@@ -72,7 +72,13 @@ def login_required(f):
         if not token:
             return jsonify({'error': '请先登录'}), 401
         at = AuthToken.query.filter_by(token=token).first()
-        if not at or at.expires_at < datetime.utcnow():
+        now = datetime.now(timezone.utc)
+        if not at:
+            return jsonify({'error': '登录已过期，请重新登录'}), 401
+        exp = at.expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < now:
             return jsonify({'error': '登录已过期，请重新登录'}), 401
         request.current_user_id = at.user_id
         return f(*args, **kwargs)
@@ -82,8 +88,15 @@ def optional_login(f):
     @functools.wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        at = AuthToken.query.filter_by(token=token).first()
-        request.current_user_id = at.user_id if at and at.expires_at > datetime.utcnow() else None
+        at = AuthToken.query.filter_by(token=token).first() if token else None
+        now = datetime.now(timezone.utc)
+        if at:
+            exp = at.expires_at
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            request.current_user_id = at.user_id if exp > now else None
+        else:
+            request.current_user_id = None
         return f(*args, **kwargs)
     return decorated
 
@@ -585,7 +598,7 @@ def register():
     db.session.add(user)
     db.session.commit()
     token = generate_token()
-    expires = datetime.utcnow() + timedelta(days=30)
+    expires = datetime.now(timezone.utc) + timedelta(days=30)
     db.session.add(AuthToken(user_id=user.id, token=token, expires_at=expires))
     db.session.commit()
     return jsonify({'user': user.to_dict(), 'token': token}), 201
@@ -602,7 +615,7 @@ def login():
     if not user or not check_password_hash(user.password_hash, password):
         return jsonify({'error': '用户名或密码错误'}), 401
     token = generate_token()
-    expires = datetime.utcnow() + timedelta(days=30)
+    expires = datetime.now(timezone.utc) + timedelta(days=30)
     db.session.add(AuthToken(user_id=user.id, token=token, expires_at=expires))
     db.session.commit()
     return jsonify({'user': user.to_dict(), 'token': token})
