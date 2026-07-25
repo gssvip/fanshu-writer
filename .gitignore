@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Build output
+dist/
+# docs/ is used for GitHub Pages - do NOT ignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Uploads
+.uploads/
+uploads/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Gradle (Android build remnants)
+.gradle/
+gradle/
+*.gradle
+gradlew*
+gradle-wrapper.*
+
+# Test
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Misc
+*.zip
+*.tar.gz
+*.rar
