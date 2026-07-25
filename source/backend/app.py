@@ -4136,4 +4136,6 @@ def serve_frontend(path):
 
 if __name__ == '__main__':
     init_db()
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Render 等云平台通过 PORT 环境变量指定端口，本地默认 5000
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)

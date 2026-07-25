@@ -9,3 +9,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      # 数据持久化目录：Render 实例重启会清空非持久化目录，使用 /var/data 持久磁盘
+      # 注意：免费 plan 不支持持久磁盘，需升级或接受数据丢失
+      - key: FANSHU_DATA_DIR
+        value: /tmp/fanshu-data
+      - key: FANSHU_FRONTEND_DIST
+        value: ../frontend/dist
