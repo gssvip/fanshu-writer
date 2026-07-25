@@ -24,6 +24,10 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 # 前端构建产物目录：优先使用环境变量，其次查找同级 frontend/dist 和上级 dist
 FRONTEND_DIST = Path(os.environ.get('FANSHU_FRONTEND_DIST', Path(__file__).parent.parent / 'frontend' / 'dist'))
 
+# 数据持久化目录：
+# - Hugging Face Spaces: /data（持久化，需手动设置 FANSHU_DATA_DIR=/data）
+# - Render: 通过 FANSHU_DATA_DIR 环境变量指定
+# - 本地开发: ~/.fanshu-writer
 DATA_DIR = Path(os.environ.get('FANSHU_DATA_DIR', Path.home() / '.fanshu-writer'))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
