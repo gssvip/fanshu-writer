@@ -1,13 +1,16 @@
 import { useState } from 'react';
-import { api } from '../api';
+import { useNavigate } from 'react-router-dom';
+import { api, isApiMisconfigured } from '../api';
 import { useStore } from '../store';
 
 export default function AuthModal({ onDone }: { onDone: () => void }) {
   const { setCurrentUser } = useStore() as any;
+  const navigate = useNavigate();
   const [isRegister, setIsRegister] = useState(false);
   const [form, setForm] = useState({ username: '', password: '', email: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const misconfigured = isApiMisconfigured();
 
   async function handleSubmit() {
     if (!form.username || !form.password) { setError('请输入用户名和密码'); return; }
@@ -38,6 +41,18 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
           <h2>番薯写作</h2>
           <p>登录后使用全部功能</p>
         </div>
+
+        {misconfigured && (
+          <div style={{ padding: '10px 12px', background: '#fde8e8', color: '#e74c3c', borderRadius: 8, fontSize: 12, marginBottom: 10, lineHeight: 1.6 }}>
+            ⚠️ 当前为静态托管环境，未配置后端服务器地址，登录注册无法使用。
+            <button
+              onClick={() => { onDone(); navigate('/mine'); }}
+              style={{ display: 'block', marginTop: 6, background: 'none', border: '1px solid #e74c3c', color: '#e74c3c', padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}
+            >
+              前往「我的 → 服务器」配置
+            </button>
+          </div>
+        )}
 
         <div className="input" style={{marginBottom:10}}>
           <input className="input" placeholder={isRegister ? '用户名' : '用户名 / 邮箱'} value={form.username}

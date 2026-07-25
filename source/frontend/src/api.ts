@@ -1,9 +1,33 @@
 import type { Book, Chapter, Character, Outline, Template, AIConfig, AISession, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport } from './types';
 
-// 生产环境需将 API_URL 设为后端实际地址，例如：
-// const BASE_URL = 'https://your-backend.onrender.com/api';
-// 开发环境通过 Vite proxy 代理到 localhost:5000
-const BASE_URL = (import.meta as any).env?.VITE_API_URL || '/api';
+// 后端 API 地址解析优先级：
+// 1. localStorage 中用户手动配置的地址（适用于 GitHub Pages 等静态托管场景）
+// 2. Vite 环境变量 VITE_API_URL（构建时注入）
+// 3. 默认 /api（开发环境通过 Vite proxy 代理到 localhost:5000）
+export function getApiBaseUrl(): string {
+  const saved = localStorage.getItem('fanshu-api-base-url');
+  if (saved && saved.trim()) return saved.replace(/\/+$/, '');
+  return (import.meta as any).env?.VITE_API_URL || '/api';
+}
+
+export function setApiBaseUrl(url: string) {
+  if (url && url.trim()) {
+    localStorage.setItem('fanshu-api-base-url', url.trim().replace(/\/+$/, ''));
+  } else {
+    localStorage.removeItem('fanshu-api-base-url');
+  }
+}
+
+// 检测当前是否在静态托管环境（如 GitHub Pages）且未配置后端地址
+export function isApiMisconfigured(): boolean {
+  const saved = localStorage.getItem('fanshu-api-base-url');
+  if (saved && saved.trim()) return false;
+  const env = (import.meta as any).env?.VITE_API_URL;
+  if (env && env.trim()) return false;
+  // 当前在 GitHub Pages 或其他静态托管，且未配置后端地址
+  const host = window.location.hostname;
+  return host.endsWith('.github.io') || host.endsWith('.vercel.app') || host.endsWith('.netlify.app');
+}
 
 function getToken(): string | null {
   return localStorage.getItem('fanshu-token');
@@ -19,7 +43,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const res = await fetch(`${BASE_URL}${url}`, { ...options, headers, signal: controller.signal });
+    const res = await fetch(`${getApiBaseUrl()}${url}`, { ...options, headers, signal: controller.signal });
     clearTimeout(timeoutId);
 
     if (!res.ok) {
@@ -36,7 +60,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
       throw new Error('请求超时，请检查网络连接');
     }
     if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
-      throw new Error('无法连接到服务器，请确认后端已启动');
+      throw new Error('无法连接到服务器，请在「我的 → 服务器」中配置后端地址');
     }
     throw e;
   }
@@ -95,7 +119,7 @@ export const api = {
   aiChat: (messages: { role: string; content: string }[]) => request<{ content: string; usage?: any }>('/ai/chat', { method: 'POST', body: JSON.stringify({ messages }) }),
   aiChatStream: (messages: { role: string; content: string }[]) => {
     const cfg = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages }) };
-    return fetch(`${BASE_URL}/ai/chat/stream`, cfg);
+    return fetch(`${getApiBaseUrl()}/ai/chat/stream`, cfg);
   },
 
   // AI Sessions
@@ -115,22 +139,22 @@ export const api = {
   // Export
   getExportUrl: (bookId: string, format: string) => {
     const token = getToken();
-    return `${BASE_URL}/books/${bookId}/export?format=${format}${token ? `&token=${token}` : ''}`;
+    return `${getApiBaseUrl()}/books/${bookId}/export?format=${format}${token ? `&token=${token}` : ''}`;
   },
   getExportZipUrl: (bookId: string) => {
     const token = getToken();
-    return `${BASE_URL}/books/${bookId}/export-zip${token ? `?token=${token}` : ''}`;
+    return `${getApiBaseUrl()}/books/${bookId}/export-zip${token ? `?token=${token}` : ''}`;
   },
   getExportFullUrl: (bookId: string) => {
     const token = getToken();
-    return `${BASE_URL}/books/${bookId}/export-full${token ? `?token=${token}` : ''}`;
+    return `${getApiBaseUrl()}/books/${bookId}/export-full${token ? `?token=${token}` : ''}`;
   },
 
   // Cover
   uploadCover: async (bookId: string, file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await fetch(`${BASE_URL}/books/${bookId}/cover`, { method: 'POST', body: formData });
+    const res = await fetch(`${getApiBaseUrl()}/books/${bookId}/cover`, { method: 'POST', body: formData });
     return res.json();
   },
 
@@ -141,7 +165,7 @@ export const api = {
   importZip: async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await fetch(`${BASE_URL}/books/import-zip`, { method: 'POST', body: formData });
+    const res = await fetch(`${getApiBaseUrl()}/books/import-zip`, { method: 'POST', body: formData });
     return res.json();
   },
 
@@ -155,7 +179,7 @@ export const api = {
     const token = getToken();
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(`${BASE_URL}/books/import-files`, { method: 'POST', body: formData, headers });
+    const res = await fetch(`${getApiBaseUrl()}/books/import-files`, { method: 'POST', body: formData, headers });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Import failed' }));
       throw new Error(err.error || `HTTP ${res.status}`);
@@ -295,7 +319,7 @@ export const api = {
     const token = getToken();
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(`${BASE_URL}/upload-analyze`, { method: 'POST', body: formData, headers });
+    const res = await fetch(`${getApiBaseUrl()}/upload-analyze`, { method: 'POST', body: formData, headers });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Upload failed' }));
       throw new Error(err.error || `HTTP ${res.status}`);
@@ -305,7 +329,7 @@ export const api = {
 
   // Export Analysis Result
   exportAnalysis: async (result: any) => {
-    const res = await fetch(`${BASE_URL}/analyze/export`, { method: 'POST', body: JSON.stringify(result), headers: { 'Content-Type': 'application/json' } });
+    const res = await fetch(`${getApiBaseUrl()}/analyze/export`, { method: 'POST', body: JSON.stringify(result), headers: { 'Content-Type': 'application/json' } });
     if (!res.ok) throw new Error('Export failed');
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);

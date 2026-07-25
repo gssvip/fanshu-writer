@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext, useRef } from 'react';
 import { useStore } from '../store';
-import { api } from '../api';
+import { api, getApiBaseUrl, setApiBaseUrl, isApiMisconfigured } from '../api';
 import { AuthContext } from '../App';
 import type { AIConfig } from '../types';
 import type { Book } from '../types';
@@ -38,6 +38,11 @@ export default function MinePage() {
   const [exporting, setExporting] = useState(false);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
+  // 后端服务器地址配置
+  const [serverUrl, setServerUrl] = useState('');
+  const [serverStatus, setServerStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  const [serverMisconfigured, setServerMisconfigured] = useState(false);
+
   // 主题背景图片
   const [bgImage, setBgImage] = useState('');
   const [bgOpacity, setBgOpacity] = useState(1.0);
@@ -59,6 +64,9 @@ export default function MinePage() {
     setBgImage(savedBg);
     setBgOpacity(savedOpacity);
     applyBgImage(savedBg, savedOpacity);
+    // 加载后端服务器地址配置
+    setServerUrl(localStorage.getItem('fanshu-api-base-url') || '');
+    setServerMisconfigured(isApiMisconfigured());
   }, []);
 
   // 应用背景图片到独立图层（支持透明度）
@@ -282,6 +290,7 @@ export default function MinePage() {
   }
 
   const SECTIONS = [
+    { key: 'server', label: '服务器', icon: '🌐' },
     { key: 'ai', label: 'AI 配置', icon: '🤖' },
     { key: 'storage', label: '本地存储', icon: '💾' },
     { key: 'theme', label: '主题', icon: '🎨' },
@@ -296,6 +305,30 @@ export default function MinePage() {
     localStorage.setItem('fanshu-local-path', localPath);
     localStorage.setItem('fanshu-storage-mode', storageMode);
     alert(storageMode === 'local' ? '已切换为本地存储模式，数据将保存在浏览器中' : '已切换为云端存储模式');
+  }
+
+  function handleSaveServerUrl() {
+    const url = serverUrl.trim().replace(/\/+$/, '');
+    setApiBaseUrl(url);
+    setServerMisconfigured(false);
+    alert(url ? '服务器地址已保存，即将刷新页面生效' : '已恢复默认服务器地址，即将刷新页面');
+    setTimeout(() => window.location.reload(), 500);
+  }
+
+  async function handleTestServerUrl() {
+    const url = serverUrl.trim().replace(/\/+$/, '');
+    if (!url) { alert('请先填写服务器地址'); return; }
+    setServerStatus('testing');
+    try {
+      const res = await fetch(`${url}/api/templates`, { method: 'GET' });
+      if (res.ok) {
+        setServerStatus('ok');
+      } else {
+        setServerStatus('fail');
+      }
+    } catch (e: any) {
+      setServerStatus('fail');
+    }
   }
 
   async function handleExportLocal() {
@@ -761,6 +794,62 @@ export default function MinePage() {
                 })}>恢复默认</button>
               </div>
             )}
+          </div>
+        )}
+
+        {activeSection === 'server' && (
+          <div className="tool-panel">
+            <h3>🌐 后端服务器</h3>
+            <p className="text-muted">配置后端 API 地址。在使用 GitHub Pages 等静态托管时必须填写，否则登录注册等所有功能都无法使用。</p>
+
+            {serverMisconfigured && (
+              <div style={{ padding: '10px 12px', background: '#fde8e8', color: '#e74c3c', borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+                ⚠️ 检测到当前为静态托管环境，但未配置后端服务器地址，登录注册等功能将无法使用。请在下方填写后端地址。
+              </div>
+            )}
+
+            <div className="form-field">
+              <label>后端服务器地址</label>
+              <div className="input-row">
+                <input
+                  className="input"
+                  value={serverUrl}
+                  onChange={e => setServerUrl(e.target.value)}
+                  placeholder="https://your-backend.onrender.com"
+                  style={{ flex: 1 }}
+                />
+                <button className="btn-ghost-sm" onClick={handleTestServerUrl} disabled={serverStatus === 'testing'}>
+                  {serverStatus === 'testing' ? '⏳' : '🔌 测试'}
+                </button>
+              </div>
+              {serverStatus === 'ok' && (
+                <div style={{ color: '#27ae60', fontSize: 12, marginTop: 4 }}>✅ 连接成功</div>
+              )}
+              {serverStatus === 'fail' && (
+                <div style={{ color: '#e74c3c', fontSize: 12, marginTop: 4 }}>❌ 连接失败，请检查地址或后端是否启动</div>
+              )}
+              <p className="text-muted" style={{ fontSize: 11, marginTop: 6 }}>
+                当前生效地址：{getApiBaseUrl()}<br />
+                留空则使用默认地址 <code>/api</code>（仅适用于前后端同域部署或开发环境）<br />
+                部署到 GitHub Pages 时，需填写已部署的后端完整地址（如 Render/Railway 等）
+              </p>
+            </div>
+
+            <div className="form-row" style={{ marginTop: 8 }}>
+              <button className="btn-primary" onClick={handleSaveServerUrl}>保存并刷新</button>
+              <button className="btn-ghost-sm" onClick={() => { setServerUrl(''); setServerStatus('idle'); }}>清空</button>
+            </div>
+
+            <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12 }}>
+              <h4 style={{ marginBottom: 8, fontSize: 13 }}>📦 后端部署指南</h4>
+              <ol style={{ paddingLeft: 18, lineHeight: 1.8 }}>
+                <li>将 <code>source/backend</code> 目录部署到 Render / Railway / Vercel 等平台</li>
+                <li>确保安装 <code>requirements.txt</code> 中的依赖</li>
+                <li>启动命令：<code>python app.py</code>，端口 5000</li>
+                <li>将平台分配的域名（如 <code>https://xxx.onrender.com</code>）填入上方</li>
+                <li>点击「测试」确认连接，再「保存并刷新」</li>
+              </ol>
+            </div>
           </div>
         )}
 
