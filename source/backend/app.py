@@ -11,15 +11,18 @@ from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from pathlib import Path
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder=None)
 app.config['SECRET_KEY'] = 'fanshu-writer-secret-key'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+
+# 前端构建产物目录：优先使用环境变量，其次查找同级 frontend/dist 和上级 dist
+FRONTEND_DIST = Path(os.environ.get('FANSHU_FRONTEND_DIST', Path(__file__).parent.parent / 'frontend' / 'dist'))
 
 DATA_DIR = Path(os.environ.get('FANSHU_DATA_DIR', Path.home() / '.fanshu-writer'))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -4099,6 +4102,37 @@ def init_db():
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
+
+
+# ==== 前端静态文件托管（生产环境）====
+# 当后端直接提供服务时，托管前端构建产物，避免前后端分离部署导致的 /api 请求失败
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_frontend(path):
+    """托管前端 SPA：所有非 /api 请求都返回静态文件或 index.html"""
+    # 前端构建产物目录
+    dist_dir = FRONTEND_DIST
+    if not dist_dir.exists():
+        # 如果 frontend/dist 不存在，尝试使用项目根目录（已构建的静态文件）
+        root_dist = Path(__file__).parent.parent.parent
+        if (root_dist / 'index.html').exists():
+            dist_dir = root_dist
+        else:
+            return jsonify({'error': '前端构建产物未找到，请先运行 npm run build'}), 404
+
+    # 如果请求的是具体文件且存在，直接返回
+    if path:
+        file_path = dist_dir / path
+        if file_path.is_file():
+            return send_from_directory(dist_dir, path)
+
+    # 其他情况返回 index.html（SPA 路由回退）
+    index_file = dist_dir / 'index.html'
+    if index_file.exists():
+        return send_from_directory(dist_dir, 'index.html')
+    return jsonify({'error': 'index.html not found'}), 404
+
 
 if __name__ == '__main__':
     init_db()
