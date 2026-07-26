@@ -9,11 +9,17 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
-      # 数据库：配置 DATABASE_URL 后用户数据存到外部 PostgreSQL，部署不丢失
-      # 推荐用 Neon 免费版（永久免费 1GB）：https://neon.tech
-      # 注册后在 Render 的 Environment 里手动添加 key=DATABASE_URL，value=Neon 连接字符串
-      # 格式：postgresql://user:password@host/dbname?sslmode=require
-      # 未配置时回退到 SQLite（部署会丢失用户数据！）
+      # ============================================================
+      # 铁律：用户数据（账号及作品）必须存到 PostgreSQL，绝不能因部署丢失
+      # ============================================================
+      # 生产环境未配置 DATABASE_URL 时，应用会拒绝启动（铁律保护）
+      # 请确保 DATABASE_URL 已在 Environment 中配置，否则部署会失败
+      #
+      # 推荐 Neon 免费版（永久免费 0.5GB，数据持久）：https://neon.tech
+      # 注册后在 Render 的 Environment 里手动添加：
+      #   key=DATABASE_URL
+      #   value=postgresql://user:password@host/dbname?sslmode=require
+      # ============================================================
       - key: FANSHU_DATA_DIR
         value: /tmp/fanshu-data
       - key: FANSHU_FRONTEND_DIST

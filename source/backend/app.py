@@ -31,19 +31,42 @@ FRONTEND_DIST = Path(os.environ.get('FANSHU_FRONTEND_DIST', Path(__file__).paren
 DATA_DIR = Path(os.environ.get('FANSHU_DATA_DIR', Path.home() / '.fanshu-writer'))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# 数据库配置：优先用 PostgreSQL（外部托管，数据持久化，推荐 Neon 免费版）
-# 配置 DATABASE_URL 环境变量后，用户数据将存到外部数据库，Render 重新部署也不会丢失
-# 未配置 DATABASE_URL 时回退到 SQLite（本地开发或单机部署）
+# ============================================================================
+# 铁律：用户数据（账号及所有作品数据）必须持久化，绝不能因部署/重启而丢失。
+# 实现方式：生产环境强制使用外部 PostgreSQL（DATABASE_URL），禁止回退到 SQLite。
+# SQLite 仅用于本地开发。云平台（Render/HF Spaces/Railway 等）无 DATABASE_URL
+# 时直接拒绝启动，避免出现"注册成功但下次部署数据消失"的假象。
+# ============================================================================
+
 DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
+# 检测生产环境：Render 自动设置 RENDER=true；其他云平台通常设置 PORT 或 CI=true
+_IS_PROD_ENV = (
+    os.environ.get('RENDER', '').lower() in ('true', '1', 'yes')
+    or os.environ.get('PORT', '').strip() != ''
+    or os.environ.get('HF_SPACE_ID', '').strip() != ''
+    or os.environ.get('RAILWAY_PROJECT_ID', '').strip() != ''
+)
+
 if DATABASE_URL:
     # 兼容 Render/Heroku 的 postgres:// 前缀（SQLAlchemy 2.0+ 需要 postgresql://）
     if DATABASE_URL.startswith('postgres://'):
         DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-    print(f'[DB] 使用 PostgreSQL 外部数据库（数据持久化，部署不丢失）', flush=True)
+    print(f'[DB] ✅ 使用 PostgreSQL 外部数据库（铁律：数据持久化，部署不丢失）', flush=True)
 else:
+    if _IS_PROD_ENV:
+        # 生产环境铁律：必须有 DATABASE_URL，否则拒绝启动
+        print('=' * 70, flush=True)
+        print('[DB][铁律违规] 生产环境未配置 DATABASE_URL，拒绝启动！', flush=True)
+        print('[DB][铁律违规] 用户数据必须存到外部 PostgreSQL，绝不能用 SQLite。', flush=True)
+        print('[DB][铁律违规] 请在 Render Dashboard → Environment 添加：', flush=True)
+        print('[DB][铁律违规]   key=DATABASE_URL  value=postgresql://user:pass@host/dbname?sslmode=require', flush=True)
+        print('[DB][铁律违规] 推荐用 Neon 免费版（永久免费 0.5GB）：https://neon.tech', flush=True)
+        print('=' * 70, flush=True)
+        raise SystemExit('[铁律] 生产环境必须配置 DATABASE_URL，进程退出以保护用户数据')
+    # 本地开发：允许 SQLite
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DATA_DIR}/fanshu.db'
-    print(f'[DB] 使用 SQLite 本地数据库：{DATA_DIR}/fanshu.db（警告：部署会丢失数据，生产环境请配置 DATABASE_URL）', flush=True)
+    print(f'[DB] ⚠️ 本地开发模式使用 SQLite：{DATA_DIR}/fanshu.db（生产环境会拒绝启动）', flush=True)
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -2911,6 +2934,8 @@ def admin_db_status():
         'sqlite_path': uri.replace('sqlite:///', '') if db_type == 'sqlite' else None,
         'counts': stats,
         'recent_users': recent_users,
+        '铁律状态': '✅ 合规：PostgreSQL 持久化' if db_type == 'postgresql' else '❌ 违规：SQLite 非持久化',
+        '铁律说明': '用户数据（账号及作品）必须存到 PostgreSQL，绝不能因部署/重启丢失',
         'warning': 'SQLite 在 Render 部署会丢失数据！请配置 DATABASE_URL 指向 PostgreSQL（如 Neon）' if db_type == 'sqlite' else None,
     })
 
@@ -4672,17 +4697,22 @@ def init_db():
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
-        # 启动诊断：打印数据库状态，便于排查"账号丢失"类问题
+        # 铁律诊断：每次启动打印数据库状态，确认用户数据持久化
         try:
             user_count = User.query.count()
             book_count = Book.query.count()
             uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
-            db_label = 'PostgreSQL' if uri.startswith('postgresql') else 'SQLite'
-            print(f'[DB-STATUS] {db_label} | users={user_count} | books={book_count}', flush=True)
+            is_pg = uri.startswith('postgresql')
+            db_label = 'PostgreSQL ✅' if is_pg else 'SQLite ⚠️'
+            print(f'[铁律] 用户数据持久化检查：{db_label} | users={user_count} | books={book_count}', flush=True)
+            if is_pg:
+                print(f'[铁律] ✅ 已连接 PostgreSQL，用户数据将持久化，部署/重启不丢失', flush=True)
+            else:
+                print(f'[铁律] ❌ 检测到 SQLite！本地开发可用，但生产环境会拒绝启动。请配置 DATABASE_URL', flush=True)
             if user_count == 0:
-                print(f'[DB-STATUS] ⚠️ 用户表为空！如果是新部署的 PostgreSQL 这是正常的；如果之前注册过账号，说明数据未持久化。', flush=True)
+                print(f'[铁律] ℹ️ 用户表为空（新数据库正常；若之前注册过账号说明数据未持久化）', flush=True)
         except Exception as e:
-            print(f'[DB-STATUS] 诊断失败: {e}', flush=True)
+            print(f'[铁律] 诊断失败: {e}', flush=True)
 
 
 # ==== 前端静态文件托管（生产环境）====
