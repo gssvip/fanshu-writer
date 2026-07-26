@@ -38,6 +38,27 @@ export default function MinePage() {
   const [exporting, setExporting] = useState(false);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
+  // 修改密码
+  const [pwdForm, setPwdForm] = useState({ old: '', new: '', confirm: '' });
+  const [pwdSaving, setPwdSaving] = useState(false);
+  const [pwdMsg, setPwdMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  async function handleChangePassword() {
+    setPwdMsg(null);
+    if (!pwdForm.old || !pwdForm.new) { setPwdMsg({ type: 'error', text: '请输入原密码和新密码' }); return; }
+    if (pwdForm.new.length < 4) { setPwdMsg({ type: 'error', text: '新密码至少4个字符' }); return; }
+    if (pwdForm.new !== pwdForm.confirm) { setPwdMsg({ type: 'error', text: '两次输入的新密码不一致' }); return; }
+    setPwdSaving(true);
+    try {
+      await api.changePassword(pwdForm.old, pwdForm.new);
+      setPwdMsg({ type: 'success', text: '密码修改成功！下次请使用新密码登录' });
+      setPwdForm({ old: '', new: '', confirm: '' });
+    } catch (e: any) {
+      setPwdMsg({ type: 'error', text: e.message || '修改失败' });
+    }
+    setPwdSaving(false);
+  }
+
   // 后端服务器地址配置
   const [serverUrl, setServerUrl] = useState('');
   const [serverStatus, setServerStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
@@ -292,6 +313,7 @@ export default function MinePage() {
     { key: 'ai', label: 'AI 配置', icon: '🤖' },
     { key: 'storage', label: '本地存储', icon: '💾' },
     { key: 'theme', label: '主题', icon: '🎨' },
+    { key: 'account', label: '账户安全', icon: '🔐' },
     { key: 'about', label: '关于', icon: 'ℹ️' },
   ];
 
@@ -848,6 +870,67 @@ export default function MinePage() {
                 <li>将平台分配的域名填入上方，点击「测试」确认连接，再「保存并刷新」</li>
               </ol>
             </div>
+          </div>
+        )}
+
+        {activeSection === 'account' && (
+          <div className="tool-panel">
+            <h3>🔐 账户安全</h3>
+
+            {currentUser ? (
+              <>
+                <div style={{ padding: '10px 12px', background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 13, marginBottom: 16 }}>
+                  <div>当前账号：<b>{currentUser.username}</b></div>
+                  <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>邮箱：{currentUser.email || '未设置'}</div>
+                </div>
+
+                <h4 style={{ margin: '12px 0 8px', fontSize: 14 }}>修改密码</h4>
+                <div className="form-field">
+                  <label>原密码</label>
+                  <input className="input" type="password" placeholder="请输入当前密码" value={pwdForm.old}
+                    onChange={e => setPwdForm(prev => ({ ...prev, old: e.target.value }))} />
+                </div>
+                <div className="form-field">
+                  <label>新密码</label>
+                  <input className="input" type="password" placeholder="至少4个字符" value={pwdForm.new}
+                    onChange={e => setPwdForm(prev => ({ ...prev, new: e.target.value }))} />
+                </div>
+                <div className="form-field">
+                  <label>确认新密码</label>
+                  <input className="input" type="password" placeholder="再次输入新密码" value={pwdForm.confirm}
+                    onChange={e => setPwdForm(prev => ({ ...prev, confirm: e.target.value }))}
+                    onKeyDown={e => { if (e.key === 'Enter') handleChangePassword(); }} />
+                </div>
+
+                {pwdMsg && (
+                  <div style={{
+                    padding: '8px 12px', borderRadius: 6, fontSize: 13, marginBottom: 10,
+                    background: pwdMsg.type === 'success' ? '#e8f7e8' : '#fde8e8',
+                    color: pwdMsg.type === 'success' ? '#27ae60' : '#e74c3c'
+                  }}>
+                    {pwdMsg.type === 'success' ? '✅ ' : '❌ '}{pwdMsg.text}
+                  </div>
+                )}
+
+                <div className="form-row">
+                  <button className="btn-primary" onClick={handleChangePassword} disabled={pwdSaving}>
+                    {pwdSaving ? '保存中...' : '保存新密码'}
+                  </button>
+                  <button className="btn-ghost-sm" onClick={() => { setPwdForm({ old: '', new: '', confirm: '' }); setPwdMsg(null); }}>清空</button>
+                </div>
+
+                <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                  <b>💡 找回密码</b><br />
+                  忘记密码时，可在登录页点击「忘记密码？」通过注册邮箱接收重置链接，重置邮件将通过 <code>xiyiji@88.com</code> 发送。
+                </div>
+              </>
+            ) : (
+              <div className="empty-state" style={{padding:30}}>
+                <div className="empty-icon">🔒</div>
+                <p>请先登录后再管理账户安全</p>
+                <button className="btn-primary-sm" style={{marginTop:12}} onClick={() => requireAuth()}>登录 / 注册</button>
+              </div>
+            )}
           </div>
         )}
 

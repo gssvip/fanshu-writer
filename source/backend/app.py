@@ -67,6 +67,16 @@ class AuthToken(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class PasswordResetToken(db.Model):
+    __tablename__ = 'password_reset_tokens'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
+    token = db.Column(db.String(100), unique=True, nullable=False)
+    used = db.Column(db.Boolean, default=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 def generate_token():
     return hashlib.sha256(os.urandom(32)).hexdigest()
 
@@ -639,6 +649,171 @@ def logout():
     AuthToken.query.filter_by(token=token).delete()
     db.session.commit()
     return jsonify({'success': True})
+
+
+# ==== 邮件发送（用于找回密码） ====
+# SMTP 配置通过环境变量覆盖；默认发件邮箱为 xiyiji@88.com
+SMTP_HOST = os.environ.get('FANSHU_SMTP_HOST', 'smtp.qiye.aliyun.com')
+SMTP_PORT = int(os.environ.get('FANSHU_SMTP_PORT', '465'))
+SMTP_USER = os.environ.get('FANSHU_SMTP_USER', 'xiyiji@88.com')
+SMTP_PASSWORD = os.environ.get('FANSHU_SMTP_PASSWORD', '')
+SMTP_FROM_NAME = os.environ.get('FANSHU_SMTP_FROM_NAME', '番薯写作')
+SMTP_FROM_ADDR = os.environ.get('FANSHU_SMTP_FROM_ADDR', 'xiyiji@88.com')
+# 前端站点地址，用于拼接重置链接
+SITE_BASE_URL = os.environ.get('FANSHU_SITE_BASE_URL', '')
+
+
+def send_reset_email(to_email, reset_token):
+    """发送密码重置邮件。如果 SMTP 未配置密码则降级为控制台输出（开发环境）。
+    返回 (ok: bool, msg: str)。
+    """
+    base = (SITE_BASE_URL or request.host_url.rstrip('/')).rstrip('/')
+    # 使用 # 锚点，兼容 HashRouter：/ sometime/#/reset-password?token=xxx
+    reset_link = f"{base}/#/reset-password?token={reset_token}"
+
+    subject = '【番薯写作】找回您的账号密码'
+    body = (
+        f"您好，\n\n"
+        f"我们收到了您重置番薯写作账号密码的请求。\n\n"
+        f"请点击下方链接重置密码（链接 30 分钟内有效）：\n"
+        f"{reset_link}\n\n"
+        f"如果您没有发起过此请求，请忽略本邮件，您的账号密码不会变更。\n\n"
+        f"—— 番薯写作团队"
+    )
+
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        from email.utils import formataddr
+
+        msg = MIMEMultipart()
+        msg['From'] = formataddr((SMTP_FROM_NAME, SMTP_FROM_ADDR))
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+        if SMTP_PASSWORD:
+            # 生产/已配置：使用 SSL 直连 SMTP 服务器
+            if SMTP_PORT == 465:
+                server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15)
+            else:
+                server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
+                server.starttls()
+            try:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.sendmail(SMTP_FROM_ADDR, [to_email], msg.as_string())
+            finally:
+                server.quit()
+        else:
+            # 开发环境降级：打印到日志，便于本地调试
+            app.logger.warning('[SMTP未配置] 密码重置邮件未实际发送。')
+            app.logger.info('---- 重置邮件内容 ----\n%s\n--------------------', body)
+
+        return True, '邮件已发送'
+    except Exception as e:
+        app.logger.exception('发送重置邮件失败')
+        return False, f'邮件发送失败：{e}'
+
+
+# ==== 修改密码 / 找回密码 / 重置密码 ====
+
+@app.route('/api/auth/change-password', methods=['POST'])
+@login_required
+def change_password():
+    """已登录用户修改密码：需要原密码验证。"""
+    data = request.json or {}
+    old_password = (data.get('old_password', '') or '').strip()
+    new_password = (data.get('new_password', '') or '').strip()
+    if not old_password or not new_password:
+        return jsonify({'error': '请输入原密码和新密码'}), 400
+    if len(new_password) < 4:
+        return jsonify({'error': '新密码至少4个字符'}), 400
+
+    user = User.query.get(request.current_user_id)
+    if not user:
+        return jsonify({'error': '用户不存在'}), 404
+    if not check_password_hash(user.password_hash, old_password):
+        return jsonify({'error': '原密码错误'}), 401
+
+    user.password_hash = generate_password_hash(new_password)
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/api/auth/forgot-password', methods=['POST'])
+def forgot_password():
+    """用户输入邮箱，生成重置令牌并发送重置邮件。"""
+    data = request.json or {}
+    email = (data.get('email', '') or '').strip().lower()
+    if not email or '@' not in email:
+        return jsonify({'error': '请输入有效的邮箱'}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        # 出于隐私保护，即使邮箱不存在也返回成功，避免被探测账号是否存在
+        return jsonify({'success': True, 'message': '如果该邮箱已注册，重置邮件已发送'})
+
+    # 失效旧的重置令牌
+    PasswordResetToken.query.filter_by(user_id=user.id, used=False).update({'used': True})
+
+    token = generate_token()
+    expires = datetime.now(timezone.utc) + timedelta(minutes=30)
+    db.session.add(PasswordResetToken(user_id=user.id, token=token, expires_at=expires, used=False))
+    db.session.commit()
+
+    ok, msg = send_reset_email(user.email, token)
+    if not ok:
+        return jsonify({'error': msg}), 500
+    return jsonify({'success': True, 'message': '重置邮件已发送，请查收'})
+
+
+@app.route('/api/auth/reset-password', methods=['POST'])
+def reset_password():
+    """用户凭重置令牌设置新密码。"""
+    data = request.json or {}
+    token = (data.get('token', '') or '').strip()
+    new_password = (data.get('new_password', '') or '').strip()
+    if not token or not new_password:
+        return jsonify({'error': '令牌或新密码不能为空'}), 400
+    if len(new_password) < 4:
+        return jsonify({'error': '新密码至少4个字符'}), 400
+
+    prt = PasswordResetToken.query.filter_by(token=token).first()
+    if not prt or prt.used:
+        return jsonify({'error': '重置链接无效或已使用'}), 400
+    exp = prt.expires_at
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp < datetime.now(timezone.utc):
+        return jsonify({'error': '重置链接已过期，请重新申请'}), 400
+
+    user = User.query.get(prt.user_id)
+    if not user:
+        return jsonify({'error': '用户不存在'}), 404
+
+    user.password_hash = generate_password_hash(new_password)
+    prt.used = True
+    db.session.commit()
+    return jsonify({'success': True, 'message': '密码已重置，请使用新密码登录'})
+
+
+@app.route('/api/auth/verify-reset-token', methods=['POST'])
+def verify_reset_token():
+    """校验重置令牌是否有效（用于前端跳转后预检）。"""
+    data = request.json or {}
+    token = (data.get('token', '') or '').strip()
+    if not token:
+        return jsonify({'valid': False}), 400
+    prt = PasswordResetToken.query.filter_by(token=token).first()
+    if not prt or prt.used:
+        return jsonify({'valid': False}), 200
+    exp = prt.expires_at
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if exp < datetime.now(timezone.utc):
+        return jsonify({'valid': False}), 200
+    return jsonify({'valid': True}), 200
 
 
 # ==== Books API ====
@@ -1812,6 +1987,71 @@ def import_book_files():
 
         update_book_stats(book.id)
         return jsonify(book.to_dict()), 201
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@app.route('/api/books/<book_id>/import-chapters', methods=['POST'])
+@login_required
+def append_import_chapters(book_id):
+    """追加导入章节到已有作品，支持 txt/md/docx/zip，每个文件可含多章。
+    新章节会按当前最大 order_index 顺序追加，不影响已有章节。
+    """
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '作品不存在'}), 404
+    if book.user_id != request.current_user_id:
+        return jsonify({'error': '无权操作该作品'}), 403
+
+    files = request.files.getlist('files')
+    if not files or len(files) == 0:
+        return jsonify({'error': '未选择文件'}), 400
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        new_chapters = []
+        for f in files:
+            if not f or not f.filename:
+                continue
+            original_name = f.filename
+            ext = original_name.rsplit('.', 1)[1].lower() if '.' in original_name else ''
+            if ext not in ('txt', 'md', 'docx', 'zip', 'json'):
+                continue
+            safe_name = f'{uuid.uuid4()}.{ext}'
+            filepath = os.path.join(tmpdir, safe_name)
+            f.save(filepath)
+            text = extract_text_from_file(filepath, safe_name)
+            if not text.strip():
+                continue
+            chapters = split_into_chapters(text)
+            if chapters:
+                new_chapters.extend(chapters)
+            else:
+                ch_title = os.path.splitext(original_name)[0]
+                new_chapters.append({'title': ch_title[:100], 'content': text})
+
+        if not new_chapters:
+            return jsonify({'error': '未能从文件中提取到有效内容，请检查文件格式或编码'}), 400
+
+        # 计算当前最大 order_index，新章节追加在末尾
+        max_order = db.session.query(db.func.max(Chapter.order_index)).filter_by(book_id=book_id).scalar() or 0
+        added = 0
+        for idx, ch_data in enumerate(new_chapters):
+            ch = Chapter(
+                book_id=book_id,
+                title=ch_data['title'][:200] or f'第{max_order + idx + 1}章',
+                content=ch_data['content'],
+                order_index=max_order + idx + 1,
+                is_volume=False,
+                parent_id='',
+                word_count=count_words(ch_data['content'])
+            )
+            db.session.add(ch)
+            added += 1
+
+        update_book_stats(book_id)
+        total = Chapter.query.filter_by(book_id=book_id, is_volume=False).count()
+        return jsonify({'success': True, 'added': added, 'total': total}), 200
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

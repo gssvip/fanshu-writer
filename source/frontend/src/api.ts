@@ -138,6 +138,18 @@ export const api = {
     request<{ user: User; token: string }>('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
   getMe: () => request<User>('/auth/me'),
   logout: () => request<{ success: boolean }>('/auth/logout', { method: 'POST' }),
+  // 修改密码（需登录）
+  changePassword: (oldPassword: string, newPassword: string) =>
+    request<{ success: boolean }>('/auth/change-password', { method: 'POST', body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }) }),
+  // 找回密码：发送重置邮件
+  forgotPassword: (email: string) =>
+    request<{ success: boolean; message?: string }>('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+  // 校验重置令牌
+  verifyResetToken: (token: string) =>
+    request<{ valid: boolean }>('/auth/verify-reset-token', { method: 'POST', body: JSON.stringify({ token }) }),
+  // 重置密码
+  resetPassword: (token: string, newPassword: string) =>
+    request<{ success: boolean; message?: string }>('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, new_password: newPassword }) }),
 
   // Books
   listBooks: () => request<Book[]>('/books'),
@@ -247,6 +259,21 @@ export const api = {
       throw new Error(err.error || `HTTP ${res.status}`);
     }
     return res.json() as Promise<Book>;
+  },
+
+  // 追加导入章节到已有作品（txt/md/docx/zip，每个文件可含多章）
+  importChapters: async (bookId: string, files: File[]) => {
+    const formData = new FormData();
+    for (const f of files) formData.append('files', f);
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(`${getApiBaseUrl()}/books/${bookId}/import-chapters`, { method: 'POST', body: formData, headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: '导入失败' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<{ success: boolean; added: number; total: number }>;
   },
 
   // Stages

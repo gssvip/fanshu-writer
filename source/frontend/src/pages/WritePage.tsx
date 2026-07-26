@@ -975,6 +975,7 @@ export default function WritePage() {
             onFormat={formatChapter}
             onRenameVolume={renameVolume}
             onDeleteVolume={deleteVolumeFn}
+            bookId={bookId}
           />
         ) : isGraphTab ? (
           <GraphPanel
@@ -1325,13 +1326,14 @@ function ChapterPanel(props: {
   onFormat: () => void;
   onRenameVolume: (volId: string, newTitle: string) => Promise<void>;
   onDeleteVolume: (volId: string) => Promise<void>;
+  bookId?: string;
 }) {
   const { chapters, activeChapter, chapterEditing, chapterEditTitle, chapterEditContent, chapterSaving,
     aiCreateMode, aiGeneratedContent, aiCreating, aiStreamError, aiUserPrompt,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
     onSelectChapter, onCreateChapter, onCreateVolume, onSaveChapter, onDeleteChapter, onCancelEdit, onStartEdit,
     onEditTitle, onEditContent, onBackToList, onStartAiCreate, onExecuteAiCreate, onConfirmAiContent, onCancelAiCreate, onEditAiContent, onEditAiPrompt, onFormat,
-    onRenameVolume, onDeleteVolume,
+    onRenameVolume, onDeleteVolume, bookId,
   } = props;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
@@ -1339,6 +1341,41 @@ function ChapterPanel(props: {
   const [renamingVolId, setRenamingVolId] = useState<string | null>(null);
   const [renameVolTitle, setRenameVolTitle] = useState('');
   const selectedCount = selectedSkillPackIds.length;
+
+  // 追加导入章节（已有作品继续添加章节，尤其适合导入的小说继续更新）
+  const importChaptersRef = useRef<HTMLInputElement>(null);
+  const [importingChapters, setImportingChapters] = useState(false);
+  const [importChaptersError, setImportChaptersError] = useState('');
+
+  async function handleImportChapters(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files || []);
+    // 清空 input 以便重复选择同一文件
+    if (importChaptersRef.current) importChaptersRef.current.value = '';
+    if (picked.length === 0) return;
+    if (!bookId) return;
+    const valid = picked.filter(f => /\.(txt|md|docx|zip|json)$/i.test(f.name));
+    if (valid.length === 0) {
+      setImportChaptersError('请选择 txt/md/docx/zip 格式的文件');
+      return;
+    }
+    setImportChaptersError('');
+    setImportingChapters(true);
+    try {
+      const result = await api.importChapters(bookId, valid);
+      alert(`成功追加 ${result.added} 章，当前共 ${result.total} 章`);
+      // 刷新章节列表
+      try {
+        const updated = await api.listChapters(bookId);
+        // 重新加载逻辑由父组件的回调处理；这里通过页面刷新最简单
+        window.location.reload();
+      } catch { /* ignore */ }
+    } catch (err: any) {
+      setImportChaptersError(err.message || '导入失败');
+      alert('追加导入失败: ' + (err.message || '未知错误'));
+    } finally {
+      setImportingChapters(false);
+    }
+  }
 
   // Enter快捷发送（Shift+Enter换行）
   const handlePromptKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1560,11 +1597,23 @@ function ChapterPanel(props: {
     <div className="chapter-list-panel">
       <div className="chapter-list-header">
         <h3>📚 章节 <span className="chapter-count">{chapters.filter(c => !c.is_volume).length}章</span></h3>
-        <div style={{display:'flex',gap:6}}>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}>
           <button className="btn-ghost-sm" onClick={() => onCreateVolume()} title="新建卷">📂 新卷</button>
+          <button className="btn-secondary-sm" onClick={() => importChaptersRef.current?.click()} disabled={importingChapters || !bookId} title="从 txt/md/docx/zip 文件追加章节，不影响已有章节">
+            {importingChapters ? '⏳ 导入中...' : '📥 导入章节'}
+          </button>
           <button className="btn-primary-sm" onClick={() => onCreateChapter()}>+ 新章节</button>
         </div>
+        <input
+          ref={importChaptersRef}
+          type="file"
+          multiple
+          accept=".txt,.md,.docx,.zip,.json"
+          style={{display:'none'}}
+          onChange={handleImportChapters}
+        />
       </div>
+      {importChaptersError && <div className="error-msg" style={{padding:'0 12px'}}>{importChaptersError}</div>}
       {chapters.length === 0 ? (
         <div className="empty-state">
           <div className="empty-icon">📖</div>

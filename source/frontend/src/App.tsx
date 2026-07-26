@@ -7,6 +7,7 @@ import WorkbenchPage from './pages/WorkbenchPage';
 import WritePage from './pages/WritePage';
 import ToolsPage from './pages/ToolsPage';
 import MinePage from './pages/MinePage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import './index.css';
 
 const TABS = [
@@ -43,7 +44,7 @@ function DesktopSidebar() {
   return (
     <aside className="desktop-sidebar">
       <div className="sidebar-brand">
-        <span className="sidebar-logo"><img src="/logo.jpg" alt="logo" style={{width:28,height:28,borderRadius:6,objectFit:'cover'}} /></span>
+        <span className="sidebar-logo"><img src="logo.jpg" alt="logo" style={{width:28,height:28,borderRadius:6,objectFit:'cover'}} /></span>
         <span className="sidebar-title">番薯写作</span>
       </div>
       <nav className="sidebar-nav">
@@ -182,6 +183,7 @@ export default function App() {
             <Route path="/write" element={<WritePage />} />
             <Route path="/tools" element={<ToolsPage />} />
             <Route path="/mine" element={<MinePage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
           </Routes>
         </Layout>
         {showAuth && <AuthModal onDone={handleAuthDone} />}

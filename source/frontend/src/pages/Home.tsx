@@ -35,7 +35,7 @@ export default function Home() {
     <div className="home-root">
       <header className="home-header">
         <div className="home-brand">
-          <img src="/logo.jpg" alt="番薯写作" style={{width:36,height:36,borderRadius:8,objectFit:'cover'}} />
+          <img src="logo.jpg" alt="番薯写作" style={{width:36,height:36,borderRadius:8,objectFit:'cover'}} />
           <div><h1>番薯写作</h1><p>AI小说创作平台</p></div>
         </div>
         <div className="home-actions">

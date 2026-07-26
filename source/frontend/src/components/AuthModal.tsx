@@ -12,6 +12,11 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
   const [loading, setLoading] = useState(false);
   const misconfigured = isApiMisconfigured();
 
+  // 找回密码模式
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSent, setForgotSent] = useState(false);
+
   async function handleSubmit() {
     if (!form.username || !form.password) { setError('请输入用户名和密码'); return; }
     if (isRegister) {
@@ -33,11 +38,66 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
     setLoading(false);
   }
 
+  async function handleForgotPassword() {
+    if (!forgotEmail.trim()) { setError('请输入注册时使用的邮箱'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forgotEmail.trim())) { setError('邮箱格式不正确'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      await api.forgotPassword(forgotEmail.trim());
+      setForgotSent(true);
+    } catch (e: any) {
+      setError(e.message || '发送失败，请稍后重试');
+    }
+    setLoading(false);
+  }
+
+  // 找回密码视图
+  if (forgotMode) {
+    return (
+      <div className="modal-overlay" onClick={onDone}>
+        <div className="auth-modal" onClick={e => e.stopPropagation()}>
+          <div className="auth-modal-brand">
+            <span className="auth-modal-logo"><img src="logo.jpg" alt="logo" style={{width:40,height:40,borderRadius:10,objectFit:'cover'}} /></span>
+            <h2>找回密码</h2>
+            <p>输入注册邮箱，我们将发送重置链接</p>
+          </div>
+
+          {forgotSent ? (
+            <div style={{ padding: '12px', background: '#e8f7e8', color: '#27ae60', borderRadius: 8, fontSize: 13, marginBottom: 10, lineHeight: 1.6 }}>
+              ✅ 重置邮件已发送至 <b>{forgotEmail}</b>，请在 30 分钟内查收并点击邮件中的链接重置密码。
+              <br />（如果没有收到，请检查垃圾邮件箱）
+            </div>
+          ) : (
+            <>
+              <div className="input" style={{marginBottom:10}}>
+                <input className="input" type="email" placeholder="注册邮箱" value={forgotEmail}
+                  onChange={e => setForgotEmail(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleForgotPassword(); }} />
+              </div>
+              {error && <div className="error-msg" style={{marginBottom:10}}>{error}</div>}
+              <button className="btn-primary" style={{width:'100%',padding:12}} onClick={handleForgotPassword} disabled={loading}>
+                {loading ? '发送中...' : '发送重置邮件'}
+              </button>
+            </>
+          )}
+
+          <div className="auth-toggle" style={{marginTop:16}}>
+            想起密码了？
+            <button onClick={() => { setForgotMode(false); setForgotSent(false); setError(''); }}>
+              返回登录
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="modal-overlay" onClick={onDone}>
       <div className="auth-modal" onClick={e => e.stopPropagation()}>
         <div className="auth-modal-brand">
-          <span className="auth-modal-logo"><img src="/logo.jpg" alt="logo" style={{width:40,height:40,borderRadius:10,objectFit:'cover'}} /></span>
+          <span className="auth-modal-logo"><img src="logo.jpg" alt="logo" style={{width:40,height:40,borderRadius:10,objectFit:'cover'}} /></span>
           <h2>番薯写作</h2>
           <p>登录后使用全部功能</p>
         </div>
@@ -83,6 +143,14 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
             {isRegister ? '去登录' : '去注册'}
           </button>
         </div>
+
+        {!isRegister && (
+          <div className="auth-toggle" style={{marginTop:8}}>
+            <button onClick={() => { setForgotMode(true); setError(''); setForgotSent(false); }} style={{color:'var(--text-muted)'}}>
+              忘记密码？
+            </button>
+          </div>
+        )}
 
         <div className="auth-modal-hint">
           {isRegister ? '注册后可用用户名或邮箱登录' : '支持用户名或邮箱登录'}
