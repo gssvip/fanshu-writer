@@ -1980,7 +1980,7 @@ def import_book_files():
             # 用原始文件名检测扩展名，避免 secure_filename 移除中文后丢失扩展名
             original_name = f.filename
             ext = original_name.rsplit('.', 1)[1].lower() if '.' in original_name else ''
-            if ext not in ('txt', 'md', 'docx', 'zip', 'json'):
+            if ext not in ('txt', 'md', 'markdown', 'docx', 'zip', 'json'):
                 continue
 
             # 保存到临时文件，用 uuid 避免文件名冲突
@@ -2078,7 +2078,7 @@ def append_import_chapters(book_id):
                 continue
             original_name = f.filename
             ext = original_name.rsplit('.', 1)[1].lower() if '.' in original_name else ''
-            if ext not in ('txt', 'md', 'docx', 'zip', 'json'):
+            if ext not in ('txt', 'md', 'markdown', 'docx', 'zip', 'json'):
                 continue
             safe_name = f'{uuid.uuid4()}.{ext}'
             filepath = os.path.join(tmpdir, safe_name)
@@ -4599,7 +4599,7 @@ def extract_text_from_file(filepath, filename):
         with open(filepath, 'rb') as f:
             raw = f.read()
         return _detect_and_decode(raw)
-    elif ext in ('md', 'json'):
+    elif ext in ('md', 'markdown', 'json'):
         with open(filepath, 'rb') as f:
             raw = f.read()
         return _detect_and_decode(raw)
@@ -4619,7 +4619,7 @@ def extract_text_from_file(filepath, filename):
                 try:
                     content = zf.read(name)
                     inner_ext = name.rsplit('.', 1)[1].lower() if '.' in name else ''
-                    if inner_ext in ('txt', 'md', 'json'):
+                    if inner_ext in ('txt', 'md', 'markdown', 'json'):
                         decoded = _detect_and_decode(content)
                         extracted_texts.append(f'=== {name} ===\n{decoded}')
                     elif inner_ext == 'docx':

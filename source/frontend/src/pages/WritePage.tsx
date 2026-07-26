@@ -1353,7 +1353,7 @@ function ChapterPanel(props: {
     if (importChaptersRef.current) importChaptersRef.current.value = '';
     if (picked.length === 0) return;
     if (!bookId) return;
-    const valid = picked.filter(f => /\.(txt|md|docx|zip|json)$/i.test(f.name));
+    const valid = picked.filter(f => /\.(txt|md|markdown|docx|zip|json)$/i.test(f.name));
     if (valid.length === 0) {
       setImportChaptersError('请选择 txt/md/docx/zip 格式的文件');
       return;
@@ -1604,7 +1604,6 @@ function ChapterPanel(props: {
           ref={importChaptersRef}
           type="file"
           multiple
-          accept=".txt,.md,.docx,.zip,.json"
           style={{display:'none'}}
           onChange={handleImportChapters}
         />
