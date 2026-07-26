@@ -2828,6 +2828,14 @@ def seed_skill_packs():
     existing_packs = {p.name: p for p in SkillPack.query.filter_by(is_builtin=True).all()}
     added = False
     updated = False
+    seed_names = {sp['name'] for sp in SEED_SKILL_PACKS}
+    # 清理已改名/已删除的旧内置技能包（is_builtin=True 但不在 SEED 列表中）
+    removed = False
+    for name, pack in list(existing_packs.items()):
+        if name not in seed_names:
+            db.session.delete(pack)
+            del existing_packs[name]
+            removed = True
     for sp in SEED_SKILL_PACKS:
         if sp['name'] in existing_packs:
             # 更新已存在内置技能包的提示词（同步字数等变更）
@@ -2852,8 +2860,16 @@ def seed_skill_packs():
         )
         db.session.add(pack)
         added = True
-    if added or updated:
+    if added or updated or removed:
         db.session.commit()
+        print(f'[SEED] skill_packs: added={added}, updated={updated}, removed={removed}', flush=True)
+
+@app.route('/api/admin/reseed-skill-packs', methods=['POST'])
+def admin_reseed_skill_packs():
+    """手动触发重新 seed 内置技能包（清理旧改名残留 + 补齐新增）"""
+    seed_skill_packs()
+    packs = SkillPack.query.filter_by(is_builtin=True).all()
+    return jsonify({'success': True, 'builtin_count': len(packs), 'names': [p.name for p in packs]})
 
 @app.route('/api/skill-packs', methods=['GET'])
 def list_skill_packs():
