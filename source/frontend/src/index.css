@@ -233,8 +233,6 @@ textarea{resize:vertical;line-height:1.8}
 .bible-tab{padding:8px 12px;font-size:12px;border-radius:0;border-bottom:2px solid transparent;white-space:nowrap;flex-shrink:0}
 .bible-tab.active{border-bottom-color:var(--accent);color:var(--accent);font-weight:600}
 .bible-content{padding:14px}
-.bible-display{cursor:pointer;min-height:60px}
-.bible-text{white-space:pre-wrap;font-size:13px;line-height:1.7;color:var(--text-secondary)}
 .bible-textarea{width:100%;font-size:13px;line-height:1.7;min-height:120px}
 .bible-edit-actions{display:flex;gap:8px;margin-top:8px;justify-content:flex-end}
 .bible-summary{margin:0 14px 14px;padding:12px;background:var(--bg-tertiary);border-radius:var(--radius-sm)}
@@ -1069,7 +1067,7 @@ textarea{resize:vertical;line-height:1.8}
 .concept-label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 .concept-label{font-size:13px;font-weight:600;color:var(--text-secondary)}
 .concept-dim-analyze-btn{font-size:11px;padding:4px 8px}
-.concept-textarea{width:100%;padding:12px;font-size:15px;line-height:1.6;resize:vertical;min-height:80px}
+.concept-textarea{width:100%;padding:12px;font-size:15px;line-height:1.6;resize:vertical;min-height:160px}
 .concept-actions{display:flex;gap:8px;margin-top:8px}
 .error-msg{color:#e74c3c;font-size:13px;margin-top:8px}
 .brainstorm-results{margin-top:16px}
@@ -1089,25 +1087,31 @@ textarea{resize:vertical;line-height:1.8}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ===== Bible编辑面板 ===== */
-.bible-edit-panel{padding:12px 16px}
-.bible-edit-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.bible-edit-panel{padding:12px 16px;display:flex;flex-direction:column}
+.bible-edit-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0}
 .bible-edit-header h3{font-size:16px;font-weight:700}
 .bible-edit-actions{display:flex;gap:8px;flex-wrap:wrap}
-.bible-ai-prompt-input{font-size:14px;line-height:1.6;resize:vertical;min-height:120px;max-height:300px}
+.bible-ai-prompt-input{font-size:15px;line-height:1.7;resize:vertical;min-height:200px;max-height:50vh}
 .bible-ai-loading{display:flex;flex-direction:column;align-items:center;gap:8px;padding:24px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-top:12px}
 .bible-ai-loading p{font-size:13px;color:var(--text-muted)}
-.bible-context-bar{display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg-tertiary);border-radius:var(--radius-sm);margin-bottom:10px;font-size:12px}
+.bible-context-bar{display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg-tertiary);border-radius:var(--radius-sm);margin-bottom:10px;font-size:12px;flex-shrink:0}
 .bible-context-book{color:var(--text-secondary);font-weight:500}
 .bible-context-sep{color:var(--text-muted)}
 .bible-context-dim{color:var(--accent);font-weight:600}
 .bible-context-count{margin-left:auto;color:var(--text-muted);font-size:11px}
-.bible-edit-footer{display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px}
+.bible-edit-footer{display:flex;align-items:center;justify-content:space-between;margin-top:8px;gap:8px;flex-shrink:0}
 .bible-edit-count{font-size:11px;color:var(--text-muted);flex-shrink:0}
 .bible-edit-hint{font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bible-tips-toggle{background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;padding:6px 0;margin-top:8px}
 .bible-tips-box{padding:10px 12px;background:var(--bg-tertiary);border-radius:var(--radius-sm);margin-top:4px}
 .bible-tips-box p{font-size:12px;color:var(--text-secondary);line-height:1.6;margin:2px 0}
 .bible-empty-actions{display:flex;gap:8px;margin-top:12px;justify-content:center}
+
+/* 维度编辑框：最大化填满可用空间（手机友好） */
+.bible-editor-textarea{width:100%;min-height:50vh;padding:12px;font-size:15px;line-height:1.8;resize:vertical;font-family:inherit}
+/* 维度内容展示区：内容多时自适应高度，外层 write-content 负责滚动 */
+.bible-display{cursor:pointer;min-height:80px}
+.bible-text{white-space:pre-wrap;font-size:15px;line-height:1.8;color:var(--text-primary)}
 
 /* 技能包选择器和信息 */
 .skill-pack-selector{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-tertiary);border-radius:var(--radius-sm);margin-bottom:8px}
