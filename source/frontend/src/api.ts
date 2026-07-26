@@ -1,12 +1,15 @@
 import type { Book, Chapter, Character, Outline, Template, AIConfig, AISession, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport } from './types';
 
+// 后端 API 默认地址（内置，开箱即用）
+// 其他用户无需手动配置即可使用。如需切换到自部署的后端，可在「我的 → 服务器」覆盖。
+// 如需更改默认地址，修改此处并重新构建即可。
+const DEFAULT_API_BASE = 'https://fanshu-writer-backend.onrender.com/api';
+
 // 后端 API 地址解析优先级：
 // 1. localStorage 中用户手动配置的地址（适用于 GitHub Pages 等静态托管场景）
-// 2. Vite 环境变量 VITE_API_URL（构建时注入）
-// 3. 默认 /api（开发环境通过 Vite proxy 代理到 localhost:5000）
-//
-// 注意：用户只需填后端根地址（如 https://xxx.onrender.com），
-// 本函数会自动补全 /api 后缀，与 api.ts 中的相对路径（如 /auth/login）拼接。
+// 2. Vite 环境变量 VITE_API_URL（构建时注入，优先级高于内置默认值）
+// 3. 内置默认地址 DEFAULT_API_BASE（开箱即用）
+// 4. /api（仅适用于前后端同域部署或开发环境）
 export function getApiBaseUrl(): string {
   const saved = localStorage.getItem('fanshu-api-base-url');
   if (saved && saved.trim()) {
@@ -19,6 +22,13 @@ export function getApiBaseUrl(): string {
   }
   const env = (import.meta as any).env?.VITE_API_URL;
   if (env && env.trim()) return env.trim().replace(/\/+$/, '');
+  // 同域部署（开发环境或后端托管前端时）走相对路径 /api
+  // 否则使用内置的默认后端地址
+  const host = window.location.hostname;
+  const isStaticHost = host.endsWith('.github.io') || host.endsWith('.vercel.app') || host.endsWith('.netlify.app');
+  if (isStaticHost) {
+    return DEFAULT_API_BASE;
+  }
   return '/api';
 }
 
@@ -31,14 +41,10 @@ export function setApiBaseUrl(url: string) {
 }
 
 // 检测当前是否在静态托管环境（如 GitHub Pages）且未配置后端地址
+// 注意：内置默认地址后，静态托管环境不再算 misconfigured
 export function isApiMisconfigured(): boolean {
-  const saved = localStorage.getItem('fanshu-api-base-url');
-  if (saved && saved.trim()) return false;
-  const env = (import.meta as any).env?.VITE_API_URL;
-  if (env && env.trim()) return false;
-  // 当前在 GitHub Pages 或其他静态托管，且未配置后端地址
-  const host = window.location.hostname;
-  return host.endsWith('.github.io') || host.endsWith('.vercel.app') || host.endsWith('.netlify.app');
+  // 已有内置默认地址，永远不算 misconfigured
+  return false;
 }
 
 function getToken(): string | null {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext, useRef } from 'react';
 import { useStore } from '../store';
-import { api, getApiBaseUrl, setApiBaseUrl, isApiMisconfigured } from '../api';
+import { api, getApiBaseUrl, setApiBaseUrl } from '../api';
 import { AuthContext } from '../App';
 import type { AIConfig } from '../types';
 import type { Book } from '../types';
@@ -41,7 +41,6 @@ export default function MinePage() {
   // 后端服务器地址配置
   const [serverUrl, setServerUrl] = useState('');
   const [serverStatus, setServerStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
-  const [serverMisconfigured, setServerMisconfigured] = useState(false);
 
   // 主题背景图片
   const [bgImage, setBgImage] = useState('');
@@ -66,7 +65,6 @@ export default function MinePage() {
     applyBgImage(savedBg, savedOpacity);
     // 加载后端服务器地址配置
     setServerUrl(localStorage.getItem('fanshu-api-base-url') || '');
-    setServerMisconfigured(isApiMisconfigured());
   }, []);
 
   // 应用背景图片到独立图层（支持透明度）
@@ -310,7 +308,6 @@ export default function MinePage() {
   function handleSaveServerUrl() {
     const url = serverUrl.trim().replace(/\/+$/, '');
     setApiBaseUrl(url);
-    setServerMisconfigured(false);
     alert(url ? '服务器地址已保存，即将刷新页面生效' : '已恢复默认服务器地址，即将刷新页面');
     setTimeout(() => window.location.reload(), 500);
   }
@@ -803,22 +800,20 @@ export default function MinePage() {
         {activeSection === 'server' && (
           <div className="tool-panel">
             <h3>🌐 后端服务器</h3>
-            <p className="text-muted">配置后端 API 地址。在使用 GitHub Pages 等静态托管时必须填写，否则登录注册等所有功能都无法使用。</p>
+            <p className="text-muted">系统已内置默认后端服务器，开箱即用。如需切换到自部署的后端，可在下方覆盖。</p>
 
-            {serverMisconfigured && (
-              <div style={{ padding: '10px 12px', background: '#fde8e8', color: '#e74c3c', borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
-                ⚠️ 检测到当前为静态托管环境，但未配置后端服务器地址，登录注册等功能将无法使用。请在下方填写后端地址。
-              </div>
-            )}
+            <div style={{ padding: '10px 12px', background: '#e8f7e8', color: '#27ae60', borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+              ✅ 已使用内置默认后端服务器，无需配置即可使用登录注册等功能。
+            </div>
 
             <div className="form-field">
-              <label>后端服务器地址 <span style={{color:'#888',fontSize:11}}>（只需填根地址，<code>/api</code> 会自动补全）</span></label>
+              <label>自定义后端服务器地址 <span style={{color:'#888',fontSize:11}}>（可选，留空使用内置默认地址）</span></label>
               <div className="input-row">
                 <input
                   className="input"
                   value={serverUrl}
                   onChange={e => setServerUrl(e.target.value)}
-                  placeholder="https://your-backend.onrender.com"
+                  placeholder="留空使用默认地址，或填自部署后端地址"
                   style={{ flex: 1 }}
                 />
                 <button className="btn-ghost-sm" onClick={handleTestServerUrl} disabled={serverStatus === 'testing'}>
@@ -833,8 +828,8 @@ export default function MinePage() {
               )}
               <p className="text-muted" style={{ fontSize: 11, marginTop: 6 }}>
                 当前生效地址：{getApiBaseUrl()}<br />
-                填写后端根地址即可（无需带 <code>/api</code>），例如 <code>https://fanshu-writer-backend.onrender.com</code><br />
-                系统会自动拼接 <code>/api</code> 前缀。留空则使用默认 <code>/api</code>（仅适用于前后端同域部署）
+                填写后端根地址即可（无需带 <code>/api</code>），系统会自动拼接 <code>/api</code> 前缀。<br />
+                留空则使用内置默认地址，普通用户无需配置。
               </p>
             </div>
 
@@ -844,13 +839,13 @@ export default function MinePage() {
             </div>
 
             <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12 }}>
-              <h4 style={{ marginBottom: 8, fontSize: 13 }}>📦 后端部署指南</h4>
+              <h4 style={{ marginBottom: 8, fontSize: 13 }}>📦 自部署后端（可选）</h4>
+              <p style={{ marginBottom: 8 }}>如果你想使用自己的后端服务器，可以参考以下步骤部署：</p>
               <ol style={{ paddingLeft: 18, lineHeight: 1.8 }}>
                 <li>将 <code>source/backend</code> 目录部署到 Render / Railway / Hugging Face Spaces 等平台</li>
                 <li>确保安装 <code>requirements.txt</code> 中的依赖</li>
                 <li>启动命令：<code>python app.py</code>（端口通过 <code>PORT</code> 环境变量指定）</li>
-                <li>将平台分配的域名（如 <code>https://xxx.onrender.com</code>）填入上方</li>
-                <li>点击「测试」确认连接，再「保存并刷新」</li>
+                <li>将平台分配的域名填入上方，点击「测试」确认连接，再「保存并刷新」</li>
               </ol>
             </div>
           </div>
