@@ -1,7 +1,7 @@
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, createContext, useContext, useCallback } from 'react';
 import { useStore } from './store';
-import { api } from './api';
+import { api, warmUpBackend } from './api';
 import AuthModal from './components/AuthModal';
 import WorkbenchPage from './pages/WorkbenchPage';
 import WritePage from './pages/WritePage';
@@ -129,6 +129,23 @@ export default function App() {
 
   useEffect(() => {
     api.getMe().then(u => { setCurrentUser?.(u); }).catch(() => {}).finally(() => setAuthChecked(true));
+  }, []);
+
+  // 后端预热：应对 Render 免费版冷启动（15 分钟无访问会休眠）
+  // 1. 应用启动时立即预热（触发唤醒）
+  // 2. 每 10 分钟自动 ping 一次（保持唤醒，避免休眠）
+  useEffect(() => {
+    warmUpBackend();
+    const intervalId = setInterval(warmUpBackend, 10 * 60 * 1000); // 10 分钟
+    // 页面从隐藏恢复可见时也预热（用户切回标签页）
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') warmUpBackend();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   useEffect(() => {

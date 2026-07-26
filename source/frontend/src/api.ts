@@ -51,18 +51,63 @@ function getToken(): string | null {
   return localStorage.getItem('fanshu-token');
 }
 
+// 后端是否正在预热中（避免重复预热）
+let warmingUp = false;
+
+/**
+ * 预热后端：发起一个轻量 GET 请求触发 Render 实例唤醒。
+ * 静默执行，不抛错，不阻塞 UI。
+ * 适用于页面加载时或长时间空闲后。
+ */
+export function warmUpBackend(): void {
+  if (warmingUp) return;
+  warmingUp = true;
+  // 用 fetch 而非 request()，避免被重试逻辑影响
+  fetch(`${getApiBaseUrl()}/templates`, { method: 'GET' })
+    .catch(() => { /* 静默失败 */ })
+    .finally(() => { warmingUp = false; });
+}
+
+/**
+ * 带自动重试的 fetch：应对 Render 免费版冷启动超时。
+ * - 第 1 次失败后等 3 秒重试
+ * - 第 2 次失败后等 8 秒重试（共等待约 11 秒，覆盖大部分冷启动场景）
+ * - 第 3 次仍失败则抛错
+ */
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 2): Promise<Response> {
+  const delays = [3000, 8000]; // 重试间隔（毫秒）
+  let lastError: any;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
+      // 5xx 错误重试（可能是冷启动中），4xx 直接返回
+      if (res.status >= 500 && attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, delays[attempt]));
+        continue;
+      }
+      return res;
+    } catch (e: any) {
+      lastError = e;
+      // 网络错误/超时重试（Render 冷启动典型表现）
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, delays[attempt]));
+        continue;
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(options?.headers as Record<string, string> || {}) };
   const token = getToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  // AbortController 实现 60 秒超时（Render 免费版冷启动需 30-60 秒）
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000);
-
   try {
-    const res = await fetch(`${getApiBaseUrl()}${url}`, { ...options, headers, signal: controller.signal });
-    clearTimeout(timeoutId);
+    const res = await fetchWithRetry(`${getApiBaseUrl()}${url}`, { ...options, headers });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
@@ -73,12 +118,11 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     }
     return {} as T;
   } catch (e: any) {
-    clearTimeout(timeoutId);
     if (e.name === 'AbortError') {
-      throw new Error('请求超时（服务器可能正在冷启动，请稍等 30-60 秒后重试）');
+      throw new Error('请求超时（服务器可能正在冷启动，已自动重试仍失败，请稍后再试）');
     }
     if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
-      throw new Error('无法连接到服务器，请检查「我的 → 服务器」中配置的后端地址是否正确');
+      throw new Error('无法连接到服务器，可能正在冷启动中。请稍等几秒后重试，或检查「我的 → 服务器」配置');
     }
     throw e;
   }
