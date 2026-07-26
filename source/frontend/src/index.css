@@ -1062,13 +1062,13 @@ textarea{resize:vertical;line-height:1.8}
 .ai-prompt-bottom-row .ai-prompt-submit{height:36px;padding:8px 16px;font-size:13px}
 
 /* ===== 构思面板 ===== */
-.concept-panel{padding:12px 16px}
-.concept-input-section{margin-bottom:16px}
-.concept-label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.concept-panel{padding:12px 16px;display:flex;flex-direction:column;min-height:0}
+.concept-input-section{margin-bottom:16px;display:flex;flex-direction:column;flex:1;min-height:0}
+.concept-label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-shrink:0}
 .concept-label{font-size:13px;font-weight:600;color:var(--text-secondary)}
 .concept-dim-analyze-btn{font-size:11px;padding:4px 8px}
-.concept-textarea{width:100%;padding:12px;font-size:15px;line-height:1.6;resize:vertical;min-height:160px}
-.concept-actions{display:flex;gap:8px;margin-top:8px}
+.concept-textarea{width:100%;padding:12px;font-size:15px;line-height:1.6;resize:vertical;min-height:calc(100vh - 320px);flex:1}
+.concept-actions{display:flex;gap:8px;margin-top:8px;flex-shrink:0}
 .error-msg{color:#e74c3c;font-size:13px;margin-top:8px}
 .brainstorm-results{margin-top:16px}
 .concept-analysis{background:var(--bg-secondary);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px}
