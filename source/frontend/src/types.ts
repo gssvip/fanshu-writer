@@ -102,6 +102,7 @@ export interface SkillPack {
   stage_keys: string[]; workflow: WorkflowStep[];
   prompts: Record<string, string>;
   is_builtin: boolean; icon: string;
+  github_source?: string; github_synced_at?: string | null;
   created_at: string;
 }
 

@@ -421,6 +421,8 @@ class SkillPack(db.Model):
     prompts_json = db.Column(db.Text, default='{}')
     is_builtin = db.Column(db.Boolean, default=False)
     icon = db.Column(db.String(10), default='📦')
+    github_source = db.Column(db.String(500), default='')  # GitHub 仓库地址，用于拉取更新
+    github_synced_at = db.Column(db.DateTime, nullable=True)  # 上次同步时间
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     def to_dict(self):
@@ -431,6 +433,8 @@ class SkillPack(db.Model):
             'workflow': json.loads(self.workflow_json or '[]'),
             'prompts': json.loads(self.prompts_json or '{}'),
             'is_builtin': self.is_builtin, 'icon': self.icon,
+            'github_source': self.github_source or '',
+            'github_synced_at': self.github_synced_at.isoformat() if self.github_synced_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
@@ -2668,6 +2672,34 @@ SEED_SKILL_PACKS = [
          'tomato_deai': '你是番茄去AI味审查员。按以下流程逐项检查并修改：\n【优先级铁律】人味>克制>流畅。删完AI味后读起来像机器人汇报→加口语碎片。太啰嗦→删修饰。磕磕绊绊→调句式。判定标准：大声读一遍，不像人说话就改。\n【必删清单(28词)】一股/一抹/不由得/不禁/随即/旋即/与此同时/颇为/甚为/极为/缓缓/淡淡/轻轻/微微/毫无疑问/毋庸置疑/不言而喻/深吸一口气/眼中闪过一丝/心中暗想/心念电转/若有所思/不知不觉间/转眼间/恍然大悟/面无表情/淡漠/漠然/眸子/嘴角微微上扬/如同/宛如/犹如/周身/周遭/气息/威压/那道身影/说话间/话音未落/当即/顿时/瞬时。\n【口语化替换】因此→所以；颇为→特别/贼；随即→马上/下一秒；显而易见→说白了；或许→估计/大概。强制使用：合着/整半天/好家伙/说白了/得了吧/拉倒吧/啥玩意/搁这/说实话/你别说。\n【AI味浓度红线≤15%】AI味特征：排比句过多/模板化过渡/段落长度均匀/情感直述/总结性段落/信息倾泻/对话书面化/缺口语语气词/转场工整/形容词堆叠。\n【人味注入】加入不完美细节(结巴/重复/打断)/感官碎片/小动作微表情/语气词和断句/适当留白/个人化比喻。只输出修改后的正文。',
          'tomato_diagnosis': '你是番茄节点诊断师。为已完成章节生成多维诊断报告：\n【基础指标】章数/总字数/均字/章型分布(M__%/C__%/W__%/D__%/F__%对比配额)/对话占比趋势。\n【质量趋势】AI味浓度(最高/最低/均值/趋势)/爽点审计(8种中使用了哪几种)/微爽密度(均__个/400字目标≥1)/钩子类型(近5章是否重复)。\n【线程健康度】主线(每章推进✅)/副线A情感(距上次__章<10✅)/副线B配角(距上次__章<25✅)/暗线世界观(距上次__章<50✅)。\n【角色出场】配角出场统计/超10章未出场(🔴需安排)。\n【代价系统】金手指代价点数__/阈值→安全/接近/已触发。\n【改进建议】针对每个🔴和⚠️给出具体修复建议。',
      }, ensure_ascii=False)},
+
+    # ==== 大神写作：源自 oh-story-claudecode，支持从 GitHub 同步更新 ====
+    {'name': '大神写作', 'description': '完整网文创作流水线：扫榜选题→拆文学习→长篇/短篇写作→多视角审稿→去AI味→封面生成→导入续写。源自 GitHub 开源项目 oh-story-claudecode，支持一键同步最新版本。',
+     'genre': 'other', 'book_type': 'novel', 'icon': '🏆',
+     'github_source': 'https://github.com/worldwonderer/oh-story-claudecode',
+     'stage_keys': json.dumps(['worldbuilding','character_design','plot_design','outline','draft'], ensure_ascii=False),
+     'workflow': json.dumps([
+         {'step':1,'name':'扫榜选题','desc':'分析平台榜单数据，提炼市场趋势与热门题材，找到能写的爆款方向','prompt_key':'market_scan'},
+         {'step':2,'name':'拆文学习','desc':'深度拆解爆款小说的黄金三章、人设架构、爽点设计、节奏控制','prompt_key':'analyze_bestseller'},
+         {'step':3,'name':'故事搭建','desc':'确定情绪目标，搭建世界观、人设、大纲，从验证过的模式出发','prompt_key':'story_setup'},
+         {'step':4,'name':'长篇写作','desc':'大纲到正文，管理世界观/人物/情节线，先定情绪再定故事','prompt_key':'long_write'},
+         {'step':5,'name':'短篇写作','desc':'构思到成稿，聚焦情绪拉扯与节奏把控，一个反转撑一篇','prompt_key':'short_write'},
+         {'step':6,'name':'多视角审稿','desc':'结构/角色/文字/设定四维对抗式审查，找问题不是验证正确性','prompt_key':'review'},
+         {'step':7,'name':'去AI味','desc':'检测并清除AI写作痕迹，改最少字让文字回归自然','prompt_key':'deslop'},
+         {'step':8,'name':'封面生成','desc':'根据书名题材分析风格，生成专业级网文封面','prompt_key':'cover'},
+         {'step':9,'name':'导入续写','desc':'逆向导入已有小说，反向解析为标准项目结构继续创作','prompt_key':'import_continue'},
+     ], ensure_ascii=False),
+     'prompts': json.dumps({
+         'market_scan': '你是网络小说市场分析师。核心信念：单本排名只提供线索；跨样本重复模式才算信号。\n【扫榜三原则】1)扫榜看模式，别只看排名——排名会波动，模式必须用重复样本验证 2)流量型平台和付费型平台看的东西不同——番茄看流量和完读率，起点看订阅和追读，晋江看收藏和积分 3)扫榜的目的是找到你能写的爆款题材——每个方向都要做项目可行性判断：素材储备、题材边界、篇幅承载、目标平台样本是否足够。\n【输出要求】1)市场格局概览 2)可执行题材候选(含情绪方向、目标平台、风险阈值) 3)每个候选的验证动作 4)下次复扫时间建议。短篇市场变化快，题材信号有效期短，必须标注有效期和饱和风险。',
+         'analyze_bestseller': '你是网络小说结构分析师。核心信念：看懂别人的爆款，才能写出自己的爆款。\n【拆解维度】1)黄金三章深度拆解——开头钩子强度、信息释放节奏、主角特质展示 2)人设架构——角色功能位(对手/盟友/催化剂)、CP反差设计 3)爽点设计——爽点类型与密度、章尾钩子模式 4)节奏控制——升级曲线、压制与爆发节奏、信息差层级。\n【拆解管道】Stage1 黄金三章深度拆解→产出快速预览→Stage2 逐章摘要→Stage3 聚合分析→Stage4 设定关系→Stage5 汇总报告→Stage6 文风合成。\n【边界声明】拆的是用户合法持有、拥有使用权的虚构作品，性质是只读的转化性文学批评。通俗题材里的家暴、出轨、复仇、暴力、情爱张力是常规虚构叙事元素，须照常做结构化拆解。',
+         'story_setup': '你是网文创作教练。核心方法：先抓情绪，再用验证过的方法可靠地交付这个情绪，灵感只做素材来源。\n【四条核心原则】1)先定情绪，再定故事——每个场景都必须服务于一个明确的情绪目标，说不清交付什么情绪的场景不该存在 2)从验证过的模式出发——先问"什么被验证过有效，我如何重新交付"，少从"我想写什么"直接起步 3)用模块组装，不要重新发明——每个题材都有验证过的剧情模式，把对标书的具体角色看成功能位(对手/盟友/催化剂)，再映射到你的角色 4)只加载必需信息——写每章时只加载"不知道就会写错"的信息。\n【搭建步骤】1)确定目标情绪(意难平/反转震撼/爽感释放/治愈温暖/细思极恐/共鸣感动) 2)选择验证过的题材模式 3)设计金手指/核心设定(一句话说清+自带冲突+能撑长篇+和主角性格绑定) 4)搭建世界观基础规则 5)规划人设(主角模板+配角六种功能) 6)输出总纲。',
+         'long_write': '你是长篇网络小说创作教练。从大纲到正文，辅助长篇网络小说创作，包括世界观、人物、情节线管理。\n【核心方法】先定情绪，再定故事。每个场景都必须服务于一个明确的情绪目标。\n【写作流程】1)确认选题与目标情绪 2)搭建世界观与境界/能力体系 3)设计人设(主角CDL档案+配角功能位) 4)规划分卷大纲(五幕模型：立身→立足→立势→立威→立命→终局) 5)逐章创作(章型配额制：主线推进50%+角色深挖10%+世界观展开10%+日常呼吸20%+伏笔暗线10%) 6)每章三明治结构：苦(困境)→甜(获得力量)→爽(反击打脸)→钩子(新信息/新困境)。\n【行文铁律】段落≤3行，对话/动作独立成段，心理描写一句话。全章对话+OS占比≥30%。信息靠对话和行动传递不靠旁白。四不写：不写让读者停下来欣赏的句子/不写解释情绪的句子/不写展示阅读量的句子/不写为了质感的句子。\n【章尾钩子七种不重复】身份揭露/新危机/荒诞反转/悬念/角色危机/能力突破/世界异常。',
+         'short_write': '你是短篇网文写作执行器。从构思到成稿，完成一篇完整的短篇小说。\n【核心规则：短篇以情绪为目标，所有内容为情绪服务。】\n【五条执行规则】1)先定情绪，再定故事——动笔前必须确定目标情绪(意难平/反转震撼/爽感释放/治愈温暖/细思极恐/共鸣感动)，所有内容为这个情绪服务 2)一个反转撑一篇——所有铺垫为反转服务，所有情绪为反转蓄力，不多线、不铺世界观 3)每句话必须有用——不推动剧情、不铺垫反转、不推高情绪的句子→删 4)开头3句定生死，结尾定传播——开头必须包含钩子，结尾必须有余韵 5)默认第一人称——短篇网文绝大多数用第一人称，代入感最强；除非题材明确需要第三人称(如多视角悬疑)。\n【格式规范】短篇8000-15000字，节奏紧凑，每1000字至少1个情绪节点，反转前必须有足够铺垫。',
+         'review': '你是审查协调器。核心铁律：审查是找问题，不是验证正确性。\n【四维对抗式审查】1)结构审查(story-architect)——情节逻辑、因果链、节奏控制、章尾钩子 2)一致性审查(consistency-checker)——人物行为是否符合设定、世界规则是否违反、时间线是否连贯、角色认知边界 3)文字审查(narrative-writer)——AI味检测、文风一致性、对话自然度、禁词扫描 4)设定审查(lore-keeper)——世界观规则、能力体系、伏笔回收、叙事债务。\n【审查模式】full=四维全审；lean=结构+一致性(不含文字自然度)；solo=基础审查。\n【输出格式】每个维度：1)问题清单(严重/中等/轻微) 2)具体位置(章节+段落) 3)可执行修改建议 4)通过/不通过判定。最后汇总总体评分和优先修改项。',
+         'deslop': '你是网文润色专家。核心信念：AI味的主要问题并非语法错误；更常见的是过度圆滑、工整、解释充分。改写目标是保留剧情功能，同时增加口语、停顿、跳跃和具体动作。\n【两条核心原则】1)改味优先，别当改错——AI味属于风格问题：过于书面化、过于对仗工整、过于面面俱到。去AI味的本质是把文字从过度工整拉回具体、自然、可读 2)改最少，效果最大——去AI味不等于重写，目标是改最少的字让整段文字的"味"变过来。能改一个词就不改一句，能删一句就不重写一段。没有问题的句子尽量保留原句；人名、地名、数字、章节名、专有名词优先保留。\n【过度去AI味保护】不得整段删除正文内容；多处AI味应逐句修改而非删除整段；删除前必须确认被删内容确实无剧情功能。\n【必删词表】一股/一抹/不由得/不禁/随即/旋即/与此同时/颇为/甚为/缓缓/淡淡/轻轻/微微/深吸一口气/眼中闪过一丝/心中暗想/若有所思/恍然大悟/面无表情/淡漠/眸子/嘴角微微上扬/如同/宛如/犹如/周身/气息/威压/那道身影/话音未落/当即/顿时。\n【人味注入】加入不完美细节(结巴/重复/打断)/感官碎片/小动作微表情/语气词和断句/适当留白。只输出修改后的正文。',
+         'cover': '你是小说封面设计师。根据书名和题材，生成包含书名和作者名的完整封面。\n【核心原则】封面是读者的第一印象，一眼传达题材和氛围。\n【设计流程】1)收集信息——书名、作者名(笔名)、目标平台、题材类型 2)分析题材风格——都市(现代感+质感)、玄幻(恢弘+光影)、言情(柔美+暖色调)、悬疑(暗调+神秘感)、科幻(科技感+冷色调) 3)确定构图——书名占封面30%-40%面积，位置醒目；作者名置于书名下方或角落；主视觉与题材匹配 4)输出封面描述(prompt)——包含画面主体、色调、构图、书名位置、作者名位置、整体氛围。用于AI绘图工具生成封面图。',
+         'import_continue': '你是小说项目逆向工程师。将已写好的小说(半成品或完本)反向解析为标准项目目录结构，兼容后续写作流程。\n【核心原则】1)先分析后迁移——先用拆解管道完整拆解小说，再将分析结果迁移为项目结构 2)复用不重复——深度分析阶段调用现成的拆解管道 3)交付物是写作工程——把作者已有的书重建为可续写的写作工程，不能当成用完即弃的中间产物。\n【导入流程】1)按篇幅分流——长篇走长篇拆解管道，短篇走短篇拆解管道 2)拆解阶段——黄金三章拆解→逐章摘要→聚合分析→设定关系→汇总报告 3)迁移阶段——将拆解结果转为项目结构(设定/人物/大纲/伏笔追踪) 4)续写衔接——导入完成后可直接进入长篇/短篇写作流程继续创作。',
+     }, ensure_ascii=False)},
 ]
 
 def seed_skill_packs():
@@ -2683,12 +2715,18 @@ def seed_skill_packs():
                 pack.workflow_json = sp['workflow']
                 pack.description = sp['description']
                 updated = True
+            # 同步 github_source 字段
+            gh = sp.get('github_source', '')
+            if gh and pack.github_source != gh:
+                pack.github_source = gh
+                updated = True
             continue
         pack = SkillPack(
             name=sp['name'], description=sp['description'], genre=sp['genre'],
             book_type=sp['book_type'], stage_keys_json=sp['stage_keys'],
             workflow_json=sp['workflow'], prompts_json=sp['prompts'],
-            is_builtin=True, icon=sp.get('icon', '📦')
+            is_builtin=True, icon=sp.get('icon', '📦'),
+            github_source=sp.get('github_source', '')
         )
         db.session.add(pack)
         added = True
@@ -2827,6 +2865,96 @@ def publish_skill_pack(pack_id):
     pack.is_builtin = True
     db.session.commit()
     return jsonify(pack.to_dict())
+
+# ==== GitHub 同步：从 oh-story-claudecode 拉取最新 SKILL.md 更新技能包 ====
+# 技能名 → GitHub skill 目录的映射，用于同步时拉取对应的 SKILL.md
+GITHUB_SKILL_MAP = {
+    'market_scan': ['story-long-scan', 'story-short-scan'],
+    'analyze_bestseller': ['story-long-analyze', 'story-short-analyze'],
+    'story_setup': ['story-setup'],
+    'long_write': ['story-long-write'],
+    'short_write': ['story-short-write'],
+    'review': ['story-review'],
+    'deslop': ['story-deslop'],
+    'cover': ['story-cover'],
+    'import_continue': ['story-import'],
+}
+
+@app.route('/api/skill-packs/<pack_id>/sync-github', methods=['POST'])
+def sync_skill_pack_from_github(pack_id):
+    """从 GitHub 仓库拉取最新 SKILL.md，更新技能包的提示词。
+    仅对有 github_source 的技能包生效。拉取后提取每个 SKILL.md 的核心内容
+    （description + 核心指令段落），追加到对应 prompt_key 的提示词中。
+    """
+    pack = SkillPack.query.get(pack_id)
+    if not pack:
+        return jsonify({'error': '技能包不存在'}), 404
+    if not pack.github_source:
+        return jsonify({'error': '该技能包未关联 GitHub 仓库，无法同步'}), 400
+
+    import urllib.request
+    import re as _re
+
+    # 从 github_source URL 提取 owner/repo
+    # 例：https://github.com/worldwonderer/oh-story-claudecode
+    gh_match = _re.match(r'https?://github\.com/([^/]+)/([^/]+)', pack.github_source)
+    if not gh_match:
+        return jsonify({'error': 'GitHub 仓库地址格式无效'}), 400
+    owner, repo = gh_match.group(1), gh_match.group(2).rstrip('/')
+
+    prompts = json.loads(pack.prompts_json or '{}')
+    workflow = json.loads(pack.workflow_json or '[]')
+    updated_count = 0
+    errors = []
+
+    for step in workflow:
+        prompt_key = step.get('prompt_key', '')
+        skill_dirs = GITHUB_SKILL_MAP.get(prompt_key, [])
+        if not skill_dirs:
+            continue
+
+        # 拉取每个关联 skill 的 SKILL.md
+        fetched_contents = []
+        for skill_dir in skill_dirs:
+            url = f'https://raw.githubusercontent.com/{owner}/{repo}/main/skills/{skill_dir}/SKILL.md'
+            try:
+                req = urllib.request.Request(url, headers={'User-Agent': 'fanshu-writer'})
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    content = resp.read().decode('utf-8', errors='replace')
+                # 提取 YAML frontmatter 中的 description
+                desc_match = _re.search(r'description:\s*["\']?(.+?)["\']?\s*\n', content)
+                desc = desc_match.group(1).strip().strip('"').strip("'") if desc_match else ''
+                # 提取 # 标题后的核心内容（去掉 YAML frontmatter 和 Agent 兼容性注释）
+                body = _re.sub(r'^---\n.*?\n---\n', '', content, flags=_re.DOTALL)
+                # 截取前 3000 字符作为核心提示词（避免过长）
+                core = body.strip()[:3000]
+                fetched_contents.append(f'### {skill_dir}\n{desc}\n\n{core}')
+            except Exception as e:
+                errors.append(f'{skill_dir}: {str(e)[:100]}')
+
+        if fetched_contents:
+            # 将 GitHub 最新内容追加到原提示词后面，保留原提示词作为执行指引
+            github_section = '\n\n---\n【GitHub 最新同步内容】\n' + '\n\n---\n'.join(fetched_contents)
+            prompts[prompt_key] = prompts.get(prompt_key, '') + github_section
+            updated_count += 1
+
+    if updated_count == 0:
+        return jsonify({
+            'error': '同步失败，未能拉取到任何 SKILL.md',
+            'details': errors[:5]
+        }), 500
+
+    pack.prompts_json = json.dumps(prompts, ensure_ascii=False)
+    pack.github_synced_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'message': f'同步完成，更新了 {updated_count} 个步骤的提示词',
+        'updated_count': updated_count,
+        'errors': errors[:5],
+        'synced_at': pack.github_synced_at.isoformat()
+    })
 
 @app.route('/api/analyze-book', methods=['POST'])
 def analyze_book():
@@ -4345,6 +4473,15 @@ def init_db():
             pass
         try:
             db.session.execute(db.text('ALTER TABLE ai_config ADD COLUMN recognition_model TEXT'))
+        except Exception:
+            pass
+        # Migration: skill_packs 添加 github_source 和 github_synced_at 字段
+        try:
+            db.session.execute(db.text('ALTER TABLE skill_packs ADD COLUMN github_source VARCHAR(500) DEFAULT \'\''))
+        except Exception:
+            pass
+        try:
+            db.session.execute(db.text('ALTER TABLE skill_packs ADD COLUMN github_synced_at DATETIME'))
         except Exception:
             pass
         try:

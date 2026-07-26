@@ -200,6 +200,26 @@ export default function ToolsPage() {
     }
   }
 
+  // 从 GitHub 同步技能包（拉取最新 SKILL.md 更新提示词）
+  const [syncingPackId, setSyncingPackId] = useState<string | null>(null);
+  async function handleSyncFromGitHub(pack: SkillPack) {
+    const ok = await requireAuth();
+    if (!ok) return;
+    if (!pack.github_source) { alert('该技能包未关联 GitHub 仓库'); return; }
+    if (!confirm(`从 GitHub 拉取最新版本？\n源：${pack.github_source}\n这会更新技能包中各步骤的提示词。`)) return;
+    setSyncingPackId(pack.id);
+    try {
+      const res = await api.syncSkillPackFromGitHub(pack.id);
+      reloadSkillPacks();
+      let msg = `✅ ${res.message}`;
+      if (res.errors && res.errors.length > 0) msg += `\n\n部分失败：\n${res.errors.join('\n')}`;
+      alert(msg);
+    } catch (e: any) {
+      alert('同步失败: ' + e.message);
+    }
+    setSyncingPackId(null);
+  }
+
   function addWorkflowStep() {
     setSkillEditor(prev => ({
       ...prev,
@@ -542,6 +562,22 @@ export default function ToolsPage() {
                   </div>
                 </div>
                 <div className="skill-card-desc">{pack.description}</div>
+                {pack.github_source && (
+                  <div style={{ marginTop: 6, padding: '6px 8px', background: 'var(--bg-tertiary)', borderRadius: 6, fontSize: 11, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      🔗 GitHub: {pack.github_synced_at ? `已同步 ${new Date(pack.github_synced_at).toLocaleDateString()}` : '未同步'}
+                    </span>
+                    <button
+                      className="btn-secondary-sm"
+                      style={{ flexShrink: 0 }}
+                      disabled={syncingPackId === pack.id}
+                      onClick={(e) => { e.stopPropagation(); handleSyncFromGitHub(pack); }}
+                      title={`从 ${pack.github_source} 拉取最新版本`}
+                    >
+                      {syncingPackId === pack.id ? '⏳ 同步中' : '🔄 同步GitHub'}
+                    </button>
+                  </div>
+                )}
                 <div className="skill-card-workflow">
                   {pack.workflow?.map((step, i) => (
                     <div key={i} className="workflow-step"><span className="workflow-step-num">{step.step}</span><span>{step.name}</span></div>

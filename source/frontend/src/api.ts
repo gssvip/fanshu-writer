@@ -327,6 +327,9 @@ export const api = {
     request<SkillPack>(`/skill-packs/${id}/clone`, { method: 'POST', body: JSON.stringify({ name }) }),
   publishSkillPack: (id: string) =>
     request<SkillPack>(`/skill-packs/${id}/publish`, { method: 'POST' }),
+  // 从 GitHub 同步技能包（拉取最新 SKILL.md 更新提示词）
+  syncSkillPackFromGitHub: (id: string) =>
+    request<{ success: boolean; message: string; updated_count: number; errors?: string[]; synced_at: string }>(`/skill-packs/${id}/sync-github`, { method: 'POST' }),
   applySkillPack: (bookId: string, packId: string) =>
     request<{ success: boolean; pack: SkillPack }>(`/books/${bookId}/apply-skill-pack`, { method: 'POST', body: JSON.stringify({ pack_id: packId }) }),
 
