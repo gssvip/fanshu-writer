@@ -26,12 +26,25 @@ FRONTEND_DIST = Path(os.environ.get('FANSHU_FRONTEND_DIST', Path(__file__).paren
 
 # 数据持久化目录：
 # - Hugging Face Spaces: /data（持久化，需手动设置 FANSHU_DATA_DIR=/data）
-# - Render: 通过 FANSHU_DATA_DIR 环境变量指定
+# - Render: 通过 FANSHU_DATA_DIR 环境变量指定（仅用于临时文件，数据库见下）
 # - 本地开发: ~/.fanshu-writer
 DATA_DIR = Path(os.environ.get('FANSHU_DATA_DIR', Path.home() / '.fanshu-writer'))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DATA_DIR}/fanshu.db'
+# 数据库配置：优先用 PostgreSQL（外部托管，数据持久化，推荐 Neon 免费版）
+# 配置 DATABASE_URL 环境变量后，用户数据将存到外部数据库，Render 重新部署也不会丢失
+# 未配置 DATABASE_URL 时回退到 SQLite（本地开发或单机部署）
+DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
+if DATABASE_URL:
+    # 兼容 Render/Heroku 的 postgres:// 前缀（SQLAlchemy 2.0+ 需要 postgresql://）
+    if DATABASE_URL.startswith('postgres://'):
+        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+    print(f'[DB] 使用 PostgreSQL 外部数据库（数据持久化，部署不丢失）', flush=True)
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DATA_DIR}/fanshu.db'
+    print(f'[DB] 使用 SQLite 本地数据库：{DATA_DIR}/fanshu.db（警告：部署会丢失数据，生产环境请配置 DATABASE_URL）', flush=True)
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -895,6 +908,19 @@ def delete_book(book_id):
     book = Book.query.get(book_id)
     if not book:
         return jsonify({'error': 'Book not found'}), 404
+    # 手动删除所有关联记录（兼容 PostgreSQL 外键约束 + SQLite）
+    ChapterVersion.query.filter(ChapterVersion.chapter_id.in_(
+        db.session.query(Chapter.id).filter_by(book_id=book_id)
+    )).delete(synchronize_session=False)
+    Chapter.query.filter_by(book_id=book_id).delete(synchronize_session=False)
+    Character.query.filter_by(book_id=book_id).delete(synchronize_session=False)
+    Outline.query.filter_by(book_id=book_id).delete(synchronize_session=False)
+    DailyStats.query.filter_by(book_id=book_id).delete(synchronize_session=False)
+    AISession.query.filter_by(book_id=book_id).delete(synchronize_session=False)
+    StageContent.query.filter_by(book_id=book_id).delete(synchronize_session=False)
+    BookBible.query.filter_by(book_id=book_id).delete(synchronize_session=False)
+    DynamicMemory.query.filter_by(book_id=book_id).delete(synchronize_session=False)
+    DynamicReport.query.filter_by(book_id=book_id).delete(synchronize_session=False)
     db.session.delete(book)
     db.session.commit()
     return jsonify({'success': True})
@@ -995,6 +1021,8 @@ def delete_chapter(book_id, chapter_id):
     ch = Chapter.query.filter_by(id=chapter_id, book_id=book_id).first()
     if not ch:
         return jsonify({'error': 'Chapter not found'}), 404
+    # 先删除章节版本（兼容 PostgreSQL 外键约束）
+    ChapterVersion.query.filter_by(chapter_id=chapter_id).delete(synchronize_session=False)
     db.session.delete(ch)
     db.session.flush()
     update_book_stats(book_id)
@@ -4481,7 +4509,7 @@ def init_db():
         except Exception:
             pass
         try:
-            db.session.execute(db.text('ALTER TABLE skill_packs ADD COLUMN github_synced_at DATETIME'))
+            db.session.execute(db.text('ALTER TABLE skill_packs ADD COLUMN github_synced_at TIMESTAMP'))
         except Exception:
             pass
         try:
