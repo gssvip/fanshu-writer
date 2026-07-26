@@ -2871,6 +2871,49 @@ def admin_reseed_skill_packs():
     packs = SkillPack.query.filter_by(is_builtin=True).all()
     return jsonify({'success': True, 'builtin_count': len(packs), 'names': [p.name for p in packs]})
 
+@app.route('/api/admin/db-status', methods=['GET'])
+def admin_db_status():
+    """数据库诊断接口：返回数据库类型、host（脱敏）、各表记录数，用于排查数据丢失问题"""
+    from urllib.parse import urlparse
+    uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    parsed = urlparse(uri)
+    db_type = 'postgresql' if uri.startswith('postgresql') else 'sqlite' if uri.startswith('sqlite') else 'unknown'
+    # 脱敏：只显示 host 和 dbname，隐藏密码
+    safe_host = parsed.hostname or ''
+    safe_dbname = (parsed.path or '').lstrip('/') or ''
+    stats = {}
+    try:
+        stats['users'] = User.query.count()
+    except Exception as e:
+        stats['users'] = f'error: {e}'
+    try:
+        stats['books'] = Book.query.count()
+    except Exception as e:
+        stats['books'] = f'error: {e}'
+    try:
+        stats['skill_packs_total'] = SkillPack.query.count()
+        stats['skill_packs_builtin'] = SkillPack.query.filter_by(is_builtin=True).count()
+    except Exception as e:
+        stats['skill_packs'] = f'error: {e}'
+    # 列出最近注册的3个用户名（仅用户名，不含密码/hash），帮助用户确认是否真的丢了
+    recent_users = []
+    try:
+        for u in User.query.order_by(User.id.desc()).limit(3).all():
+            recent_users.append({'username': u.username, 'created_at': str(u.created_at) if hasattr(u, 'created_at') else None})
+    except Exception:
+        pass
+    return jsonify({
+        'db_type': db_type,
+        'host': safe_host,
+        'dbname': safe_dbname,
+        'is_postgresql': db_type == 'postgresql',
+        'is_sqlite': db_type == 'sqlite',
+        'sqlite_path': uri.replace('sqlite:///', '') if db_type == 'sqlite' else None,
+        'counts': stats,
+        'recent_users': recent_users,
+        'warning': 'SQLite 在 Render 部署会丢失数据！请配置 DATABASE_URL 指向 PostgreSQL（如 Neon）' if db_type == 'sqlite' else None,
+    })
+
 @app.route('/api/skill-packs', methods=['GET'])
 def list_skill_packs():
     genre = request.args.get('genre', '')
@@ -4629,6 +4672,17 @@ def init_db():
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
+        # 启动诊断：打印数据库状态，便于排查"账号丢失"类问题
+        try:
+            user_count = User.query.count()
+            book_count = Book.query.count()
+            uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+            db_label = 'PostgreSQL' if uri.startswith('postgresql') else 'SQLite'
+            print(f'[DB-STATUS] {db_label} | users={user_count} | books={book_count}', flush=True)
+            if user_count == 0:
+                print(f'[DB-STATUS] ⚠️ 用户表为空！如果是新部署的 PostgreSQL 这是正常的；如果之前注册过账号，说明数据未持久化。', flush=True)
+        except Exception as e:
+            print(f'[DB-STATUS] 诊断失败: {e}', flush=True)
 
 
 # ==== 前端静态文件托管（生产环境）====
