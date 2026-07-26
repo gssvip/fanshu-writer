@@ -141,9 +141,12 @@ export const api = {
   // 修改密码（需登录）
   changePassword: (oldPassword: string, newPassword: string) =>
     request<{ success: boolean }>('/auth/change-password', { method: 'POST', body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }) }),
-  // 找回密码：发送重置邮件
+  // 找回密码：发送重置邮件（传入当前站点地址，用于构造重置链接）
   forgotPassword: (email: string) =>
-    request<{ success: boolean; message?: string }>('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+    request<{ success: boolean; message?: string; reset_link?: string; dev_mode?: boolean }>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email, site_url: window.location.origin }),
+    }),
   // 校验重置令牌
   verifyResetToken: (token: string) =>
     request<{ valid: boolean }>('/auth/verify-reset-token', { method: 'POST', body: JSON.stringify({ token }) }),

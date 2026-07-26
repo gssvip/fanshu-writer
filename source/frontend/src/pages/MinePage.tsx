@@ -130,6 +130,8 @@ export default function MinePage() {
 
   useEffect(() => {
     if (!currentUser) return;
+    // 已登录用户进入"我的"页面时，默认展开"账户安全"分区，方便修改密码
+    setActiveSection('account');
     api.getAIConfig().then(setAIConfig).catch(() => {});
     api.listBooks().then((books: Book[]) => {
       setStats({
@@ -383,11 +385,27 @@ export default function MinePage() {
   return (
     <div className="page mine-page">
       <header className="page-header">
-        <h1>设置</h1>
+        <h1
+          onClick={() => currentUser && toggleSection('account')}
+          style={currentUser ? { cursor: 'pointer' } : undefined}
+          title={currentUser ? '点击修改密码' : undefined}
+        >
+          设置
+        </h1>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           {currentUser ? (
             <>
-              <span className="text-muted" style={{fontSize:13}}>{currentUser.username}</span>
+              <button
+                className="btn-ghost-sm"
+                onClick={() => toggleSection('account')}
+                title="点击修改密码"
+                style={{ fontWeight: 600, color: 'var(--accent)' }}
+              >
+                👤 {currentUser.username}
+              </button>
+              <button className="btn-primary-sm" onClick={() => toggleSection('account')} title="修改密码">
+                🔐 修改密码
+              </button>
               <button className="btn-ghost-sm" onClick={handleLogout}>退出</button>
             </>
           ) : (

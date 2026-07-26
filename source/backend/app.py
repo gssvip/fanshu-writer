@@ -663,11 +663,12 @@ SMTP_FROM_ADDR = os.environ.get('FANSHU_SMTP_FROM_ADDR', 'xiyiji@88.com')
 SITE_BASE_URL = os.environ.get('FANSHU_SITE_BASE_URL', '')
 
 
-def send_reset_email(to_email, reset_token):
-    """发送密码重置邮件。如果 SMTP 未配置密码则降级为控制台输出（开发环境）。
-    返回 (ok: bool, msg: str)。
+def send_reset_email(to_email, reset_token, site_url=None):
+    """发送密码重置邮件。如果 SMTP 未配置密码则降级为返回链接（开发模式）。
+    返回 (ok: bool, msg: str, reset_link: str)。
     """
-    base = (SITE_BASE_URL or request.host_url.rstrip('/')).rstrip('/')
+    # 优先使用前端传入的 site_url（前后端分离部署时至关重要），其次环境变量，最后回退到后端地址
+    base = (site_url or SITE_BASE_URL or request.host_url.rstrip('/')).rstrip('/')
     # 使用 # 锚点，兼容 HashRouter：/ sometime/#/reset-password?token=xxx
     reset_link = f"{base}/#/reset-password?token={reset_token}"
 
@@ -705,15 +706,15 @@ def send_reset_email(to_email, reset_token):
                 server.sendmail(SMTP_FROM_ADDR, [to_email], msg.as_string())
             finally:
                 server.quit()
+            return True, '邮件已发送', reset_link
         else:
-            # 开发环境降级：打印到日志，便于本地调试
-            app.logger.warning('[SMTP未配置] 密码重置邮件未实际发送。')
+            # 开发环境降级：SMTP 未配置，无法实际发邮件，返回链接供前端展示
+            app.logger.warning('[SMTP未配置] 密码重置邮件未实际发送，返回链接供开发调试。')
             app.logger.info('---- 重置邮件内容 ----\n%s\n--------------------', body)
-
-        return True, '邮件已发送'
+            return True, 'SMTP未配置，已生成重置链接', reset_link
     except Exception as e:
         app.logger.exception('发送重置邮件失败')
-        return False, f'邮件发送失败：{e}'
+        return False, f'邮件发送失败：{e}', reset_link
 
 
 # ==== 修改密码 / 找回密码 / 重置密码 ====
@@ -746,6 +747,7 @@ def forgot_password():
     """用户输入邮箱，生成重置令牌并发送重置邮件。"""
     data = request.json or {}
     email = (data.get('email', '') or '').strip().lower()
+    site_url = (data.get('site_url', '') or '').strip()
     if not email or '@' not in email:
         return jsonify({'error': '请输入有效的邮箱'}), 400
 
@@ -762,10 +764,16 @@ def forgot_password():
     db.session.add(PasswordResetToken(user_id=user.id, token=token, expires_at=expires, used=False))
     db.session.commit()
 
-    ok, msg = send_reset_email(user.email, token)
+    ok, msg, reset_link = send_reset_email(user.email, token, site_url=site_url)
     if not ok:
         return jsonify({'error': msg}), 500
-    return jsonify({'success': True, 'message': '重置邮件已发送，请查收'})
+
+    resp = {'success': True, 'message': msg}
+    # SMTP 未配置时，返回重置链接给前端展示（开发/自部署环境降级方案）
+    if not SMTP_PASSWORD:
+        resp['reset_link'] = reset_link
+        resp['dev_mode'] = True
+    return jsonify(resp)
 
 
 @app.route('/api/auth/reset-password', methods=['POST'])

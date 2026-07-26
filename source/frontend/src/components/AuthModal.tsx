@@ -16,6 +16,8 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
+  const [resetLink, setResetLink] = useState('');
+  const [devMode, setDevMode] = useState(false);
 
   async function handleSubmit() {
     if (!form.username || !form.password) { setError('请输入用户名和密码'); return; }
@@ -44,8 +46,10 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
     setLoading(true);
     setError('');
     try {
-      await api.forgotPassword(forgotEmail.trim());
+      const res = await api.forgotPassword(forgotEmail.trim());
       setForgotSent(true);
+      setResetLink(res.reset_link || '');
+      setDevMode(!!res.dev_mode);
     } catch (e: any) {
       setError(e.message || '发送失败，请稍后重试');
     }
@@ -64,9 +68,29 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
           </div>
 
           {forgotSent ? (
-            <div style={{ padding: '12px', background: '#e8f7e8', color: '#27ae60', borderRadius: 8, fontSize: 13, marginBottom: 10, lineHeight: 1.6 }}>
-              ✅ 重置邮件已发送至 <b>{forgotEmail}</b>，请在 30 分钟内查收并点击邮件中的链接重置密码。
-              <br />（如果没有收到，请检查垃圾邮件箱）
+            <div style={{ marginBottom: 10 }}>
+              {devMode && resetLink ? (
+                <div style={{ padding: '12px', background: '#fff8e1', color: '#8a6d3b', borderRadius: 8, fontSize: 13, marginBottom: 10, lineHeight: 1.6, wordBreak: 'break-all' }}>
+                  ⚠️ 服务器未配置 SMTP 邮件服务，无法发送邮件。<br />
+                  请直接点击下方链接重置密码（30 分钟内有效）：
+                  <div style={{ marginTop: 8 }}>
+                    <a href={resetLink} style={{ color: 'var(--accent)', wordBreak: 'break-all' }}>{resetLink}</a>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ padding: '12px', background: '#e8f7e8', color: '#27ae60', borderRadius: 8, fontSize: 13, marginBottom: 10, lineHeight: 1.6 }}>
+                  ✅ 重置邮件已发送至 <b>{forgotEmail}</b>，请在 30 分钟内查收并点击邮件中的链接重置密码。
+                  <br />（如果没有收到，请检查垃圾邮件箱）
+                </div>
+              )}
+              <button
+                className="btn-primary"
+                style={{width:'100%',padding:12}}
+                onClick={() => { if (resetLink) window.location.href = resetLink; }}
+                disabled={!resetLink}
+              >
+                {resetLink ? '前往重置密码 →' : '已发送邮件'}
+              </button>
             </div>
           ) : (
             <>
@@ -84,7 +108,7 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
 
           <div className="auth-toggle" style={{marginTop:16}}>
             想起密码了？
-            <button onClick={() => { setForgotMode(false); setForgotSent(false); setError(''); }}>
+            <button onClick={() => { setForgotMode(false); setForgotSent(false); setError(''); setResetLink(''); setDevMode(false); }}>
               返回登录
             </button>
           </div>
