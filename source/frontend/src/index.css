@@ -752,10 +752,20 @@ textarea{resize:vertical;line-height:1.8}
   .write-page>.draft-banner{flex-shrink:0}
   .write-page>.write-layout{flex:1;min-height:0;height:auto}
   .write-main{display:flex;flex-direction:column;overflow:hidden}
+  /* 非章节编辑模式下，维度面板内容可上下滚动（符合手机操作习惯） */
+  .write-page:not(.chapter-mode) .write-content{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(70px + var(--safe-bottom))}
+  /* 章节编辑模式保持原有固定高度布局 */
+  .write-page.chapter-mode .write-content{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 }
 
 /* 滚动惯性 */
 .scroll-y{overflow-y:auto;-webkit-overflow-scrolling:touch}
+
+/* 创作页桌面端：非章节维度面板可滚动 */
+@media (min-width: 768px){
+  .write-page:not(.chapter-mode) .write-content{overflow-y:auto;padding-bottom:40px}
+  .write-page.chapter-mode .write-content{display:flex;flex-direction:column;overflow:hidden;flex:1;min-height:0}
+}
 
 /* ===== 离线提示条 ===== */
 .offline-banner{display:flex;align-items:center;gap:8px;padding:6px 16px;background:var(--accent-light);color:var(--accent);font-size:12px;text-align:center;justify-content:center;flex-shrink:0}

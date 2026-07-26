@@ -836,7 +836,7 @@ export default function WritePage() {
   const isPlotTab = activeTab === 'plot';
 
   return (
-    <div className="page write-page">
+    <div className={`page write-page${isChapterTab ? ' chapter-mode' : ''}`}>
       <header className={`page-header ${headerCollapsed ? 'header-collapsed' : ''}`}>
         <div className="page-header-left">
           <button className="btn-ghost" onClick={() => navigate('/workbench')}>←</button>
