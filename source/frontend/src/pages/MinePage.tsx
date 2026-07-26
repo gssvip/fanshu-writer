@@ -320,7 +320,10 @@ export default function MinePage() {
     if (!url) { alert('请先填写服务器地址'); return; }
     setServerStatus('testing');
     try {
-      const res = await fetch(`${url}/api/templates`, { method: 'GET' });
+      // 用与实际 API 调用一致的 URL 构造方式测试
+      // getApiBaseUrl() 会自动补全 /api 后缀
+      const apiUrl = url.endsWith('/api') ? url : url + '/api';
+      const res = await fetch(`${apiUrl}/templates`, { method: 'GET' });
       if (res.ok) {
         setServerStatus('ok');
       } else {
@@ -809,7 +812,7 @@ export default function MinePage() {
             )}
 
             <div className="form-field">
-              <label>后端服务器地址</label>
+              <label>后端服务器地址 <span style={{color:'#888',fontSize:11}}>（只需填根地址，<code>/api</code> 会自动补全）</span></label>
               <div className="input-row">
                 <input
                   className="input"
@@ -830,8 +833,8 @@ export default function MinePage() {
               )}
               <p className="text-muted" style={{ fontSize: 11, marginTop: 6 }}>
                 当前生效地址：{getApiBaseUrl()}<br />
-                留空则使用默认地址 <code>/api</code>（仅适用于前后端同域部署或开发环境）<br />
-                部署到 GitHub Pages 时，需填写已部署的后端完整地址（如 Render/Railway 等）
+                填写后端根地址即可（无需带 <code>/api</code>），例如 <code>https://fanshu-writer-backend.onrender.com</code><br />
+                系统会自动拼接 <code>/api</code> 前缀。留空则使用默认 <code>/api</code>（仅适用于前后端同域部署）
               </p>
             </div>
 
@@ -843,9 +846,9 @@ export default function MinePage() {
             <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12 }}>
               <h4 style={{ marginBottom: 8, fontSize: 13 }}>📦 后端部署指南</h4>
               <ol style={{ paddingLeft: 18, lineHeight: 1.8 }}>
-                <li>将 <code>source/backend</code> 目录部署到 Render / Railway / Vercel 等平台</li>
+                <li>将 <code>source/backend</code> 目录部署到 Render / Railway / Hugging Face Spaces 等平台</li>
                 <li>确保安装 <code>requirements.txt</code> 中的依赖</li>
-                <li>启动命令：<code>python app.py</code>，端口 5000</li>
+                <li>启动命令：<code>python app.py</code>（端口通过 <code>PORT</code> 环境变量指定）</li>
                 <li>将平台分配的域名（如 <code>https://xxx.onrender.com</code>）填入上方</li>
                 <li>点击「测试」确认连接，再「保存并刷新」</li>
               </ol>

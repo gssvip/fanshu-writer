@@ -4,10 +4,22 @@ import type { Book, Chapter, Character, Outline, Template, AIConfig, AISession, 
 // 1. localStorage 中用户手动配置的地址（适用于 GitHub Pages 等静态托管场景）
 // 2. Vite 环境变量 VITE_API_URL（构建时注入）
 // 3. 默认 /api（开发环境通过 Vite proxy 代理到 localhost:5000）
+//
+// 注意：用户只需填后端根地址（如 https://xxx.onrender.com），
+// 本函数会自动补全 /api 后缀，与 api.ts 中的相对路径（如 /auth/login）拼接。
 export function getApiBaseUrl(): string {
   const saved = localStorage.getItem('fanshu-api-base-url');
-  if (saved && saved.trim()) return saved.replace(/\/+$/, '');
-  return (import.meta as any).env?.VITE_API_URL || '/api';
+  if (saved && saved.trim()) {
+    let url = saved.trim().replace(/\/+$/, '');
+    // 自动补全 /api 后缀：用户只需填后端根地址
+    if (!url.endsWith('/api')) {
+      url = url + '/api';
+    }
+    return url;
+  }
+  const env = (import.meta as any).env?.VITE_API_URL;
+  if (env && env.trim()) return env.trim().replace(/\/+$/, '');
+  return '/api';
 }
 
 export function setApiBaseUrl(url: string) {
@@ -38,16 +50,16 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const token = getToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  // AbortController 实现 15 秒超时
+  // AbortController 实现 60 秒超时（Render 免费版冷启动需 30-60 秒）
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
 
   try {
     const res = await fetch(`${getApiBaseUrl()}${url}`, { ...options, headers, signal: controller.signal });
     clearTimeout(timeoutId);
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: '请求失败' }));
+      const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
       throw new Error(err.error || `HTTP ${res.status}`);
     }
     if (res.headers.get('content-type')?.includes('application/json')) {
@@ -57,10 +69,10 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   } catch (e: any) {
     clearTimeout(timeoutId);
     if (e.name === 'AbortError') {
-      throw new Error('请求超时，请检查网络连接');
+      throw new Error('请求超时（服务器可能正在冷启动，请稍等 30-60 秒后重试）');
     }
     if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
-      throw new Error('无法连接到服务器，请在「我的 → 服务器」中配置后端地址');
+      throw new Error('无法连接到服务器，请检查「我的 → 服务器」中配置的后端地址是否正确');
     }
     throw e;
   }
