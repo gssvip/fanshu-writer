@@ -749,6 +749,7 @@ export default function WritePage() {
       alert('没有内容需要排版');
       return;
     }
+    const original = chapterEditContent;
     let text = chapterEditContent;
     // 统一换行符
     text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -759,13 +760,10 @@ export default function WritePage() {
     text = text.replace(/"/g, '\u201C').replace(/"/g, '\u201D');
     // 修正省略号：。。。/.../··· → ……
     text = text.replace(/\.{3,}/g, '\u2026\u2026').replace(/。{3,}/g, '\u2026\u2026').replace(/·{3,}/g, '\u2026\u2026');
-    // 修正破折号：--/单个— → ——
+    // 修正破折号：-- → ——
     text = text.replace(/-{2,}/g, '\u2014\u2014');
-    // 单个破折号变双破折号（避免 lookbehind 兼容问题）
-    const dashChar = '\u2014';
-    while (text.includes(dashChar) && !text.includes(dashChar + dashChar)) {
-      text = text.split(dashChar).join(dashChar + dashChar);
-    }
+    // 单个破折号变双破折号（用正则一次性处理，避免 while 循环）
+    text = text.replace(/(?<!\u2014)\u2014(?!\u2014)/g, '\u2014\u2014');
     // 把三个以上破折号裁成两个
     text = text.replace(/\u2014{3,}/g, '\u2014\u2014');
     // 重复标点修正
@@ -775,6 +773,10 @@ export default function WritePage() {
     // 去除首尾多余空白
     text = text.replace(/^[\s\n]+/, '').replace(/[\s\n]+$/, '');
     setChapterEditContent(text);
+    // 给出反馈，让用户知道排版已完成
+    const changed = text !== original;
+    const paraCount = text.split(/\n\n+/).filter(p => p.trim()).length;
+    alert(changed ? `✅ 排版完成（共 ${paraCount} 段）` : '✅ 内容已是规范格式，无需调整');
   }
 
   async function deleteChapter(chId: string) {
@@ -1485,7 +1487,7 @@ function ChapterPanel(props: {
   if (activeChapter && !chapterEditing) {
     const paragraphs = (activeChapter.content || '').split(/\n+/).filter(p => p.trim());
     return (
-      <div className="chapter-detail-panel">
+      <div className="chapter-detail-panel chapter-detail-scrollable">
         <div className="chapter-detail-header">
           <button className="btn-ghost-sm" onClick={onBackToList}>← 返回列表</button>
           <div className="chapter-detail-actions">
@@ -1518,7 +1520,7 @@ function ChapterPanel(props: {
         </div>
         <div className="chapter-edit-toolbar">
           <button className="btn-ghost-sm chapter-ai-btn chapter-ai-write-btn" onClick={() => onStartAiCreate('write')} disabled={aiCreating} title="AI根据构思和设定生成整章内容">
-            🤖 AI写作
+            🤖 AI创作
           </button>
           <button className="btn-ghost-sm chapter-ai-btn" onClick={() => onStartAiCreate('continue')} disabled={aiCreating} title="AI根据已有内容继续创作">
             ✨ 续写
@@ -1526,7 +1528,7 @@ function ChapterPanel(props: {
           <button className="btn-ghost-sm chapter-ai-btn" onClick={() => onStartAiCreate('polish')} disabled={aiCreating || !chapterEditContent.trim()} title="AI优化当前文字">
             💎 润色
           </button>
-          <button className="btn-ghost-sm chapter-format-btn" onClick={onFormat} disabled={!chapterEditContent.trim()} title="一键排版：修正段落、标点、空行">
+          <button className="btn-ghost-sm chapter-format-btn" onClick={onFormat} disabled={!chapterEditContent.trim()} title="一键排版：修正段落、标点、空行，适配小说阅读模式">
             📐 排版
           </button>
         </div>

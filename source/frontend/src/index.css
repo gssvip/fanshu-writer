@@ -754,8 +754,8 @@ textarea{resize:vertical;line-height:1.8}
   .write-main{display:flex;flex-direction:column;overflow:hidden}
   /* 非章节编辑模式下，维度面板内容可上下滚动（符合手机操作习惯） */
   .write-page:not(.chapter-mode) .write-content{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(70px + var(--safe-bottom))}
-  /* 章节编辑模式保持原有固定高度布局 */
-  .write-page.chapter-mode .write-content{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+  /* 章节模式：预览可滚动，编辑器固定高度 */
+  .write-page.chapter-mode .write-content{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
 }
 
 /* 滚动惯性 */
@@ -764,7 +764,7 @@ textarea{resize:vertical;line-height:1.8}
 /* 创作页桌面端：非章节维度面板可滚动 */
 @media (min-width: 768px){
   .write-page:not(.chapter-mode) .write-content{overflow-y:auto;padding-bottom:40px}
-  .write-page.chapter-mode .write-content{display:flex;flex-direction:column;overflow:hidden;flex:1;min-height:0}
+  .write-page.chapter-mode .write-content{overflow-y:auto;padding-bottom:40px;flex:1;min-height:0}
 }
 
 /* ===== 离线提示条 ===== */
@@ -993,7 +993,8 @@ textarea{resize:vertical;line-height:1.8}
 
 /* 章节详情 */
 .chapter-detail-panel{padding:12px 16px}
-.chapter-detail-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.chapter-detail-scrollable{overflow-y:auto;-webkit-overflow-scrolling:touch;height:100%;padding-bottom:calc(70px + var(--safe-bottom))}
+.chapter-detail-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;position:sticky;top:0;background:var(--bg-primary);padding:4px 0;z-index:5}
 .chapter-detail-actions{display:flex;gap:8px}
 .chapter-detail-title{font-size:18px;font-weight:700;margin-bottom:4px}
 .chapter-detail-meta{font-size:12px;color:var(--text-muted);margin-bottom:16px}
@@ -1006,9 +1007,11 @@ textarea{resize:vertical;line-height:1.8}
 .chapter-reading-content .novel-empty-hint{color:var(--text-muted);font-style:italic;text-align:center;padding:40px 0}
 
 /* 章节编辑 */
-.chapter-edit-panel{padding:12px 16px;display:flex;flex-direction:column;gap:10px;height:calc(100vh - 200px)}
-.chapter-edit-header{display:flex;justify-content:space-between;align-items:center}
-.chapter-edit-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--border-color)}
+.chapter-edit-panel{padding:12px 16px;display:flex;flex-direction:column;gap:10px;height:100%;min-height:0}
+.chapter-edit-header{display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.chapter-edit-toolbar{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;overflow-x:auto;padding:6px 0;border-bottom:1px solid var(--border-color);flex-shrink:0;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.chapter-edit-toolbar::-webkit-scrollbar{display:none}
+.chapter-edit-toolbar .btn-ghost-sm{flex-shrink:0;white-space:nowrap}
 .chapter-edit-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .chapter-ai-btn{font-size:12px;padding:5px 10px;border-color:var(--accent);color:var(--accent)}
 .chapter-ai-btn:hover{background:var(--accent-light)}
@@ -1018,8 +1021,8 @@ textarea{resize:vertical;line-height:1.8}
 .chapter-format-btn{font-size:12px;padding:5px 10px;border-color:#00b894;color:#00b894;background:#e8f8f5}
 .chapter-format-btn:hover{background:#d5f5ec}
 .chapter-format-btn:disabled{opacity:0.4;cursor:not-allowed}
-.chapter-edit-title-input{font-size:16px;font-weight:600;padding:10px 12px}
-.chapter-edit-textarea{flex:1;font-size:15px;line-height:1.8;padding:12px;resize:none;font-family:inherit}
+.chapter-edit-title-input{font-size:16px;font-weight:600;padding:10px 12px;flex-shrink:0}
+.chapter-edit-textarea{flex:1;min-height:0;font-size:15px;line-height:1.8;padding:12px;resize:none;font-family:inherit}
 .chapter-ai-loading{display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px;background:var(--bg-secondary);border-radius:var(--radius-sm)}
 .chapter-ai-loading p{font-size:13px;color:var(--text-muted)}
 
