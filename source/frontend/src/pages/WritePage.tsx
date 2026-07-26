@@ -1363,12 +1363,8 @@ function ChapterPanel(props: {
     try {
       const result = await api.importChapters(bookId, valid);
       alert(`成功追加 ${result.added} 章，当前共 ${result.total} 章`);
-      // 刷新章节列表
-      try {
-        const updated = await api.listChapters(bookId);
-        // 重新加载逻辑由父组件的回调处理；这里通过页面刷新最简单
-        window.location.reload();
-      } catch { /* ignore */ }
+      // 刷新页面以重新加载章节列表
+      window.location.reload();
     } catch (err: any) {
       setImportChaptersError(err.message || '导入失败');
       alert('追加导入失败: ' + (err.message || '未知错误'));

@@ -386,7 +386,7 @@ export default function MinePage() {
     <div className="page mine-page">
       <header className="page-header">
         <h1
-          onClick={() => currentUser && toggleSection('account')}
+          onClick={() => currentUser && setActiveSection('account')}
           style={currentUser ? { cursor: 'pointer' } : undefined}
           title={currentUser ? '点击修改密码' : undefined}
         >
@@ -397,13 +397,13 @@ export default function MinePage() {
             <>
               <button
                 className="btn-ghost-sm"
-                onClick={() => toggleSection('account')}
+                onClick={() => setActiveSection('account')}
                 title="点击修改密码"
                 style={{ fontWeight: 600, color: 'var(--accent)' }}
               >
                 👤 {currentUser.username}
               </button>
-              <button className="btn-primary-sm" onClick={() => toggleSection('account')} title="修改密码">
+              <button className="btn-primary-sm" onClick={() => setActiveSection('account')} title="修改密码">
                 🔐 修改密码
               </button>
               <button className="btn-ghost-sm" onClick={handleLogout}>退出</button>
