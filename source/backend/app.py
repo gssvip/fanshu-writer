@@ -5047,15 +5047,20 @@ def init_db():
 @app.route('/<path:path>')
 def serve_frontend(path):
     """托管前端 SPA：所有非 /api 请求都返回静态文件或 index.html"""
-    # 前端构建产物目录
+    # 前端构建产物目录：优先 frontend/dist，其次 backend/static
     dist_dir = FRONTEND_DIST
-    if not dist_dir.exists():
-        # 如果 frontend/dist 不存在，尝试使用项目根目录（已构建的静态文件）
-        root_dist = Path(__file__).parent.parent.parent
-        if (root_dist / 'index.html').exists():
-            dist_dir = root_dist
+    if not dist_dir.exists() or not (dist_dir / 'index.html').exists():
+        # fallback: backend/static（仓库中提交的预构建产物）
+        static_dir = Path(__file__).parent / 'static'
+        if (static_dir / 'index.html').exists():
+            dist_dir = static_dir
         else:
-            return jsonify({'error': '前端构建产物未找到，请先运行 npm run build'}), 404
+            # 再 fallback: 项目根目录
+            root_dist = Path(__file__).parent.parent.parent
+            if (root_dist / 'index.html').exists():
+                dist_dir = root_dist
+            else:
+                return jsonify({'error': '前端构建产物未找到，请先运行 npm run build'}), 404
 
     # 如果请求的是具体文件且存在，直接返回
     if path:
