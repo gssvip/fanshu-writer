@@ -48,22 +48,28 @@ const DIMENSION_LABELS: Record<string, string> = {
 };
 
 // 维度 → 技能包 prompt_key 映射（用于查找最匹配的技能提示词）
+// P2-11/12: 统一前后端映射，补充之前缺失的维度和死包key
 const DIMENSION_SKILL_KEYS: Record<string, string[]> = {
-  concept: ['one_line_concept', 'master_outline', 'tomato_plan'],
-  key_rules: ['lock_facts', 'tomato_setting'],
-  plot_design: ['master_outline', 'volume_breakdown', 'chapter_plan', 'tomato_outline'],
-  worldbuilding: ['lock_facts', 'tomato_setting'],
-  character_profiles: ['character_cognition', 'tomato_character'],
-  timeline: ['chapter_plan', 'tomato_outline'],
-  foreshadowing: ['foreshadow_register', 'narrative_debt'],
-  locations: ['lock_facts'],
+  concept: ['one_line_concept', 'master_outline', 'tomato_plan', 'one_line_hook', 'story_setup'],
+  key_rules: ['lock_facts', 'tomato_setting', 'base_rules', 'level_system', 'power_system', 'infinity_rules'],
+  plot_design: ['master_outline', 'volume_breakdown', 'chapter_plan', 'tomato_outline', 'quick_outline', 'volume_plan', 'volume_outline'],
+  worldbuilding: ['lock_facts', 'tomato_setting', 'base_rules', 'geography', 'history', 'cultures', 'era_setting', 'tech_tree', 'future_society', 'era_geopolitics'],
+  character_profiles: ['character_cognition', 'tomato_character', 'cp_design', 'character_moe', 'faction_design', 'soldier_arc'],
+  timeline: ['chapter_plan', 'tomato_outline', 'volume_breakdown'],
+  foreshadowing: ['foreshadow_register', 'narrative_debt', 'truth_card', 'info_gap', 'red_herring'],
+  locations: ['lock_facts', 'tomato_setting', 'geography'],
+  // P2-11: 新增之前无映射的维度
+  inventory: ['lock_facts', 'level_system', 'power_system', 'ability_tree'],
+  style_guide: ['style_anchor', 'fantasy_draft', 'style_import', 'forbidden_words', 'rhythm_check'],
+  relation_graph: ['character_cognition', 'faction_design', 'cp_design'],
 };
 
 // 章节AI模式 → 技能包 prompt_key 映射
+// P2-11/12: 补充死包key，让"大神写作/inkos/说人话/奇幻铸魂"等技能包能被调用
 const CHAPTER_SKILL_KEYS: Record<string, string[]> = {
-  write: ['write_chapter', 'draft_writing', 'context_pack', 'tomato_chapter', 'fantasy_draft'],
-  continue: ['write_chapter', 'draft_writing', 'tomato_chapter', 'fantasy_draft'],
-  polish: ['polish', 'de_ai_check', 'minimal_rewrite', 'humanize', 'final_check', 'tomato_deai', 'forbidden_words', 'rhythm_check'],
+  write: ['write_chapter', 'draft_writing', 'context_pack', 'tomato_chapter', 'fantasy_draft', 'long_write', 'short_write', 'first_draft', 'writer', 'daily_adventure', 'chapter_structure'],
+  continue: ['write_chapter', 'draft_writing', 'tomato_chapter', 'fantasy_draft', 'long_write', 'writer', 'first_draft'],
+  polish: ['polish', 'de_ai_check', 'minimal_rewrite', 'humanize', 'final_check', 'tomato_deai', 'forbidden_words', 'rhythm_check', 'deslop', 'draft_rewrite', 'fidelity_check', 'final_polish', 'anti_ai_audit', 'reviser', 'style_analyzer', 'protect_rewrite', 'fidelity_read', 'residual_read'],
 };
 
 // 从多个技能包中提取匹配的提示词（合并）
@@ -164,6 +170,9 @@ export default function WritePage() {
   const [aiCreating, setAiCreating] = useState(false);
   const [aiStreamError, setAiStreamError] = useState('');
   const [aiUserPrompt, setAiUserPrompt] = useState('');
+  // P0-1: 多Agent协同开关（开启时调用 ai-continue 后端管线，走章节计划+正文+去AI味+一致性检查）
+  const [useAgentPipeline, setUseAgentPipeline] = useState(false);
+  const [agentMeta, setAgentMeta] = useState<any>(null); // 存放 aiContinue 返回的 chapter_plan/温度/卷信息等
 
   // 缓存回调——必须在所有 useState 之后，防止每次渲染新建函数引用引发子组件无限循环
   const startConceptAi = useCallback(() => { setConceptAiMode(true); setConceptAiError(''); }, []);
@@ -225,7 +234,7 @@ export default function WritePage() {
     setBrainstormResult(null);
     setAdoptedSuggestions(new Set());
     try {
-      const result = await api.brainstorm(bookId, concept);
+      const result = await api.brainstorm(bookId, concept, undefined, selectedSkillPackIds);
       setBrainstormResult(result);
       if (concept !== bible?.concept) {
         const updated = await api.updateBible(bookId, { concept } as any);
@@ -634,6 +643,32 @@ export default function WritePage() {
     setAiCreating(true);
     setAiStreamError('');
     setAiGeneratedContent('');
+    setAgentMeta(null);
+
+    // P0-1: 多Agent协同管线分支（章节计划→正文→去AI味→一致性检查）
+    if (useAgentPipeline && (aiCreateMode === 'write' || aiCreateMode === 'continue')) {
+      try {
+        const result = await api.aiContinue(bookId, aiUserPrompt, selectedSkillPackIds, true);
+        setAiGeneratedContent(result.content);
+        setAgentMeta({
+          chapter_plan: result.chapter_plan,
+          temperature: result.temperature,
+          vol_title: result.vol_title,
+          vol_index: result.vol_index,
+          current_chapter_num: result.current_chapter_num,
+          deai_status: result.deai_status,
+          review_notes: result.review_notes,
+          consistency_passed: result.consistency_passed,
+          consistency_issues: result.consistency_issues,
+          has_draft: !!result.draft,
+        });
+      } catch (e: any) {
+        setAiStreamError(e.message || 'Agent管线调用失败，请检查AI配置');
+      } finally {
+        setAiCreating(false);
+      }
+      return;
+    }
 
     try {
       const contextConcept = concept || bible?.concept || book?.synopsis || '暂无构思';
@@ -1014,6 +1049,9 @@ export default function WritePage() {
             onRenameVolume={renameVolume}
             onDeleteVolume={deleteVolumeFn}
             bookId={bookId}
+            useAgentPipeline={useAgentPipeline}
+            onToggleAgentPipeline={setUseAgentPipeline}
+            agentMeta={agentMeta}
           />
         ) : isDynamicMemoryTab ? (
           <DynamicMemoryPanel
@@ -1376,6 +1414,10 @@ function ChapterPanel(props: {
   onRenameVolume: (volId: string, newTitle: string) => Promise<void>;
   onDeleteVolume: (volId: string) => Promise<void>;
   bookId?: string;
+  // P0-1: 多Agent协同开关与元信息
+  useAgentPipeline?: boolean;
+  onToggleAgentPipeline?: (v: boolean) => void;
+  agentMeta?: any;
 }) {
   const { chapters, activeChapter, chapterEditing, chapterEditTitle, chapterEditContent, chapterSaving,
     aiCreateMode, aiGeneratedContent, aiCreating, aiStreamError, aiUserPrompt,
@@ -1383,6 +1425,7 @@ function ChapterPanel(props: {
     onSelectChapter, onCreateChapter, onCreateVolume, onSaveChapter, onDeleteChapter, onCancelEdit, onStartEdit,
     onEditTitle, onEditContent, onBackToList, onStartAiCreate, onExecuteAiCreate, onConfirmAiContent, onCancelAiCreate, onEditAiContent, onEditAiPrompt, onFormat,
     onRenameVolume, onDeleteVolume, bookId,
+    useAgentPipeline: useAgent, onToggleAgentPipeline, agentMeta,
   } = props;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
@@ -1513,6 +1556,34 @@ function ChapterPanel(props: {
             </div>
           )}
           {aiStreamError && <div className="error-msg" style={{marginTop:8}}>{aiStreamError}</div>}
+
+          {/* P0-1: 多Agent协同管线开关与元信息展示 */}
+          {onToggleAgentPipeline && (aiCreateMode === 'write' || aiCreateMode === 'continue') && (
+            <div style={{marginTop:8, padding:'8px 10px', background:'var(--bg-tertiary)', borderRadius:8, fontSize:12}}>
+              <label style={{display:'flex', alignItems:'center', gap:6, cursor:'pointer', userSelect:'none'}}>
+                <input type="checkbox" checked={!!useAgent} onChange={e => onToggleAgentPipeline(e.target.checked)} disabled={aiCreating} />
+                <span>🤖 多Agent协同管线</span>
+                <span className="text-muted" style={{fontSize:11}}>（章节计划→正文→去AI味→一致性检查，更慢但质量更高）</span>
+              </label>
+              {agentMeta && (
+                <div style={{marginTop:6, fontSize:11, color:'var(--text-secondary)', lineHeight:1.7}}>
+                  {agentMeta.chapter_plan && (
+                    <div style={{marginBottom:4, padding:'6px 8px', background:'var(--bg-secondary)', borderRadius:4, borderLeft:'3px solid var(--accent)'}}>
+                      <b>📋 章节计划：</b>{agentMeta.chapter_plan.slice(0, 200)}{agentMeta.chapter_plan.length > 200 ? '...' : ''}
+                    </div>
+                  )}
+                  <div>
+                    📍 第{agentMeta.current_chapter_num}章 · {agentMeta.vol_title || `第${agentMeta.vol_index}卷`} · 温度{agentMeta.temperature}
+                    {agentMeta.deai_status === 'success' && <span style={{color:'#27ae60'}}> · ✅去AI味成功</span>}
+                    {agentMeta.deai_status === 'failed' && <span style={{color:'#e67e22'}} title={agentMeta.review_notes}> · ⚠️去AI味失败(用初稿)</span>}
+                    {agentMeta.deai_status === 'skipped' && <span className="text-muted"> · 未启用去AI味</span>}
+                    {agentMeta.consistency_passed === false && <span style={{color:'#e74c3c'}} title={agentMeta.consistency_issues}> · ❌一致性异常</span>}
+                    {agentMeta.consistency_passed === true && <span style={{color:'#27ae60'}}> · ✅一致性通过</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 底部：控制区（技能包+输入框，固定在底部） */}
@@ -4331,6 +4402,23 @@ function DynamicMemoryPanel(props: {
     });
   }
 
+  // P0-4: AI识别指定卷的动态摘要（人物/事件/时间/地点/势力/伏笔/境界/关系），写入 dynamic_volumes
+  async function handleAnalyzeDynamicVolume(volId: string, volTitle: string) {
+    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，识别本卷的动态摘要（人物/事件/伏笔/关系等变化），结果写入按卷动态文件。是否继续？`, async () => {
+      setAnalyzingVol(volId || volTitle);
+      setError('');
+      try {
+        const result = await api.analyzeDynamicVolume(bookId, volId, volTitle, selectedSkillPackIds);
+        if (result.bible) onBibleUpdate(result.bible);
+        alert(`AI识别完成！已为「${volTitle}」生成本卷动态摘要`);
+      } catch (e: any) {
+        setError(e.message || 'AI识别失败');
+        alert('AI识别失败：' + (e.message || '请检查AI配置'));
+      }
+      setAnalyzingVol('');
+    });
+  }
+
   // 删除某卷的动态文件数据
   async function deleteVolumeDynamic(idx: number) {
     const vol = displayDynVolumes[idx];
@@ -4626,6 +4714,8 @@ function DynamicMemoryPanel(props: {
                   {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
                   <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
                     {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
+                    {/* P0-4: 新增"识别卷动态摘要"按钮，调用 analyzeDynamicVolume 写入 dynamic_volumes */}
+                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeDynamicVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={!!analyzingVol} title="AI识别本卷动态摘要（人物/事件/伏笔/关系）写入按卷动态文件">📝 摘要</button>
                     {hasData && (
                       <button className="btn-ghost-sm" onClick={() => deleteVolumeDynamic(idx)} style={{color:'#e74c3c'}} title="删除此卷动态文件数据">🗑️</button>
                     )}

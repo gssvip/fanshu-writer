@@ -2363,7 +2363,8 @@ def ai_import_recognize(book_id):
     titles_text = '\n'.join(titles)
     samples_text = '\n\n'.join(samples)[:4000]
 
-    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'master_outline', 'character_design', 'world_setting'], mode='agent')
+    # P2-10: 修复幽灵key——'character_design'/'world_setting' 不是真实prompt_key，替换为内置存在的key
+    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'master_outline', 'tomato_character', 'tomato_setting'], mode='agent')
 
     # 识别哪些维度为空（仅填充空维度，避免覆盖已有内容）
     dim_status = {
@@ -2878,6 +2879,36 @@ def update_prompt(prompt_id):
 
 # ==== Book Bible API (项目宪法) ====
 
+def _normalize_bible_formats(bb):
+    """P1-5/6/7: 统一 bible 字段格式归一化（幂等，安全）。
+    - inventory: 纯文本 → JSON 数组 [{volume:'历史数据', data:旧文本}]
+    - timeline: 不强制改（保留双语义，但 ai_outline_volume 已有丢弃重建逻辑）
+    - character_profiles: 不强制改（保留文本/JSON双兼容，_filter_bible_by_relevance 已兼容）
+    仅 inventory 做主动迁移，其他字段在读取时容错。"""
+    if not bb:
+        return
+    changed = False
+    # inventory 迁移
+    inv = bb.inventory or ''
+    if inv.strip():
+        try:
+            parsed = json.loads(inv)
+            if isinstance(parsed, str) and parsed.strip():
+                # JSON 字符串包裹的纯文本
+                bb.inventory = json.dumps([{'volume': '历史数据', 'volume_id': '', 'data': parsed}], ensure_ascii=False)
+                changed = True
+            # list 或 dict 保持不变
+        except (json.JSONDecodeError, ValueError):
+            # 纯文本：包裹为单元素数组
+            bb.inventory = json.dumps([{'volume': '历史数据', 'volume_id': '', 'data': inv}], ensure_ascii=False)
+            changed = True
+    if changed:
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+
 @app.route('/api/books/<book_id>/bible', methods=['GET'])
 def get_book_bible(book_id):
     bb = BookBible.query.filter_by(book_id=book_id).first()
@@ -2885,6 +2916,8 @@ def get_book_bible(book_id):
         bb = BookBible(book_id=book_id)
         db.session.add(bb)
         db.session.commit()
+    # P1-5: 格式归一化（inventory 纯文本→JSON数组）
+    _normalize_bible_formats(bb)
     # 数据修复迁移：历史 bug 导致关系图谱文本被写入 character_profiles，破坏了 JSON 数组结构。
     # 如果 relation_graph 为空，且 character_profiles 看起来是图谱文本（非 JSON 数组），
     # 则把图谱文本迁到 relation_graph，并清空 character_profiles（让用户重新维护角色档案）。
@@ -3595,6 +3628,8 @@ def get_skill_pack(pack_id):
 
 @app.route('/api/books/<book_id>/apply-skill-pack', methods=['POST'])
 def apply_skill_pack(book_id):
+    """把技能包应用到书本：将 prompts_json 真正持久化到 StageContent，而非空赋值。
+    P2-13: 修复名不副实——把 prompt 写入对应 stage_key 的 StageContent.content"""
     pack_id = request.json.get('pack_id')
     pack = SkillPack.query.get(pack_id)
     if not pack:
@@ -3609,16 +3644,19 @@ def apply_skill_pack(book_id):
         db.session.add(bb)
 
     prompts = json.loads(pack.prompts_json or '{}')
+    applied_stages = []
     for stage_key in json.loads(pack.stage_keys_json or '[]'):
         sc = StageContent.query.filter_by(book_id=book_id, stage_key=stage_key).first()
         if not sc:
             sc = StageContent(book_id=book_id, stage_key=stage_key)
             db.session.add(sc)
+        # P2-13: 真正写入 prompt 内容（若 stage_key 与某个 prompt_key 同名）
         stage_prompt = prompts.get(stage_key, '')
         if stage_prompt and not sc.content:
-            sc.content = ''
+            sc.content = stage_prompt
+            applied_stages.append(stage_key)
     db.session.commit()
-    return jsonify({'success': True, 'pack': pack.to_dict()})
+    return jsonify({'success': True, 'pack': pack.to_dict(), 'applied_stages': applied_stages})
 
 @app.route('/api/skill-packs', methods=['POST'])
 def create_skill_pack():
@@ -4292,7 +4330,21 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
     if filtered_bible.get('style_guide'):
         bible_sections.append(('【文风指南】', filtered_bible['style_guide'], 1))
 
-    # 按卷注入维度数据（#1）
+    # P1-8: 全局 locations/inventory 接入写章节（之前是数据孤岛）
+    # locations 全局字段（若按卷 locations_volumes 已注入则作为补充）
+    if bb.locations and bb.locations.strip():
+        loc_text = bb.locations[:800]
+        bible_sections.append(('【地点信息·全局】（若与本卷地点冲突，以本卷为准）', loc_text, 1))
+    # inventory 全局字段（角色持有物品/境界约束，生成阶段需感知）
+    if bb.inventory and bb.inventory.strip():
+        inv_text = bb.inventory[:800]
+        bible_sections.append(('【物资/境界库】（角色持有物品约束，不可凭空获得）', inv_text, 2))
+    # P2-14: relation_graph 接入写章节（人物关系一致性参考）
+    if bb.relation_graph and bb.relation_graph.strip():
+        rg_text = bb.relation_graph[:800]
+        bible_sections.append(('【人物关系图谱】（保持关系一致性）', rg_text, 1))
+
+    # 按卷注入维度数据（#1）——P1-8: 按卷优先，全局兜底
     vol_dim_sections = []
     _inject_volume_dimensions(bb, vol_chapter, vol_index, vol_dim_sections)
     for s in vol_dim_sections:
@@ -5433,13 +5485,13 @@ def ai_master_create(book_id):
 
     # 维度→技能包prompt_key映射 + 生成提示（按番茄金番工作流顺序）
     DIM_MAP = {
-        'concept': {'field': 'concept', 'label': '构思', 'keys': ['tomato_plan', 'one_line_concept', 'brainstorm'],
+        'concept': {'field': 'concept', 'label': '构思', 'keys': ['tomato_plan', 'one_line_concept', 'master_outline'],
                     'prompt': '生成核心构思：一句话概念、核心卖点、主线冲突、独特亮点、目标读者。'},
-        'key_rules': {'field': 'key_rules', 'label': '设定/规则', 'keys': ['tomato_setting', 'worldbuilding'],
+        'key_rules': {'field': 'key_rules', 'label': '设定/规则', 'keys': ['tomato_setting', 'lock_facts'],
                       'prompt': '生成核心设定：金手指四法则、代价反噬、世界观框架、五不妥协原则。'},
-        'worldbuilding': {'field': 'worldbuilding', 'label': '世界观', 'keys': ['worldbuilding', 'tomato_setting'],
+        'worldbuilding': {'field': 'worldbuilding', 'label': '世界观', 'keys': ['tomato_setting', 'lock_facts'],
                           'prompt': '生成世界观：修炼体系/势力格局/地理环境/核心规则。'},
-        'character_profiles': {'field': 'character_profiles', 'label': '人物', 'keys': ['tomato_character', 'character_design'],
+        'character_profiles': {'field': 'character_profiles', 'label': '人物', 'keys': ['tomato_character', 'character_cognition'],
                                'prompt': '生成主要人物：主角模板+CDL档案+配角六功能，含性格/动机/成长弧线。'},
         'plot_design': {'field': 'plot_design', 'label': '大纲', 'keys': ['master_outline', 'tomato_outline', 'volume_breakdown'],
                         'prompt': '生成五幕式总纲：每卷核心目标/主要冲突/关键转折/卷尾悬念。'},
@@ -5512,8 +5564,18 @@ def ai_master_create(book_id):
             results.append({'dimension': dim, 'label': info['label'], 'field': info['field'], 'content': content})
             # 关键：本轮产出回流到 ctx，供下一轮维度作为上游上下文
             ctx[dim] = content
+            # P1-9: 直接落库，避免前端未回流导致协同结果丢失
+            setattr(bb, info['field'], content)
 
-    return jsonify({'results': results})
+    # P1-9: 串行生成完成后统一提交事务
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'落库失败: {str(e)}', 'results': results}), 500
+
+    # 返回最新 bible 供前端同步状态
+    return jsonify({'results': results, 'bible': bb.to_dict()})
 
 
 # ==== AI 共创 / 头脑风暴 ====
@@ -6316,14 +6378,25 @@ def _get_volume_list(bb):
 
 
 def _upsert_volume_entry(bb, field_name, entry):
-    """在 bible.<field_name> 的 JSON 数组中按 volume_id/volume upsert 一条记录。"""
+    """在 bible.<field_name> 的 JSON 数组中按 volume_id/volume upsert 一条记录。
+    P1-5: 对 inventory 字段，若旧值是纯文本（非JSON），先迁移为 [{volume:'', data:旧文本}] 再 upsert。"""
     data_list = []
+    raw = getattr(bb, field_name, '') or ''
     try:
-        parsed = json.loads(getattr(bb, field_name) or '[]')
+        parsed = json.loads(raw)
         if isinstance(parsed, list):
             data_list = parsed
+        elif isinstance(parsed, str) and parsed.strip():
+            # 旧纯文本：迁移为单元素数组
+            data_list = [{'volume': '历史数据', 'volume_id': '', 'data': parsed}]
+        else:
+            data_list = []
     except (json.JSONDecodeError, ValueError):
-        data_list = []
+        # P1-5: 纯文本兜底——把旧文本包成单元素数组，避免静默丢弃
+        if raw.strip():
+            data_list = [{'volume': '历史数据', 'volume_id': '', 'data': raw}]
+        else:
+            data_list = []
 
     vid = str(entry.get('volume_id', ''))
     vname = str(entry.get('volume', ''))
@@ -6875,7 +6948,8 @@ def ai_analyze_locations_volume(book_id):
         ctx_parts.append(f'【世界观设定】\n{bb.worldbuilding[:500]}')
     extra_ctx = '\n\n'.join(ctx_parts)
 
-    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'world_setting'], mode='agent')
+    # P2-10: 'world_setting' 是幽灵key，替换为 'tomato_setting'
+    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'tomato_setting'], mode='agent')
 
     vol_label = volume_title or '全部章节'
     system_prompt = f"""你是专业的小说地图分析师。请从以下「{vol_label}」的章节内容中，识别本卷涉及的所有地点、场景、地理信息。
@@ -7153,8 +7227,9 @@ def ai_generate_dynamic_memory(book_id):
 DYNAMIC_REPORT_INTERVAL = 5  # 每5章生成一份报告
 
 
-def _generate_dynamic_report_content(book_id, chapter_start, chapter_end):
-    """内部函数：调用AI生成动态报告内容"""
+def _generate_dynamic_report_content(book_id, chapter_start, chapter_end, skill_pack_ids=None):
+    """内部函数：调用AI生成动态报告内容。
+    skill_pack_ids: 可选，技能包ID列表，用于注入提示词（P0-2修复）"""
     book = Book.query.get(book_id)
     if not book:
         return None, 'Book not found'
@@ -7175,6 +7250,11 @@ def _generate_dynamic_report_content(book_id, chapter_start, chapter_end):
 
     if not target_chapters:
         return None, '指定范围内无章节'
+
+    # P0-2: 注入技能包提示词（narrative_debt/foreshadow_register 用于动态摘要生成）
+    skill_note = ''
+    if skill_pack_ids:
+        skill_note = _get_skill_prompts(skill_pack_ids, ['narrative_debt', 'foreshadow_register', 'lock_facts'], max_per_prompt=1000, mode='agent')
 
     # 拼接章节内容（每章截取前800字，控制总量）
     chapters_text = []
@@ -7211,7 +7291,9 @@ def _generate_dynamic_report_content(book_id, chapter_start, chapter_end):
 - 用简洁的条目式写法，每类1-3条
 - 只记录关键信息，不展开描述
 - 不要写废话和过渡句
-- 直接输出报告内容，不要加标题和前后缀"""
+- 直接输出报告内容，不要加标题和前后缀
+
+{skill_note}"""
 
     user_content = f"""作品：{book.title}
 题材：{book.genre or '通用'}
@@ -7393,8 +7475,8 @@ def batch_generate_dynamic_reports(book_id):
         if key in existing_map and not overwrite:
             skipped.append({'chapter_start': cs, 'chapter_end': ce, 'reason': '已存在'})
             continue
-        # 调用AI生成内容
-        content, err = _generate_dynamic_report_content(book_id, cs, ce)
+        # 调用AI生成内容（P0-2: 传入 skill_pack_ids）
+        content, err = _generate_dynamic_report_content(book_id, cs, ce, skill_pack_ids=skill_pack_ids)
         if err:
             errors.append({'chapter_start': cs, 'chapter_end': ce, 'error': err})
             continue
@@ -7479,12 +7561,14 @@ def batch_delete_dynamic_reports(book_id):
 @app.route('/api/books/<book_id>/dynamic-reports/<report_id>/regenerate', methods=['POST'])
 @login_required
 def regenerate_dynamic_report(book_id, report_id):
-    """重新生成动态报告内容（AI）"""
+    """重新生成动态报告内容（AI）。支持可选 skill_pack_ids 注入提示词。"""
     report = DynamicReport.query.filter_by(id=report_id, book_id=book_id).first()
     if not report:
         return jsonify({'error': 'Report not found'}), 404
 
-    content, error = _generate_dynamic_report_content(book_id, report.chapter_start, report.chapter_end)
+    data = request.get_json(silent=True) or {}
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    content, error = _generate_dynamic_report_content(book_id, report.chapter_start, report.chapter_end, skill_pack_ids=skill_pack_ids)
     if error:
         return jsonify({'error': error}), 500
 
