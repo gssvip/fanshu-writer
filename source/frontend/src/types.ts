@@ -95,6 +95,9 @@ export interface BookBible {
   locations: string; concept: string; plot_design: string;
   generated_summary: string; last_synced_at: string | null;
   relation_graph?: string;
+  inventory?: string;
+  character_volumes?: string;
+  dynamic_volumes?: string;
 }
 
 export interface SkillPack {

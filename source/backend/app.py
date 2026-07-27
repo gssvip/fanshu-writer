@@ -431,6 +431,12 @@ class BookBible(db.Model):
     generated_summary = db.Column(db.Text, default='')
     # 关系图谱专用字段（与 character_profiles 解耦，避免互相覆盖导致角色丢失）
     relation_graph = db.Column(db.Text, default='')
+    # 物资库：JSON 数组，按卷存储势力/角色的物品、功法、法宝、境界等
+    inventory = db.Column(db.Text, default='')
+    # 人物按卷：JSON 数组，每卷的人物档案
+    character_volumes = db.Column(db.Text, default='')
+    # 动态文件按卷：JSON 数组，每卷的动态分类摘要
+    dynamic_volumes = db.Column(db.Text, default='')
     last_synced_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -444,6 +450,9 @@ class BookBible(db.Model):
             'concept': self.concept, 'plot_design': self.plot_design,
             'generated_summary': self.generated_summary,
             'relation_graph': self.relation_graph,
+            'inventory': self.inventory or '',
+            'character_volumes': self.character_volumes or '',
+            'dynamic_volumes': self.dynamic_volumes or '',
             'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None
         }
 
@@ -2325,7 +2334,7 @@ def update_book_bible(book_id):
         bb = BookBible(book_id=book_id)
         db.session.add(bb)
     data = request.json
-    for field in ['worldbuilding', 'character_profiles', 'timeline', 'foreshadowing', 'style_guide', 'key_rules', 'locations', 'concept', 'plot_design', 'relation_graph']:
+    for field in ['worldbuilding', 'character_profiles', 'timeline', 'foreshadowing', 'style_guide', 'key_rules', 'locations', 'concept', 'plot_design', 'relation_graph', 'inventory', 'character_volumes', 'dynamic_volumes']:
         if field in data:
             setattr(bb, field, data[field])
     db.session.commit()
@@ -5050,6 +5059,476 @@ def ai_analyze_plot_volume(book_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+def _collect_volume_chapters(book_id, volume_id):
+    """收集指定卷的章节内容文本。volume_id 为空则取全部非卷章节。"""
+    all_chapters = Chapter.query.filter_by(book_id=book_id).order_by(Chapter.order_index).all()
+    volume_chapters = []
+    if volume_id:
+        collecting = False
+        for ch in all_chapters:
+            if ch.id == volume_id:
+                collecting = True
+                continue
+            if collecting:
+                if ch.is_volume:
+                    break
+                volume_chapters.append(ch)
+    else:
+        volume_chapters = [c for c in all_chapters if not c.is_volume]
+
+    chapter_text = ''
+    max_chars = 12000
+    for ch in volume_chapters:
+        ch_content = (ch.content or '')
+        if getattr(ch, 'summary', None) and ch.summary:
+            segment = f'【{ch.title}】{ch.summary[:500]}\n'
+        elif len(ch_content) > 1000:
+            segment = f'【{ch.title}】{ch_content[:800]}…{ch_content[-200:]}\n'
+        else:
+            segment = f'【{ch.title}】{ch_content}\n'
+        if len(chapter_text) + len(segment) > max_chars:
+            remaining = max_chars - len(chapter_text)
+            if remaining > 200:
+                chapter_text += segment[:remaining]
+            break
+        chapter_text += segment
+    return chapter_text, len(volume_chapters)
+
+
+def _get_volume_list(bb):
+    """从 bible.timeline 解析卷列表，返回 [{volume_id, volume, volume_index}]"""
+    if not bb or not bb.timeline:
+        return []
+    try:
+        parsed = json.loads(bb.timeline)
+        if isinstance(parsed, list):
+            return [v for v in parsed if isinstance(v, dict)]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return []
+
+
+def _upsert_volume_entry(bb, field_name, entry):
+    """在 bible.<field_name> 的 JSON 数组中按 volume_id/volume upsert 一条记录。"""
+    data_list = []
+    try:
+        parsed = json.loads(getattr(bb, field_name) or '[]')
+        if isinstance(parsed, list):
+            data_list = parsed
+    except (json.JSONDecodeError, ValueError):
+        data_list = []
+
+    vid = str(entry.get('volume_id', ''))
+    vname = str(entry.get('volume', ''))
+    found_idx = -1
+    for i, v in enumerate(data_list):
+        if not isinstance(v, dict):
+            continue
+        ev_vid = str(v.get('volume_id', ''))
+        ev_vol = str(v.get('volume', ''))
+        if (vid and ev_vid == vid) or (vname and ev_vol == vname):
+            found_idx = i
+            break
+    if found_idx >= 0:
+        data_list[found_idx] = {**data_list[found_idx], **entry}
+    else:
+        data_list.append(entry)
+    data_list.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
+    setattr(bb, field_name, json.dumps(data_list, ensure_ascii=False, indent=2))
+    return data_list
+
+
+@app.route('/api/books/<book_id>/ai-analyze-character-volume', methods=['POST'])
+@login_required
+def ai_analyze_character_volume(book_id):
+    """AI识别指定卷的人物档案。按卷分析章节内容，识别人物并写入 character_volumes。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Book not found'}), 404
+
+    data = request.get_json() or {}
+    volume_id = data.get('volume_id', '')
+    volume_title = data.get('volume_title', '')
+    skill_pack_ids = data.get('skill_pack_ids', [])
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    config = AIConfig.query.first()
+    api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
+    base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
+    model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    chapter_text, ch_count = _collect_volume_chapters(book_id, volume_id)
+    if not chapter_text and ch_count == 0:
+        return jsonify({'error': '该卷没有章节内容，无法识别人物'}), 400
+
+    # 上下文：全局人物档案 + 设定 + 该卷剧情
+    ctx_parts = []
+    if bb.character_profiles:
+        ctx_parts.append(f'【全局人物档案（参考，避免重复识别）】\n{bb.character_profiles[:1000]}')
+    if bb.key_rules:
+        ctx_parts.append(f'【核心规则】\n{bb.key_rules[:600]}')
+    if bb.worldbuilding:
+        ctx_parts.append(f'【世界观设定】\n{bb.worldbuilding[:600]}')
+    # 该卷剧情
+    if bb.timeline:
+        try:
+            vols = json.loads(bb.timeline)
+            if isinstance(vols, list):
+                for v in vols:
+                    if isinstance(v, dict) and (str(v.get('volume_id', '')) == str(volume_id) or v.get('volume') == volume_title):
+                        ctx_parts.append(f'【该卷剧情（参考）】\n{(v.get("main_plot") or "")[:500]}')
+                        break
+        except (json.JSONDecodeError, ValueError):
+            pass
+    extra_ctx = '\n\n'.join(ctx_parts)
+
+    skill_note = _get_skill_prompts(skill_pack_ids, ['character_cognition', 'tomato_character'], mode='agent')
+
+    vol_label = volume_title or '全部章节'
+    system_prompt = f"""你是专业的小说分析师。请从以下「{vol_label}」的章节内容中，识别本卷出现的所有重要角色（出现2次以上或有台词的角色）。
+
+{extra_ctx and f"【已有参考】{chr(10)}{extra_ctx}" or ""}
+
+严格按JSON对象格式输出（不要任何其他文字）：
+{{
+  "volume": "{vol_label}",
+  "characters": [
+    {{
+      "name": "角色名",
+      "role": "主角/配角/反派/路人",
+      "identity": "身份职业",
+      "personality": "性格特征（1-2句）",
+      "motivation": "本卷中的动机",
+      "relationships": "本卷中与其他角色的关系",
+      "abilities": "本卷中使用的能力/功法",
+      "items": "本卷中持有的重要物品",
+      "arc": "本卷中的角色弧线/变化"
+    }}
+  ]
+}}
+
+{skill_note}"""
+
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容）"}'
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=3000, temperature=0.3
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    try:
+        analysis = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        import re as _re_cv
+        m = _re_cv.search(r'\{[\s\S]*\}', content)
+        if m:
+            analysis = json.loads(m.group())
+        else:
+            return jsonify({'error': 'AI返回格式无法解析', 'raw': content[:300]}), 500
+
+    chars = analysis.get('characters', []) if isinstance(analysis, dict) else []
+
+    entry = {
+        'volume_id': volume_id,
+        'volume': vol_label,
+        'volume_index': _extract_volume_index(vol_label) or 0,
+        'characters': chars,
+    }
+    data_list = _upsert_volume_entry(bb, 'character_volumes', entry)
+    bb.last_synced_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'volume_data': entry,
+        'character_volumes': data_list,
+        'bible': bb.to_dict()
+    })
+
+
+@app.route('/api/books/<book_id>/ai-analyze-inventory-volume', methods=['POST'])
+@login_required
+def ai_analyze_inventory_volume(book_id):
+    """AI识别指定卷的物资库。按卷分析章节内容，识别势力/角色拥有的物品、功法、法宝、境界等。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Book not found'}), 404
+
+    data = request.get_json() or {}
+    volume_id = data.get('volume_id', '')
+    volume_title = data.get('volume_title', '')
+    skill_pack_ids = data.get('skill_pack_ids', [])
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    config = AIConfig.query.first()
+    api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
+    base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
+    model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    chapter_text, ch_count = _collect_volume_chapters(book_id, volume_id)
+    if not chapter_text and ch_count == 0:
+        return jsonify({'error': '该卷没有章节内容，无法识别物资'}), 400
+
+    # 上下文
+    ctx_parts = []
+    if bb.character_profiles:
+        ctx_parts.append(f'【人物档案（识别持有者）】\n{bb.character_profiles[:1000]}')
+    if bb.key_rules:
+        ctx_parts.append(f'【核心规则（能力体系/境界划分）】\n{bb.key_rules[:800]}')
+    if bb.worldbuilding:
+        ctx_parts.append(f'【世界观设定（势力格局）】\n{bb.worldbuilding[:600]}')
+    if bb.timeline:
+        try:
+            vols = json.loads(bb.timeline)
+            if isinstance(vols, list):
+                for v in vols:
+                    if isinstance(v, dict) and (str(v.get('volume_id', '')) == str(volume_id) or v.get('volume') == volume_title):
+                        ctx_parts.append(f'【该卷剧情（参考）】\n{(v.get("main_plot") or "")[:500]}')
+                        break
+        except (json.JSONDecodeError, ValueError):
+            pass
+    extra_ctx = '\n\n'.join(ctx_parts)
+
+    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'tomato_setting'], mode='agent')
+
+    vol_label = volume_title or '全部章节'
+    system_prompt = f"""你是专业的小说世界观分析师。请从以下「{vol_label}」的章节内容中，识别本卷出现的所有势力及角色拥有的物资。
+物资类型包括：物品、功法、法宝、境界、灵宠、领地、资源等。
+
+{extra_ctx and f"【已有参考】{chr(10)}{extra_ctx}" or ""}
+
+严格按JSON对象格式输出（不要任何其他文字）：
+{{
+  "volume": "{vol_label}",
+  "items": [
+    {{
+      "owner": "持有者（角色名/势力名）",
+      "owner_type": "角色/势力",
+      "name": "物资名称",
+      "category": "物品/功法/法宝/境界/灵宠/领地/资源/其他",
+      "description": "描述（来源、能力、效果）",
+      "status": "获得/持有/失去/消耗",
+      "chapter": "首次出现章节"
+    }}
+  ],
+  "realms": [
+    {{
+      "character": "角色名",
+      "realm": "当前境界",
+      "progress": "修炼进度/突破节点"
+    }}
+  ]
+}}
+
+{skill_note}"""
+
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容）"}'
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=3000, temperature=0.3
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    try:
+        analysis = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        import re as _re_iv
+        m = _re_iv.search(r'\{[\s\S]*\}', content)
+        if m:
+            analysis = json.loads(m.group())
+        else:
+            return jsonify({'error': 'AI返回格式无法解析', 'raw': content[:300]}), 500
+
+    items = analysis.get('items', []) if isinstance(analysis, dict) else []
+    realms = analysis.get('realms', []) if isinstance(analysis, dict) else []
+
+    entry = {
+        'volume_id': volume_id,
+        'volume': vol_label,
+        'volume_index': _extract_volume_index(vol_label) or 0,
+        'items': items,
+        'realms': realms,
+    }
+    data_list = _upsert_volume_entry(bb, 'inventory', entry)
+    bb.last_synced_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'volume_data': entry,
+        'inventory': data_list,
+        'bible': bb.to_dict()
+    })
+
+
+@app.route('/api/books/<book_id>/ai-analyze-dynamic-volume', methods=['POST'])
+@login_required
+def ai_analyze_dynamic_volume(book_id):
+    """AI识别指定卷的动态文件分类。按卷汇总章节内容，生成该卷的动态摘要（人物/事件/时间/地点/势力/伏笔/境界/关系）。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Book not found'}), 404
+
+    data = request.get_json() or {}
+    volume_id = data.get('volume_id', '')
+    volume_title = data.get('volume_title', '')
+    skill_pack_ids = data.get('skill_pack_ids', [])
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    config = AIConfig.query.first()
+    api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
+    base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
+    model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    chapter_text, ch_count = _collect_volume_chapters(book_id, volume_id)
+    if not chapter_text and ch_count == 0:
+        return jsonify({'error': '该卷没有章节内容，无法识别动态文件'}), 400
+
+    # 收集该卷区间内的已有动态报告（5章一份）
+    dyn_reports = DynamicReport.query.filter_by(book_id=book_id).order_by(DynamicReport.chapter_start).all()
+    relevant_reports = []
+    # 简单按卷章节范围匹配：若该卷有章节，计算其起止章号
+    all_chs = Chapter.query.filter_by(book_id=book_id).order_by(Chapter.order_index).all()
+    vol_ch_idx = []
+    if volume_id:
+        collecting = False
+        for i, ch in enumerate(all_chs):
+            if ch.id == volume_id:
+                collecting = True
+                continue
+            if collecting:
+                if ch.is_volume:
+                    break
+                vol_ch_idx.append(i)
+    else:
+        vol_ch_idx = [i for i, ch in enumerate(all_chs) if not ch.is_volume]
+
+    if vol_ch_idx:
+        # 章节序号从1开始
+        ch_start = vol_ch_idx[0] + 1
+        ch_end = vol_ch_idx[-1] + 1
+        for r in dyn_reports:
+            if r.chapter_end >= ch_start and r.chapter_start <= ch_end:
+                relevant_reports.append(r)
+
+    reports_text = '\n\n'.join([f'【{r.title}】\n{(r.content or "")[:500]}' for r in relevant_reports]) if relevant_reports else '（无已生成报告）'
+
+    ctx_parts = []
+    if bb.character_profiles:
+        ctx_parts.append(f'【人物档案】\n{bb.character_profiles[:600]}')
+    if bb.key_rules:
+        ctx_parts.append(f'【核心规则】\n{bb.key_rules[:600]}')
+    extra_ctx = '\n\n'.join(ctx_parts)
+
+    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'narrative_debt', 'foreshadow_register'], mode='agent')
+
+    vol_label = volume_title or '全部章节'
+    system_prompt = f"""你是专业的小说防遗忘系统分析师。请从以下「{vol_label}」的章节内容及已有动态报告中，生成本卷的动态分类摘要。
+
+【已有动态报告（5章一份）】
+{reports_text}
+
+{extra_ctx and f"【已有参考】{chr(10)}{extra_ctx}" or ""}
+
+严格按JSON对象格式输出（不要任何其他文字）：
+{{
+  "volume": "{vol_label}",
+  "characters": "本卷登场人物及状态变化（200字内）",
+  "events": "本卷关键事件脉络（200字内）",
+  "timeline": "本卷时间线要点（150字内）",
+  "locations": "本卷涉及地点（100字内）",
+  "factions": "本卷势力动态（100字内）",
+  "foreshadowing": "本卷埋设/回收的伏笔（150字内）",
+  "realms": "本卷境界/能力变化（100字内）",
+  "relationships": "本卷人物关系变化（100字内）",
+  "summary": "本卷综合动态摘要（300字内）"
+}}
+
+{skill_note}"""
+
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容，依据报告生成）"}'
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=2500, temperature=0.3
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    try:
+        analysis = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        import re as _re_dv
+        m = _re_dv.search(r'\{[\s\S]*\}', content)
+        if m:
+            analysis = json.loads(m.group())
+        else:
+            return jsonify({'error': 'AI返回格式无法解析', 'raw': content[:300]}), 500
+
+    entry = {
+        'volume_id': volume_id,
+        'volume': vol_label,
+        'volume_index': _extract_volume_index(vol_label) or 0,
+        'data': analysis if isinstance(analysis, dict) else {},
+    }
+    data_list = _upsert_volume_entry(bb, 'dynamic_volumes', entry)
+    bb.last_synced_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'volume_data': entry,
+        'dynamic_volumes': data_list,
+        'bible': bb.to_dict()
+    })
+
+
+@app.route('/api/books/<book_id>/clear-timeline', methods=['POST'])
+@login_required
+def clear_timeline(book_id):
+    """一键清空剧情分卷大纲（timeline 字段），不影响章节表。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Book not found'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+    bb.timeline = ''
+    bb.last_synced_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({'success': True, 'bible': bb.to_dict()})
+
+
 @app.route('/api/books/<book_id>/dynamic-memory', methods=['GET'])
 @login_required
 def get_dynamic_memory(book_id):
@@ -5960,6 +6439,10 @@ def init_db():
         _add_column('book_bible', 'plot_design TEXT')
         # Migration: 关系图谱专用字段（解耦 character_profiles，避免角色丢失）
         _add_column('book_bible', 'relation_graph TEXT')
+        # Migration: 物资库、人物按卷、动态文件按卷
+        _add_column('book_bible', 'inventory TEXT')
+        _add_column('book_bible', 'character_volumes TEXT')
+        _add_column('book_bible', 'dynamic_volumes TEXT')
         _add_column('ai_config', 'recognition_model TEXT')
         # Migration: skill_packs 添加 github_source 和 github_synced_at 字段
         _add_column('skill_packs', "github_source VARCHAR(500) DEFAULT ''")

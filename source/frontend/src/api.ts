@@ -478,6 +478,31 @@ export const api = {
       body: JSON.stringify({ skill_pack_ids: skillPackIds || [] }),
     }),
 
+  // 一键清空剧情分卷大纲（timeline）
+  clearTimeline: (bookId: string) =>
+    request<{ success: boolean; bible: any }>(`/books/${bookId}/clear-timeline`, { method: 'POST' }),
+
+  // AI识别指定卷的人物档案（按卷）
+  analyzeCharacterVolume: (bookId: string, volumeId: string, volumeTitle: string, skillPackIds?: string[]) =>
+    request<{ success: boolean; volume_data: any; character_volumes: any[]; bible: any }>(`/books/${bookId}/ai-analyze-character-volume`, {
+      method: 'POST',
+      body: JSON.stringify({ volume_id: volumeId, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [] }),
+    }),
+
+  // AI识别指定卷的物资库（按卷）
+  analyzeInventoryVolume: (bookId: string, volumeId: string, volumeTitle: string, skillPackIds?: string[]) =>
+    request<{ success: boolean; volume_data: any; inventory: any[]; bible: any }>(`/books/${bookId}/ai-analyze-inventory-volume`, {
+      method: 'POST',
+      body: JSON.stringify({ volume_id: volumeId, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [] }),
+    }),
+
+  // AI识别指定卷的动态文件分类（按卷）
+  analyzeDynamicVolume: (bookId: string, volumeId: string, volumeTitle: string, skillPackIds?: string[]) =>
+    request<{ success: boolean; volume_data: any; dynamic_volumes: any[]; bible: any }>(`/books/${bookId}/ai-analyze-dynamic-volume`, {
+      method: 'POST',
+      body: JSON.stringify({ volume_id: volumeId, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [] }),
+    }),
+
   // ==== 总 AI 创作：总览全局各维度 ====
   aiMasterCreate: (bookId: string, dimensions: string[], skillPackIds?: string[], instruction?: string) =>
     request<{ results: Array<{ dimension: string; label: string; field: string; content?: string; error?: string }> }>(`/books/${bookId}/ai-master-create`, {

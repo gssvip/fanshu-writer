@@ -3,23 +3,21 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import type { Book, BookBible, BrainstormResult, BrainstormSuggestion, Chapter, SkillPack, DynamicReport } from '../types';
 
-// 两行 Tab 布局
+// 两行 Tab 布局：上下各 5 个维度
 const TAB_ROW_1 = [
   { key: 'concept', label: '构思', icon: '💡', field: 'concept', placeholder: '一句话描述你的故事核心创意...' },
   { key: 'settings', label: '设定', icon: '⚙️', field: 'key_rules', placeholder: '核心规则、能力限制、世界观禁忌...' },
   { key: 'outline', label: '大纲', icon: '📋', field: 'plot_design', placeholder: '主线冲突、卷纲拆解、章节规划...' },
   { key: 'characters', label: '人物及关系', icon: '👤', field: 'character_profiles', placeholder: '主角、配角的姓名、身份、性格、动机、人物关系...' },
   { key: 'plot', label: '剧情', icon: '📖', field: 'timeline', placeholder: '按时间顺序列出关键事件...' },
-  { key: 'dynamicMemory', label: '动态文件', icon: '🗂️', field: '', placeholder: '' },
 ];
 
 const TAB_ROW_2 = [
+  { key: 'dynamicMemory', label: '动态文件', icon: '🗂️', field: '', placeholder: '' },
+  { key: 'inventory', label: '物资库', icon: '🎒', field: 'inventory', placeholder: '按势力/角色记录物品、功法、法宝、境界...' },
   { key: 'chapters', label: '章节', icon: '📚', field: '', placeholder: '' },
   { key: 'foreshadowing', label: '伏笔', icon: '🔮', field: 'foreshadowing', placeholder: '伏笔内容、埋设时机、回收方式...' },
   { key: 'map', label: '地图', icon: '🗺️', field: 'locations', placeholder: '' },
-  { key: 'relationGraph', label: '关系图谱', icon: '🕸️', field: 'relation_graph', placeholder: '' },
-  { key: 'realmGraph', label: '境界图谱', icon: '⚡', field: 'worldbuilding', placeholder: '' },
-  { key: 'locationGraph', label: '地点图谱', icon: '🗺️', field: 'locations', placeholder: '' },
 ];
 
 const ALL_TABS = [...TAB_ROW_1, ...TAB_ROW_2];
@@ -46,9 +44,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   chapters: '章节',
   locations: '地点',
   foreshadowing: '伏笔',
-  relationGraph: '人物关系图谱',
-  realmGraph: '境界图谱',
-  locationGraph: '地点图谱',
+  inventory: '物资库',
 };
 
 // 维度 → 技能包 prompt_key 映射（用于查找最匹配的技能提示词）
@@ -424,7 +420,7 @@ export default function WritePage() {
     });
   }
 
-  // 从动态文件报告提取维度信息（地图/关系图谱/地点图谱/境界图谱等）
+  // 从动态文件报告提取维度信息（地图等）
   const handleAnalyzeFromReports = useCallback(async (dimension: string) => {
     if (!bookId) return;
     const label = DIMENSION_LABELS[dimension] || dimension;
@@ -443,16 +439,9 @@ export default function WritePage() {
 
   // 稳定的维度回调
   const onAnalyzeFromReportsLocations = useCallback(() => handleAnalyzeFromReports('locations'), [handleAnalyzeFromReports]);
-  const onAnalyzeFromReportsGraph = useCallback(() => handleAnalyzeFromReports(activeTab), [handleAnalyzeFromReports, activeTab]);
   const onAnalyzeConcept = useCallback(() => handleAnalyzeDimension('concept'), [bookId]);
 
-  // 图谱/地图更新回调 —— 必须在所有 early return 之前声明
-  const handleGraphUpdate = useCallback(async (val: string) => {
-    if (!bookId) return;
-    const updated = await api.updateBible(bookId, { [currentTab.field]: val } as any);
-    setBible(updated);
-  }, [bookId, currentTab.field]);
-
+  // 地图更新回调 —— 必须在所有 early return 之前声明
   const handleMapUpdate = useCallback(async (val: string) => {
     if (!bookId) return;
     const updated = await api.updateBible(bookId, { locations: val } as any);
@@ -878,14 +867,14 @@ export default function WritePage() {
     );
   }
 
-  // 判断是否是图谱类 tab
-  const isGraphTab = ['relationGraph', 'realmGraph', 'locationGraph'].includes(activeTab);
+  // 判断是否是图谱类 tab（已移除关系图谱/地点图谱/境界图谱）
   const isMapTab = activeTab === 'map';
   const isChapterTab = activeTab === 'chapters';
   const isOutlineTab = activeTab === 'outline';
   const isDynamicMemoryTab = activeTab === 'dynamicMemory';
   const isCharacterTab = activeTab === 'characters';
   const isPlotTab = activeTab === 'plot';
+  const isInventoryTab = activeTab === 'inventory';
 
   return (
     <div className={`page write-page${isChapterTab ? ' chapter-mode' : ''}`}>
@@ -1027,28 +1016,18 @@ export default function WritePage() {
             onDeleteVolume={deleteVolumeFn}
             bookId={bookId}
           />
-        ) : isGraphTab ? (
-          <GraphPanel
-            type={activeTab as 'relationGraph' | 'realmGraph' | 'locationGraph'}
-            data={currentContent}
-            concept={concept || bible?.concept || ''}
-            charactersData={bible?.character_profiles || ''}
-            plotData={bible?.timeline || ''}
-            settingsData={bible?.key_rules || ''}
-            outlineData={bible?.plot_design || ''}
-            worldData={bible?.worldbuilding || ''}
-            onAnalyzeFromReports={onAnalyzeFromReportsGraph}
-            dimAnalyzing={dimAnalyzing}
-            bookId={bookId}
-            onUpdate={handleGraphUpdate}
-          />
         ) : isDynamicMemoryTab ? (
           <DynamicMemoryPanel
             bookId={bookId}
             concept={concept || bible?.concept || ''}
             bible={bible}
+            onBibleUpdate={setBible}
             chapters={chapters}
             showConfirm={showConfirm}
+            skillPacks={skillPacks}
+            selectedSkillPackIds={selectedSkillPackIds}
+            onToggleSkillPack={toggleSkillPack}
+            selectedSkillPacks={selectedSkillPacks}
           />
         ) : isOutlineTab ? (
           <OutlineCombinedPanel
@@ -1071,6 +1050,7 @@ export default function WritePage() {
             bible={bible}
             onBibleUpdate={setBible}
             bookTitle={book?.title || ''}
+            chapters={chapters}
             hasChapters={chapters.length > 0}
             showConfirm={showConfirm}
             skillPacks={skillPacks}
@@ -1093,6 +1073,20 @@ export default function WritePage() {
             selectedSkillPacks={selectedSkillPacks}
             concept={concept}
             onRefreshChapters={() => api.listChapters(bookId || '').then(setChapters).catch(() => {})}
+          />
+        ) : isInventoryTab ? (
+          <InventoryPanel
+            bookId={bookId || ''}
+            bible={bible}
+            onBibleUpdate={setBible}
+            bookTitle={book?.title || ''}
+            chapters={chapters}
+            hasChapters={chapters.length > 0}
+            showConfirm={showConfirm}
+            skillPacks={skillPacks}
+            selectedSkillPackIds={selectedSkillPackIds}
+            onToggleSkillPack={toggleSkillPack}
+            selectedSkillPacks={selectedSkillPacks}
           />
         ) : (
           <BibleEditPanel
@@ -1803,6 +1797,7 @@ function CharacterPanel(props: {
   bible: BookBible | null;
   onBibleUpdate: (b: BookBible) => void;
   bookTitle: string;
+  chapters: Chapter[];
   hasChapters: boolean;
   showConfirm: (message: string, onConfirm: () => void) => void;
   skillPacks: SkillPack[];
@@ -1810,7 +1805,7 @@ function CharacterPanel(props: {
   onToggleSkillPack: (id: string) => void;
   selectedSkillPacks: SkillPack[];
 }) {
-  const { bookId, bible, onBibleUpdate, bookTitle, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks } = props;
+  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks } = props;
   const [characters, setCharacters] = useState<CharacterData[]>([]);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [addingNew, setAddingNew] = useState(false);
@@ -1823,6 +1818,10 @@ function CharacterPanel(props: {
   const [aiError, setAiError] = useState('');
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [collapsedChars, setCollapsedChars] = useState<Set<number>>(new Set());
+  // 按卷人物识别
+  const [charVolumes, setCharVolumes] = useState<any[]>([]);
+  const [analyzingVol, setAnalyzingVol] = useState('');
+  const [collapsedVolChars, setCollapsedVolChars] = useState<Set<number>>(new Set());
 
   function toggleChar(idx: number) {
     setCollapsedChars(prev => {
@@ -1857,6 +1856,118 @@ function CharacterPanel(props: {
       setCharacters(chars);
     }
   }, [bible?.character_profiles]);
+
+  // 解析按卷人物数据（character_volumes）
+  useEffect(() => {
+    if (!bible?.character_volumes) { setCharVolumes([]); return; }
+    try {
+      const parsed = JSON.parse(bible.character_volumes);
+      if (Array.isArray(parsed)) { setCharVolumes(parsed); return; }
+    } catch { /* not JSON */ }
+    setCharVolumes([]);
+  }, [bible?.character_volumes]);
+
+  // chapters 表的卷（可识别）
+  const volumeChapters = chapters.filter(c => c.is_volume);
+
+  // 合并卷列表：chapters.is_volume 卷 + charVolumes 已有卷
+  const displayCharVolumes = useMemo(() => {
+    const result: any[] = [];
+    const usedIds = new Set<string>();
+    for (const vc of volumeChapters) {
+      const cvData = charVolumes.find(v => v.volume_id === vc.id) || charVolumes.find(v => v.volume === vc.title);
+      result.push({
+        volume_id: vc.id,
+        volume: vc.title,
+        characters: cvData?.characters || [],
+        chapter_count: chapters.filter(c => c.parent_id === vc.id).length,
+      });
+      if (cvData) { usedIds.add(cvData.volume_id || ''); usedIds.add(cvData.volume || ''); }
+    }
+    for (const v of charVolumes) {
+      const id = v.volume_id || '';
+      const name = v.volume || '';
+      if (!usedIds.has(id) && !usedIds.has(name)) {
+        result.push({ ...v, chapter_count: 0 });
+      }
+    }
+    return result;
+  }, [volumeChapters, charVolumes, chapters]);
+
+  function toggleVolChar(idx: number) {
+    setCollapsedVolChars(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  }
+
+  // AI识别指定卷人物
+  async function handleAnalyzeCharVolume(volId: string, volTitle: string) {
+    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，识别本卷出现的角色。是否继续？`, async () => {
+      setAnalyzingVol(volId || volTitle);
+      try {
+        const result = await api.analyzeCharacterVolume(bookId, volId, volTitle, selectedSkillPackIds);
+        if (result.bible) onBibleUpdate(result.bible);
+        alert(`AI识别完成！已为「${volTitle}」识别 ${result.volume_data?.characters?.length || 0} 个角色`);
+      } catch (e: any) {
+        alert('AI识别失败：' + (e.message || '请检查AI配置'));
+      }
+      setAnalyzingVol('');
+    });
+  }
+
+  // 删除某卷的人物数据
+  async function deleteVolumeCharacters(idx: number) {
+    const vol = displayCharVolumes[idx];
+    if (!vol) return;
+    showConfirm(`确定删除「${vol.volume || '该卷'}」的人物识别数据？`, async () => {
+      const newList = charVolumes.filter((v: any) => {
+        const vId = v.volume_id || '';
+        const vName = v.volume || '';
+        if (vol.volume_id && vId === vol.volume_id) return false;
+        if (vol.volume && vName === vol.volume) return false;
+        return true;
+      });
+      try {
+        const updated = await api.updateBible(bookId, { character_volumes: JSON.stringify(newList, null, 2) } as any);
+        onBibleUpdate(updated);
+      } catch (e: any) {
+        alert('删除失败: ' + e.message);
+      }
+    });
+  }
+
+  // 将某卷识别的角色合并到全局人物档案
+  async function mergeVolumeToGlobal(idx: number) {
+    const vol = displayCharVolumes[idx];
+    if (!vol || !vol.characters || vol.characters.length === 0) return;
+    showConfirm(`将「${vol.volume}」识别的 ${vol.characters.length} 个角色合并到全局人物档案？（重名角色会跳过）`, async () => {
+      const existingNames = new Set(characters.map(c => c.name));
+      const toAdd: CharacterData[] = [];
+      for (const c of vol.characters) {
+        if (c.name && !existingNames.has(c.name)) {
+          toAdd.push({
+            name: c.name,
+            role: c.role || '',
+            identity: c.identity || '',
+            personality: c.personality || '',
+            motivation: c.motivation || '',
+            relationships: c.relationships || '',
+            abilities: c.abilities || '',
+            items: c.items || '',
+          });
+          existingNames.add(c.name);
+        }
+      }
+      if (toAdd.length === 0) {
+        alert('该卷角色已全部在全局档案中，无需合并');
+        return;
+      }
+      await saveCharacters([...characters, ...toAdd]);
+      alert(`已合并 ${toAdd.length} 个角色到全局人物档案`);
+    });
+  }
 
   async function saveCharacters(newChars: CharacterData[]) {
     setCharacters(newChars);
@@ -2060,6 +2171,65 @@ function CharacterPanel(props: {
         </div>
       </div>
 
+      {/* 按卷人物识别 */}
+      {displayCharVolumes.length > 0 && (
+        <div className="plot-volume-list" style={{marginBottom:16}}>
+          <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
+            📚 按卷识别人物：每卷可单独 AI 识别本卷出现的角色，识别后可合并到下方全局人物档案。
+          </p>
+          {displayCharVolumes.map((vol, idx) => (
+            <div key={idx} className="plot-volume-card">
+              <div className="plot-volume-header" onClick={() => toggleVolChar(idx)} style={{cursor:'pointer'}}>
+                <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVolChars.has(idx) ? '▶' : '▼'}</span>
+                <h4>{vol.volume || `第${idx + 1}卷`}</h4>
+                {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
+                <span className="text-muted" style={{fontSize:12}}>{(vol.characters || []).length}人</span>
+                <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+                  {hasChapters && (
+                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeCharVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume)} title="AI识别此卷人物">
+                      {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}
+                    </button>
+                  )}
+                  {(vol.characters || []).length > 0 && (
+                    <>
+                      <button className="btn-ghost-sm" onClick={() => mergeVolumeToGlobal(idx)} title="合并到全局人物档案" style={{color:'#27ae60'}}>⬇ 合并</button>
+                      <button className="btn-ghost-sm" onClick={() => deleteVolumeCharacters(idx)} style={{color:'#e74c3c'}} title="删除此卷人物数据">🗑️</button>
+                    </>
+                  )}
+                </div>
+              </div>
+              {!collapsedVolChars.has(idx) && (
+                <div className="plot-volume-body">
+                  {(!vol.characters || vol.characters.length === 0) ? (
+                    <p className="text-muted" style={{fontSize:13}}>暂无人物识别数据，点击「识别」自动提取本卷角色</p>
+                  ) : (
+                    <div className="character-cards-grid">
+                      {vol.characters.map((char: any, ci: number) => (
+                        <div key={ci} className="character-card">
+                          <div className="character-card-header">
+                            <span className="character-card-name">{char.name}</span>
+                            {char.role && <span className="character-card-role">{char.role}</span>}
+                          </div>
+                          <div className="character-card-body">
+                            {char.identity && <p><b>身份：</b>{char.identity}</p>}
+                            {char.personality && <p><b>性格：</b>{char.personality}</p>}
+                            {char.motivation && <p><b>动机：</b>{char.motivation}</p>}
+                            {char.relationships && <p><b>关系：</b>{char.relationships}</p>}
+                            {char.abilities && <p><b>能力：</b>{char.abilities}</p>}
+                            {char.items && <p><b>物品：</b>{char.items}</p>}
+                            {char.arc && <p><b>本卷弧线：</b>{char.arc}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 添加/编辑表单 */}
       {(addingNew || editingIdx !== null) && (
         <div className="character-edit-form" style={{background:'var(--bg-tertiary)',borderRadius:'var(--radius-sm)',padding:16,marginBottom:16}}>
@@ -2214,6 +2384,10 @@ function PlotPanel(props: {
   // 工作流状态（getter 仍被按钮 disabled 使用；setter 已废弃，因 generateOutlineMaster 已移除）
   const [outlineWorkflowLoading] = useState<'' | 'master' | 'volume' | 'all'>('');
   const [outlineWorkflowProgress] = useState('');
+  // 工作流按钮区折叠（手机友好）
+  const [workflowCollapsed, setWorkflowCollapsed] = useState(false);
+  // 一键清空
+  const [clearing, setClearing] = useState(false);
 
   // 五幕弧线模板
   const ARC_NAMES = ['立身', '立足', '立势', '立威', '立命'];
@@ -2329,6 +2503,21 @@ function PlotPanel(props: {
           }
         }
       }
+    });
+  }
+
+  // 一键清空全部分卷大纲（仅清空 timeline，不影响章节表）
+  async function handleClearAllVolumes() {
+    showConfirm('确定一键清空全部分卷大纲？此操作仅清空剧情维度的分卷数据，不影响章节表和大纲总纲。', async () => {
+      setClearing(true);
+      try {
+        const updated = await api.clearTimeline(bookId);
+        if (updated.bible) onBibleUpdate(updated.bible);
+        alert('已清空全部分卷大纲');
+      } catch (e: any) {
+        alert('清空失败：' + (e.message || '请重试'));
+      }
+      setClearing(false);
     });
   }
 
@@ -2626,12 +2815,40 @@ function PlotPanel(props: {
   }
 
   // 合并卷列表和已有数据
+  // 修复「导入分卷大纲后第1卷残留」：增强匹配，按 volume_id / volume 完整名 / 卷号 三级匹配，
+  // 避免 chapters 表的「第1卷」(UUID) 与 timeline 的「第1卷」(volume_id="1") 因不匹配而重复显示。
   const displayVolumes = useMemo(() => {
     const result: any[] = [];
     const usedVolIds = new Set<string>();
-    // 先添加有章节的卷
+    const usedVolNames = new Set<string>();
+    const usedVolNums = new Set<number>();
+    // 卷号提取：第X卷 / 卷X / 第X部 等开头的数字
+    const extractVolNum = (s: string): number => {
+      if (!s) return 0;
+      const cn = '零一二三四五六七八九十';
+      const m = s.match(/第?\s*([零一二三四五六七八九十百\d]+)\s*[卷部篇]/);
+      if (!m) return 0;
+      const raw = m[1];
+      if (/^\d+$/.test(raw)) return parseInt(raw, 10);
+      // 中文数字转换
+      if (raw === '十') return 10;
+      if (raw.startsWith('十')) return 10 + (cn.indexOf(raw[1]) >= 0 ? cn.indexOf(raw[1]) : 0);
+      if (raw.endsWith('十')) return cn.indexOf(raw[0]) >= 0 ? cn.indexOf(raw[0]) * 10 : 0;
+      if (raw.includes('十')) {
+        const parts = raw.split('十');
+        return (cn.indexOf(parts[0]) >= 0 ? cn.indexOf(parts[0]) : 0) * 10 + (cn.indexOf(parts[1]) >= 0 ? cn.indexOf(parts[1]) : 0);
+      }
+      let n = 0;
+      for (const ch of raw) { const idx = cn.indexOf(ch); if (idx >= 0) n = n * 10 + idx; }
+      return n;
+    };
+    // 先添加有章节的卷（来自 chapters 表 is_volume=true）
     for (const vc of volumeChapters) {
-      const volData = volumes.find(v => v.volume_id === vc.id) || volumes.find(v => v.volume === vc.title);
+      const vcNum = extractVolNum(vc.title);
+      // 三级匹配：volume_id 完全相等 → volume 名称相等 → 卷号相等
+      const volData = volumes.find(v => v.volume_id === vc.id)
+        || volumes.find(v => v.volume === vc.title)
+        || (vcNum > 0 ? volumes.find(v => extractVolNum(v.volume) === vcNum) : undefined);
       result.push({
         volume_id: vc.id,
         volume: vc.title,
@@ -2641,15 +2858,25 @@ function PlotPanel(props: {
         climax: volData?.climax || '',
         ending: volData?.ending || '',
         foreshadowing: volData?.foreshadowing || [],
+        nodes: volData?.nodes || [],
         chapter_count: chapters.filter(c => c.parent_id === vc.id).length,
       });
-      usedVolIds.add(volData?.volume_id || '');
-      if (volData) usedVolIds.add(volData.volume || '');
+      if (volData) {
+        usedVolIds.add(volData.volume_id || '');
+        usedVolNames.add(volData.volume || '');
+        const vn = extractVolNum(volData.volume);
+        if (vn > 0) usedVolNums.add(vn);
+      }
     }
-    // 再添加没有对应章节卷的数据
+    // 再添加没有对应章节卷的数据（来自 timeline，跳过已合并的）
     for (const v of volumes) {
-      const id = v.volume_id || v.volume;
-      if (!usedVolIds.has(id) && v.volume !== '全部剧情') {
+      const id = v.volume_id || '';
+      const name = v.volume || '';
+      const vNum = extractVolNum(name);
+      const alreadyUsed = (id && usedVolIds.has(id))
+        || (name && usedVolNames.has(name))
+        || (vNum > 0 && usedVolNums.has(vNum));
+      if (!alreadyUsed && v.volume !== '全部剧情') {
         result.push({ ...v, chapter_count: 0 });
       }
     }
@@ -2657,6 +2884,12 @@ function PlotPanel(props: {
     if (result.length === 0 && volumes.length > 0) {
       result.push(...volumes);
     }
+    // 按 volume_index / 卷号 排序，避免导入后卷前后颠倒
+    result.sort((a, b) => {
+      const ai = a.volume_index || extractVolNum(a.volume) || 9999;
+      const bi = b.volume_index || extractVolNum(b.volume) || 9999;
+      return ai - bi;
+    });
     return result;
   }, [volumeChapters, volumes, chapters]);
 
@@ -2713,73 +2946,96 @@ function PlotPanel(props: {
       )}
       <div className="bible-edit-header">
         <h3>📖 剧情（按卷）</h3>
+        <div className="bible-edit-actions">
+          {displayVolumes.length > 0 && (
+            <button
+              className="btn-ghost-sm"
+              onClick={handleClearAllVolumes}
+              disabled={clearing}
+              title="一键清空全部分卷大纲（不影响章节表和大纲总纲）"
+              style={{ color: '#e74c3c' }}
+            >
+              {clearing ? '⏳ 清空中...' : '🗑️ 一键清空'}
+            </button>
+          )}
+          <button
+            className="btn-ghost-sm header-collapse-btn"
+            onClick={() => setWorkflowCollapsed(v => !v)}
+            title={workflowCollapsed ? '展开工作流' : '折叠工作流（手机友好）'}
+          >
+            {workflowCollapsed ? '▾' : '▴'}
+          </button>
+        </div>
       </div>
 
-      {/* 大纲工作流（从大纲维度迁移）：总纲→分卷规划→提取→导入→AI创作 全部在同一行，相互协作非强制 */}
-      <div className="volume-calc-section" style={{ borderLeft: '3px solid #6c5ce7', paddingLeft: 10, marginBottom: 8 }}>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          {/* 反生成五幕式总纲：从已导入的各卷剧情反向提炼，写入大纲维度 */}
-          <button
-            className="btn-ghost-sm"
-            onClick={handleReverseGenerateOutline}
-            disabled={reverseLoading || outlineWorkflowLoading !== ''}
-            title="从已导入/提取的各卷剧情，反向提炼五幕式总纲，填入大纲维度"
-            style={{ color: '#6c5ce7' }}
-          >
-            {reverseLoading ? '⏳ 反生成中...' : '🔄 反生成五幕式总纲'}
-          </button>
-          <button
-            className="btn-ghost-sm"
-            onClick={() => setShowVolumeCalc(s => !s)}
-            disabled={outlineWorkflowLoading !== ''}
-            title="输入目标字数，按每卷50章×2400字自动分卷"
-            style={showVolumeCalc ? { background: '#6c5ce7', color: '#fff' } : {}}
-          >
-            📊 自动分卷规划
-          </button>
-          <button
-            className="btn-ghost-sm"
-            onClick={handleExtractVolumes}
-            disabled={extractLoading || outlineWorkflowLoading !== ''}
-            title="从大纲总纲（五幕式/AI创作/AI识别/手编均可）一次性提取各卷剧情"
-          >
-            {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
-          </button>
-          <button
-            className="btn-ghost-sm"
-            onClick={() => setImportModalOpen(true)}
-            disabled={importLoading}
-            title="导入剧情大纲文本，自动识别拆分到各卷"
-          >
-            📥 导入剧情大纲
-          </button>
-          <button
-            className="btn-ghost-sm"
-            onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }}
-            title="AI 协同创作各卷剧情"
-          >
-            ✨ AI创作
-          </button>
-          <button
-            className="btn-primary-sm"
-            onClick={addVolumeOutline}
-            title="手动添加一卷空大纲"
-          >
-            ＋ 添加卷大纲
-          </button>
+      {/* 大纲工作流（从大纲维度迁移）：总纲→分卷规划→提取→导入→AI创作 全部在同一行，相互协作非强制。
+          支持折叠，方便手机使用。 */}
+      {!workflowCollapsed && (
+        <div className="volume-calc-section" style={{ borderLeft: '3px solid #6c5ce7', paddingLeft: 10, marginBottom: 8 }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* 反生成五幕式总纲：从已导入的各卷剧情反向提炼，写入大纲维度 */}
+            <button
+              className="btn-ghost-sm"
+              onClick={handleReverseGenerateOutline}
+              disabled={reverseLoading || outlineWorkflowLoading !== ''}
+              title="从已导入/提取的各卷剧情，反向提炼五幕式总纲，填入大纲维度"
+              style={{ color: '#6c5ce7' }}
+            >
+              {reverseLoading ? '⏳ 反生成中...' : '🔄 反生成五幕式总纲'}
+            </button>
+            <button
+              className="btn-ghost-sm"
+              onClick={() => setShowVolumeCalc(s => !s)}
+              disabled={outlineWorkflowLoading !== ''}
+              title="输入目标字数，按每卷50章×2400字自动分卷"
+              style={showVolumeCalc ? { background: '#6c5ce7', color: '#fff' } : {}}
+            >
+              📊 自动分卷规划
+            </button>
+            <button
+              className="btn-ghost-sm"
+              onClick={handleExtractVolumes}
+              disabled={extractLoading || outlineWorkflowLoading !== ''}
+              title="从大纲总纲（五幕式/AI创作/AI识别/手编均可）一次性提取各卷剧情"
+            >
+              {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
+            </button>
+            <button
+              className="btn-ghost-sm"
+              onClick={() => setImportModalOpen(true)}
+              disabled={importLoading}
+              title="导入剧情大纲文本，自动识别拆分到各卷"
+            >
+              📥 导入剧情大纲
+            </button>
+            <button
+              className="btn-ghost-sm"
+              onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }}
+              title="AI 协同创作各卷剧情"
+            >
+              ✨ AI创作
+            </button>
+            <button
+              className="btn-primary-sm"
+              onClick={addVolumeOutline}
+              title="手动添加一卷空大纲"
+            >
+              ＋ 添加卷大纲
+            </button>
+          </div>
+          {/* 工作流提示：打通总纲→分卷→提取→导入→AI创作，相互反哺非强制 */}
+          <div style={{ fontSize: 11, color: '#636e72', marginTop: 4, lineHeight: 1.6 }}>
+            💡 工作流可任选起点、相互反哺：
+            {bible?.plot_design?.trim() ? ' ✓有总纲' : ' ✗无总纲'}
+            {bible?.timeline?.trim() ? ' ✓有各卷' : ' ✗无各卷'}
+            <br />
+            有总纲→提取各卷；有各卷→反生成总纲；无总纲→分卷规划/导入/AI创作任选；节点设计无需总纲即可用
+          </div>
+          {outlineWorkflowProgress && (
+            <div style={{ fontSize: 12, color: '#0984e3', marginTop: 6 }}>{outlineWorkflowProgress}</div>
+          )}
         </div>
-        {/* 工作流提示：打通总纲→分卷→提取→导入→AI创作，相互反哺非强制 */}
-        <div style={{ fontSize: 11, color: '#636e72', marginTop: 4, lineHeight: 1.6 }}>
-          💡 工作流可任选起点、相互反哺：
-          {bible?.plot_design?.trim() ? ' ✓有总纲' : ' ✗无总纲'}
-          {bible?.timeline?.trim() ? ' ✓有各卷' : ' ✗无各卷'}
-          <br />
-          有总纲→提取各卷；有各卷→反生成总纲；无总纲→分卷规划/导入/AI创作任选；节点设计无需总纲即可用
-        </div>
-        {outlineWorkflowProgress && (
-          <div style={{ fontSize: 12, color: '#0984e3', marginTop: 6 }}>{outlineWorkflowProgress}</div>
-        )}
-      </div>
+      )}
 
       {/* 自动分卷规划表单（点击按钮后展开） */}
       {showVolumeCalc && (
@@ -3020,6 +3276,308 @@ function PlotPanel(props: {
                   )}
                 </div>
               ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===== 物资库面板（按卷） ===== */
+function InventoryPanel(props: {
+  bookId: string;
+  bible: BookBible | null;
+  onBibleUpdate: (b: BookBible) => void;
+  bookTitle: string;
+  chapters: Chapter[];
+  hasChapters: boolean;
+  showConfirm: (message: string, onConfirm: () => void) => void;
+  skillPacks: SkillPack[];
+  selectedSkillPackIds: string[];
+  onToggleSkillPack: (id: string) => void;
+  selectedSkillPacks: SkillPack[];
+}) {
+  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks } = props;
+  const [inventory, setInventory] = useState<any[]>([]);
+  const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
+  const [analyzingVol, setAnalyzingVol] = useState('');
+  const [aiMode, setAiMode] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiAssisting, setAiAssisting] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [skillExpanded, setSkillExpanded] = useState(false);
+
+  // 从 chapters 表筛 is_volume 卷，作为可识别的卷列表
+  const volumeChapters = chapters.filter(c => c.is_volume);
+
+  // 解析 inventory（JSON 数组，每卷一条）
+  useEffect(() => {
+    if (!bible?.inventory) { setInventory([]); return; }
+    try {
+      const parsed = JSON.parse(bible.inventory);
+      if (Array.isArray(parsed)) { setInventory(parsed); return; }
+    } catch { /* not JSON */ }
+    setInventory([]);
+  }, [bible?.inventory]);
+
+  async function saveInventory(newList: any[]) {
+    setInventory(newList);
+    try {
+      const updated = await api.updateBible(bookId, { inventory: JSON.stringify(newList, null, 2) } as any);
+      onBibleUpdate(updated);
+    } catch (e: any) {
+      alert('保存失败: ' + e.message);
+    }
+  }
+
+  function toggleVol(idx: number) {
+    setCollapsedVols(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  }
+
+  // 合并卷列表：chapters.is_volume 卷 + inventory 已有卷
+  const displayVolumes = useMemo(() => {
+    const result: any[] = [];
+    const usedIds = new Set<string>();
+    // chapters 表的卷（可识别）
+    for (const vc of volumeChapters) {
+      const invData = inventory.find(v => v.volume_id === vc.id) || inventory.find(v => v.volume === vc.title);
+      result.push({
+        volume_id: vc.id,
+        volume: vc.title,
+        items: invData?.items || [],
+        realms: invData?.realms || [],
+        chapter_count: chapters.filter(c => c.parent_id === vc.id).length,
+      });
+      if (invData) { usedIds.add(invData.volume_id || ''); usedIds.add(invData.volume || ''); }
+    }
+    // inventory 已有但无对应章节卷
+    for (const v of inventory) {
+      const id = v.volume_id || '';
+      const name = v.volume || '';
+      if (!usedIds.has(id) && !usedIds.has(name)) {
+        result.push({ ...v, chapter_count: 0 });
+      }
+    }
+    return result;
+  }, [volumeChapters, inventory, chapters]);
+
+  // AI识别指定卷的物资
+  async function handleAnalyzeVolume(volId: string, volTitle: string) {
+    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，识别势力/角色拥有的物品、功法、法宝、境界等。是否继续？`, async () => {
+      setAnalyzingVol(volId || volTitle);
+      try {
+        const result = await api.analyzeInventoryVolume(bookId, volId, volTitle, selectedSkillPackIds);
+        if (result.bible) onBibleUpdate(result.bible);
+        alert(`AI识别完成！已为「${volTitle}」识别 ${result.volume_data?.items?.length || 0} 项物资`);
+      } catch (e: any) {
+        alert('AI识别失败：' + (e.message || '请检查AI配置'));
+      }
+      setAnalyzingVol('');
+    });
+  }
+
+  // 删除某卷的物资数据
+  async function deleteVolumeInventory(idx: number) {
+    const vol = displayVolumes[idx];
+    if (!vol) return;
+    showConfirm(`确定删除「${vol.volume || '该卷'}」的物资数据？`, async () => {
+      const newList = inventory.filter((v: any) => {
+        const vId = v.volume_id || '';
+        const vName = v.volume || '';
+        if (vol.volume_id && vId === vol.volume_id) return false;
+        if (vol.volume && vName === vol.volume) return false;
+        return true;
+      });
+      await saveInventory(newList);
+    });
+  }
+
+  // AI协同创作（生成物资数据）
+  async function executeAi() {
+    if (!aiPrompt.trim()) { alert('请输入创作要求'); return; }
+    setAiAssisting(true);
+    setAiError('');
+    try {
+      const skillKeys = ['lock_facts', 'tomato_setting'];
+      const skillPrompt = extractSkillPrompt(selectedSkillPacks, skillKeys);
+      const skillNote = selectedSkillPacks.length > 0 ? `\n\n【已加载技能包：${selectedSkillPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
+      const contextConcept = bible?.concept || '暂无构思';
+      const messages = [
+        { role: 'system', content: `你是专业网文世界观分析师。请根据用户要求生成物资库（物品、功法、法宝、境界等）。${skillNote}` },
+        { role: 'user', content: `构思：${contextConcept}\n已有物资：${bible?.inventory?.slice(0, 500) || '无'}\n\n用户要求：${aiPrompt}\n\n请生成按卷划分的物资库，用JSON数组格式输出，每个元素包含 volume(卷名)、items(物资数组，含owner/name/category/description/status)、realms(境界数组，含character/realm/progress)。` },
+      ];
+      const result = await api.aiChat(messages);
+      let newVols: any[] = [];
+      try {
+        const match = result.content.match(/\[[\s\S]*\]/);
+        if (match) newVols = JSON.parse(match[0]);
+      } catch { /* parse fail */ }
+      if (newVols.length > 0) {
+        await saveInventory([...inventory, ...newVols]);
+        setAiMode(false);
+        setAiPrompt('');
+      } else {
+        setAiError('AI返回格式无法解析，请重试');
+      }
+    } catch (e: any) {
+      setAiError(e.message || 'AI创作失败');
+    }
+    setAiAssisting(false);
+  }
+
+  const handlePromptKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      if (!aiAssisting && aiPrompt.trim()) executeAi();
+    }
+  };
+
+  const CATEGORY_LABELS: Record<string, string> = {
+    '物品': '📦', '功法': '📖', '法宝': '⚔️', '境界': '⚡', '灵宠': '🐾', '领地': '🗺️', '资源': '💎', '其他': '🔹',
+  };
+
+  // AI协同创作模式
+  if (aiMode) {
+    return (
+      <div className="bible-edit-panel">
+        <div className="bible-edit-header">
+          <h3>🎒 AI协同创作 · 物资库</h3>
+          <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
+        </div>
+        {skillPacks.length > 0 && (
+          <div className="skill-pack-collapsible">
+            <button className="skill-pack-toggle" onClick={() => setSkillExpanded(v => !v)} disabled={aiAssisting}>
+              <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
+              <span>📦 协同技能包</span>
+              {selectedSkillPackIds.length > 0 && <span className="skill-pack-toggle-badge">{selectedSkillPackIds.length}</span>}
+            </button>
+            {skillExpanded && (
+              <div className="skill-pack-checkbox-list">
+                {skillPacks.map(p => (
+                  <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
+                    <input type="checkbox" checked={selectedSkillPackIds.includes(p.id)} onChange={() => onToggleSkillPack(p.id)} disabled={aiAssisting} />
+                    <span className="skill-pack-checkbox-icon">{p.icon}</span>
+                    <span className="skill-pack-checkbox-name">{p.name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="ai-prompt-vertical">
+          <textarea className="input bible-ai-prompt-input" rows={6} value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} onKeyDown={handlePromptKeyDown} placeholder="例如：生成三卷的物资库，每卷包含主角和主要势力的法宝、功法、境界..." disabled={aiAssisting} autoFocus />
+          <div className="ai-prompt-bottom-row">
+            <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
+            <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? '⏳ 创作中...' : '🚀 发送'}</button>
+          </div>
+        </div>
+        {aiError && <div className="error-msg" style={{marginTop:8}}>{aiError}</div>}
+        {aiAssisting && <div className="bible-ai-loading"><div className="loading-spinner" /><p>AI正在生成物资库...</p></div>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="bible-edit-panel">
+      {bookTitle && (
+        <div className="bible-context-bar">
+          <span className="bible-context-book">📖 {bookTitle}</span>
+          <span className="bible-context-sep">›</span>
+          <span className="bible-context-dim">🎒 物资库</span>
+          {displayVolumes.length > 0 && <span className="bible-context-count">{displayVolumes.length}卷</span>}
+        </div>
+      )}
+      <div className="bible-edit-header">
+        <h3>🎒 物资库（按卷）</h3>
+        <div className="bible-edit-actions">
+          <button className="btn-ghost-sm" onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }} title="AI 协同创作物资库">
+            ✨ AI创作
+          </button>
+        </div>
+      </div>
+      <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
+        按卷记录主要势力和角色拥有的物品、功法、法宝、境界等。每卷可单独 AI 识别。
+      </p>
+
+      {displayVolumes.length === 0 ? (
+        <div className="bible-empty">
+          <span className="bible-empty-icon">🎒</span>
+          <p>暂无物资信息</p>
+          <p className="text-muted">先在剧情维度创建分卷，或用 AI 创作生成物资库</p>
+          <div className="bible-empty-actions">
+            <button className="btn-primary-sm" onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }}>✨ AI创作</button>
+            {hasChapters && (
+              <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume('', '全部章节')} disabled={analyzingVol === '全部章节'}>
+                {analyzingVol === '全部章节' ? '🤖 识别中...' : '🔍 AI识别全部'}
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="plot-volume-list">
+          {displayVolumes.map((vol, idx) => (
+            <div key={idx} className="plot-volume-card">
+              <div className="plot-volume-header" onClick={() => toggleVol(idx)} style={{cursor:'pointer'}}>
+                <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVols.has(idx) ? '▶' : '▼'}</span>
+                <h4>{vol.volume || `第${idx + 1}卷`}</h4>
+                {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
+                <span className="text-muted" style={{fontSize:12}}>{(vol.items || []).length}项物资</span>
+                <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+                  {hasChapters && (
+                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume)} title="AI识别此卷物资">
+                      {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}
+                    </button>
+                  )}
+                  {(vol.items || []).length > 0 && (
+                    <button className="btn-ghost-sm" onClick={() => deleteVolumeInventory(idx)} style={{color:'#e74c3c'}} title="删除此卷物资数据">🗑️</button>
+                  )}
+                </div>
+              </div>
+              {!collapsedVols.has(idx) && (
+                <div className="plot-volume-body">
+                  {(!vol.items || vol.items.length === 0) && (!vol.realms || vol.realms.length === 0) ? (
+                    <p className="text-muted" style={{fontSize:13}}>暂无物资数据，点击「识别」自动提取</p>
+                  ) : (
+                    <>
+                      {vol.items && vol.items.length > 0 && (
+                        <div className="plot-events">
+                          <b>物资清单（{vol.items.length}项）：</b>
+                          <ul>
+                            {vol.items.map((item: any, i: number) => (
+                              <li key={i}>
+                                <span style={{color:'#5b8def',fontWeight:600}}>{CATEGORY_LABELS[item.category] || '🔹'} {item.name}</span>
+                                {item.owner && <span style={{color:'#888'}}> · 持有：{item.owner}</span>}
+                                {item.category && <span style={{color:'#27ae60'}}> · {item.category}</span>}
+                                {item.status && <span style={{color:'#e87d3e'}}> · {item.status}</span>}
+                                {item.description && <span style={{color:'#666'}}> — {item.description}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {vol.realms && vol.realms.length > 0 && (
+                        <div className="plot-events">
+                          <b>境界变化（{vol.realms.length}项）：</b>
+                          <ul>
+                            {vol.realms.map((r: any, i: number) => (
+                              <li key={i}>
+                                <span style={{color:'#9b59b6',fontWeight:600}}>{r.character}</span>
+                                {r.realm && <span style={{color:'#27ae60'}}> · {r.realm}</span>}
+                                {r.progress && <span style={{color:'#666'}}> — {r.progress}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -3564,10 +4122,15 @@ function DynamicMemoryPanel(props: {
   bookId: string;
   concept: string;
   bible: BookBible | null;
+  onBibleUpdate: (b: BookBible) => void;
   chapters: Chapter[];
   showConfirm: (message: string, onConfirm: () => void) => void;
+  skillPacks: SkillPack[];
+  selectedSkillPackIds: string[];
+  onToggleSkillPack: (id: string) => void;
+  selectedSkillPacks: SkillPack[];
 }) {
-  const { bookId, chapters, showConfirm } = props;
+  const { bookId, chapters, showConfirm, selectedSkillPackIds } = props;
   const [reports, setReports] = useState<DynamicReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -3584,6 +4147,10 @@ function DynamicMemoryPanel(props: {
   const [batchMode, setBatchMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
+  // 按卷动态识别
+  const [dynVolumes, setDynVolumes] = useState<any[]>([]);
+  const [analyzingVol, setAnalyzingVol] = useState('');
+  const [collapsedVolDyn, setCollapsedVolDyn] = useState<Set<number>>(new Set());
 
   const chapterCount = chapters.filter(c => !c.is_volume).length;
 
@@ -3613,6 +4180,88 @@ function DynamicMemoryPanel(props: {
     }
     if (reports.length === 0) setSelectedId(null);
   }, [reports]);
+
+  // 解析按卷动态文件数据（dynamic_volumes）
+  const { bible, onBibleUpdate } = props;
+  useEffect(() => {
+    if (!bible?.dynamic_volumes) { setDynVolumes([]); return; }
+    try {
+      const parsed = JSON.parse(bible.dynamic_volumes);
+      if (Array.isArray(parsed)) { setDynVolumes(parsed); return; }
+    } catch { /* not JSON */ }
+    setDynVolumes([]);
+  }, [bible?.dynamic_volumes]);
+
+  // chapters 表的卷
+  const volumeChapters = chapters.filter(c => c.is_volume);
+
+  // 合并卷列表：chapters.is_volume 卷 + dynVolumes 已有卷
+  const displayDynVolumes = useMemo(() => {
+    const result: any[] = [];
+    const usedIds = new Set<string>();
+    for (const vc of volumeChapters) {
+      const dvData = dynVolumes.find(v => v.volume_id === vc.id) || dynVolumes.find(v => v.volume === vc.title);
+      result.push({
+        volume_id: vc.id,
+        volume: vc.title,
+        data: dvData?.data || null,
+        chapter_count: chapters.filter(c => c.parent_id === vc.id).length,
+      });
+      if (dvData) { usedIds.add(dvData.volume_id || ''); usedIds.add(dvData.volume || ''); }
+    }
+    for (const v of dynVolumes) {
+      const id = v.volume_id || '';
+      const name = v.volume || '';
+      if (!usedIds.has(id) && !usedIds.has(name)) {
+        result.push({ ...v, chapter_count: 0 });
+      }
+    }
+    return result;
+  }, [volumeChapters, dynVolumes, chapters]);
+
+  function toggleVolDyn(idx: number) {
+    setCollapsedVolDyn(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  }
+
+  // AI识别指定卷的动态文件分类
+  async function handleAnalyzeDynVolume(volId: string, volTitle: string) {
+    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，生成本卷的动态分类摘要（人物/事件/时间线/地点/势力/伏笔/境界/关系）。是否继续？`, async () => {
+      setAnalyzingVol(volId || volTitle);
+      try {
+        const result = await api.analyzeDynamicVolume(bookId, volId, volTitle, selectedSkillPackIds);
+        if (result.bible) onBibleUpdate(result.bible);
+        alert(`AI识别完成！已为「${volTitle}」生成动态文件摘要`);
+      } catch (e: any) {
+        alert('AI识别失败：' + (e.message || '请检查AI配置'));
+      }
+      setAnalyzingVol('');
+    });
+  }
+
+  // 删除某卷的动态文件数据
+  async function deleteVolumeDynamic(idx: number) {
+    const vol = displayDynVolumes[idx];
+    if (!vol) return;
+    showConfirm(`确定删除「${vol.volume || '该卷'}」的动态文件数据？`, async () => {
+      const newList = dynVolumes.filter((v: any) => {
+        const vId = v.volume_id || '';
+        const vName = v.volume || '';
+        if (vol.volume_id && vId === vol.volume_id) return false;
+        if (vol.volume && vName === vol.volume) return false;
+        return true;
+      });
+      try {
+        const updated = await api.updateBible(bookId, { dynamic_volumes: JSON.stringify(newList, null, 2) } as any);
+        onBibleUpdate(updated);
+      } catch (e: any) {
+        alert('删除失败: ' + e.message);
+      }
+    });
+  }
 
   const selectedReport = reports.find(r => r.id === selectedId) || null;
 
@@ -3824,6 +4473,58 @@ function DynamicMemoryPanel(props: {
       </div>
 
       {error && <div className="error-msg" style={{ marginBottom: 8 }}>{error}</div>}
+
+      {/* 按卷动态文件识别 */}
+      {displayDynVolumes.length > 0 && (
+        <div className="plot-volume-list" style={{marginBottom:16}}>
+          <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
+            📚 按卷动态文件：每卷可单独 AI 识别本卷的人物/事件/时间线/地点/势力/伏笔/境界/关系摘要。
+          </p>
+          {displayDynVolumes.map((vol, idx) => {
+            const d = vol.data || {};
+            const hasData = vol.data && (d.summary || d.characters || d.events);
+            return (
+              <div key={idx} className="plot-volume-card">
+                <div className="plot-volume-header" onClick={() => toggleVolDyn(idx)} style={{cursor:'pointer'}}>
+                  <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVolDyn.has(idx) ? '▶' : '▼'}</span>
+                  <h4>{vol.volume || `第${idx + 1}卷`}</h4>
+                  {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
+                  {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
+                  <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+                    {chapterCount > 0 && (
+                      <button className="btn-ghost-sm" onClick={() => handleAnalyzeDynVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume)} title="AI识别此卷动态文件">
+                        {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}
+                      </button>
+                    )}
+                    {hasData && (
+                      <button className="btn-ghost-sm" onClick={() => deleteVolumeDynamic(idx)} style={{color:'#e74c3c'}} title="删除此卷动态文件数据">🗑️</button>
+                    )}
+                  </div>
+                </div>
+                {!collapsedVolDyn.has(idx) && (
+                  <div className="plot-volume-body">
+                    {!hasData ? (
+                      <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据，点击「识别」自动生成本卷摘要</p>
+                    ) : (
+                      <div className="plot-events">
+                        {d.summary && <p><b>综合摘要：</b>{d.summary}</p>}
+                        {d.characters && <p><b>登场人物：</b>{d.characters}</p>}
+                        {d.events && <p><b>关键事件：</b>{d.events}</p>}
+                        {d.timeline && <p><b>时间线：</b>{d.timeline}</p>}
+                        {d.locations && <p><b>地点：</b>{d.locations}</p>}
+                        {d.factions && <p><b>势力动态：</b>{d.factions}</p>}
+                        {d.foreshadowing && <p><b>伏笔：</b>{d.foreshadowing}</p>}
+                        {d.realms && <p><b>境界变化：</b>{d.realms}</p>}
+                        {d.relationships && <p><b>关系变化：</b>{d.relationships}</p>}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* 报告区域 */}
       {reports.length === 0 ? (
@@ -4319,1248 +5020,4 @@ function MapPanel(props: {
       )}
     </div>
   );
-}
-
-/* ===== 图谱面板 ===== */
-interface GraphNode {
-  id: string;
-  label: string;
-  x: number;
-  y: number;
-  color?: string;
-  size?: number;
-  desc?: string;
-  nodeType?: string;
-  // 境界图谱扩展字段
-  isCurrent?: boolean;
-  requirements?: string;
-  materials?: string;
-  techniques?: string;
-  visited?: boolean;
-}
-interface GraphEdge {
-  source: string;
-  target: string;
-  label?: string;
-  style?: 'solid' | 'dashed' | 'dotted';
-  color?: string;
-  directed?: boolean;
-}
-
-// 简易力导向布局
-function forceLayout(nodes: GraphNode[], edges: GraphEdge[], iterations: number = 100): void {
-  if (nodes.length <= 1) return;
-  const k = 140;
-  const damping = 0.85;
-
-  for (let iter = 0; iter < iterations; iter++) {
-    const forces: Record<string, { x: number; y: number }> = {};
-    nodes.forEach(n => { forces[n.id] = { x: 0, y: 0 }; });
-
-    // 节点间斥力
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const dx = nodes[i].x - nodes[j].x;
-        const dy = nodes[i].y - nodes[j].y;
-        let dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 1) dist = 1;
-        const force = (k * k) / dist;
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-        forces[nodes[i].id].x += fx;
-        forces[nodes[i].id].y += fy;
-        forces[nodes[j].id].x -= fx;
-        forces[nodes[j].id].y -= fy;
-      }
-    }
-
-    // 边的引力
-    edges.forEach(e => {
-      const s = nodes.find(n => n.id === e.source);
-      const t = nodes.find(n => n.id === e.target);
-      if (!s || !t) return;
-      const dx = t.x - s.x;
-      const dy = t.y - s.y;
-      let dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 1) dist = 1;
-      const force = (dist * dist) / k;
-      const fx = (dx / dist) * force;
-      const fy = (dy / dist) * force;
-      forces[s.id].x += fx;
-      forces[s.id].y += fy;
-      forces[t.id].x -= fx;
-      forces[t.id].y -= fy;
-    });
-
-    // 中心引力
-    nodes.forEach(n => {
-      forces[n.id].x += (200 - n.x) * 0.01;
-      forces[n.id].y += (250 - n.y) * 0.01;
-    });
-
-    const t = 1 - iter / iterations;
-    nodes.forEach(n => {
-      n.x += forces[n.id].x * 0.08 * damping * t;
-      n.y += forces[n.id].y * 0.08 * damping * t;
-    });
-  }
-
-  // 居中并限制范围
-  const minX = Math.min(...nodes.map(n => n.x));
-  const maxX = Math.max(...nodes.map(n => n.x));
-  const minY = Math.min(...nodes.map(n => n.y));
-  const maxY = Math.max(...nodes.map(n => n.y));
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  nodes.forEach(n => { n.x = n.x - cx + 200; n.y = n.y - cy + 250; });
-}
-
-// 关系类型样式映射
-const RELATION_STYLES: Record<string, { color: string; style: 'solid' | 'dashed' | 'dotted' }> = {
-  '师徒': { color: '#5b8def', style: 'solid' },
-  '师父': { color: '#5b8def', style: 'solid' },
-  '师傅': { color: '#5b8def', style: 'solid' },
-  '父子': { color: '#c44d58', style: 'solid' },
-  '父女': { color: '#c44d58', style: 'solid' },
-  '母子': { color: '#c44d58', style: 'solid' },
-  '母女': { color: '#c44d58', style: 'solid' },
-  '兄弟': { color: '#e87d3e', style: 'solid' },
-  '姐妹': { color: '#e87d3e', style: 'solid' },
-  '兄妹': { color: '#e87d3e', style: 'solid' },
-  '姐弟': { color: '#e87d3e', style: 'solid' },
-  '夫妻': { color: '#e91e63', style: 'solid' },
-  '恋人': { color: '#e91e63', style: 'dashed' },
-  '情侣': { color: '#e91e63', style: 'dashed' },
-  '仇': { color: '#c0392b', style: 'dashed' },
-  '敌': { color: '#c0392b', style: 'dashed' },
-  '友': { color: '#27ae60', style: 'solid' },
-  '盟': { color: '#27ae60', style: 'solid' },
-  '主仆': { color: '#9b59b6', style: 'dotted' },
-  '同门': { color: '#1abc9c', style: 'solid' },
-  '同门师': { color: '#1abc9c', style: 'solid' },
-  '上下级': { color: '#9b59b6', style: 'dotted' },
-  '部下': { color: '#9b59b6', style: 'dotted' },
-};
-
-function getRelationStyle(label: string): { color: string; style: 'solid' | 'dashed' | 'dotted' } {
-  for (const key of Object.keys(RELATION_STYLES)) {
-    if (label.includes(key)) {
-      return RELATION_STYLES[key];
-    }
-  }
-  return { color: '#b0a890', style: 'solid' };
-}
-
-function GraphPanel(props: {
-  type: 'relationGraph' | 'realmGraph' | 'locationGraph';
-  data: string;
-  concept: string;
-  charactersData?: string;
-  plotData?: string;
-  settingsData?: string;
-  outlineData?: string;
-  worldData?: string;
-  onAnalyzeFromReports: () => void;
-  dimAnalyzing: boolean;
-  bookId: string;
-  onUpdate: (val: string) => Promise<void>;
-}) {
-  const { type, data, charactersData, plotData, settingsData, outlineData, worldData, onAnalyzeFromReports, dimAnalyzing, onUpdate } = props;
-  const svgRef = useRef<SVGSVGElement>(null);
-  const [editingNode, setEditingNode] = useState<GraphNode | null>(null);
-  const [editName, setEditName] = useState('');
-  const [editDesc, setEditDesc] = useState('');
-  const [editExtra, setEditExtra] = useState<Record<string, string>>({});
-  const [editIsCurrent, setEditIsCurrent] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  // 拖拽——ref 存位置，renderTick 驱重绘，避免状态依赖链导致无限循环
-  const nodePositionsRef = useRef<Record<string, { x: number; y: number }>>({});
-  const draggingRef = useRef<string | null>(null);
-  const dragOffsetRef = useRef({ x: 0, y: 0 });
-  const [renderTick, setRenderTick] = useState(0);
-  const layoutCache = useRef<Map<string, {x:number;y:number}>>(new Map());
-  // 连线模式
-  const [connectMode, setConnectMode] = useState(false);
-  const [connectSource, setConnectSource] = useState<string | null>(null);
-  const [connectLabel, setConnectLabel] = useState('');
-  const [activeEdgeTarget, setActiveEdgeTarget] = useState<string | null>(null);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const { nodes: rawNodes, edges, title } = useMemo(() => {
-    return parseGraphData(type, data, charactersData, plotData, settingsData, outlineData, worldData);
-  }, [type, data, charactersData, plotData, settingsData, outlineData, worldData]);
-
-  // 稳定布局：已有节点保留缓存坐标，新节点用 forceLayout 坐标
-  const nodes = useMemo(() => {
-    const cache = layoutCache.current;
-    const result = rawNodes.map(n => {
-      const cached = cache.get(n.id);
-      if (cached) return { ...n, x: cached.x, y: cached.y };
-      return n;
-    });
-    return result;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawNodes]);
-
-  // 副作用移到 useEffect：更新布局缓存
-  useEffect(() => {
-    const nextCache = new Map<string, {x:number;y:number}>();
-    nodes.forEach(n => { nextCache.set(n.id, { x: n.x, y: n.y }); });
-    layoutCache.current = nextCache;
-  }, [nodes]);
-
-  // 直接读 ref 获取节点渲染坐标（renderTick 作为隐式依赖保证拖拽时重绘）
-  const getPos = (nodeId: string, fallbackX: number, fallbackY: number) => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    void renderTick;
-    return nodePositionsRef.current[nodeId] || { x: fallbackX, y: fallbackY };
-  };
-
-  // 全局拖拽事件——只在 draggingRef 变化时绑定
-  useEffect(() => {
-    const nodeId = draggingRef.current;
-    if (!nodeId) return;
-    const svgEl = svgRef.current;
-    if (!svgEl) return;
-
-    const handleMove = (clientX: number, clientY: number) => {
-      const svgRect = svgEl.getBoundingClientRect();
-      const vb = viewBox; // 闭包捕获当前 viewBox，不读 DOM 属性
-      const scaleX = vb.vbW / svgRect.width;
-      const scaleY = vb.vbH / svgRect.height;
-      const svgX = vb.minX + (clientX - svgRect.left) * scaleX;
-      const svgY = vb.minY + (clientY - svgRect.top) * scaleY;
-      nodePositionsRef.current = {
-        ...nodePositionsRef.current,
-        [nodeId]: { x: svgX - dragOffsetRef.current.x, y: svgY - dragOffsetRef.current.y },
-      };
-      setRenderTick(t => t + 1);
-    };
-
-    const onMouseMove = (e: MouseEvent) => handleMove(e.clientX, e.clientY);
-    const onTouchMove = (e: TouchEvent) => {
-      e.preventDefault();
-      if (e.touches.length > 0) handleMove(e.touches[0].clientX, e.touches[0].clientY);
-    };
-    const onEnd = () => { draggingRef.current = null; setRenderTick(t => t + 1); };
-
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onEnd);
-    window.addEventListener('touchmove', onTouchMove, { passive: false });
-    window.addEventListener('touchend', onEnd);
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onEnd);
-      window.removeEventListener('touchmove', onTouchMove);
-      window.removeEventListener('touchend', onEnd);
-    };
-  }, []); // 空依赖：通过 ref 通信
-
-  function handleNodeMouseDown(e: React.MouseEvent, node: GraphNode) {
-    if (connectMode) {
-      if (connectSource) {
-        if (connectSource !== node.id) setActiveEdgeTarget(node.id);
-      } else {
-        setConnectSource(node.id);
-      }
-      return;
-    }
-    e.stopPropagation();
-    const svgEl = svgRef.current;
-    if (!svgEl) return;
-    const svgRect = svgEl.getBoundingClientRect();
-    const vb = viewBox;
-    const scaleX = vb.vbW / svgRect.width;
-    const scaleY = vb.vbH / svgRect.height;
-    const svgX = vb.minX + (e.clientX - svgRect.left) * scaleX;
-    const svgY = vb.minY + (e.clientY - svgRect.top) * scaleY;
-    const pos = nodePositionsRef.current[node.id] || { x: node.x, y: node.y };
-    dragOffsetRef.current = { x: svgX - pos.x, y: svgY - pos.y };
-    draggingRef.current = node.id;
-    setRenderTick(t => t + 1);
-  }
-
-  function handleNodeTouchStart(e: React.TouchEvent, node: GraphNode) {
-    if (connectMode) {
-      if (connectSource) {
-        if (connectSource !== node.id) setActiveEdgeTarget(node.id);
-      } else {
-        setConnectSource(node.id);
-      }
-      return;
-    }
-    // 长按 600ms 进入连线模式
-    if (longPressTimer.current) clearTimeout(longPressTimer.current);
-    longPressTimer.current = setTimeout(() => {
-      setConnectMode(true);
-      setConnectSource(node.id);
-    }, 600);
-    // 同时准备拖拽
-    if (e.touches.length > 0) {
-      const touch = e.touches[0];
-      const svgEl = svgRef.current;
-      if (!svgEl) return;
-      const svgRect = svgEl.getBoundingClientRect();
-      const vb = viewBox;
-      const scaleX = vb.vbW / svgRect.width;
-      const scaleY = vb.vbH / svgRect.height;
-      const svgX = vb.minX + (touch.clientX - svgRect.left) * scaleX;
-      const svgY = vb.minY + (touch.clientY - svgRect.top) * scaleY;
-      const pos = nodePositionsRef.current[node.id] || { x: node.x, y: node.y };
-      dragOffsetRef.current = { x: svgX - pos.x, y: svgY - pos.y };
-      draggingRef.current = node.id;
-      setRenderTick(t => t + 1);
-    }
-    const onTouchEnd = () => {
-      if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
-      window.removeEventListener('touchend', onTouchEnd);
-    };
-    window.addEventListener('touchend', onTouchEnd, { once: true });
-  }
-
-  async function confirmCreateEdge() {
-    if (!connectSource || !activeEdgeTarget || !connectLabel.trim()) {
-      alert('请选择关系类型');
-      return;
-    }
-    try {
-      // 尝试解析JSON格式并添加edges
-      let newData = data;
-      try {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed)) {
-          // 原始格式节点在顶层，边信息不存在，需要附加存储
-          // 使用简单策略：在数据末尾追加边定义
-          newData = JSON.stringify(parsed, null, 2);
-        }
-      } catch { /* keep as is */ }
-      // 将 edges 信息追加为注释格式存储（不改变原有数据格式）
-      const edgeDef = `\n/*EDGE:${connectSource}->${activeEdgeTarget}:${connectLabel}:${'#ffd54f'}*/`;
-      const existingEdges = (data.match(/\/\*EDGE:[^*]*\*\//g) || []).join('\n');
-      let baseData = data;
-      if (existingEdges) {
-        baseData = baseData.replace(/\/\*EDGE:[^*]*\*\//g, '').trim();
-      }
-      newData = baseData + '\n' + existingEdges + edgeDef;
-      await onUpdate(newData.trim());
-    } catch (e: any) {
-      alert('添加连线失败: ' + e.message);
-    }
-    setConnectSource(null);
-    setActiveEdgeTarget(null);
-    setConnectLabel('');
-  }
-
-  function openNodeEditor(node: GraphNode) {
-    setEditingNode(node);
-    setEditName(node.label);
-    setEditDesc(node.desc || '');
-    setEditIsCurrent(!!node.isCurrent);
-    setEditExtra({
-      requirements: node.requirements || '',
-      materials: node.materials || '',
-      techniques: node.techniques || '',
-    });
-  }
-
-  async function saveNodeEdit() {
-    if (!editingNode) return;
-    setSaving(true);
-    try {
-      let newData = data;
-      // 尝试JSON格式更新
-      try {
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed)) {
-          const updated = parsed.map((item: any) => {
-            const name = item.name || item.realm || item.level || item.id;
-            if (name === editingNode.label || name === editingNode.id) {
-              return {
-                ...item,
-                name: editName,
-                desc: editDesc,
-                description: editDesc,
-                isCurrent: type === 'realmGraph' ? editIsCurrent : undefined,
-                requirements: editExtra.requirements || undefined,
-                materials: editExtra.materials || undefined,
-                techniques: editExtra.techniques || undefined,
-              };
-            }
-            return item;
-          });
-          newData = JSON.stringify(updated, null, 2);
-        } else if (parsed.characters && Array.isArray(parsed.characters)) {
-          parsed.characters = parsed.characters.map((item: any) => {
-            if (item.name === editingNode.label) {
-              return { ...item, name: editName, desc: editDesc, description: editDesc };
-            }
-            return item;
-          });
-          newData = JSON.stringify(parsed, null, 2);
-        }
-      } catch {
-        // 纯文本格式：按行替换
-        const lines = data.split('\n');
-        const updatedLines = lines.map(line => {
-          if (line.includes(editingNode.label)) {
-            // 替换描述部分
-            const colonIdx = line.search(/[：:]/);
-            if (colonIdx > 0) {
-              return line.slice(0, colonIdx + 1) + ' ' + editDesc;
-            }
-            return `${editName}：${editDesc}`;
-          }
-          return line;
-        });
-        newData = updatedLines.join('\n');
-      }
-      await onUpdate(newData);
-      setEditingNode(null);
-    } catch (e: any) {
-      alert('保存失败: ' + e.message);
-    }
-    setSaving(false);
-  }
-
-  if (!data || nodes.length === 0) {
-    const hints: Record<string, string> = {
-      relationGraph: '在「人物及关系」中填写角色信息后，这里会自动生成人物关系图谱',
-      realmGraph: '在「世界观」中填写境界/等级体系后，这里会自动生成晋升图谱',
-    };
-    const icons: Record<string, string> = {
-      relationGraph: '🕸️',
-      realmGraph: '⚡',
-    };
-    return (
-      <div className="graph-panel">
-        <div className="graph-header">
-          <h3>{icons[type]} {title}</h3>
-          <button className="btn-ghost-sm" onClick={onAnalyzeFromReports} disabled={dimAnalyzing} title="从动态文件提取信息">
-            {dimAnalyzing ? '⏳ 识别中...' : '🔍 AI识别'}
-          </button>
-        </div>
-        <div className="bible-empty">
-          <span className="bible-empty-icon">{icons[type]}</span>
-          <p>暂无图谱数据</p>
-          <p className="text-muted">{hints[type]}</p>
-          <button className="btn-primary-sm" style={{ marginTop: 8 }} onClick={onAnalyzeFromReports} disabled={dimAnalyzing}>
-            {dimAnalyzing ? '⏳ 识别中...' : '🔍 从动态文件识别'}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // 自适应 viewBox（含拖拽后的位置）
-  const allX: number[] = [];
-  const allY: number[] = [];
-  nodes.forEach(n => {
-    const p = nodePositionsRef.current[n.id];
-    if (p) { allX.push(p.x); allY.push(p.y); }
-    allX.push(n.x); allY.push(n.y);
-  });
-  const minX = Math.min(...allX) - 50;
-  const maxX = Math.max(...allX) + 50;
-  const minY = Math.min(...allY) - 40;
-  const maxY = Math.max(...allY) + 50;
-  const vbW = Math.max(maxX - minX, 200);
-  const vbH = Math.max(maxY - minY, 200);
-
-  // viewBox 对象（稳定引用，供拖拽闭包使用，避免直接读 DOM 属性）
-  const viewBox = useMemo(() => ({ minX, minY, vbW, vbH }), [minX, minY, vbW, vbH]);
-
-  // 收集出现过的边样式用于图例
-  const edgeLegendMap = new Map<string, { color: string; style: string }>();
-  edges.forEach(e => {
-    if (e.label) {
-      const st = getRelationStyle(e.label);
-      edgeLegendMap.set(e.label, { color: st.color, style: st.style });
-    }
-  });
-
-  return (
-    <div className="graph-panel">
-      <div className="graph-header">
-        <h3>{title}</h3>
-        <div className="graph-header-actions">
-          <button className="btn-ghost-sm" onClick={onAnalyzeFromReports} disabled={dimAnalyzing} title="从动态文件提取信息">
-            {dimAnalyzing ? '⏳ 识别中...' : '🔍 AI识别'}
-          </button>
-          <span className="text-muted">{nodes.length}个节点 · {edges.length}条关系 · 点击节点可编辑</span>
-        </div>
-      </div>
-      <div className="graph-svg-container graph-starry-bg">
-        <svg ref={svgRef} viewBox={`${minX} ${minY} ${vbW} ${vbH}`} className="graph-svg graph-starry-svg" preserveAspectRatio="xMidYMid meet">
-          <defs>
-            {/* 星空背景渐变 */}
-            <radialGradient id="space-bg" cx="50%" cy="50%" r="70%">
-              <stop offset="0%" stopColor="#1a1a3e" stopOpacity="0.95" />
-              <stop offset="60%" stopColor="#0d0d2b" stopOpacity="0.98" />
-              <stop offset="100%" stopColor="#060614" stopOpacity="1" />
-            </radialGradient>
-            {/* 节点发光滤镜 */}
-            <filter id="node-glow" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="3" result="coloredBlur" />
-              <feMerge>
-                <feMergeNode in="coloredBlur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-            {/* 星星节点渐变 */}
-            <radialGradient id="star-gold" cx="35%" cy="35%" r="65%">
-              <stop offset="0%" stopColor="#fff8e1" />
-              <stop offset="40%" stopColor="#ffd54f" />
-              <stop offset="100%" stopColor="#f9a825" />
-            </radialGradient>
-            <radialGradient id="star-blue" cx="35%" cy="35%" r="65%">
-              <stop offset="0%" stopColor="#e3f2fd" />
-              <stop offset="40%" stopColor="#64b5f6" />
-              <stop offset="100%" stopColor="#1565c0" />
-            </radialGradient>
-            <radialGradient id="star-pink" cx="35%" cy="35%" r="65%">
-              <stop offset="0%" stopColor="#fce4ec" />
-              <stop offset="40%" stopColor="#f06292" />
-              <stop offset="100%" stopColor="#c2185b" />
-            </radialGradient>
-            <radialGradient id="star-green" cx="35%" cy="35%" r="65%">
-              <stop offset="0%" stopColor="#e8f5e9" />
-              <stop offset="40%" stopColor="#66bb6a" />
-              <stop offset="100%" stopColor="#2e7d32" />
-            </radialGradient>
-            <radialGradient id="star-purple" cx="35%" cy="35%" r="65%">
-              <stop offset="0%" stopColor="#f3e5f5" />
-              <stop offset="40%" stopColor="#ab47bc" />
-              <stop offset="100%" stopColor="#6a1b9a" />
-            </radialGradient>
-            <radialGradient id="star-teal" cx="35%" cy="35%" r="65%">
-              <stop offset="0%" stopColor="#e0f2f1" />
-              <stop offset="40%" stopColor="#26a69a" />
-              <stop offset="100%" stopColor="#00695c" />
-            </radialGradient>
-            <radialGradient id="star-orange" cx="35%" cy="35%" r="65%">
-              <stop offset="0%" stopColor="#fff3e0" />
-              <stop offset="40%" stopColor="#ff8a65" />
-              <stop offset="100%" stopColor="#d84315" />
-            </radialGradient>
-            <marker id="arrow-default" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-              <path d="M0,0 L8,4 L0,8 Z" fill="#7e8da0" />
-            </marker>
-            <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-              <path d="M0,0 L8,4 L0,8 Z" fill="#ff6b6b" />
-            </marker>
-            <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-              <path d="M0,0 L8,4 L0,8 Z" fill="#66bb6a" />
-            </marker>
-            <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-              <path d="M0,0 L8,4 L0,8 Z" fill="#64b5f6" />
-            </marker>
-            <marker id="arrow-purple" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-              <path d="M0,0 L8,4 L0,8 Z" fill="#ab47bc" />
-            </marker>
-            <marker id="arrow-pink" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-              <path d="M0,0 L8,4 L0,8 Z" fill="#f06292" />
-            </marker>
-            <marker id="arrow-orange" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-              <path d="M0,0 L8,4 L0,8 Z" fill="#ff8a65" />
-            </marker>
-            <marker id="arrow-teal" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-              <path d="M0,0 L8,4 L0,8 Z" fill="#26a69a" />
-            </marker>
-          </defs>
-          {/* 星空背景 */}
-          <rect x={minX} y={minY} width={vbW} height={vbH} fill="url(#space-bg)" />
-          {/* 装饰星星 */}
-          {Array.from({ length: 30 }).map((_, i) => {
-            const seed = (i * 137.5) % 100;
-            const sx = minX + (seed / 100) * vbW;
-            const sy = minY + ((seed * 1.7) % 100 / 100) * vbH;
-            const sr = (i % 3 === 0) ? 1.2 : 0.6;
-            const op = 0.3 + (seed % 50) / 100;
-            return <circle key={`star-${i}`} cx={sx} cy={sy} r={sr} fill="#fff" opacity={op} className="graph-twinkle-star" style={{ animationDelay: `${i * 0.3}s` }} />;
-          })}
-          {/* 绘制边 */}
-          {edges.map((edge, i) => {
-            const s = nodes.find(n => n.id === edge.source);
-            const t = nodes.find(n => n.id === edge.target);
-            if (!s || !t) return null;
-            const edgeColor = edge.color || (edge.label ? getRelationStyle(edge.label).color : '#8e99ab');
-            const edgeStyle = edge.style || (edge.label ? getRelationStyle(edge.label).style : 'solid');
-            const markerRef = edge.directed ? (() => {
-              if (edgeColor.includes('c0392b') || edgeColor.includes('c44d58') || edgeColor.includes('e74c3c')) return 'arrow-red';
-              if (edgeColor.includes('27ae60') || edgeColor.includes('2ecc71') || edgeColor.includes('66bb6a')) return 'arrow-green';
-              if (edgeColor.includes('5b8def') || edgeColor.includes('3498db') || edgeColor.includes('64b5f6')) return 'arrow-blue';
-              if (edgeColor.includes('9b59b6') || edgeColor.includes('8e44ad') || edgeColor.includes('ab47bc')) return 'arrow-purple';
-              if (edgeColor.includes('e91e63') || edgeColor.includes('f06292')) return 'arrow-pink';
-              if (edgeColor.includes('e87d3e') || edgeColor.includes('ff8a65')) return 'arrow-orange';
-              if (edgeColor.includes('1abc9c') || edgeColor.includes('26a69a')) return 'arrow-teal';
-              return 'arrow-default';
-            })() : '';
-            const sPos = getPos(s.id, s.x, s.y);
-            const tPos = getPos(t.id, t.x, t.y);
-            const dx = tPos.x - sPos.x;
-            const dy = tPos.y - sPos.y;
-            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const sR = (s.size || 24) + 2;
-            const tR = (t.size || 24) + (edge.directed ? 6 : 2);
-            const x1 = sPos.x + (dx / dist) * sR;
-            const y1 = sPos.y + (dy / dist) * sR;
-            const x2 = tPos.x - (dx / dist) * tR;
-            const y2 = tPos.y - (dy / dist) * tR;
-            const midX = (x1 + x2) / 2;
-            const midY = (y1 + y2) / 2 - 6;
-            return (
-              <g key={`edge-${i}`}>
-                <line
-                  x1={x1} y1={y1} x2={x2} y2={y2}
-                  stroke={edgeColor}
-                  strokeWidth="2"
-                  strokeDasharray={edgeStyle === 'dashed' ? '5,3' : edgeStyle === 'dotted' ? '2,2' : undefined}
-                  markerEnd={markerRef ? `url(#${markerRef})` : undefined}
-                  opacity="0.6"
-                />
-                {edge.label && (
-                  <text x={midX} y={midY} className="graph-edge-label graph-star-edge-label" textAnchor="middle" fill={edgeColor}>
-                    {edge.label.length > 6 ? edge.label.slice(0, 5) + '…' : edge.label}
-                  </text>
-                )}
-              </g>
-            );
-          })}
-          {/* 绘制节点 */}
-          {nodes.map(node => {
-            const r = Math.max(node.size || 28, 22);
-            const isRealm = type === 'realmGraph';
-            const isCharHeader = node.nodeType === 'char-header';
-            const labelBelow = isCharHeader || (!isRealm && node.label.length > 3);
-            const labelInside = isRealm && !isCharHeader;
-            const isCurrentRealm = isRealm && node.isCurrent;
-            const reqSummary = type === 'realmGraph' && node.requirements ? `需:${node.requirements.slice(0, 14)}` : '';
-            const techSummary = type === 'realmGraph' && node.techniques ? `功:${node.techniques.slice(0, 12)}` : '';
-            const matSummary = type === 'realmGraph' && node.materials ? `物:${node.materials.slice(0, 12)}` : '';
-            // 根据节点颜色选择星星渐变
-            const nodeColor = node.color || '#ffd54f';
-            const starGrad = (() => {
-              if (nodeColor.includes('c0392b') || nodeColor.includes('c44d58') || nodeColor.includes('e74c3c')) return 'star-orange';
-              if (nodeColor.includes('27ae60') || nodeColor.includes('2ecc71')) return 'star-green';
-              if (nodeColor.includes('5b8def') || nodeColor.includes('3498db')) return 'star-blue';
-              if (nodeColor.includes('9b59b6') || nodeColor.includes('8e44ad')) return 'star-purple';
-              if (nodeColor.includes('e91e63') || nodeColor.includes('e74c8c')) return 'star-pink';
-              if (nodeColor.includes('1abc9c') || nodeColor.includes('16a085')) return 'star-teal';
-              if (nodeColor.includes('e87d3e') || nodeColor.includes('f39c12')) return 'star-gold';
-              return 'star-gold';
-            })();
-            const pos = getPos(node.id, node.x, node.y);
-            return (
-              <g key={node.id}
-                className={`graph-node-group graph-star-node ${connectMode && connectSource === node.id ? 'graph-connect-source' : ''}`}
-                style={{ cursor: connectMode ? 'crosshair' : 'grab' }}
-                onClick={() => {
-                  if (connectMode && connectSource && connectSource !== node.id) {
-                    setActiveEdgeTarget(node.id);
-                  } else if (connectMode && !connectSource) {
-                    setConnectSource(node.id);
-                  } else if (!connectMode) {
-                    openNodeEditor(node);
-                  }
-                }}
-                onMouseDown={(e) => handleNodeMouseDown(e, node)}
-                onTouchStart={(e) => handleNodeTouchStart(e, node)}
-              >
-                {/* 外层光晕 */}
-                <circle cx={pos.x} cy={pos.y} r={r + 6} fill={nodeColor} opacity="0.15" className="graph-star-halo" />
-                {isCurrentRealm && (
-                  <>
-                    <circle cx={pos.x} cy={pos.y} r={r + 10} fill="none" stroke="#ffd54f" strokeWidth="2" opacity="0.3" className="graph-current-ring" />
-                    <circle cx={pos.x} cy={pos.y} r={r + 6} fill="none" stroke="#ffd54f" strokeWidth="2.5" opacity="0.7" />
-                  </>
-                )}
-                {/* 主节点 - 星星效果 */}
-                <circle
-                  cx={pos.x} cy={pos.y} r={r}
-                  fill={`url(#${starGrad})`}
-                  className="graph-node-circle graph-star-circle"
-                  stroke={isCurrentRealm ? '#ffd54f' : 'rgba(255,255,255,0.4)'}
-                  strokeWidth={isCurrentRealm ? '2.5' : '1'}
-                  filter="url(#node-glow)"
-                />
-                <text
-                  x={pos.x}
-                  y={labelInside ? pos.y + 3 : (pos.y + (labelBelow ? 0 : 5))}
-                  className={`graph-node-text graph-star-text ${labelInside ? 'graph-realm-label' : ''}`}
-                  textAnchor="middle"
-                  fontSize={labelInside ? Math.min(11, r * 0.5) : undefined}
-                >
-                  {labelInside ? (node.label.length > 3 ? node.label.slice(0, 2) + '…' : node.label) : (labelBelow ? '' : (node.label.length > 2 ? node.label.slice(0, 2) : node.label))}
-                </text>
-                {labelBelow && (
-                  <text
-                    x={pos.x}
-                    y={pos.y + r + 16}
-                    className="graph-node-label-below"
-                    textAnchor="middle"
-                  >
-                    {node.label.length > 7 ? node.label.slice(0, 6) + '…' : node.label}
-                  </text>
-                )}
-                {isCurrentRealm && (
-                  <text x={pos.x} y={pos.y - r - 10} className="graph-current-badge" textAnchor="middle">📍当前</text>
-                )}
-                {reqSummary && (
-                  <text x={pos.x} y={pos.y + r + (labelBelow ? 32 : 18)} className="graph-req-text" textAnchor="middle">{reqSummary}</text>
-                )}
-                {matSummary && (
-                  <text x={pos.x} y={pos.y + r + (labelBelow ? 46 : 32)} className="graph-req-text" textAnchor="middle">{matSummary}</text>
-                )}
-                {techSummary && (
-                  <text x={pos.x} y={pos.y + r + (labelBelow ? 60 : 46)} className="graph-req-text" textAnchor="middle">{techSummary}</text>
-                )}
-                {node.desc && (
-                  <title>{node.label}：{node.desc}{node.requirements ? `\n所需：${node.requirements}` : ''}{node.materials ? `\n物品：${node.materials}` : ''}{node.techniques ? `\n功法：${node.techniques}` : ''}</title>
-                )}
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      {/* 连线模式控制栏 */}
-      <div className="graph-connect-bar">
-        <button className={`btn-ghost-sm ${connectMode ? 'active' : ''}`}
-          onClick={() => { setConnectMode(!connectMode); setConnectSource(null); }}
-          style={{color: connectMode ? '#ffd54f' : undefined}}>
-          {connectMode ? '🔗 连线模式：点击第一个节点' : '🔗 连线模式'}
-        </button>
-        {connectSource && (
-          <span>已选起点：{nodes.find(n => n.id === connectSource)?.label || connectSource}，请点击终点</span>
-        )}
-        <span className="text-muted" style={{marginLeft:'auto',fontSize:10}}>长按节点也可进入连线</span>
-      </div>
-      {/* 连线标签编辑弹窗 */}
-      {connectMode && connectSource && activeEdgeTarget && (
-        <div className="modal-overlay" onClick={() => { setConnectSource(null); setActiveEdgeTarget(null); }}>
-          <div className="modal-content graph-connect-editor" onClick={e => e.stopPropagation()}>
-            <h4>🔗 添加连线</h4>
-            <p style={{fontSize:13,color:'var(--text-secondary)'}}>
-              {nodes.find(n => n.id === connectSource)?.label} → {nodes.find(n => n.id === activeEdgeTarget)?.label}
-            </p>
-            <div>
-              <label>关系类型</label>
-              <select value={connectLabel} onChange={e => setConnectLabel(e.target.value)} className="input">
-                <option value="">— 选择关系 —</option>
-                <option value="师徒">师徒</option>
-                <option value="盟友">盟友</option>
-                <option value="敌对">敌对</option>
-                <option value="恋爱">恋爱</option>
-                <option value="亲人">亲人</option>
-                <option value="朋友">朋友</option>
-                <option value="统领">统领</option>
-                <option value="隶属">隶属</option>
-                <option value="晋升">晋升</option>
-                <option value="突破">突破</option>
-                <option value="相邻">相邻</option>
-                <option value="通行">通行</option>
-                <option value="仇敌">仇敌</option>
-              </select>
-            </div>
-            <div className="confirm-actions">
-              <button className="btn-ghost-sm" onClick={() => { setConnectSource(null); setActiveEdgeTarget(null); }}>取消</button>
-              <button className="btn-primary-sm" onClick={confirmCreateEdge}>确认添加</button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* 关系类型图例 */}
-      {edgeLegendMap.size > 0 && (
-        <div className="graph-edge-legend">
-          {Array.from(edgeLegendMap.entries()).map(([label, st]) => (
-            <div key={label} className="graph-edge-legend-item">
-              <svg width="24" height="10" style={{ flexShrink: 0 }}>
-                <line x1="0" y1="5" x2="24" y2="5" stroke={st.color} strokeWidth="2"
-                  strokeDasharray={st.style === 'dashed' ? '5,3' : st.style === 'dotted' ? '2,2' : undefined} />
-              </svg>
-              <span>{label}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {/* 节点列表 - 可点击编辑 */}
-      <div className="graph-legend">
-        {nodes.map(node => (
-          <div key={node.id} className="graph-legend-item graph-legend-clickable" title={node.desc || node.label} onClick={() => openNodeEditor(node)}>
-            <span className="graph-legend-dot" style={{ background: node.color || 'var(--accent)' }} />
-            <span>{node.label}{node.isCurrent ? ' ★当前' : ''}</span>
-            {node.desc && <span className="graph-legend-desc">{node.desc.slice(0, 20)}</span>}
-            {node.requirements && <span className="graph-legend-req">所需:{node.requirements.slice(0, 12)}</span>}
-            {node.materials && <span className="graph-legend-req">物品:{node.materials.slice(0, 12)}</span>}
-            {node.techniques && <span className="graph-legend-req">功法:{node.techniques.slice(0, 12)}</span>}
-          </div>
-        ))}
-      </div>
-
-      {/* 节点编辑弹窗 */}
-      {editingNode && (
-        <div className="modal-overlay" onClick={() => setEditingNode(null)}>
-          <div className="modal-content graph-node-editor" onClick={e => e.stopPropagation()}>
-            <h3>✏️ 编辑节点</h3>
-            <div className="form-group">
-              <label>名称</label>
-              <input className="input" value={editName} onChange={e => setEditName(e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label>描述</label>
-              <textarea className="input" rows={3} value={editDesc} onChange={e => setEditDesc(e.target.value)} />
-            </div>
-            {type === 'realmGraph' && (
-              <>
-                <div className="form-group">
-                  <label>
-                    <input type="checkbox" checked={editIsCurrent} onChange={e => setEditIsCurrent(e.target.checked)} style={{ marginRight: 6 }} />
-                    这是主角当前境界
-                  </label>
-                </div>
-                <div className="form-group">
-                  <label>突破所需物资</label>
-                  <input className="input" value={editExtra.requirements || ''} onChange={e => setEditExtra({ ...editExtra, requirements: e.target.value })} placeholder="如：灵石×100、天魂草×3" />
-                </div>
-                <div className="form-group">
-                  <label>消耗物品</label>
-                  <input className="input" value={editExtra.materials || ''} onChange={e => setEditExtra({ ...editExtra, materials: e.target.value })} placeholder="如：筑基丹、破境符" />
-                </div>
-                <div className="form-group">
-                  <label>所需功法</label>
-                  <input className="input" value={editExtra.techniques || ''} onChange={e => setEditExtra({ ...editExtra, techniques: e.target.value })} placeholder="如：混元功、太清诀" />
-                </div>
-              </>
-            )}
-            <div className="confirm-actions">
-              <button className="btn-ghost-sm" onClick={() => setEditingNode(null)} disabled={saving}>取消</button>
-              <button className="btn-primary-sm" onClick={saveNodeEdit} disabled={saving}>
-                {saving ? '保存中...' : '💾 保存'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* 解析图谱数据 */
-function parseGraphData(type: string, data: string, charactersData?: string, plotData?: string, settingsData?: string, outlineData?: string, worldData?: string): {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  title: string;
-  emptyHint: string;
-} {
-  if (!data && !charactersData && !plotData && !settingsData && !outlineData && !worldData) return { nodes: [], edges: [], title: '', emptyHint: '' };
-
-  const titles: Record<string, string> = {
-    relationGraph: '人物关系图谱',
-    realmGraph: '境界晋升图谱',
-    locationGraph: '地点关联图谱',
-  };
-
-  if (type === 'relationGraph') {
-    return parseRelationGraph(data, titles.relationGraph, charactersData, plotData);
-  } else if (type === 'realmGraph') {
-    return parseRealmGraph(data, titles.realmGraph, charactersData, settingsData, outlineData, worldData);
-  } else if (type === 'locationGraph') {
-    return parseLocationGraph(data, titles.locationGraph, settingsData, outlineData, worldData);
-  }
-  return { nodes: [], edges: [], title: '', emptyHint: '' };
-}
-
-function parseRelationGraph(data: string, title: string, charactersData?: string, plotData?: string): { nodes: GraphNode[]; edges: GraphEdge[]; title: string; emptyHint: string } {
-  const nodes: GraphNode[] = [];
-  const edges: GraphEdge[] = [];
-  const colors = ['#4a8b4a', '#e87d3e', '#5b8def', '#c44d58', '#9b59b6', '#1abc9c', '#f39c12', '#e91e63'];
-  const nodeMap = new Map<string, GraphNode>();
-
-  const relationWords = ['关系', '好友', '敌人', '朋友', '伙伴', '兄弟', '姐妹', '父亲', '母亲', '儿子', '女儿', '丈夫', '妻子', '师傅', '徒弟', '师兄', '师姐', '师弟', '师妹', '对手', '盟友', '恋人', '爱人', '仇人', '恩人', '下属', '上司', '同事', '同学', '邻居', '亲人', '同族', '同乡', '师徒', '夫妻', '亲子', '主仆', '关系图', '关系网', '关系图谱', '亲属关系', '人物关系', '角色关系', '关系类型', '关系说明', '姓名', '身份', '性格', '动机', '背景', '人物', '角色'];
-
-  // 判断是否为关系词/非人物词（精确匹配 + 包含"关系"二字的短词）
-  function isRelationWord(name: string): boolean {
-    const n = name.trim();
-    if (!n) return true;
-    if (relationWords.includes(n)) return true;
-    // 包含"关系"且较短（如"亲属关系"、"敌对关系"），视为关系词
-    if (n.includes('关系') && n.length <= 6) return true;
-    return false;
-  }
-
-  function ensureNode(name: string, desc?: string): GraphNode | null {
-    const cleanName = name.trim();
-    if (!cleanName) return null;
-    if (isRelationWord(cleanName)) return null; // 过滤关系词，不再返回 nodes[0] 避免脏数据
-    if (nodeMap.has(cleanName)) {
-      if (desc && !nodeMap.get(cleanName)!.desc) nodeMap.get(cleanName)!.desc = desc;
-      return nodeMap.get(cleanName)!;
-    }
-    const i = nodeMap.size;
-    const node: GraphNode = {
-      id: cleanName,
-      label: cleanName,
-      x: 200 + (Math.random() - 0.5) * 200,
-      y: 250 + (Math.random() - 0.5) * 200,
-      color: colors[i % colors.length],
-      size: 24,
-      desc,
-    };
-    nodes.push(node);
-    nodeMap.set(cleanName, node);
-    return node;
-  }
-
-  function addEdge(source: string, target: string, label: string) {
-    if (source === target || !source || !target) return;
-    if (isRelationWord(source) || isRelationWord(target)) return;
-    const exists = edges.some(e =>
-      (e.source === source && e.target === target) ||
-      (e.source === target && e.target === source && e.label === label)
-    );
-    if (exists) return;
-    const st = getRelationStyle(label);
-    edges.push({ source, target, label, style: st.style, color: st.color, directed: !!label });
-  }
-
-  function parseText(text: string) {
-    const lines = text.split('\n');
-    lines.forEach(line => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-
-      const bracketMatch = trimmed.match(/[【\[](.+?)[】\]]/);
-      if (bracketMatch) {
-        ensureNode(bracketMatch[1], trimmed.replace(/[【\[](.+?)[】\]]/, '').replace(/^[：:]\s*/, '').trim());
-      }
-
-      const arrowMatch = trimmed.match(/(.{1,12})\s*[→>➜]+\s*(.{1,12})(?:[：:（(]([^）)]+)[）)]?)?/);
-      if (arrowMatch) {
-        const a = arrowMatch[1].trim();
-        const b = arrowMatch[2].trim().replace(/[：:（(].*$/, '');
-        ensureNode(a);
-        ensureNode(b);
-        addEdge(a, b, arrowMatch[3]?.trim() || '');
-      }
-
-      const relMatch = trimmed.match(/(.{1,10})\s*是\s*(.{1,10})\s*的\s*(.+)/);
-      if (relMatch) {
-        const a = relMatch[1].trim();
-        const b = relMatch[2].trim();
-        const rel = relMatch[3].trim();
-        ensureNode(a);
-        ensureNode(b);
-        addEdge(a, b, rel);
-      }
-
-      if (!bracketMatch && !arrowMatch && !relMatch) {
-        const colonMatch = trimmed.match(/^(.{1,10})\s*[：:]/);
-        if (colonMatch) {
-          ensureNode(colonMatch[1].trim(), trimmed.slice(colonMatch[0].length).trim());
-        }
-      }
-    });
-
-    if (nodes.length > 0) {
-      lines.forEach(line => {
-        const mentioned = nodes.filter(n => line.includes(n.label));
-        if (mentioned.length >= 2) {
-          const relMatch = line.match(/[（(](.+?)[）)]/);
-          const relLabel = relMatch ? relMatch[1] : '';
-          for (let i = 0; i < mentioned.length; i++) {
-            for (let j = i + 1; j < mentioned.length; j++) {
-              addEdge(mentioned[i].id, mentioned[j].id, relLabel);
-            }
-          }
-        }
-      });
-    }
-  }
-
-  function parseJSON(text: string) {
-    try {
-      const parsed = JSON.parse(text);
-      const chars = Array.isArray(parsed) ? parsed : (parsed.characters || parsed.nodes || []);
-      if (Array.isArray(chars) && chars.length > 0) {
-        chars.forEach((char: any) => {
-          const name = char.name || char.id;
-          if (!name) return;
-          ensureNode(name, char.desc || char.description || char.summary || '');
-          if (Array.isArray(char.relationships)) {
-            char.relationships.forEach((rel: any) => {
-              const targetName = rel.target_name || rel.target || rel.name;
-              if (targetName && !isRelationWord(targetName)) {
-                ensureNode(targetName, rel.target_desc || '');
-                addEdge(name, targetName, rel.relation || rel.type || rel.label || '');
-              }
-            });
-          }
-        });
-      }
-    } catch {
-      parseText(text);
-    }
-  }
-
-  if (charactersData) {
-    parseJSON(charactersData);
-  }
-
-  if (plotData) {
-    parseText(plotData);
-  }
-
-  if (!charactersData && data) {
-    parseJSON(data);
-  }
-
-  nodes.forEach(n => {
-    const count = edges.filter(e => e.source === n.id || e.target === n.id).length;
-    n.size = Math.min(36, 20 + count * 3);
-  });
-
-  if (nodes.length > 1) {
-    forceLayout(nodes, edges, 100);
-  }
-
-  const hint = nodes.length === 0 ? '在「人物及关系」中填写角色信息后，这里会自动生成关系图谱' : '';
-  return { nodes, edges, title, emptyHint: hint };
-}
-
-function parseRealmGraph(data: string, title: string, charactersData?: string, settingsData?: string, outlineData?: string, worldData?: string): { nodes: GraphNode[]; edges: GraphEdge[]; title: string; emptyHint: string } {
-  const nodes: GraphNode[] = [];
-  const edges: GraphEdge[] = [];
-  const realmColors = ['#c44d58', '#e87d3e', '#f39c12', '#1abc9c', '#5b8def', '#9b59b6', '#4a8b4a', '#e91e63'];
-  const charColors = ['#5b8def', '#e87d3e', '#1abc9c', '#9b59b6', '#f39c12', '#e91e63', '#4a8b4a', '#c44d58'];
-
-  function parseRealmsFromText(text: string) {
-    const results: any[] = [];
-    try {
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed)) return parsed;
-      if (parsed.realms) return parsed.realms;
-    } catch {
-      const lines = text.split('\n').filter(l => l.trim());
-      lines.forEach(line => {
-        const cleaned = line.replace(/^[#\d\.\-•*→>]\s*/, '');
-        const match = cleaned.match(/[【\[](.+?)[】\]]/);
-        const name = match ? match[1].trim() : cleaned.replace(/\s*[：:].+/, '').slice(0, 20).trim();
-        if (name && !results.find((r: any) => r.name === name || r.realm === name)) {
-          results.push({ name, level: results.length + 1 });
-        }
-      });
-    }
-    return results;
-  }
-
-  let realmLevels: any[] = [];
-
-  if (worldData) {
-    realmLevels = parseRealmsFromText(worldData);
-  }
-
-  if (realmLevels.length === 0 && settingsData) {
-    realmLevels = parseRealmsFromText(settingsData);
-  }
-
-  if (realmLevels.length === 0 && outlineData) {
-    realmLevels = parseRealmsFromText(outlineData);
-  }
-
-  if (realmLevels.length === 0 && data) {
-    realmLevels = parseRealmsFromText(data);
-  }
-
-  let characters: any[] = [];
-  if (charactersData) {
-    try {
-      const parsed = JSON.parse(charactersData);
-      if (Array.isArray(parsed)) characters = parsed;
-    } catch { /* not JSON */ }
-  }
-
-  const charCount = Math.max(characters.length, 1);
-  const colWidth = Math.min(140, Math.max(90, 800 / charCount));
-  const realmHeight = 52;
-  const topY = 50;
-  const charNameY = topY;
-  const firstRealmY = charNameY + 50;
-
-  const displayChars = characters.length > 0 ? characters : [{ name: '通用', role: '' }];
-
-  displayChars.forEach((char, ci) => {
-    const colX = 50 + ci * colWidth + colWidth / 2;
-    const charId = `char-${char.name}`;
-
-    const charNode: GraphNode = {
-      id: charId, label: char.name,
-      x: colX, y: charNameY,
-      color: charColors[ci % charColors.length], size: 22,
-      desc: char.role || char.abilities || '',
-      nodeType: 'char-header',
-      requirements: char.abilities || '',
-      materials: char.items || '',
-      techniques: '',
-    };
-    nodes.push(charNode);
-
-    const currentRealmName = char.currentRealm || char.realm || '';
-    const currentRealmIdx = realmLevels.findIndex((r: any) => {
-      const rName = r.name || r.realm || '';
-      return rName === currentRealmName || rName.includes(currentRealmName) || currentRealmName.includes(rName);
-    });
-
-    realmLevels.forEach((realm: any, ri: number) => {
-      const rName = realm.name || realm.realm || `境界${ri + 1}`;
-      const realmId = `${char.name}-${rName}`;
-      const isCurrent = ri === currentRealmIdx;
-
-      nodes.push({
-        id: realmId, label: rName,
-        x: colX, y: firstRealmY + ri * realmHeight,
-        color: realmColors[ri % realmColors.length], size: isCurrent ? 26 : 22,
-        desc: realm.desc || realm.description || realm.requirement || '',
-        nodeType: 'realm',
-        isCurrent,
-        requirements: realm.requirements || realm.requirement || '',
-        materials: realm.materials || realm.items || '',
-        techniques: realm.techniques || realm.skills || realm.methods || '',
-      });
-
-      if (ri === 0) {
-        edges.push({
-          source: charId, target: realmId,
-          label: isCurrent ? '当前' : '',
-          color: charColors[ci % charColors.length], directed: true, style: 'solid',
-        });
-      }
-
-      if (ri > 0) {
-        const prevName = realmLevels[ri - 1].name || realmLevels[ri - 1].realm || `境界${ri}`;
-        const prevId = `${char.name}-${prevName}`;
-        const reqStr = realm.requirements || realm.requirement || '';
-        edges.push({
-          source: prevId, target: realmId,
-          label: reqStr ? `需:${reqStr.slice(0, 6)}` : '晋升',
-          color: realmColors[ri % realmColors.length], directed: true, style: 'solid',
-        });
-      }
-    });
-  });
-
-  const hint = nodes.length === 0 ? '在「世界观」中填写境界/等级体系，在「人物及关系」中添加角色后，这里会自动生成各角色的境界晋升图谱' : '';
-  return { nodes, edges, title, emptyHint: hint };
-}
-
-/* ===== 地点图谱解析（从地图数据构建层级关联图） ===== */
-function parseLocationGraph(data: string, title: string, settingsData?: string, outlineData?: string, worldData?: string): { nodes: GraphNode[]; edges: GraphEdge[]; title: string; emptyHint: string } {
-  const nodes: GraphNode[] = [];
-  const edges: GraphEdge[] = [];
-  const colors: Record<string, string> = { l1: '#4a8b4a', l2: '#5b8def', l3: '#f39c12' };
-  const sizes: Record<string, number> = { l1: 26, l2: 22, l3: 18 };
-  const yLevels: Record<string, number> = { l1: 60, l2: 200, l3: 350 };
-
-  function parseLocationsFromText(text: string): MapRegion[] {
-    const results: MapRegion[] = [];
-    try {
-      const p = JSON.parse(text);
-      if (Array.isArray(p)) return p;
-    } catch {
-      text.split('\n').filter(l => l.trim()).forEach(line => {
-        const cleaned = line.replace(/^[#\d\.\-•*→>]\s*/, '');
-        const match = cleaned.match(/[【\[](.+?)[】\]]/);
-        const name = (match ? match[1] : cleaned.slice(0, 20)).trim();
-        if (name && !results.find(r => r.name === name)) {
-          results.push({ name, desc: cleaned.slice(name.length).trim() });
-        }
-      });
-    }
-    return results;
-  }
-
-  let parsed: MapRegion[] = [];
-
-  if (worldData) {
-    parsed = parsed.concat(parseLocationsFromText(worldData));
-  }
-
-  if (settingsData) {
-    parsed = parsed.concat(parseLocationsFromText(settingsData));
-  }
-
-  if (outlineData) {
-    parsed = parsed.concat(parseLocationsFromText(outlineData));
-  }
-
-  if (data) {
-    parsed = parsed.concat(parseLocationsFromText(data));
-  }
-
-  const seenNames = new Set<string>();
-  parsed = parsed.filter(r => {
-    if (seenNames.has(r.name)) return false;
-    seenNames.add(r.name);
-    return true;
-  });
-
-  if (!data.trim() && parsed.length === 0) return { nodes, edges, title, emptyHint: '在「地图」中添加地点后，这里会自动生成地点关联图谱' };
-
-  if (parsed.length === 0) return { nodes, edges, title, emptyHint: '在「地图」中添加地点后，这里会自动生成地点关联图谱' };
-
-  const totalL2 = parsed.reduce((s, r1) => s + (r1.children?.length || 0), 0);
-  const l2Spacing = Math.max(50, Math.min(80, 300 / Math.max(totalL2, 1)));
-  const l3Spacing = 40;
-
-  const visitedNodes: GraphNode[] = [];
-  parsed.forEach((r1, i1) => {
-    const childCount = r1.children?.length || 0;
-    const x1 = 200 + (i1 - (parsed.length - 1) / 2) * Math.max(110, (childCount + 1) * l2Spacing);
-    const r1Visited = !!r1.visited;
-    const r1Id = `loc-${r1.name}`;
-    const r1Node: GraphNode = {
-      id: r1Id, label: r1.name, x: x1, y: yLevels.l1,
-      color: colors.l1, size: sizes.l1, nodeType: 'l1', desc: r1.desc, visited: r1Visited,
-    };
-    nodes.push(r1Node);
-    if (r1Visited) visitedNodes.push(r1Node);
-
-    r1.children?.forEach((r2, i2) => {
-      const x2 = x1 + (i2 - (childCount - 1) / 2) * l2Spacing;
-      const r2Id = `loc-${r1.name}/${r2.name}`;
-      const r2Visited = !!r2.visited;
-      const r2Node: GraphNode = {
-        id: r2Id, label: r2.name, x: x2, y: yLevels.l2,
-        color: colors.l2, size: sizes.l2, nodeType: 'l2', desc: r2.desc, visited: r2Visited,
-      };
-      nodes.push(r2Node);
-      if (r2Visited) visitedNodes.push(r2Node);
-      edges.push({ source: r1Id, target: r2Id, color: colors.l1, style: 'solid' });
-
-      const grandCount = r2.children?.length || 0;
-      r2.children?.forEach((r3, i3) => {
-        const x3 = x2 + (i3 - (grandCount - 1) / 2) * l3Spacing;
-        const r3Id = `loc-${r1.name}/${r2.name}/${r3.name}`;
-        const r3Visited = !!r3.visited;
-        const r3Node: GraphNode = {
-          id: r3Id, label: r3.name, x: x3, y: yLevels.l3,
-          color: colors.l3, size: sizes.l3, nodeType: 'l3', desc: r3.desc, visited: r3Visited,
-        };
-        nodes.push(r3Node);
-        if (r3Visited) visitedNodes.push(r3Node);
-        edges.push({ source: r2Id, target: r3Id, color: colors.l2, style: 'dashed' });
-      });
-    });
-  });
-
-  for (let i = 0; i < visitedNodes.length - 1; i++) {
-    edges.push({
-      source: visitedNodes[i].id, target: visitedNodes[i + 1].id,
-      label: '路径', color: '#f39c12', style: 'dashed', directed: true,
-    });
-  }
-
-  const l2n = nodes.filter(n => n.nodeType === 'l2' || n.nodeType === 'l3');
-  if (l2n.length > 1) forceLayout(l2n, edges, 50);
-
-  return { nodes, edges, title, emptyHint: '' };
 }
