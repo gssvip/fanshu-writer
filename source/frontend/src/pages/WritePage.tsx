@@ -1033,6 +1033,10 @@ export default function WritePage() {
             data={currentContent}
             concept={concept || bible?.concept || ''}
             charactersData={bible?.character_profiles || ''}
+            plotData={bible?.timeline || ''}
+            settingsData={bible?.key_rules || ''}
+            outlineData={bible?.plot_design || ''}
+            worldData={bible?.worldbuilding || ''}
             onAnalyzeFromReports={onAnalyzeFromReportsGraph}
             dimAnalyzing={dimAnalyzing}
             bookId={bookId}
@@ -4433,12 +4437,16 @@ function GraphPanel(props: {
   data: string;
   concept: string;
   charactersData?: string;
+  plotData?: string;
+  settingsData?: string;
+  outlineData?: string;
+  worldData?: string;
   onAnalyzeFromReports: () => void;
   dimAnalyzing: boolean;
   bookId: string;
   onUpdate: (val: string) => Promise<void>;
 }) {
-  const { type, data, charactersData, onAnalyzeFromReports, dimAnalyzing, onUpdate } = props;
+  const { type, data, charactersData, plotData, settingsData, outlineData, worldData, onAnalyzeFromReports, dimAnalyzing, onUpdate } = props;
   const svgRef = useRef<SVGSVGElement>(null);
   const [editingNode, setEditingNode] = useState<GraphNode | null>(null);
   const [editName, setEditName] = useState('');
@@ -4461,8 +4469,8 @@ function GraphPanel(props: {
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { nodes: rawNodes, edges, title } = useMemo(() => {
-    return parseGraphData(type, data, charactersData);
-  }, [type, data, charactersData]);
+    return parseGraphData(type, data, charactersData, plotData, settingsData, outlineData, worldData);
+  }, [type, data, charactersData, plotData, settingsData, outlineData, worldData]);
 
   // 稳定布局：已有节点保留缓存坐标，新节点用 forceLayout 坐标
   const nodes = useMemo(() => {
@@ -5119,13 +5127,13 @@ function GraphPanel(props: {
 }
 
 /* 解析图谱数据 */
-function parseGraphData(type: string, data: string, charactersData?: string): {
+function parseGraphData(type: string, data: string, charactersData?: string, plotData?: string, settingsData?: string, outlineData?: string, worldData?: string): {
   nodes: GraphNode[];
   edges: GraphEdge[];
   title: string;
   emptyHint: string;
 } {
-  if (!data) return { nodes: [], edges: [], title: '', emptyHint: '' };
+  if (!data && !charactersData && !plotData && !settingsData && !outlineData && !worldData) return { nodes: [], edges: [], title: '', emptyHint: '' };
 
   const titles: Record<string, string> = {
     relationGraph: '人物关系图谱',
@@ -5134,25 +5142,27 @@ function parseGraphData(type: string, data: string, charactersData?: string): {
   };
 
   if (type === 'relationGraph') {
-    return parseRelationGraph(data, titles.relationGraph);
+    return parseRelationGraph(data, titles.relationGraph, charactersData, plotData);
   } else if (type === 'realmGraph') {
-    return parseRealmGraph(data, titles.realmGraph, charactersData);
+    return parseRealmGraph(data, titles.realmGraph, charactersData, settingsData, outlineData, worldData);
   } else if (type === 'locationGraph') {
-    return parseLocationGraph(data, titles.locationGraph);
+    return parseLocationGraph(data, titles.locationGraph, settingsData, outlineData, worldData);
   }
   return { nodes: [], edges: [], title: '', emptyHint: '' };
 }
 
-function parseRelationGraph(data: string, title: string): { nodes: GraphNode[]; edges: GraphEdge[]; title: string; emptyHint: string } {
+function parseRelationGraph(data: string, title: string, charactersData?: string, plotData?: string): { nodes: GraphNode[]; edges: GraphEdge[]; title: string; emptyHint: string } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
-  const lines = data.split('\n');
   const colors = ['#4a8b4a', '#e87d3e', '#5b8def', '#c44d58', '#9b59b6', '#1abc9c', '#f39c12', '#e91e63'];
   const nodeMap = new Map<string, GraphNode>();
+
+  const relationWords = ['关系', '好友', '敌人', '朋友', '伙伴', '兄弟', '姐妹', '父亲', '母亲', '儿子', '女儿', '丈夫', '妻子', '师傅', '徒弟', '师兄', '师姐', '师弟', '师妹', '对手', '盟友', '恋人', '爱人', '仇人', '恩人', '下属', '上司', '同事', '同学', '邻居', '亲人', '同族', '同乡', '伙伴'];
 
   function ensureNode(name: string, desc?: string): GraphNode {
     const cleanName = name.trim();
     if (!cleanName) return nodes[0];
+    if (relationWords.includes(cleanName)) return nodes[0];
     if (nodeMap.has(cleanName)) {
       if (desc && !nodeMap.get(cleanName)!.desc) nodeMap.get(cleanName)!.desc = desc;
       return nodeMap.get(cleanName)!;
@@ -5174,6 +5184,7 @@ function parseRelationGraph(data: string, title: string): { nodes: GraphNode[]; 
 
   function addEdge(source: string, target: string, label: string) {
     if (source === target || !source || !target) return;
+    if (relationWords.includes(source) || relationWords.includes(target)) return;
     const exists = edges.some(e =>
       (e.source === source && e.target === target) ||
       (e.source === target && e.target === source && e.label === label)
@@ -5183,40 +5194,18 @@ function parseRelationGraph(data: string, title: string): { nodes: GraphNode[]; 
     edges.push({ source, target, label, style: st.style, color: st.color, directed: !!label });
   }
 
-  // 尝试 JSON 解析
-  try {
-    const parsed = JSON.parse(data);
-    const chars = Array.isArray(parsed) ? parsed : (parsed.characters || parsed.nodes || []);
-    if (Array.isArray(chars) && chars.length > 0) {
-      chars.forEach((char: any) => {
-        const name = char.name || char.id;
-        if (!name) return;
-        ensureNode(name, char.desc || char.description || char.summary || '');
-        if (Array.isArray(char.relationships)) {
-          char.relationships.forEach((rel: any) => {
-            const targetName = rel.target_name || rel.target || rel.name;
-            if (targetName) {
-              ensureNode(targetName, rel.target_desc || '');
-              addEdge(name, targetName, rel.relation || rel.type || rel.label || '');
-            }
-          });
-        }
-      });
-    }
-  } catch {
-    // 纯文本解析
+  function parseText(text: string) {
+    const lines = text.split('\n');
     lines.forEach(line => {
       const trimmed = line.trim();
       if (!trimmed) return;
 
-      // 模式1：【人物名】描述
       const bracketMatch = trimmed.match(/[【\[](.+?)[】\]]/);
       if (bracketMatch) {
         ensureNode(bracketMatch[1], trimmed.replace(/[【\[](.+?)[】\]]/, '').replace(/^[：:]\s*/, '').trim());
       }
 
-      // 模式2：A→B：关系 或 A→B（关系）
-      const arrowMatch = trimmed.match(/(.{1,10})\s*[→>➜]+\s*(.{1,10})(?:[：:（(]([^）)]+)[）)]?)?/);
+      const arrowMatch = trimmed.match(/(.{1,12})\s*[→>➜]+\s*(.{1,12})(?:[：:（(]([^）)]+)[）)]?)?/);
       if (arrowMatch) {
         const a = arrowMatch[1].trim();
         const b = arrowMatch[2].trim().replace(/[：:（(].*$/, '');
@@ -5225,8 +5214,7 @@ function parseRelationGraph(data: string, title: string): { nodes: GraphNode[]; 
         addEdge(a, b, arrowMatch[3]?.trim() || '');
       }
 
-      // 模式3：A是B的XX
-      const relMatch = trimmed.match(/(.{1,8})\s*是\s*(.{1,8})\s*的\s*(.+)/);
+      const relMatch = trimmed.match(/(.{1,10})\s*是\s*(.{1,10})\s*的\s*(.+)/);
       if (relMatch) {
         const a = relMatch[1].trim();
         const b = relMatch[2].trim();
@@ -5236,16 +5224,14 @@ function parseRelationGraph(data: string, title: string): { nodes: GraphNode[]; 
         addEdge(a, b, rel);
       }
 
-      // 模式4：人物名：描述（冒号前短文本作为人物名）
       if (!bracketMatch && !arrowMatch && !relMatch) {
-        const colonMatch = trimmed.match(/^(.{1,8})\s*[：:]/);
+        const colonMatch = trimmed.match(/^(.{1,10})\s*[：:]/);
         if (colonMatch) {
           ensureNode(colonMatch[1].trim(), trimmed.slice(colonMatch[0].length).trim());
         }
       }
     });
 
-    // 二次扫描：同行出现多个人物名则建立关联
     if (nodes.length > 0) {
       lines.forEach(line => {
         const mentioned = nodes.filter(n => line.includes(n.label));
@@ -5262,13 +5248,48 @@ function parseRelationGraph(data: string, title: string): { nodes: GraphNode[]; 
     }
   }
 
-  // 根据连接数调整节点大小
+  function parseJSON(text: string) {
+    try {
+      const parsed = JSON.parse(text);
+      const chars = Array.isArray(parsed) ? parsed : (parsed.characters || parsed.nodes || []);
+      if (Array.isArray(chars) && chars.length > 0) {
+        chars.forEach((char: any) => {
+          const name = char.name || char.id;
+          if (!name) return;
+          ensureNode(name, char.desc || char.description || char.summary || '');
+          if (Array.isArray(char.relationships)) {
+            char.relationships.forEach((rel: any) => {
+              const targetName = rel.target_name || rel.target || rel.name;
+              if (targetName) {
+                ensureNode(targetName, rel.target_desc || '');
+                addEdge(name, targetName, rel.relation || rel.type || rel.label || '');
+              }
+            });
+          }
+        });
+      }
+    } catch {
+      parseText(text);
+    }
+  }
+
+  if (charactersData) {
+    parseJSON(charactersData);
+  }
+
+  if (plotData) {
+    parseText(plotData);
+  }
+
+  if (!charactersData && data) {
+    parseJSON(data);
+  }
+
   nodes.forEach(n => {
     const count = edges.filter(e => e.source === n.id || e.target === n.id).length;
     n.size = Math.min(36, 20 + count * 3);
   });
 
-  // 力导向布局
   if (nodes.length > 1) {
     forceLayout(nodes, edges, 100);
   }
@@ -5277,32 +5298,50 @@ function parseRelationGraph(data: string, title: string): { nodes: GraphNode[]; 
   return { nodes, edges, title, emptyHint: hint };
 }
 
-function parseRealmGraph(data: string, title: string, charactersData?: string): { nodes: GraphNode[]; edges: GraphEdge[]; title: string; emptyHint: string } {
+function parseRealmGraph(data: string, title: string, charactersData?: string, settingsData?: string, outlineData?: string, worldData?: string): { nodes: GraphNode[]; edges: GraphEdge[]; title: string; emptyHint: string } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   const realmColors = ['#c44d58', '#e87d3e', '#f39c12', '#1abc9c', '#5b8def', '#9b59b6', '#4a8b4a', '#e91e63'];
   const charColors = ['#5b8def', '#e87d3e', '#1abc9c', '#9b59b6', '#f39c12', '#e91e63', '#4a8b4a', '#c44d58'];
 
-  // 解析境界体系
-  let realmLevels: any[] = [];
-  try {
-    const parsed = JSON.parse(data);
-    if (Array.isArray(parsed)) realmLevels = parsed;
-    else if (parsed.realms) realmLevels = parsed.realms;
-  } catch {
-    // 纯文本解析境界
-    const lines = data.split('\n').filter(l => l.trim());
-    lines.forEach(line => {
-      const cleaned = line.replace(/^[#\d\.\-•*→>]\s*/, '');
-      const match = cleaned.match(/[【\[](.+?)[】\]]/);
-      const name = match ? match[1].trim() : cleaned.replace(/\s*[：:].+/, '').slice(0, 15).trim();
-      if (name && !realmLevels.find((r: any) => r.name === name || r.realm === name)) {
-        realmLevels.push({ name, level: realmLevels.length + 1 });
-      }
-    });
+  function parseRealmsFromText(text: string) {
+    const results: any[] = [];
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed.realms) return parsed.realms;
+    } catch {
+      const lines = text.split('\n').filter(l => l.trim());
+      lines.forEach(line => {
+        const cleaned = line.replace(/^[#\d\.\-•*→>]\s*/, '');
+        const match = cleaned.match(/[【\[](.+?)[】\]]/);
+        const name = match ? match[1].trim() : cleaned.replace(/\s*[：:].+/, '').slice(0, 20).trim();
+        if (name && !results.find((r: any) => r.name === name || r.realm === name)) {
+          results.push({ name, level: results.length + 1 });
+        }
+      });
+    }
+    return results;
   }
 
-  // 解析角色数据
+  let realmLevels: any[] = [];
+
+  if (worldData) {
+    realmLevels = parseRealmsFromText(worldData);
+  }
+
+  if (realmLevels.length === 0 && settingsData) {
+    realmLevels = parseRealmsFromText(settingsData);
+  }
+
+  if (realmLevels.length === 0 && outlineData) {
+    realmLevels = parseRealmsFromText(outlineData);
+  }
+
+  if (realmLevels.length === 0 && data) {
+    realmLevels = parseRealmsFromText(data);
+  }
+
   let characters: any[] = [];
   if (charactersData) {
     try {
@@ -5318,14 +5357,12 @@ function parseRealmGraph(data: string, title: string, charactersData?: string): 
   const charNameY = topY;
   const firstRealmY = charNameY + 50;
 
-  // 如果没有角色，创建一个通用列
   const displayChars = characters.length > 0 ? characters : [{ name: '通用', role: '' }];
 
   displayChars.forEach((char, ci) => {
     const colX = 50 + ci * colWidth + colWidth / 2;
     const charId = `char-${char.name}`;
 
-    // 角色名节点（顶部）
     const charNode: GraphNode = {
       id: charId, label: char.name,
       x: colX, y: charNameY,
@@ -5338,14 +5375,12 @@ function parseRealmGraph(data: string, title: string, charactersData?: string): 
     };
     nodes.push(charNode);
 
-    // 找到该角色当前境界
     const currentRealmName = char.currentRealm || char.realm || '';
     const currentRealmIdx = realmLevels.findIndex((r: any) => {
       const rName = r.name || r.realm || '';
       return rName === currentRealmName || rName.includes(currentRealmName) || currentRealmName.includes(rName);
     });
 
-    // 境界节点
     realmLevels.forEach((realm: any, ri: number) => {
       const rName = realm.name || realm.realm || `境界${ri + 1}`;
       const realmId = `${char.name}-${rName}`;
@@ -5363,7 +5398,6 @@ function parseRealmGraph(data: string, title: string, charactersData?: string): 
         techniques: realm.techniques || realm.skills || realm.methods || '',
       });
 
-      // 边：从角色名到第一个境界
       if (ri === 0) {
         edges.push({
           source: charId, target: realmId,
@@ -5372,7 +5406,6 @@ function parseRealmGraph(data: string, title: string, charactersData?: string): 
         });
       }
 
-      // 边：境界间的晋升
       if (ri > 0) {
         const prevName = realmLevels[ri - 1].name || realmLevels[ri - 1].realm || `境界${ri}`;
         const prevId = `${char.name}-${prevName}`;
@@ -5391,31 +5424,60 @@ function parseRealmGraph(data: string, title: string, charactersData?: string): 
 }
 
 /* ===== 地点图谱解析（从地图数据构建层级关联图） ===== */
-function parseLocationGraph(data: string, title: string): { nodes: GraphNode[]; edges: GraphEdge[]; title: string; emptyHint: string } {
+function parseLocationGraph(data: string, title: string, settingsData?: string, outlineData?: string, worldData?: string): { nodes: GraphNode[]; edges: GraphEdge[]; title: string; emptyHint: string } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   const colors: Record<string, string> = { l1: '#4a8b4a', l2: '#5b8def', l3: '#f39c12' };
   const sizes: Record<string, number> = { l1: 26, l2: 22, l3: 18 };
   const yLevels: Record<string, number> = { l1: 60, l2: 200, l3: 350 };
 
-  if (!data.trim()) return { nodes, edges, title, emptyHint: '在「地图」中添加地点后，这里会自动生成地点关联图谱' };
+  function parseLocationsFromText(text: string): MapRegion[] {
+    const results: MapRegion[] = [];
+    try {
+      const p = JSON.parse(text);
+      if (Array.isArray(p)) return p;
+    } catch {
+      text.split('\n').filter(l => l.trim()).forEach(line => {
+        const cleaned = line.replace(/^[#\d\.\-•*→>]\s*/, '');
+        const match = cleaned.match(/[【\[](.+?)[】\]]/);
+        const name = (match ? match[1] : cleaned.slice(0, 20)).trim();
+        if (name && !results.find(r => r.name === name)) {
+          results.push({ name, desc: cleaned.slice(name.length).trim() });
+        }
+      });
+    }
+    return results;
+  }
 
   let parsed: MapRegion[] = [];
-  try {
-    const p = JSON.parse(data);
-    if (Array.isArray(p)) parsed = p;
-  } catch {
-    // 纯文本：按行解析为L1节点
-    data.split('\n').filter(l => l.trim()).forEach(line => {
-      const cleaned = line.replace(/^[#\d\.\-•*→>]\s*/, '');
-      const match = cleaned.match(/[【\[](.+?)[】\]]/);
-      parsed.push({ name: (match ? match[1] : cleaned.slice(0, 15)).trim() });
-    });
+
+  if (worldData) {
+    parsed = parsed.concat(parseLocationsFromText(worldData));
   }
+
+  if (settingsData) {
+    parsed = parsed.concat(parseLocationsFromText(settingsData));
+  }
+
+  if (outlineData) {
+    parsed = parsed.concat(parseLocationsFromText(outlineData));
+  }
+
+  if (data) {
+    parsed = parsed.concat(parseLocationsFromText(data));
+  }
+
+  const seenNames = new Set<string>();
+  parsed = parsed.filter(r => {
+    if (seenNames.has(r.name)) return false;
+    seenNames.add(r.name);
+    return true;
+  });
+
+  if (!data.trim() && parsed.length === 0) return { nodes, edges, title, emptyHint: '在「地图」中添加地点后，这里会自动生成地点关联图谱' };
 
   if (parsed.length === 0) return { nodes, edges, title, emptyHint: '在「地图」中添加地点后，这里会自动生成地点关联图谱' };
 
-  // 计算L2节点总数用于列间距
   const totalL2 = parsed.reduce((s, r1) => s + (r1.children?.length || 0), 0);
   const l2Spacing = Math.max(50, Math.min(80, 300 / Math.max(totalL2, 1)));
   const l3Spacing = 40;
@@ -5461,7 +5523,6 @@ function parseLocationGraph(data: string, title: string): { nodes: GraphNode[]; 
     });
   });
 
-  // 主角路径：已访问地点之间用高亮虚线连接
   for (let i = 0; i < visitedNodes.length - 1; i++) {
     edges.push({
       source: visitedNodes[i].id, target: visitedNodes[i + 1].id,
@@ -5469,7 +5530,6 @@ function parseLocationGraph(data: string, title: string): { nodes: GraphNode[]; 
     });
   }
 
-  // 对L2和L3节点运行力导向布局改善间距
   const l2n = nodes.filter(n => n.nodeType === 'l2' || n.nodeType === 'l3');
   if (l2n.length > 1) forceLayout(l2n, edges, 50);
 
