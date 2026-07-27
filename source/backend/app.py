@@ -3241,6 +3241,11 @@ def analyze_book():
 # AI 一致性检查 / 继续写作
 @app.route('/api/books/<book_id>/ai-continue', methods=['POST'])
 def ai_continue(book_id):
+    """正文滚动创作（agent 协同版）：
+    1. 分层注入 bible 上下文（key_rules/worldbuilding/character_profiles/plot_design/timeline/concept）保持一致性
+    2. 分层滚动记忆（即时层最近1章 + 近期层最近3份动态报告）防遗忘
+    3. 伏笔防遗忘：注入 bb.foreshadowing 待回收伏笔清单
+    4. 审校环节：正文生成后追加 tomato_deai 去AI味审校（参考番茄金番工作流后半段）"""
     book = Book.query.get(book_id)
     if not book: return jsonify({'error': 'Not found'}), 404
     config = AIConfig.query.first()
@@ -3249,62 +3254,143 @@ def ai_continue(book_id):
     model = config.model if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
 
     bb = BookBible.query.filter_by(book_id=book_id).first()
-    bible_context = bb.generated_summary or '' if bb else ''
-    if not bible_context:
+    if not bb:
         bb = BookBible(book_id=book_id)
         db.session.add(bb)
         db.session.commit()
 
     chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
-    # 优先使用动态报告作为前文上下文（节省token），没有报告时回退到章节摘要
+    current_chapter_num = len(chapters) + 1
+
+    # ===== 1. 分层 bible 上下文（按优先级截断，保持上下文一致性）=====
+    # 优先级：key_rules(金手指/能力限制，绝不可违反) > character_profiles(人设一致) > worldbuilding > plot_design(当前卷目标) > timeline > concept
+    bible_sections = []
+    if bb.key_rules and bb.key_rules.strip():
+        bible_sections.append(f'【核心规则/金手指】（绝不可违反）\n{bb.key_rules[:1200]}')
+    if bb.character_profiles and bb.character_profiles.strip():
+        bible_sections.append(f'【人物档案】（保持人设一致）\n{bb.character_profiles[:1200]}')
+    if bb.worldbuilding and bb.worldbuilding.strip():
+        bible_sections.append(f'【世界观设定】\n{bb.worldbuilding[:1000]}')
+    if bb.plot_design and bb.plot_design.strip():
+        bible_sections.append(f'【五幕式总纲】（参考当前进度对齐走向）\n{bb.plot_design[:1000]}')
+    if bb.timeline and bb.timeline.strip():
+        bible_sections.append(f'【已有剧情】\n{bb.timeline[:800]}')
+    if bb.concept and bb.concept.strip():
+        bible_sections.append(f'【核心构思】\n{bb.concept[:500]}')
+    if bb.style_guide and bb.style_guide.strip():
+        bible_sections.append(f'【文风指南】\n{bb.style_guide[:500]}')
+    bible_context = '\n\n'.join(bible_sections) if bible_sections else (bb.generated_summary or '')[:2000]
+
+    # ===== 2. 分层滚动记忆（防遗忘）=====
     recent_reports = DynamicReport.query.filter_by(book_id=book_id).order_by(
         DynamicReport.chapter_start.desc()
     ).limit(3).all()
     recent_reports.reverse()
 
     if recent_reports:
-        # 使用动态报告作为前文记忆
         report_context = '\n\n'.join([f'【{r.title}】\n{r.content}' for r in recent_reports if r.content])
-        # 仍取最近1章的尾部作为即时衔接
-        recent_text = (chapters[-1].content or '')[-600:] if chapters else ''
+        # 即时层：最近1章尾部 1200 字（衔接语气和当前场景）
+        recent_text = (chapters[-1].content or '')[-1200:] if chapters else ''
         memory_section = f"""前文动态记忆（防遗忘摘要）：
 {report_context}
 
-最近章节衔接：
-{recent_text}"""
+最近章节衔接（即时层）：
+{recent_text or '（开篇第一章）'}"""
     else:
-        # 没有动态报告时，回退到旧逻辑：取最近3章摘要
-        recent_text = '\n'.join([(c.content or '')[:500] for c in chapters[-3:]]) if chapters else ''
-        memory_section = f'最近内容：\n{recent_text[:2000]}'
+        # 回退：最近3章前800字
+        recent_text = '\n\n'.join([f'【第{c.order_index}章 {c.title or ""}】\n{(c.content or "")[:800]}' for c in chapters[-3:]]) if chapters else ''
+        memory_section = f'最近内容（防遗忘）：\n{recent_text[:3000]}'
+
+    # ===== 3. 伏笔防遗忘：注入待回收伏笔清单 =====
+    foreshadowing_section = ''
+    if bb.foreshadowing and bb.foreshadowing.strip():
+        # 从 foreshadowing 文本中提取未回收伏笔（简单启发式：含"待回收/未回收/埋设"等关键词的行）
+        fs_lines = bb.foreshadowing.split('\n')
+        pending_fs = []
+        for line in fs_lines:
+            line = line.strip()
+            if not line:
+                continue
+            # 排除已回收的伏笔
+            if any(kw in line for kw in ['已回收', '已揭示', '已解决', '已兑现']):
+                continue
+            pending_fs.append(line)
+        if pending_fs:
+            # 取最近 8 条待回收伏笔
+            pending_text = '\n'.join(pending_fs[-8:])
+            foreshadowing_section = f"""【待回收伏笔清单】（本章节应考虑回收其中1-2条，避免遗忘；若无合适时机可暂缓，但不可永久遗忘）
+{pending_text}"""
 
     instruction = request.json.get('instruction', '继续写下一章')
-    skill_pack_ids = request.json.get('skill_pack_ids', [])  # 支持技能包注入
+    skill_pack_ids = request.json.get('skill_pack_ids', [])
 
-    # 注入技能包提示词（章节写作相关）
-    skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_chapter', 'write_chapter', 'draft_writing', 'chapter_plan'])
+    # 注入技能包提示词（章节写作 + 去AI味审校 + 诊断规则，让 AI 知道完整工作流后半段）
+    skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_chapter', 'tomato_deai', 'tomato_diagnosis', 'write_chapter', 'draft_writing', 'chapter_plan'])
 
-    system_prompt = f"""你是专业网文作者，正在协作写一本小说。
-项目宪法（必须严格遵守）：
-{bible_context[:3000]}
+    system_prompt = f"""你是番茄小说金番作者级别的写手，正在协作写一本小说，当前准备写第 {current_chapter_num} 章。
+
+【项目宪法 - 已确认设定】（必须严格遵守，不可矛盾）
+{bible_context[:3500]}
 
 {memory_section}
 
+{foreshadowing_section}
+
 {skill_note}
 
-写作要求：
-1. 严格遵循项目宪法中的设定
-2. 保持前后人物性格一致
-3. 延续现有文风
-4. 控制每章2400字±100"""
+【写作要求】
+1. 严格遵循项目宪法中的设定（核心规则/金手指/世界观/人设），不可违反
+2. 保持前后人物性格、关系、能力一致
+3. 延续现有文风和叙事节奏
+4. 每章 2400 字 ±100，对话占比 ≥30%
+5. 主动考虑回收"待回收伏笔清单"中的伏笔（若有），避免长线遗忘
+6. 三明治结构：苦(困境)→甜(获得)→爽(反击)→钩子(新信息/新困境)
+7. 章尾必留钩子，七种类型不重复"""
+
+    user_prompt = instruction or f'请继续写第 {current_chapter_num} 章。'
 
     try:
         resp = requests.post(f'{base_url}/chat/completions',
             headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-            json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':instruction}],
+            json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}],
                   'temperature': 0.7, 'max_tokens': 4000},
             timeout=180)
         result = resp.json()
-        return jsonify({'content': result['choices'][0]['message']['content']})
+        draft_content = result['choices'][0]['message']['content']
+
+        # ===== 4. 审校环节：去AI味审校（参考番茄金番工作流 tomato_deai）=====
+        # 仅当用户选了技能包时执行审校（避免无技能包时多消耗 token）
+        polished_content = draft_content
+        review_notes = ''
+        if skill_pack_ids:
+            deai_skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_deai'], max_per_prompt=1200, mode='agent')
+            if deai_skill_note:
+                deai_system = f"""你是番茄去AI味审查员。对以下刚写好的章节正文做去AI味审校，按规则修改后只输出修改后的正文。
+
+{deai_skill_note}
+
+【优先级铁律】人味>克制>流畅。删完AI味后读起来像机器人汇报→加口语碎片。太啰嗦→删修饰。磕磕绊绊→调句式。
+【必删清单】一股/一抹/不由得/不禁/随即/旋即/与此同时/颇为/甚为/极为/缓缓/淡淡/轻轻/微微/毫无疑问/毋庸置疑/不言而喻/深吸一口气/眼中闪过一丝/心中暗想/心念电转/若有所思/不知不觉间/转眼间/恍然大悟/面无表情/淡漠/漠然/眸子/嘴角微微上扬/如同/宛如/犹如/周身/周遭/气息/威压/那道身影/说话间/话音未落/当即/顿时/瞬时。
+【人味注入】加入不完美细节(结巴/重复/打断)/感官碎片/小动作微表情/语气词和断句/适当留白。
+【硬性约束】修改后字数仍须 2400±100，保留原章节的剧情走向和钩子，只改文风不改剧情。"""
+
+                try:
+                    deai_resp = requests.post(f'{base_url}/chat/completions',
+                        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                        json={'model': model,
+                              'messages': [{'role':'system','content':deai_system},
+                                           {'role':'user','content':f'请审校以下章节正文：\n\n{draft_content}'}],
+                              'temperature': 0.5, 'max_tokens': 4000},
+                        timeout=180)
+                    deai_result = deai_resp.json()
+                    polished = deai_result['choices'][0]['message']['content'].strip()
+                    if polished and len(polished) > 500:  # 简单校验，避免空返回
+                        polished_content = polished
+                        review_notes = '已自动去AI味审校'
+                except Exception:
+                    pass  # 审校失败不影响返回初稿
+
+        return jsonify({'content': polished_content, 'draft': draft_content if review_notes else None, 'review_notes': review_notes})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
