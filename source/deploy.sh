@@ -13,9 +13,10 @@ cp -r frontend/dist/* backend/static/
 echo "=== 更新仓库根目录（供 GitHub Pages main 分支使用）==="
 cd /workspace
 cp -f source/frontend/dist/index.html .
+# 完全清空 assets 目录后再复制，避免旧版本 JS/CSS 残留导致 index.html 引用失配
+rm -rf assets
+mkdir -p assets
 cp -rf source/frontend/dist/assets/* assets/
-# 删除旧版本 JS（只保留最新）
-ls assets/index-*.js | head -n -1 | xargs -r rm -f
 
 echo "=== 推送 main 分支（后端 + 静态文件 + 根目录前端）==="
 git add .
