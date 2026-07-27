@@ -209,13 +209,13 @@ textarea{resize:vertical;line-height:1.8}
 .master-create-entry-desc{font-size:12px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .master-create-entry-arrow{font-size:20px;color:#7cb89e;flex-shrink:0}
 
-/* AI 总创作半屏模态框 */
-.master-create-modal{position:fixed;bottom:0;left:0;right:0;width:100%;max-height:70vh;background:var(--bg-primary);border-radius:var(--radius-lg) var(--radius-lg) 0 0;box-shadow:0 -4px 20px rgba(0,0,0,0.1);display:flex;flex-direction:column;z-index:1000;animation:slideUp 0.3s ease-out}
-@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
-.master-create-modal-header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border-color);flex-shrink:0}
+/* AI 总创作全屏模态框 */
+.master-create-modal{position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100vh;background:var(--bg-primary);display:flex;flex-direction:column;z-index:1000;animation:fadeIn 0.2s ease-out}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.master-create-modal-header{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border-color);flex-shrink:0;background:var(--bg-primary)}
 .master-create-modal-header h2{font-size:16px;font-weight:600;color:var(--text-primary)}
-.master-create-modal-body{padding:16px 20px;overflow-y:auto;flex:1}
-@media(min-width:768px){.master-create-modal{width:600px;left:50%;transform:translateX(-50%);border-radius:var(--radius-lg);bottom:20px;max-height:75vh}}
+.master-create-modal-body{padding:16px 20px;overflow-y:auto;flex:1;padding-bottom:env(safe-area-inset-bottom,20px)}
+@media(min-width:768px){.master-create-modal{top:50%;left:50%;width:600px;height:auto;max-height:90vh;transform:translate(-50%,-50%);border-radius:var(--radius-lg);box-shadow:0 8px 32px rgba(0,0,0,0.15)}}
 .home-book-actions{display:flex;gap:4px;flex-shrink:0}
 .home-book-actions .btn-icon-sm{padding:4px 6px;font-size:14px;border:none;background:transparent;opacity:0.5;transition:opacity .15s}
 .home-book-actions .btn-icon-sm:hover{opacity:1;background:var(--bg-hover);border-radius:4px}
