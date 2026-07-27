@@ -3337,8 +3337,11 @@ def _call_llm(messages, max_tokens=None, temperature=None):
         return None, str(e)
 
 
-def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500):
-    """从技能包提取指定 prompt_keys 的提示词（token优化：每个prompt截断，每包只取第一个匹配key）"""
+def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500, mode='agent'):
+    """从技能包提取指定 prompt_keys 的提示词（agent 协同模式：所有匹配 prompt 都注入）。
+    mode='agent'（默认）：第一个匹配 prompt 全量注入，其余匹配 prompt 摘要注入（取前 400 字），让 AI 看到完整 workflow 上下文。
+    mode='single'：每包只取第一个匹配 prompt（兼容旧行为）。
+    """
     if not skill_pack_ids:
         return ''
     try:
@@ -3353,11 +3356,24 @@ def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500):
             prompts = json.loads(pack.prompts_json) if pack.prompts_json else {}
         except Exception:
             prompts = {}
-        for key in prompt_keys:
-            if key in prompts and prompts[key]:
-                p = prompts[key][:max_per_prompt]
-                notes.append(f'【{pack.name}】\n{p}')
-                break
+        matched = [(k, prompts[k]) for k in prompt_keys if k in prompts and prompts[k]]
+        if not matched:
+            continue
+        if mode == 'single':
+            # 兼容旧模式：只取第一个
+            p = matched[0][1][:max_per_prompt]
+            notes.append(f'【{pack.name}】\n{p}')
+        else:
+            # agent 模式：第一个全量，其余摘要
+            parts = []
+            for idx, (k, p) in enumerate(matched):
+                if idx == 0:
+                    parts.append(f'[{k}]\n{p[:max_per_prompt]}')
+                else:
+                    # 辅助 prompt 取摘要（前 400 字 + 规则要点）
+                    summary = p[:400]
+                    parts.append(f'[{k}（摘要）]\n{summary}')
+            notes.append(f'【{pack.name}】\n' + '\n'.join(parts))
     return '\n\n'.join(notes)
 
 
@@ -3389,6 +3405,8 @@ def ai_outline_master(book_id):
         context_parts.append(f'【设定/规则】\n{bb.key_rules[:2000]}')
     if bb.worldbuilding:
         context_parts.append(f'【世界观】\n{bb.worldbuilding[:2000]}')
+    if bb.character_profiles:
+        context_parts.append(f'【人物档案】\n{bb.character_profiles[:2000]}')
     context = '\n\n'.join(context_parts) or '（暂无构思和设定，请基于书名和题材自由发挥）'
 
     system_prompt = f"""你是番茄小说金番作者级别的总纲设计师。
@@ -3454,6 +3472,10 @@ def ai_outline_volume(book_id):
 
     existing_timeline = (bb.timeline or '')[:2000]
     master_outline = (bb.plot_design or '')[:3000]
+    # agent 协同：补充世界观+人物档案，让卷内情节节点能落地到具体世界观规则和角色互动
+    worldbuilding_ctx = (bb.worldbuilding or '')[:1500]
+    characters_ctx = (bb.character_profiles or '')[:1500]
+    key_rules_ctx = (bb.key_rules or '')[:1000]
 
     system_prompt = f"""你是番茄小说金番作者级别的卷纲设计师。
 任务：为第 {volume_index} 卷「{volume_title}」生成详细大纲+情节节点。
@@ -3488,6 +3510,15 @@ def ai_outline_volume(book_id):
 
 【已有剧情】
 {existing_timeline or '（暂无）'}
+
+【世界观设定】（情节节点需符合世界观规则）
+{worldbuilding_ctx or '（暂无）'}
+
+【核心规则】（金手指/能力限制等，不可违反）
+{key_rules_ctx or '（暂无）'}
+
+【人物档案】（情节节点需涉及这些角色，安排其互动）
+{characters_ctx or '（暂无）'}
 
 【最近已完成章节】
 {completed_summary or '（本卷为第一卷，无前文）'}
@@ -3534,7 +3565,9 @@ BOSS：{volume_data.get('boss', '')}
 # ==== 总 AI 创作：总览全局各维度，用户确认后填入 ====
 @app.route('/api/books/<book_id>/ai-master-create', methods=['POST'])
 def ai_master_create(book_id):
-    """总AI创作：一次性为多个维度生成内容，返回结果供用户确认后填入"""
+    """总AI创作：按番茄金番工作流串行协同，本轮产出回流给下一轮作为上下文。
+    维度依赖图（agent 协同）：concept → key_rules → worldbuilding → character_profiles → plot_design → timeline
+    每个维度都能看到本轮已生成的所有上游维度产物。"""
     book = Book.query.get(book_id)
     if not book:
         return jsonify({'error': 'Not found'}), 404
@@ -3549,7 +3582,7 @@ def ai_master_create(book_id):
     dimensions = data.get('dimensions', ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design'])
     instruction = data.get('instruction', '')
 
-    # 维度→技能包prompt_key映射 + 生成提示
+    # 维度→技能包prompt_key映射 + 生成提示（按番茄金番工作流顺序）
     DIM_MAP = {
         'concept': {'field': 'concept', 'label': '构思', 'keys': ['tomato_plan', 'one_line_concept', 'brainstorm'],
                     'prompt': '生成核心构思：一句话概念、核心卖点、主线冲突、独特亮点、目标读者。'},
@@ -3565,33 +3598,60 @@ def ai_master_create(book_id):
                      'prompt': '生成第1卷详细剧情：5-8个情节节点+章型配额+小故事闭环。'},
     }
 
-    # 已有上下文（供AI参考，截断省token）
-    ctx_parts = []
-    if bb.concept: ctx_parts.append(f'构思：{bb.concept[:800]}')
-    if bb.key_rules: ctx_parts.append(f'设定：{bb.key_rules[:800]}')
-    if bb.worldbuilding: ctx_parts.append(f'世界观：{bb.worldbuilding[:800]}')
-    existing_ctx = '\n'.join(ctx_parts)
+    # agent 协同：串行执行，本轮产出回流到下一轮上下文
+    DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline']
+    ordered_dims = [d for d in DIM_ORDER if d in dimensions]
+
+    # 上下文字典：初始值来自 bible 已有内容，运行中动态追加本轮产出
+    ctx = {
+        'concept': bb.concept or '',
+        'key_rules': bb.key_rules or '',
+        'worldbuilding': bb.worldbuilding or '',
+        'character_profiles': bb.character_profiles or '',
+        'plot_design': bb.plot_design or '',
+        'timeline': bb.timeline or '',
+    }
 
     results = []
-    for dim in dimensions:
-        if dim not in DIM_MAP:
-            continue
+    for dim in ordered_dims:
         info = DIM_MAP[dim]
-        skill_note = _get_skill_prompts(skill_pack_ids, info['keys'])
+        skill_note = _get_skill_prompts(skill_pack_ids, info['keys'], mode='agent')
 
-        system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师。
+        # 组装上游上下文：本轮已生成的所有维度产物（截断省 token）
+        upstream_parts = []
+        for up_dim in DIM_ORDER:
+            up_val = ctx[up_dim]
+            if up_val.strip() and up_dim != dim:
+                up_label = DIM_MAP[up_dim]['label']
+                upstream_parts.append(f'【{up_label}（已确认）】\n{up_val[:800]}')
+        upstream_ctx = '\n\n'.join(upstream_parts) if upstream_parts else '（暂无上游维度，自由发挥）'
+
+        # 标注当前维度在 workflow 中的位置
+        dim_idx = DIM_ORDER.index(dim)
+        upstream_names = [DIM_MAP[d]['label'] for d in DIM_ORDER[:dim_idx] if ctx[d].strip()]
+        downstream_names = [DIM_MAP[d]['label'] for d in DIM_ORDER[dim_idx+1:] if d in ordered_dims]
+        position_note = f'你正在执行第 {dim_idx+1}/{len(DIM_ORDER)} 步：{info["label"]}设计'
+        if upstream_names:
+            position_note += f'（上游已完成：{"→".join(upstream_names)}）'
+        if downstream_names:
+            position_note += f'（下游将基于你的产出继续：{"→".join(downstream_names)}）'
+
+        system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
+{position_note}
+
 任务：{info['prompt']}
 
 书名：{book.title}
 题材：{book.genre}
-已有设定：
-{existing_ctx or '（暂无）'}
+
+【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
+{upstream_ctx}
 
 {skill_note}
 
-直接输出{info['label']}内容（纯文本，不要JSON包裹）。"""
+直接输出{info['label']}内容（纯文本，不要JSON包裹）。确保与上游维度衔接一致。"""
 
-        user_prompt = instruction or f'请为这本小说生成{info["label"]}。'
+        user_prompt = instruction or f'请为这本小说生成{info["label"]}，与已确认的上游维度保持一致。'
 
         content, err = _call_llm(
             [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
@@ -3601,6 +3661,8 @@ def ai_master_create(book_id):
             results.append({'dimension': dim, 'label': info['label'], 'field': info['field'], 'error': err})
         else:
             results.append({'dimension': dim, 'label': info['label'], 'field': info['field'], 'content': content})
+            # 关键：本轮产出回流到 ctx，供下一轮维度作为上游上下文
+            ctx[dim] = content
 
     return jsonify({'results': results})
 
@@ -3879,7 +3941,25 @@ def ai_analyze_dimension(book_id):
         'locations': '地点体系：三级分类（大区域/城市/场景），JSON格式',
     }
 
-    system_prompt = f"""你是专业的小说分析师。请分析以下小说内容，提取并归纳「{dim_label}」维度的设定信息。
+    # agent 协同：读取 bible 其他维度作为已知上下文，让识别结果与已确认维度保持一致
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    known_ctx_parts = []
+    if bb:
+        dim_label_map = {'concept': '构思', 'key_rules': '设定/规则', 'worldbuilding': '世界观',
+                         'character_profiles': '人物', 'plot_design': '大纲', 'timeline': '剧情',
+                         'foreshadowing': '伏笔', 'locations': '地点'}
+        for f, lbl in dim_label_map.items():
+            v = getattr(bb, f, '') or ''
+            if v.strip() and f != field:  # 排除当前维度自身
+                known_ctx_parts.append(f'【{lbl}（已确认）】\n{v[:600]}')
+    known_ctx = '\n\n'.join(known_ctx_parts) if known_ctx_parts else '（暂无其他维度参考）'
+
+    system_prompt = f"""你是专业的小说分析师，正在与其他维度分析师协同工作。
+请分析以下小说内容，提取并归纳「{dim_label}」维度的设定信息。
+
+【已确认的其他维度设定】（识别结果必须与这些维度保持一致，不可矛盾）
+{known_ctx}
+
 严格按JSON格式输出，不要任何其他文字：
 {{
   "{field}": "{dim_prompts.get(field, dim_label)}"
