@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/jpeg" href="./logo.jpg" />
+    <link rel="apple-touch-icon" href="./logo.jpg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="番薯写作 - AI原生的中文网文创作工作台，移动端沉浸写作" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="番薯写作" />
+
+    <title>番薯写作</title>
+    <script>
+      // 强制注销所有已注册的 Service Worker（它们会缓存旧JS导致React DOM冲突）
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          for (var i = 0; i < registrations.length; i++) {
+            registrations[i].unregister();
+          }
+        });
+      }
+    </script>
+    <script type="module" crossorigin src="./assets/index-DsElCK4_.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Czpsmumv.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
