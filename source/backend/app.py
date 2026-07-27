@@ -628,69 +628,143 @@ def count_words(text):
     return cn_chars + en_words + numbers
 
 
-_CN_DIGITS = {'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'零':0}
-_CN_UNITS = {'十':10,'百':100,'千':1000,'万':10000}
+_CN_DIGITS = {'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'零':0,'〇':0}
+_CN_UNITS = {'十':10,'百':100,'千':1000,'万':10000,'亿':100000000}
+# 全角数字 → 半角
+_FULLWIDTH_DIGITS = str.maketrans('０１２３４５６７８９', '0123456789')
 
 
 def _chinese_to_int(s):
-    """将中文数字（如 十一/二十三/一百零五/一千二百）转为 int。无法解析返回 None。"""
+    """将中文数字（如 十一/二十三/一百零五/一千二百/两万零一）转为 int。
+    无法解析返回 None。支持阿拉伯数字与中文数字混用（如 2十/1百2/12）。"""
     if not s:
         return None
     total = 0
     cur = 0
     wan_part = 0  # 万位以上的累积
-    for ch in s:
-        if ch in _CN_DIGITS:
+    yi_part = 0   # 亿位以上的累积
+    has_digit = False
+    has_value = False  # 是否出现过非零值
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if ch.isdigit():
+            # 连续阿拉伯数字作为一个整体整数
+            j = i
+            while j < n and s[j].isdigit():
+                j += 1
+            cur = int(s[i:j])
+            has_digit = True
+            if cur != 0:
+                has_value = True
+            i = j
+            continue
+        elif ch in _CN_DIGITS:
             cur = _CN_DIGITS[ch]
-        elif ch == '万':
+            has_digit = True
+            if cur != 0:
+                has_value = True
+            i += 1
+        elif ch == '亿':
+            if cur == 0 and total == 0:
+                return None
             if cur == 0:
                 cur = 1
-            wan_part = (total + cur) * 10000
+            yi_part = (yi_part + wan_part + total + cur) * 100000000
+            wan_part = 0
             total = 0
             cur = 0
+            has_value = True
+            i += 1
+        elif ch == '万':
+            if cur == 0 and total == 0:
+                return None
+            if cur == 0:
+                cur = 1
+            wan_part = (wan_part + total + cur) * 10000
+            total = 0
+            cur = 0
+            has_value = True
+            i += 1
         elif ch in _CN_UNITS:
             if cur == 0:
                 cur = 1  # "十" 单独出现视为 10
             total += cur * _CN_UNITS[ch]
             cur = 0
+            has_digit = True
+            has_value = True
+            i += 1
         else:
             return None  # 含非数字字符，无法解析
-    result = wan_part + total + cur
-    return result if result > 0 else None
+    if not has_digit:
+        return None
+    result = yi_part + wan_part + total + cur
+    # 允许 0（如"第零章"），仅当原串确实含数字时
+    if result == 0:
+        return 0 if has_digit else None
+    return result
 
 
 def parse_chapter_number(title):
     """从章节标题解析章节号，返回 int 或 None。
-    支持：第11章/第十一章/第11回/第11节/Chapter 11/11.标题/11、标题 等。"""
+    支持的格式（阿拉伯/中文数字可混用）：
+      第N章/第N章/第N回/第N节/第N话/第N集/第N幕/第N折/第N卷/第N部/第N篇...
+      Chapter N / Ch.N / CHAPTER N / Episode N / Ep.N
+      N.标题 / N、标题 / N:标题 / N-标题 / N 标题 / N标题
+      十一 标题（行首纯中文数字）
+    支持括号包裹：【第11章】、（第十一章）、[Chapter 11]
+    多个章节号时取最后一个（如 第3卷第5章 → 5）。"""
     if not title:
         return None
     import re
-    t = title.strip()
-    # 1. 第N章/回/节/卷/部（阿拉伯数字）
-    m = re.search(r'第\s*(\d+)\s*[章节回卷部篇]', t)
+    # 全角数字转半角
+    t = title.strip().translate(_FULLWIDTH_DIGITS)
+
+    # 收集所有「第...后缀」模式的章节号，取最后一个（最细粒度）
+    # 后缀字符集：章/节/回/卷/部/篇/话/集/幕/折/更/段/讲/课/夜/日/年/季/场 等
+    suffix_class = '章节回卷部篇话集幕折更段讲课夜日年季场'
+    matches = re.findall(r'第\s*([0-9零一二三四五六七八九十百千万亿两〇]+)\s*[' + suffix_class + r']', t)
+    if matches:
+        # 取最后一个匹配（如 第3卷第5章 → 取5）
+        n = _chinese_to_int(matches[-1])
+        if n is not None:
+            return n
+
+    # Chapter N / Ch.N / CHAPTER N / Episode N / Ep.N（大小写不敏感）
+    m = re.search(r'(?:chapter|ch|episode|ep)\.?\s*(\d+)', t, re.IGNORECASE)
     if m:
-        try:
+        return int(m.group(1))
+
+    # 行首：数字（阿拉伯）+ 可选分隔符 + 后续标题
+    # 分隔符：. 、 : ： - ) ] 】 空格 ，或直接跟中文/字母
+    # 排除日期格式：数字紧接 年/月/日/时/分/秒/号 或 N-N-N 连续日期格式 视为非章节号
+    m = re.match(r'\s*(\d+)(?:\s*[\.、:：\-\)\]】，;；]|\s+|\s*(?=[\u4e00-\u9fffA-Za-z]))', t)
+    if m:
+        num_end = m.end(1)
+        rest = t[num_end:]
+        is_date = False
+        # 数字后紧跟日期单位（年/月/日/时/分/秒/号）
+        if rest and rest[0] in '年月日时分秒号':
+            is_date = True
+        # YYYY-MM-DD / YYYY-MM 日期格式（数字-数字-数字）
+        if re.match(r'\s*-\d{1,2}(-\d{1,2})?(\s|$)', rest):
+            is_date = True
+        if not is_date:
             return int(m.group(1))
-        except ValueError:
-            pass
-    # 2. 第N章/回/节（中文数字）
-    m = re.search(r'第\s*([零一二三四五六七八九十百千万两]+)\s*[章节回卷部篇]', t)
+
+    # 行首：纯中文数字 + 可选分隔符
+    m = re.match(r'\s*([零一二三四五六七八九十百千万亿两〇]+)(?:\s*[\.、:：\-\)\]】，;；]|\s+)', t)
     if m:
         n = _chinese_to_int(m.group(1))
         if n is not None:
             return n
-    # 3. Chapter N / CHAPTER N
-    m = re.search(r'[Cc]hapter\s*(\d+)', t)
-    if m:
-        return int(m.group(1))
-    # 4. 行首 数字 + 分隔符（11. / 11、 / 11  / 11: / 11-）
-    m = re.match(r'\s*(\d+)\s*[\.、:：\-\)\]】]', t)
-    if m:
-        return int(m.group(1))
-    # 5. 行首纯数字
+
+    # 行首纯数字（整行就是一个数字）
     m = re.match(r'\s*(\d+)\s*$', t)
     if m:
         return int(m.group(1))
+
     return None
 
 
