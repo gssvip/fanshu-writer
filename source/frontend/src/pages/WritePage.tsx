@@ -4520,9 +4520,6 @@ function DynamicMemoryPanel(props: {
     setGenerating(false);
   }
 
-  // 计算下一个应该生成的区间
-  const nextIntervalStart = Math.floor(chapterCount / 5) * 5 + 1;
-
   if (loading) return <div className="page loading-screen"><span>加载动态文件...</span></div>;
 
   return (
@@ -4938,7 +4935,7 @@ function DynamicMemoryPanel(props: {
             )}
 
             <div className="modal-actions">
-              <button className="btn-ghost-sm" onClick={() => { setShowAntiForgetModal(false); setAntiForgetScope('recent'); }}>关闭</button>
+              <button className="btn-ghost-sm" onClick={() => { setShowAntiForgetModal(false); setAntiForgetScope('reports'); }}>关闭</button>
               <button className="btn-primary-sm" onClick={() => { setShowAntiForgetModal(false); handleAntiForgetCheck(); }} disabled={antiForgetChecking}>
                 {antiForgetChecking ? '⏳ 重新检查中...' : '🔄 重新检查'}
               </button>
