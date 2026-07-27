@@ -2473,8 +2473,11 @@ def ai_anti_forget_check(book_id):
 
     data = request.get_json() or {}
     skill_pack_ids = data.get('skill_pack_ids', [])
-    # 检查范围：recent(近10章) / all(全部章节，按卷抽样) / dimensions(仅维度)
-    scope = data.get('scope', 'recent')
+    # 检查范围：reports(所有动态报告) / dimensions(仅维度，查阅除构思/章节外所有维度)
+    scope = data.get('scope', 'reports')
+    # 兼容旧值 recent/all → reports
+    if scope in ('recent', 'all'):
+        scope = 'reports'
 
     config = AIConfig.query.first()
     if not config or not config.api_key:
@@ -2488,32 +2491,32 @@ def ai_anti_forget_check(book_id):
     all_chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
     chapter_text = ''
     ch_count = len(all_chs)
-    source_label = '章节正文'
-    if ch_count > 0:
-        if scope == 'dimensions':
-            # 仅维度模式：不读章节
-            chapter_text, source_label = _collect_dimension_source(bb, '全部维度')
-        elif scope == 'all' and ch_count > 20:
-            # 全部模式：抽样 首中尾 各几章
-            sample = all_chs[:5] + all_chs[len(all_chs)//2-2:len(all_chs)//2+3] + all_chs[-5:]
-            seen = set()
-            parts = []
-            for ch in sample:
-                if ch.id in seen:
-                    continue
-                seen.add(ch.id)
-                parts.append(f'【{ch.title}】\n{(ch.content or "")[:800]}')
-            chapter_text = '\n\n'.join(parts)[:8000]
-        else:
-            # 近期模式（默认）：最近 10 章
+    source_label = '动态文件报告'
+    if scope == 'dimensions':
+        # 仅维度模式：不读章节，也不读构思；查阅设定/大纲/剧情/人物/伏笔/地点/物资等
+        chapter_text, source_label = _collect_dimension_source(bb, '全部维度（除构思、章节）')
+        # _collect_dimension_source 默认含构思，此处剥离构思
+        if chapter_text:
+            import re as _re_dim
+            chapter_text = _re_dim.sub(r'【构思】\n[^\n]*(\n|$)', '', chapter_text).strip()
+    else:
+        # 动态文件模式（reports）：读取所有动态报告作为检查依据
+        all_reports = DynamicReport.query.filter_by(book_id=book_id).order_by(DynamicReport.chapter_start).all()
+        if all_reports:
+            parts = [f'【{r.title}（{r.chapter_start}-{r.chapter_end}章）】\n{(r.content or "")[:800]}' for r in all_reports]
+            chapter_text = '\n\n'.join(parts)[:10000]
+            source_label = f'动态文件（共{len(all_reports)}份报告）'
+        elif ch_count > 0:
+            # 无动态报告时回退到近期章节
             recent = all_chs[-10:]
             parts = [f'【{ch.title}】\n{(ch.content or "")[:1000]}' for ch in recent]
             chapter_text = '\n\n'.join(parts)[:8000]
-    else:
-        # 无章节：回退到维度数据
-        chapter_text, source_label = _collect_dimension_source(bb, '全部维度')
-        if not chapter_text:
-            return jsonify({'error': '该作品暂无章节，且设定/大纲/剧情维度也为空，无法进行检查。请先填写维度或导入章节。'}), 400
+            source_label = '近期章节（暂无动态报告）'
+        else:
+            # 无章节也无报告：回退到维度数据
+            chapter_text, source_label = _collect_dimension_source(bb, '全部维度')
+            if not chapter_text:
+                return jsonify({'error': '该作品暂无动态报告、章节，且维度也为空，无法进行检查。请先生成动态报告或填写维度。'}), 400
 
     # 收集已有动态文件（若有），作为额外上下文
     dm = DynamicMemory.query.filter_by(book_id=book_id).first()
@@ -6739,6 +6742,109 @@ def create_dynamic_report(book_id):
     db.session.add(report)
     db.session.commit()
     return jsonify(report.to_dict()), 201
+
+
+@app.route('/api/books/<book_id>/dynamic-reports/batch-generate', methods=['POST'])
+@login_required
+def batch_generate_dynamic_reports(book_id):
+    """按卷批量生成动态报告（每5章一份）。AI识别按钮选择某卷后，自动生成该卷内所有
+    尚未生成的5章区间动态报告，减少一个个手动添加的麻烦。
+    参数：volume_id（可选，空则全卷）、volume_title、skill_pack_ids、overwrite（是否覆盖已存在，默认false）"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Book not found'}), 404
+
+    data = request.get_json() or {}
+    volume_id = data.get('volume_id', '')
+    volume_title = data.get('volume_title', '')
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    overwrite = data.get('overwrite', False)
+
+    config = AIConfig.query.first()
+    if not config or not config.api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    # 收集该卷章节（按order_index）
+    all_chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+    if not all_chs:
+        return jsonify({'error': '该作品暂无章节，无法批量生成动态报告。'}), 400
+
+    # 确定该卷章节的全局1-based起止章号
+    if volume_id:
+        vol_ch_idx = []
+        collecting = False
+        for i, ch in enumerate(all_chs):
+            if ch.id == volume_id:
+                collecting = True
+                continue
+            if collecting:
+                if ch.is_volume:
+                    break
+                vol_ch_idx.append(i)
+        if not vol_ch_idx:
+            return jsonify({'error': f'卷「{volume_title or volume_id}」内暂无章节'}), 400
+        global_start = vol_ch_idx[0] + 1
+        global_end = vol_ch_idx[-1] + 1
+    else:
+        global_start = 1
+        global_end = len(all_chs)
+
+    # 按5章一份切分区间
+    intervals = []
+    s = global_start
+    while s <= global_end:
+        e = min(s + DYNAMIC_REPORT_INTERVAL - 1, global_end)
+        intervals.append((s, e))
+        s = e + 1
+
+    if not intervals:
+        return jsonify({'error': '该卷章节范围无效'}), 400
+
+    # 查询已存在的报告（按chapter_start/chapter_end匹配），决定是否跳过/覆盖
+    existing = DynamicReport.query.filter_by(book_id=book_id).all()
+    existing_map = {(r.chapter_start, r.chapter_end): r for r in existing}
+
+    generated = []
+    skipped = []
+    errors = []
+    for (cs, ce) in intervals:
+        key = (cs, ce)
+        if key in existing_map and not overwrite:
+            skipped.append({'chapter_start': cs, 'chapter_end': ce, 'reason': '已存在'})
+            continue
+        # 调用AI生成内容
+        content, err = _generate_dynamic_report_content(book_id, cs, ce)
+        if err:
+            errors.append({'chapter_start': cs, 'chapter_end': ce, 'error': err})
+            continue
+        if key in existing_map and overwrite:
+            # 覆盖已存在报告
+            r = existing_map[key]
+            r.content = content
+            r.title = f'动态-({cs}-{ce}章)'
+            r.auto_generated = False
+        else:
+            # 新建报告
+            r = DynamicReport(
+                book_id=book_id, title=f'动态-({cs}-{ce}章)', content=content,
+                chapter_start=cs, chapter_end=ce, auto_generated=False
+            )
+            db.session.add(r)
+        db.session.commit()
+        generated.append(r.to_dict())
+
+    return jsonify({
+        'success': True,
+        'volume_title': volume_title or '全部章节',
+        'chapter_range': [global_start, global_end],
+        'total_intervals': len(intervals),
+        'generated_count': len(generated),
+        'skipped_count': len(skipped),
+        'error_count': len(errors),
+        'generated': generated,
+        'skipped': skipped,
+        'errors': errors,
+    })
 
 
 @app.route('/api/books/<book_id>/dynamic-reports/<report_id>', methods=['PUT'])

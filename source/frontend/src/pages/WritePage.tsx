@@ -4198,8 +4198,8 @@ function DynamicMemoryPanel(props: {
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createStart, setCreateStart] = useState(1);
-  const [createEnd, setCreateEnd] = useState(5);
+  const [createStart, setCreateStart] = useState<number | ''>('');
+  const [createEnd, setCreateEnd] = useState<number | ''>('');
   const [batchMode, setBatchMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
@@ -4212,7 +4212,7 @@ function DynamicMemoryPanel(props: {
   // 防遗忘与一致性检查
   const [antiForgetChecking, setAntiForgetChecking] = useState(false);
   const [antiForgetReport, setAntiForgetReport] = useState<any>(null);
-  const [antiForgetScope, setAntiForgetScope] = useState<'recent' | 'all' | 'dimensions'>('recent');
+  const [antiForgetScope, setAntiForgetScope] = useState<'reports' | 'dimensions'>('reports');
   const [showAntiForgetModal, setShowAntiForgetModal] = useState(false);
 
   const chapterCount = chapters.filter(c => !c.is_volume).length;
@@ -4304,15 +4304,27 @@ function DynamicMemoryPanel(props: {
     });
   }
 
-  // AI识别指定卷的动态文件分类
+  // AI识别指定卷的动态文件：按5章一份批量生成动态报告
   async function handleAnalyzeDynVolume(volId: string, volTitle: string) {
-    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，生成本卷的动态分类摘要（人物/事件/时间线/地点/势力/伏笔/境界/关系）。是否继续？`, async () => {
+    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，按每5章一份自动生成该卷所有动态报告（已存在的将跳过）。是否继续？`, async () => {
       setAnalyzingVol(volId || volTitle);
+      setError('');
       try {
-        const result = await api.analyzeDynamicVolume(bookId, volId, volTitle, selectedSkillPackIds);
-        if (result.bible) onBibleUpdate(result.bible);
-        alert(`AI识别完成！已为「${volTitle}」生成动态文件摘要`);
+        const result = await api.batchGenerateDynamicReports(bookId, {
+          volume_id: volId,
+          volume_title: volTitle,
+          skill_pack_ids: selectedSkillPackIds,
+          overwrite: false,
+        });
+        // 重新拉取报告列表（按章号排序）
+        const fresh = await api.listDynamicReports(bookId);
+        setReports(fresh.sort((a, b) => a.chapter_start - b.chapter_start));
+        const msg = `✅ AI识别完成！\n卷「${result.volume_title}」（第${result.chapter_range[0]}-${result.chapter_range[1]}章）\n` +
+          `本次生成 ${result.generated_count} 份报告，跳过已存在 ${result.skipped_count} 份` +
+          (result.error_count > 0 ? `，失败 ${result.error_count} 份` : '');
+        alert(msg);
       } catch (e: any) {
+        setError(e.message || 'AI识别失败');
         alert('AI识别失败：' + (e.message || '请检查AI配置'));
       }
       setAnalyzingVol('');
@@ -4465,6 +4477,10 @@ function DynamicMemoryPanel(props: {
 
   async function handleCreate() {
     if (!bookId) return;
+    if (createStart === '' || createEnd === '') {
+      alert('请填写起始章号和结束章号');
+      return;
+    }
     if (createEnd < createStart) {
       alert('结束章号不能小于起始章号');
       return;
@@ -4506,7 +4522,6 @@ function DynamicMemoryPanel(props: {
 
   // 计算下一个应该生成的区间
   const nextIntervalStart = Math.floor(chapterCount / 5) * 5 + 1;
-  const nextIntervalEnd = nextIntervalStart + 4;
 
   if (loading) return <div className="page loading-screen"><span>加载动态文件...</span></div>;
 
@@ -4537,7 +4552,7 @@ function DynamicMemoryPanel(props: {
               {batchMode ? '✕ 退出批量' : '☑ 批量管理'}
             </button>
           )}
-          <button className="btn-primary-sm" onClick={() => { setCreateStart(nextIntervalStart); setCreateEnd(nextIntervalEnd); setShowCreateModal(true); }} disabled={generating || batchMode}>
+          <button className="btn-primary-sm" onClick={() => { setCreateStart(''); setCreateEnd(''); setShowCreateModal(true); }} disabled={generating || batchMode}>
             ＋ 生成报告
           </button>
         </div>
@@ -4549,7 +4564,7 @@ function DynamicMemoryPanel(props: {
       {/* 防遗忘检查范围选择（整合防遗忘技能包：一致性/锁定事实/伏笔/叙事债务/角色认知） */}
       <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:10,fontSize:11,color:'var(--text-muted)',flexWrap:'wrap'}}>
         <span>🛡️ 防遗忘检查范围:</span>
-        {(['recent','all','dimensions'] as const).map(s => (
+        {(['reports','dimensions'] as const).map(s => (
           <button
             key={s}
             className={antiForgetScope === s ? 'btn-primary-sm' : 'btn-ghost-sm'}
@@ -4557,10 +4572,10 @@ function DynamicMemoryPanel(props: {
             onClick={() => setAntiForgetScope(s)}
             disabled={antiForgetChecking}
           >
-            {s === 'recent' ? '近10章' : s === 'all' ? '全章抽样' : '仅维度'}
+            {s === 'reports' ? '动态文件' : '仅维度'}
           </button>
         ))}
-        <span style={{fontSize:10,opacity:0.7}}>（无章节时自动从设定/大纲/剧情维度提取）</span>
+        <span style={{fontSize:10,opacity:0.7}}>（动态文件：检查所有动态报告；仅维度：查阅除构思、章节外所有维度）</span>
       </div>
 
       {/* 章节进度指示：只保留章数和报告数，移除 1-5/6-10 等 chips（下方已有可编辑报告目录） */}
@@ -4646,7 +4661,7 @@ function DynamicMemoryPanel(props: {
 
       {/* 报告区域 */}
       {reports.length === 0 ? (
-        <div className="bible-empty" onClick={() => { setCreateStart(1); setCreateEnd(Math.min(5, chapterCount || 5)); setShowCreateModal(true); }}>
+        <div className="bible-empty" onClick={() => { setCreateStart(''); setCreateEnd(''); setShowCreateModal(true); }}>
           <span className="bible-empty-icon">🗂️</span>
           <p>暂无动态报告</p>
           <p className="text-muted">
@@ -4794,17 +4809,25 @@ function DynamicMemoryPanel(props: {
               <input
                 type="number"
                 min={1}
-                max={chapterCount}
+                max={chapterCount || undefined}
                 value={createStart}
-                onChange={e => setCreateStart(parseInt(e.target.value) || 1)}
+                placeholder="如 1"
+                onChange={e => {
+                  const v = e.target.value;
+                  setCreateStart(v === '' ? '' : (parseInt(v) || ''));
+                }}
               />
               <label>结束章号</label>
               <input
                 type="number"
                 min={1}
-                max={chapterCount}
+                max={chapterCount || undefined}
                 value={createEnd}
-                onChange={e => setCreateEnd(parseInt(e.target.value) || 1)}
+                placeholder="如 5"
+                onChange={e => {
+                  const v = e.target.value;
+                  setCreateEnd(v === '' ? '' : (parseInt(v) || ''));
+                }}
               />
             </div>
             <div className="confirm-actions">

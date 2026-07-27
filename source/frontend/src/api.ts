@@ -349,7 +349,7 @@ export const api = {
     }),
 
   // AI Anti-Forget Check (长篇小说防遗忘与一致性检查)
-  aiAntiForgetCheck: (bookId: string, scope: 'recent' | 'all' | 'dimensions' = 'recent', skillPackIds: string[] = []) =>
+  aiAntiForgetCheck: (bookId: string, scope: 'reports' | 'dimensions' = 'reports', skillPackIds: string[] = []) =>
     request<{ success: boolean; report: any; scope: string; ch_count: number; source_label: string }>(`/books/${bookId}/ai-anti-forget-check`, {
       method: 'POST',
       body: JSON.stringify({ scope, skill_pack_ids: skillPackIds }),
@@ -399,6 +399,17 @@ export const api = {
     request<DynamicReport>(`/books/${bookId}/dynamic-reports`, {
       method: 'POST',
       body: JSON.stringify(data),
+    }),
+  // 按卷批量生成动态报告（每5章一份，自动补齐该卷所有5章区间）
+  batchGenerateDynamicReports: (bookId: string, data: { volume_id?: string; volume_title?: string; skill_pack_ids?: string[]; overwrite?: boolean }) =>
+    request<{ success: boolean; volume_title: string; chapter_range: number[]; total_intervals: number; generated_count: number; skipped_count: number; error_count: number; generated: DynamicReport[]; skipped: any[]; errors: any[] }>(`/books/${bookId}/dynamic-reports/batch-generate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        volume_id: data.volume_id || '',
+        volume_title: data.volume_title || '',
+        skill_pack_ids: data.skill_pack_ids || [],
+        overwrite: data.overwrite || false,
+      }),
     }),
   updateDynamicReport: (bookId: string, reportId: string, data: Partial<DynamicReport>) =>
     request<DynamicReport>(`/books/${bookId}/dynamic-reports/${reportId}`, {
