@@ -17,7 +17,7 @@ const TAB_ROW_2 = [
   { key: 'chapters', label: '章节', icon: '📚', field: '', placeholder: '' },
   { key: 'foreshadowing', label: '伏笔', icon: '🔮', field: 'foreshadowing', placeholder: '伏笔内容、埋设时机、回收方式...' },
   { key: 'map', label: '地图', icon: '🗺️', field: 'locations', placeholder: '' },
-  { key: 'relationGraph', label: '关系图谱', icon: '🕸️', field: 'character_profiles', placeholder: '' },
+  { key: 'relationGraph', label: '关系图谱', icon: '🕸️', field: 'relation_graph', placeholder: '' },
   { key: 'realmGraph', label: '境界图谱', icon: '⚡', field: 'worldbuilding', placeholder: '' },
   { key: 'locationGraph', label: '地点图谱', icon: '🗺️', field: 'locations', placeholder: '' },
 ];

@@ -429,6 +429,8 @@ class BookBible(db.Model):
     concept = db.Column(db.Text, default='')
     plot_design = db.Column(db.Text, default='')
     generated_summary = db.Column(db.Text, default='')
+    # 关系图谱专用字段（与 character_profiles 解耦，避免互相覆盖导致角色丢失）
+    relation_graph = db.Column(db.Text, default='')
     last_synced_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -441,6 +443,7 @@ class BookBible(db.Model):
             'key_rules': self.key_rules, 'locations': self.locations,
             'concept': self.concept, 'plot_design': self.plot_design,
             'generated_summary': self.generated_summary,
+            'relation_graph': self.relation_graph,
             'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None
         }
 
@@ -2290,6 +2293,29 @@ def get_book_bible(book_id):
         bb = BookBible(book_id=book_id)
         db.session.add(bb)
         db.session.commit()
+    # 数据修复迁移：历史 bug 导致关系图谱文本被写入 character_profiles，破坏了 JSON 数组结构。
+    # 如果 relation_graph 为空，且 character_profiles 看起来是图谱文本（非 JSON 数组），
+    # 则把图谱文本迁到 relation_graph，并清空 character_profiles（让用户重新维护角色档案）。
+    try:
+        cp = bb.character_profiles or ''
+        rg = bb.relation_graph or ''
+        if not rg.strip() and cp.strip():
+            is_json_array = False
+            try:
+                parsed = json.loads(cp)
+                is_json_array = isinstance(parsed, list)
+            except (json.JSONDecodeError, ValueError):
+                is_json_array = False
+            if not is_json_array:
+                # 看起来像图谱文本（含 /*EDGE: 标记 或 含 "关系:" 行 或 含 | 分隔的人物行）
+                looks_like_graph = ('/*EDGE:' in cp) or ('关系:' in cp) or ('关系：' in cp) or \
+                                   any('|' in line and ('人物' in line or '姓名' in line) for line in cp.split('\n')[:5])
+                if looks_like_graph:
+                    bb.relation_graph = cp
+                    bb.character_profiles = ''
+                    db.session.commit()
+    except Exception:
+        db.session.rollback()
     return jsonify(bb.to_dict())
 
 @app.route('/api/books/<book_id>/bible', methods=['PUT'])
@@ -2299,7 +2325,7 @@ def update_book_bible(book_id):
         bb = BookBible(book_id=book_id)
         db.session.add(bb)
     data = request.json
-    for field in ['worldbuilding', 'character_profiles', 'timeline', 'foreshadowing', 'style_guide', 'key_rules', 'locations', 'concept', 'plot_design']:
+    for field in ['worldbuilding', 'character_profiles', 'timeline', 'foreshadowing', 'style_guide', 'key_rules', 'locations', 'concept', 'plot_design', 'relation_graph']:
         if field in data:
             setattr(bb, field, data[field])
     db.session.commit()
@@ -4634,7 +4660,7 @@ def ai_analyze_from_reports(book_id):
     # 维度 → bible字段 映射
     dim_field_map = {
         'locations': 'locations',
-        'relationGraph': 'character_profiles',
+        'relationGraph': 'relation_graph',
         'locationGraph': 'locations',
         'realmGraph': 'worldbuilding',
     }
@@ -4691,9 +4717,9 @@ def ai_analyze_from_reports(book_id):
 {"locations": [{"name":"大区域名","desc":"描述","children":[{"name":"城市名","desc":"描述","children":[{"name":"场景名","desc":"描述"}]}]}]}
 如果没有明确地点信息，输出空数组。""",
 
-        'relationGraph': """请从以下内容中提取所有人物及其关系，整理为人物档案。
+        'relationGraph': """请从以下内容中提取所有人物及其关系，整理为关系图谱数据。
 输出JSON格式：
-{"character_profiles": "人物1: 姓名|身份|性格|动机\\n人物2: 姓名|身份|性格|动机\\n关系: A与B-关系类型"}
+{"relation_graph": "人物1: 姓名|身份|性格|动机\\n人物2: 姓名|身份|性格|动机\\n关系: A与B-关系类型"}
 如果没有人物信息，输出空字符串。""",
 
         'locationGraph': """请从以下内容中提取地点之间的关联关系。
@@ -5000,6 +5026,11 @@ def init_db():
             pass
         try:
             db.session.execute(db.text('ALTER TABLE book_bible ADD COLUMN plot_design TEXT'))
+        except Exception:
+            pass
+        # Migration: 关系图谱专用字段（解耦 character_profiles，避免角色丢失）
+        try:
+            db.session.execute(db.text('ALTER TABLE book_bible ADD COLUMN relation_graph TEXT'))
         except Exception:
             pass
         try:
