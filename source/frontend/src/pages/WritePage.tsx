@@ -5264,6 +5264,7 @@ function LocationsPanel(props: {
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
+  const [globalLocCollapsed, setGlobalLocCollapsed] = useState(true); // 全局地点档案默认折叠
 
   useEffect(() => {
     setLocations(bible?.locations || '');
@@ -5444,23 +5445,28 @@ function LocationsPanel(props: {
 
       {/* 全局地点编辑 */}
       <div className="bible-edit-section">
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-          <b>📝 全局地点档案</b>
+        <div
+          style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,cursor:'pointer',userSelect:'none'}}
+          onClick={() => setGlobalLocCollapsed(c => !c)}
+        >
+          <b>📝 全局地点档案 <span style={{fontSize:10,color:'var(--text-muted)'}}>{globalLocCollapsed ? '▶ 点击展开' : '▼ 点击折叠'}</span></b>
           {!editing ? (
-            <button className="btn-ghost-sm" onClick={() => { setEditing(true); setEditValue(locations); }}>✏️ 编辑</button>
+            <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); setEditing(true); setEditValue(locations); setGlobalLocCollapsed(false); }}>✏️ 编辑</button>
           ) : (
-            <div style={{display:'flex',gap:6}}>
+            <div style={{display:'flex',gap:6}} onClick={e => e.stopPropagation()}>
               <button className="btn-primary-sm" onClick={() => { saveLocations(editValue); setEditing(false); }} disabled={saving}>{saving ? '保存中...' : '💾 保存'}</button>
               <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
             </div>
           )}
         </div>
-        {editing ? (
-          <textarea className="input" rows={12} value={editValue} onChange={e => setEditValue(e.target.value)} placeholder="记录主要地点、区域、地理特征..." />
-        ) : (
-          <div className="bible-content-view" style={{whiteSpace:'pre-wrap',minHeight:80,padding:12,background:'var(--bg-tertiary)',borderRadius:8}}>
-            {locations || <span className="text-muted">暂无全局地点档案，点击「编辑」手动添加</span>}
-          </div>
+        {!globalLocCollapsed && (
+          editing ? (
+            <textarea className="input" rows={12} value={editValue} onChange={e => setEditValue(e.target.value)} placeholder="记录主要地点、区域、地理特征..." />
+          ) : (
+            <div className="bible-content-view" style={{whiteSpace:'pre-wrap',minHeight:80,padding:12,background:'var(--bg-tertiary)',borderRadius:8}}>
+              {locations || <span className="text-muted">暂无全局地点档案，点击「编辑」手动添加</span>}
+            </div>
+          )
         )}
       </div>
     </div>
