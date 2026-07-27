@@ -2125,7 +2125,8 @@ def import_book_zip():
 
 
 def split_into_chapters(text):
-    """将纯文本按章节标记拆分为多个章节，支持多种章节标题格式"""
+    """将纯文本按章节标记拆分为多个章节，支持多种章节标题格式。
+    会自动合并"同章双标题"（如 第20章 / 第二十章 紧挨出现，前者为空）产生的空章。"""
     import re
 
     def _extract(matches, text, strip_prefix=''):
@@ -2145,34 +2146,79 @@ def split_into_chapters(text):
     cn_pattern = re.compile(r'^[ \t]*第[零一二三四五六七八九十百千万\d]+[章节回卷][ \t]*.*$', re.MULTILINE)
     cn_matches = list(cn_pattern.finditer(text))
     if len(cn_matches) >= 1:
-        return _extract(cn_matches, text)
+        return _merge_empty_chapters(_extract(cn_matches, text))
 
     # 2. Markdown 标题 # xxx 或 ## xxx
     md_pattern = re.compile(r'^#{1,3}[ \t]+.+$', re.MULTILINE)
     md_matches = list(md_pattern.finditer(text))
     if len(md_matches) >= 1:
-        return _extract(md_matches, text, strip_prefix='#')
+        return _merge_empty_chapters(_extract(md_matches, text, strip_prefix='#'))
 
     # 3. 英文 Chapter N / CHAPTER N
     en_pattern = re.compile(r'^[ \t]*[Cc][Hh][Aa][Pp][Tt][Ee][Rr][ \t]*\d+[ \t]*.*$', re.MULTILINE)
     en_matches = list(en_pattern.finditer(text))
     if len(en_matches) >= 1:
-        return _extract(en_matches, text)
+        return _merge_empty_chapters(_extract(en_matches, text))
 
     # 4. 纯数字开头：1. xxx / 1、xxx / 1: xxx（至少2个才拆分，避免误拆）
     num_pattern = re.compile(r'^[ \t]*\d{1,4}[.、:][ \t]*\S.+$', re.MULTILINE)
     num_matches = list(num_pattern.finditer(text))
     if len(num_matches) >= 2:
-        return _extract(num_matches, text)
+        return _merge_empty_chapters(_extract(num_matches, text))
 
     # 5. 【 xxx 】 或 『 xxx 』 格式标题
     bracket_pattern = re.compile(r'^[ \t]*[【『][^】』]+[】』][ \t]*.*$', re.MULTILINE)
     bracket_matches = list(bracket_pattern.finditer(text))
     if len(bracket_matches) >= 2:
-        return _extract(bracket_matches, text)
+        return _merge_empty_chapters(_extract(bracket_matches, text))
 
     # 无法拆分，作为单个章节
     return None
+
+
+def _merge_empty_chapters(chapters):
+    """合并空章节：处理"同章双标题"导致的空章。
+    规则：
+    - 若某章 content 为空，且与下一章章节号相同（如 第20章/第二十章），则视为同一章，
+      保留下一章（有内容的那个）的标题，删除空章。
+    - 若某章 content 为空，且下一章 content 非空，但章节号不同或无法解析，则将下一章
+      内容并入当前空章（标题以当前章为主，下一章标题作为副标题保留），避免0字节空章。
+    返回合并后的章节列表（至少保留1章）。"""
+    if not chapters:
+        return chapters
+    result = []
+    i = 0
+    while i < len(chapters):
+        cur = chapters[i]
+        cur_num = parse_chapter_number(cur.get('title', ''))
+        cur_content = cur.get('content', '').strip()
+        # 当前章为空，尝试与下一章合并
+        if not cur_content and i + 1 < len(chapters):
+            nxt = chapters[i + 1]
+            nxt_num = parse_chapter_number(nxt.get('title', ''))
+            nxt_content = nxt.get('content', '').strip()
+            # 情况A：章节号相同（同章双标题，如 第20章/第二十章）→ 删空章，跳到下一章
+            if cur_num is not None and nxt_num is not None and cur_num == nxt_num:
+                i += 1
+                continue
+            # 情况B：下一章有内容 → 内容并入当前章，标题保留当前章（下一章作副标题）
+            if nxt_content:
+                merged_title = cur.get('title', '')
+                # 若两标题不同，拼接副标题
+                if nxt.get('title', '') and nxt.get('title', '') != merged_title:
+                    merged_title = f'{merged_title} / {nxt.get("title", "")}'
+                result.append({'title': merged_title[:100], 'content': nxt_content})
+                i += 2  # 跳过下一章
+                continue
+            # 情况C：下一章也为空 → 删当前空章，处理下一章
+            i += 1
+            continue
+        result.append({'title': cur.get('title', '')[:100], 'content': cur_content})
+        i += 1
+    # 兜底：若合并后为空（全部空章），保留原第一章避免0章
+    if not result:
+        result = [{'title': chapters[0].get('title', '')[:100], 'content': chapters[0].get('content', '')}]
+    return result
 
 
 @app.route('/api/books/import-files', methods=['POST'])
