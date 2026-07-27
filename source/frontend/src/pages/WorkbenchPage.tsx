@@ -522,15 +522,30 @@ export default function WorkbenchPage() {
               <div className="form-field">
                 <label>题材</label>
                 <select className="input" value={importForm.genre} onChange={e => setImportForm(prev => ({ ...prev, genre: e.target.value }))}>
-                  <option value="other">其他</option>
-                  <option value="urban">都市</option>
-                  <option value="fantasy">玄幻</option>
-                  <option value="xianxia">仙侠</option>
-                  <option value="history">历史</option>
-                  <option value="scifi">科幻</option>
-                  <option value="mystery">悬疑</option>
-                  <option value="romance">现代言情</option>
-                  <option value="ancient_romance">古代言情</option>
+                  <optgroup label="通用">
+                    <option value="other">其他</option>
+                  </optgroup>
+                  <optgroup label="男频">
+                    <option value="urban">都市</option>
+                    <option value="fantasy">玄幻</option>
+                    <option value="xianxia">仙侠</option>
+                    <option value="history">历史</option>
+                    <option value="military">军事</option>
+                    <option value="game">游戏</option>
+                    <option value="sports">体育</option>
+                    <option value="scifi">科幻</option>
+                    <option value="mystery">悬疑</option>
+                    <option value="light_novel">轻小说</option>
+                    <option value="urban_business">都市职场</option>
+                    <option value="urban_fantasy">都市异能</option>
+                  </optgroup>
+                  <optgroup label="女频">
+                    <option value="romance">现代言情</option>
+                    <option value="ancient_romance">古代言情</option>
+                    <option value="fantasy_romance">幻想言情</option>
+                    <option value="danmei">纯爱</option>
+                    <option value="acg">二次元</option>
+                  </optgroup>
                 </select>
               </div>
             </div>
