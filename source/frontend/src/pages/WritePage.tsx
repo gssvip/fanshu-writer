@@ -2203,7 +2203,6 @@ function PlotPanel(props: {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importLoading, setImportLoading] = useState(false);
-  const [scrollLoading, setScrollLoading] = useState(false);
   // 自动分卷规划
   const [targetWords, setTargetWords] = useState<number>(0);
   const [showVolumeCalc, setShowVolumeCalc] = useState(false);
@@ -2378,19 +2377,6 @@ function PlotPanel(props: {
 
   // ==== 大纲工作流相关函数（从大纲维度迁移） ====
 
-  // 解析已有 timeline 中已生成的卷数（用于滚动生成时计算下一卷号）
-  function parseExistingVolumeCount(): number {
-    try {
-      if (bible?.timeline) {
-        const existing = JSON.parse(bible.timeline);
-        if (Array.isArray(existing) && existing.length > 0) {
-          return existing.length;
-        }
-      }
-    } catch { /* ignore */ }
-    return 0;
-  }
-
   // 生成五幕式总纲（写入 plot_design）
   async function generateOutlineMaster() {
     if (!bookId) return;
@@ -2404,160 +2390,6 @@ function PlotPanel(props: {
       alert(`五幕式总纲已生成并填入大纲（共 ${result.volume_count} 卷）`);
     } catch (e: any) {
       alert('生成总纲失败: ' + e.message);
-      setOutlineWorkflowProgress('');
-    }
-    setOutlineWorkflowLoading('');
-  }
-
-  // 滚动生成下一卷大纲（写入 timeline）
-  async function generateOutlineVolumeScroll() {
-    if (!bookId) return;
-    // 先检查是否有总纲（plotDesign 非空）
-    if (!bible?.plot_design || !bible.plot_design.trim()) {
-      alert('请先在大纲维度生成五幕式总纲');
-      return;
-    }
-    setScrollLoading(true);
-    setOutlineWorkflowProgress('⏳ 计算当前卷号...');
-    try {
-      // 自动计算当前应该生成第几卷：基于已生成卷数 + 1（已有 timeline 中的卷数 + 1）
-      const existingCount = parseExistingVolumeCount();
-      const volumeIndex = existingCount + 1;
-      const volumeTitle = `第${volumeIndex}卷`;
-
-      setOutlineWorkflowProgress(`⏳ 正在生成第 ${volumeIndex} 卷大纲...`);
-      const result = await api.aiOutlineVolume(bookId, volumeIndex, volumeTitle, selectedSkillPackIds, CHAPTERS_PER_VOLUME);
-
-      // 把返回的 timeline 填入剧情维度（通过 onBibleUpdate 更新 timeline 字段）
-      const updated = await api.updateBible(bookId, { timeline: result.timeline } as any);
-      onBibleUpdate(updated);
-
-      // 显示 volume_data 的情节节点（合并到 volumeData 状态）
-      if (result.volume_data) {
-        const newVols = Array.isArray(result.volume_data) ? result.volume_data : [result.volume_data];
-        setVolumeData(prev => {
-          const next = [...prev];
-          newVols.forEach((v, i) => {
-            const idx = volumeIndex - 1 + i;
-            if (idx < next.length) next[idx] = { ...next[idx], ...v };
-            else next[idx] = v;
-          });
-          return next;
-        });
-        // 展开新增的卷
-        setExpandedVol(prev => {
-          const n = new Set(prev);
-          n.add(volumeIndex - 1);
-          return n;
-        });
-      }
-
-      setOutlineWorkflowProgress('');
-      alert(`第${volumeIndex}卷大纲已生成并填入剧情`);
-    } catch (e: any) {
-      alert('生成本卷大纲失败: ' + e.message);
-      setOutlineWorkflowProgress('');
-    }
-    setScrollLoading(false);
-  }
-
-  // 一键全书大纲（分卷迭代，健壮版）
-  async function generateOutlineAllVolumes() {
-    if (!bookId) return;
-    setOutlineWorkflowLoading('all');
-    setOutlineWorkflowProgress('⏳ 准备生成全书大纲...');
-    try {
-      // 先确保有总纲（没有则先调 aiOutlineMaster）
-      let masterOutline = bible?.plot_design || '';
-      let volumeCount = 6; // 默认6卷
-      if (!masterOutline.trim()) {
-        setOutlineWorkflowProgress('⏳ 正在生成五幕式总纲...');
-        const masterResult = await api.aiOutlineMaster(bookId, selectedSkillPackIds, undefined, CHAPTERS_PER_VOLUME);
-        masterOutline = masterResult.master_outline;
-        volumeCount = masterResult.volume_count || volumeCount;
-        const updatedMaster = await api.updateBible(bookId, { plot_design: masterOutline } as any);
-        onBibleUpdate(updatedMaster);
-      } else {
-        // 尝试从已有 timeline 推断 volume_count
-        const existingCount = parseExistingVolumeCount();
-        if (existingCount > 0) volumeCount = Math.max(volumeCount, existingCount);
-      }
-
-      // 准备 timeline 数组：先加载已有的 timeline 数据
-      let allTimeline: any[] = [];
-      try {
-        if (bible?.timeline) {
-          const existing = JSON.parse(bible.timeline);
-          if (Array.isArray(existing)) allTimeline = [...existing];
-        }
-      } catch { /* ignore */ }
-
-      // 逐卷调用 aiOutlineVolume（从第1卷到 volume_count 卷）
-      let completed = 0;
-      const newVolumeData: any[] = [];
-      for (let v = 1; v <= volumeCount; v++) {
-        setOutlineWorkflowProgress(`⏳ 正在生成第 ${v}/${volumeCount} 卷...`);
-        try {
-          const volumeTitle = `第${v}卷`;
-          const result = await api.aiOutlineVolume(bookId, v, volumeTitle, selectedSkillPackIds, CHAPTERS_PER_VOLUME);
-
-          // 合并 timeline：尝试解析返回的 timeline，并替换/追加第v卷
-          let appended = false;
-          try {
-            const parsedTimeline = JSON.parse(result.timeline);
-            if (Array.isArray(parsedTimeline)) {
-              parsedTimeline.forEach((t, i) => {
-                const idx = (v - 1) + i;
-                if (idx < allTimeline.length) allTimeline[idx] = t;
-                else allTimeline[idx] = t;
-              });
-              appended = true;
-            } else {
-              allTimeline[v - 1] = parsedTimeline;
-              appended = true;
-            }
-          } catch {
-            // 如果 timeline 不是 JSON，直接用 volume_data
-          }
-          if (!appended && result.volume_data) {
-            const volData = Array.isArray(result.volume_data) ? result.volume_data[0] : result.volume_data;
-            allTimeline[v - 1] = volData;
-          }
-
-          // 收集 volume_data 用于展示情节节点
-          if (result.volume_data) {
-            const vols = Array.isArray(result.volume_data) ? result.volume_data : [result.volume_data];
-            vols.forEach((vd, i) => {
-              const idx = (v - 1) + i;
-              if (idx < newVolumeData.length) newVolumeData[idx] = { ...newVolumeData[idx], ...vd };
-              else newVolumeData[idx] = vd;
-            });
-          }
-          completed = v;
-        } catch (e: any) {
-          // 失败则停止并提示已完成的卷数
-          alert(`第${v}卷生成失败：${e.message}\n已完成 ${completed}/${volumeCount} 卷`);
-          break;
-        }
-      }
-
-      // 把合并后的 timeline 回填到剧情维度
-      const cleanedTimeline = allTimeline.filter(Boolean);
-      if (cleanedTimeline.length > 0) {
-        const updated = await api.updateBible(bookId, { timeline: JSON.stringify(cleanedTimeline, null, 2) } as any);
-        onBibleUpdate(updated);
-      }
-
-      // 显示新卷数据（情节节点）
-      if (newVolumeData.length > 0) {
-        setVolumeData(newVolumeData.filter(Boolean));
-        setExpandedVol(new Set(newVolumeData.map((_, i) => i)));
-      }
-
-      setOutlineWorkflowProgress('');
-      alert(`全书大纲生成完成：${completed}/${volumeCount} 卷`);
-    } catch (e: any) {
-      alert('一键全书大纲失败: ' + e.message);
       setOutlineWorkflowProgress('');
     }
     setOutlineWorkflowLoading('');
@@ -2868,26 +2700,10 @@ function PlotPanel(props: {
           <button
             className="btn-ghost-sm"
             onClick={handleExtractVolumes}
-            disabled={extractLoading || outlineWorkflowLoading !== '' || scrollLoading}
+            disabled={extractLoading || outlineWorkflowLoading !== ''}
             title="从大纲总纲一次性提取各卷剧情"
           >
             {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
-          </button>
-          <button
-            className="btn-ghost-sm"
-            onClick={generateOutlineVolumeScroll}
-            disabled={scrollLoading || outlineWorkflowLoading !== '' || extractLoading}
-            title="滚动生成下一卷大纲"
-          >
-            {scrollLoading ? '⏳ 生成卷纲中...' : '📜 滚动生成下一卷'}
-          </button>
-          <button
-            className="btn-ghost-sm"
-            onClick={generateOutlineAllVolumes}
-            disabled={outlineWorkflowLoading !== '' || scrollLoading || extractLoading}
-            title="一键全书大纲：先总纲，再逐卷迭代生成"
-          >
-            {outlineWorkflowLoading === 'all' ? '⏳ 全书生成中...' : '⚡ 一键全书大纲'}
           </button>
           <button
             className="btn-ghost-sm"
@@ -3707,6 +3523,9 @@ function DynamicMemoryPanel(props: {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createStart, setCreateStart] = useState(1);
   const [createEnd, setCreateEnd] = useState(5);
+  const [batchMode, setBatchMode] = useState(false);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
 
   const chapterCount = chapters.filter(c => !c.is_volume).length;
 
@@ -3809,6 +3628,57 @@ function DynamicMemoryPanel(props: {
     });
   }
 
+  function toggleChecked(id: string) {
+    setCheckedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (checkedIds.size === reports.length) {
+      setCheckedIds(new Set());
+    } else {
+      setCheckedIds(new Set(reports.map(r => r.id)));
+    }
+  }
+
+  function exitBatchMode() {
+    setBatchMode(false);
+    setCheckedIds(new Set());
+  }
+
+  function handleBatchDelete() {
+    if (checkedIds.size === 0) return;
+    showConfirm(`确定删除选中的 ${checkedIds.size} 份报告？此操作不可撤销。`, async () => {
+      setBatchDeleting(true);
+      try {
+        const ids = Array.from(checkedIds);
+        await api.batchDeleteDynamicReports(bookId, ids);
+        const deletedSet = new Set(ids);
+        setReports(prev => {
+          const filtered = prev.filter(r => !deletedSet.has(r.id));
+          if (selectedId && deletedSet.has(selectedId)) {
+            if (filtered.length > 0) {
+              setSelectedId(filtered[0].id);
+              setEditValue(filtered[0].content);
+              setEditTitle(filtered[0].title);
+            } else {
+              setSelectedId(null);
+            }
+          }
+          return filtered;
+        });
+        exitBatchMode();
+      } catch (e: any) {
+        alert('批量删除失败: ' + e.message);
+      }
+      setBatchDeleting(false);
+    });
+  }
+
   async function handleCreate() {
     if (!bookId) return;
     if (createEnd < createStart) {
@@ -3861,10 +3731,20 @@ function DynamicMemoryPanel(props: {
       <div className="dm-header">
         <h3>🗂️ 动态文件</h3>
         <div className="dm-header-actions">
-          <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating} title="检查并自动生成缺失的报告">
+          <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating || batchMode} title="检查并自动生成缺失的报告">
             {generating ? '⏳ 处理中...' : '🔄 自动检查'}
           </button>
-          <button className="btn-primary-sm" onClick={() => { setCreateStart(nextIntervalStart); setCreateEnd(nextIntervalEnd); setShowCreateModal(true); }} disabled={generating}>
+          {reports.length > 0 && (
+            <button
+              className={batchMode ? 'btn-primary-sm' : 'btn-ghost-sm'}
+              onClick={() => batchMode ? exitBatchMode() : setBatchMode(true)}
+              disabled={batchDeleting}
+              title="批量选择并删除报告"
+            >
+              {batchMode ? '✕ 退出批量' : '☑ 批量管理'}
+            </button>
+          )}
+          <button className="btn-primary-sm" onClick={() => { setCreateStart(nextIntervalStart); setCreateEnd(nextIntervalEnd); setShowCreateModal(true); }} disabled={generating || batchMode}>
             ＋ 生成报告
           </button>
         </div>
@@ -3917,24 +3797,64 @@ function DynamicMemoryPanel(props: {
         </div>
       ) : (
         <>
-          {/* 报告切换标签栏 - 单击切换编辑 */}
-          <div className="dm-tab-bar">
-            {reports.map(r => (
-              <button
-                key={r.id}
-                className={`dm-tab-chip ${selectedId === r.id ? 'active' : ''}`}
-                onClick={() => selectReport(r)}
-                title={r.title}
-              >
-                <span className="dm-tab-chip-range">{r.chapter_start}-{r.chapter_end}</span>
-                {r.auto_generated && <span className="dm-tab-chip-badge">自</span>}
-              </button>
-            ))}
-          </div>
+          {batchMode ? (
+            <>
+              {/* 批量操作栏 */}
+              <div className="dm-batch-bar">
+                <button className="btn-ghost-sm" onClick={toggleSelectAll} disabled={batchDeleting}>
+                  {checkedIds.size === reports.length && reports.length > 0 ? '取消全选' : '全选'}
+                </button>
+                <span className="dm-batch-count">
+                  已选 {checkedIds.size}/{reports.length}
+                </span>
+                <button
+                  className="btn-primary-sm dm-btn-danger"
+                  onClick={handleBatchDelete}
+                  disabled={batchDeleting || checkedIds.size === 0}
+                >
+                  {batchDeleting ? '⏳ 删除中...' : `🗑️ 删除选中(${checkedIds.size})`}
+                </button>
+              </div>
+              {/* 带复选框的报告标签栏 */}
+              <div className="dm-tab-bar dm-tab-bar-batch">
+                {reports.map(r => (
+                  <label
+                    key={r.id}
+                    className={`dm-tab-chip ${checkedIds.has(r.id) ? 'active' : ''} dm-tab-chip-checkable`}
+                    title={r.title}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checkedIds.has(r.id)}
+                      onChange={() => toggleChecked(r.id)}
+                      disabled={batchDeleting}
+                    />
+                    <span className="dm-tab-chip-range">{r.chapter_start}-{r.chapter_end}</span>
+                    {r.auto_generated && <span className="dm-tab-chip-badge">自</span>}
+                  </label>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              {/* 报告切换标签栏 - 单击切换编辑 */}
+              <div className="dm-tab-bar">
+                {reports.map(r => (
+                  <button
+                    key={r.id}
+                    className={`dm-tab-chip ${selectedId === r.id ? 'active' : ''}`}
+                    onClick={() => selectReport(r)}
+                    title={r.title}
+                  >
+                    <span className="dm-tab-chip-range">{r.chapter_start}-{r.chapter_end}</span>
+                    {r.auto_generated && <span className="dm-tab-chip-badge">自</span>}
+                  </button>
+                ))}
+              </div>
 
-          {/* 折叠编辑器面板 */}
-          {selectedReport && (
-            <div className={`dm-editor-panel ${editorCollapsed ? 'collapsed' : ''}`}>
+              {/* 折叠编辑器面板 */}
+              {selectedReport && (
+                <div className={`dm-editor-panel ${editorCollapsed ? 'collapsed' : ''}`}>
               <div className="dm-editor-panel-header" onClick={() => setEditorCollapsed(!editorCollapsed)}>
                 <div className="dm-editor-panel-title">
                   <span className="dm-editor-toggle">{editorCollapsed ? '▶' : '▼'}</span>
@@ -3995,6 +3915,8 @@ function DynamicMemoryPanel(props: {
                 </div>
               )}
             </div>
+          )}
+            </>
           )}
         </>
       )}

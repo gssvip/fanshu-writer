@@ -393,6 +393,11 @@ export const api = {
     }),
   deleteDynamicReport: (bookId: string, reportId: string) =>
     request<{ success: boolean }>(`/books/${bookId}/dynamic-reports/${reportId}`, { method: 'DELETE' }),
+  batchDeleteDynamicReports: (bookId: string, reportIds: string[]) =>
+    request<{ success: boolean; deleted_count: number; deleted_ids: string[] }>(`/books/${bookId}/dynamic-reports/batch-delete`, {
+      method: 'POST',
+      body: JSON.stringify({ report_ids: reportIds }),
+    }),
   regenerateDynamicReport: (bookId: string, reportId: string) =>
     request<DynamicReport>(`/books/${bookId}/dynamic-reports/${reportId}/regenerate`, { method: 'POST' }),
   autoCheckDynamicReport: (bookId: string) =>

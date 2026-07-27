@@ -3766,35 +3766,81 @@ def ai_extract_volumes_from_outline(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=8000, temperature=0.7
+        max_tokens=12000, temperature=0.7
     )
     if err:
         return jsonify({'error': err}), 500
 
     import re
-    # 尝试匹配 JSON 数组（优先）或单个对象
-    arr_match = re.search(r'\[[\s\S]*\]', content)
-    if arr_match:
-        try:
-            volumes = json.loads(arr_match.group())
-            if isinstance(volumes, list) and volumes:
-                # 补全字段
-                for i, v in enumerate(volumes):
-                    if 'volume_id' not in v:
-                        v['volume_id'] = str(v.get('volume_index', i + 1))
-                    if 'volume_index' not in v:
-                        v['volume_index'] = _extract_volume_index(v.get('volume', v.get('volume_id', ''))) or (i + 1)
-                    if 'volume' not in v:
-                        v['volume'] = f'第{v["volume_index"]}卷'
-                # 按 volume_index 排序
-                volumes.sort(key=lambda v: int(v.get('volume_index', 0) or 0))
-                bb.timeline = json.dumps(volumes, ensure_ascii=False, indent=2)
-                db.session.commit()
-                return jsonify({'success': True, 'volumes': volumes, 'bible': bb.to_dict()})
-        except (json.JSONDecodeError, ValueError) as e:
-            pass
 
-    return jsonify({'error': 'AI返回格式错误，无法解析为JSON数组', 'raw': content[:800]}), 500
+    def _safe_volume_index(v, i):
+        """安全提取卷号：优先 volume_index，再 volume/volume_id，最后用序号。始终返回 int。"""
+        raw = v.get('volume_index')
+        if raw is None:
+            raw = v.get('volume', v.get('volume_id', ''))
+        idx = _extract_volume_index(raw)
+        return idx if idx > 0 else (i + 1)
+
+    volumes = None
+    parse_error = None
+
+    # 策略1：去除 markdown 代码块围栏后，直接尝试整段解析
+    cleaned = content.strip()
+    fence_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
+    if fence_match:
+        cleaned = fence_match.group(1).strip()
+
+    # 策略2：尝试整段 JSON 解析（数组 或 含 volumes 字段的对象）
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            volumes = parsed
+        elif isinstance(parsed, dict):
+            # 兼容 {"volumes": [...]} / {"data": [...]} / {"result": [...]} 等包裹
+            for k in ('volumes', 'data', 'result', 'items', 'list'):
+                if isinstance(parsed.get(k), list):
+                    volumes = parsed[k]
+                    break
+            # 单个对象当一卷处理
+            if volumes is None and 'volume' in parsed:
+                volumes = [parsed]
+    except (json.JSONDecodeError, ValueError) as e:
+        parse_error = str(e)
+
+    # 策略3：正则提取最外层数组（非贪婪优先，回退贪婪）
+    if not volumes:
+        for pattern in (r'\[\s*\{[\s\S]*\}\s*\]', r'\[[\s\S]*\]'):
+            m = re.search(pattern, cleaned)
+            if m:
+                try:
+                    cand = json.loads(m.group())
+                    if isinstance(cand, list) and cand:
+                        volumes = cand
+                        break
+                except (json.JSONDecodeError, ValueError) as e:
+                    parse_error = str(e)
+
+    if not volumes or not isinstance(volumes, list) or len(volumes) == 0:
+        return jsonify({'error': 'AI返回格式错误，无法解析为JSON数组', 'raw': content[:800], 'parse_error': parse_error}), 500
+
+    # 过滤非字典项并补全字段
+    volumes = [v for v in volumes if isinstance(v, dict)]
+    if not volumes:
+        return jsonify({'error': 'AI返回的JSON数组中无有效卷数据', 'raw': content[:800]}), 500
+
+    for i, v in enumerate(volumes):
+        v['volume_index'] = _safe_volume_index(v, i)
+        if 'volume_id' not in v:
+            v['volume_id'] = str(v['volume_index'])
+        if 'volume' not in v:
+            v['volume'] = f'第{v["volume_index"]}卷'
+
+    # 按 volume_index 排序（已确保为 int，不会抛异常）
+    volumes.sort(key=lambda v: v['volume_index'])
+
+    bb.timeline = json.dumps(volumes, ensure_ascii=False, indent=2)
+    db.session.commit()
+    return jsonify({'success': True, 'volumes': volumes, 'bible': bb.to_dict()})
 
 
 @app.route('/api/books/<book_id>/ai-import-plot-outline', methods=['POST'])
@@ -5212,6 +5258,26 @@ def delete_dynamic_report(book_id, report_id):
     db.session.delete(report)
     db.session.commit()
     return jsonify({'success': True})
+
+
+@app.route('/api/books/<book_id>/dynamic-reports/batch-delete', methods=['POST'])
+@login_required
+def batch_delete_dynamic_reports(book_id):
+    """批量删除动态报告"""
+    data = request.get_json() or {}
+    report_ids = data.get('report_ids') or []
+    if not isinstance(report_ids, list) or not report_ids:
+        return jsonify({'error': '请提供要删除的报告ID列表'}), 400
+
+    deleted = DynamicReport.query.filter(
+        DynamicReport.book_id == book_id,
+        DynamicReport.id.in_(report_ids)
+    ).all(synchronize_session=False)
+    deleted_ids = [r.id for r in deleted]
+    for r in deleted:
+        db.session.delete(r)
+    db.session.commit()
+    return jsonify({'success': True, 'deleted_count': len(deleted_ids), 'deleted_ids': deleted_ids})
 
 
 @app.route('/api/books/<book_id>/dynamic-reports/<report_id>/regenerate', methods=['POST'])

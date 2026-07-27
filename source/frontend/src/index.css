@@ -1230,6 +1230,18 @@ textarea{resize:vertical;line-height:1.8}
 .dm-tab-chip-badge{font-size:9px;padding:1px 4px;border-radius:6px;background:rgba(255,255,255,.25);font-weight:700}
 .dm-tab-chip:not(.active) .dm-tab-chip-badge{background:#e3f2fd;color:#1565c0}
 
+/* 动态文件：批量管理模式 */
+.dm-batch-bar{display:flex;align-items:center;gap:10px;padding:8px 10px;margin-bottom:8px;background:var(--bg-tertiary);border-radius:var(--radius-sm);border:1px solid var(--border-color)}
+.dm-batch-count{font-size:13px;font-weight:600;color:var(--text-secondary);flex:1}
+.dm-tab-bar-batch{flex-wrap:wrap;overflow-x:visible}
+.dm-tab-chip-checkable{cursor:pointer;user-select:none}
+.dm-tab-chip-checkable input[type="checkbox"]{margin:0;cursor:pointer;accent-color:var(--accent)}
+.dm-tab-chip-checkable.active{background:#e53935;border-color:#e53935;color:#fff}
+.dm-tab-chip-checkable.active .dm-tab-chip-badge{background:rgba(255,255,255,.25)}
+.dm-batch-bar .dm-btn-danger{background:#e53935;color:#fff;border-color:#e53935}
+.dm-batch-bar .dm-btn-danger:hover{background:#c62828;border-color:#c62828}
+.dm-batch-bar .dm-btn-danger:disabled{opacity:.5;cursor:not-allowed}
+
 /* 动态文件：折叠编辑器面板 */
 .dm-editor-panel{background:var(--bg-secondary);border-radius:var(--radius-sm);border:1px solid var(--border-color);overflow:hidden}
 .dm-editor-panel.collapsed .dm-editor-panel-body{display:none}
