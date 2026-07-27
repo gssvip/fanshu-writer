@@ -4,7 +4,9 @@ services:
     runtime: python
     rootDir: source/backend
     plan: free
-    buildCommand: pip install -r requirements.txt && cd ../frontend && npm install && npm run build
+    # 前端构建产物已提交到 backend/static（git 跟踪），无需在 Render 上重新 build
+    # 简化构建命令，避免免费版内存不足导致 npm build 失败
+    buildCommand: pip install -r requirements.txt
     startCommand: python app.py
     envVars:
       - key: PYTHON_VERSION
