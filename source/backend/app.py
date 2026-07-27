@@ -5070,41 +5070,26 @@ def export_analysis():
 def init_db():
     with app.app_context():
         db.create_all()
-        # Migration: add new columns to book_bible if missing
-        try:
-            db.session.execute(db.text('ALTER TABLE book_bible ADD COLUMN locations TEXT'))
-        except Exception:
-            pass
-        try:
-            db.session.execute(db.text('ALTER TABLE book_bible ADD COLUMN concept TEXT'))
-        except Exception:
-            pass
-        try:
-            db.session.execute(db.text('ALTER TABLE book_bible ADD COLUMN plot_design TEXT'))
-        except Exception:
-            pass
+        # Migration: 逐条独立提交，避免 PostgreSQL 事务污染
+        # （PG 中一条 ALTER 失败会使整个事务 aborted，后续语句全失败）
+        # 使用 ADD COLUMN IF NOT EXISTS（PostgreSQL 9.6+ / SQLite 3.35+ 均支持，老版本 SQLite 走 except 兜底）
+        def _add_column(table, col_def):
+            sql = f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col_def}'
+            try:
+                db.session.execute(db.text(sql))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+        _add_column('book_bible', 'locations TEXT')
+        _add_column('book_bible', 'concept TEXT')
+        _add_column('book_bible', 'plot_design TEXT')
         # Migration: 关系图谱专用字段（解耦 character_profiles，避免角色丢失）
-        try:
-            db.session.execute(db.text('ALTER TABLE book_bible ADD COLUMN relation_graph TEXT'))
-        except Exception:
-            pass
-        try:
-            db.session.execute(db.text('ALTER TABLE ai_config ADD COLUMN recognition_model TEXT'))
-        except Exception:
-            pass
+        _add_column('book_bible', 'relation_graph TEXT')
+        _add_column('ai_config', 'recognition_model TEXT')
         # Migration: skill_packs 添加 github_source 和 github_synced_at 字段
-        try:
-            db.session.execute(db.text('ALTER TABLE skill_packs ADD COLUMN github_source VARCHAR(500) DEFAULT \'\''))
-        except Exception:
-            pass
-        try:
-            db.session.execute(db.text('ALTER TABLE skill_packs ADD COLUMN github_synced_at TIMESTAMP'))
-        except Exception:
-            pass
-        try:
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
+        _add_column('skill_packs', "github_source VARCHAR(500) DEFAULT ''")
+        _add_column('skill_packs', 'github_synced_at TIMESTAMP')
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
