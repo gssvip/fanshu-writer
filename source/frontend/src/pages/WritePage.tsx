@@ -1092,6 +1092,7 @@ export default function WritePage() {
             onToggleSkillPack={toggleSkillPack}
             selectedSkillPacks={selectedSkillPacks}
             concept={concept}
+            onRefreshChapters={() => api.listChapters(bookId || '').then(setChapters).catch(() => {})}
           />
         ) : (
           <BibleEditPanel
@@ -2183,8 +2184,9 @@ function PlotPanel(props: {
   onToggleSkillPack: (id: string) => void;
   selectedSkillPacks: SkillPack[];
   concept: string;
+  onRefreshChapters: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept } = props;
+  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept, onRefreshChapters } = props;
   const [volumes, setVolumes] = useState<any[]>([]);
   const [editingVol, setEditingVol] = useState<string | null>(null);
   const [editForm, setEditForm] = useState('');
@@ -2293,10 +2295,42 @@ function PlotPanel(props: {
   }
 
   async function deleteVolume(idx: number) {
-    const vol = volumes[idx];
-    showConfirm(`确定删除「${vol.volume || '该卷'}」的剧情？`, async () => {
-      const newVols = volumes.filter((_, i) => i !== idx);
+    const vol = displayVolumes[idx];
+    if (!vol) return;
+    const volId = vol.volume_id || '';
+    const volName = vol.volume || '';
+    showConfirm(`确定删除「${volName || '该卷'}」的剧情？`, async () => {
+      // 按 volume_id / volume 精确匹配删除，避免 displayVolumes 与 volumes 下标错位导致删错卷
+      let newVols = volumes.filter((v: any) => {
+        const vId = v.volume_id || '';
+        const vName = v.volume || '';
+        // 命中条件：id 相同（且非空）或 名称相同
+        if (volId && vId === volId) return false;
+        if (volName && vName === volName) return false;
+        return true;
+      });
+      // 若精确匹配后未删掉任何项（说明该卷只存在于 chapters 表的 is_volume 行），
+      // 回退到按下标删除 volumes[idx]
+      let removedFromTimeline = newVols.length < volumes.length;
+      if (!removedFromTimeline && idx < volumes.length) {
+        newVols = volumes.filter((_, i) => i !== idx);
+        removedFromTimeline = newVols.length < volumes.length;
+      }
       await saveVolumes(newVols);
+
+      // 若该卷来自 chapters 表（有 volume_id 对应 is_volume 章节），也一并删除该卷章节
+      if (volId) {
+        const vc = volumeChapters.find(c => c.id === volId);
+        if (vc) {
+          try {
+            await api.deleteChapter(bookId, volId);
+            onRefreshChapters();
+          } catch (e: any) {
+            // 章节删除失败不阻断，timeline 已删除
+            console.warn('删除卷章节失败:', e.message);
+          }
+        }
+      }
     });
   }
 
@@ -2684,9 +2718,9 @@ function PlotPanel(props: {
         </div>
       </div>
 
-      {/* 大纲工作流（从大纲维度迁移） */}
+      {/* 大纲工作流（从大纲维度迁移）：总纲→分卷规划→提取→导入→AI创作 全部在同一行 */}
       <div className="volume-calc-section" style={{ borderLeft: '3px solid #6c5ce7', paddingLeft: 10, marginBottom: 8 }}>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           {!bible?.plot_design?.trim() && (
             <button
               className="btn-primary-sm"
@@ -2699,9 +2733,18 @@ function PlotPanel(props: {
           )}
           <button
             className="btn-ghost-sm"
+            onClick={() => setShowVolumeCalc(s => !s)}
+            disabled={outlineWorkflowLoading !== ''}
+            title="输入目标字数，按每卷50章×2400字自动分卷"
+            style={showVolumeCalc ? { background: '#6c5ce7', color: '#fff' } : {}}
+          >
+            📊 自动分卷规划
+          </button>
+          <button
+            className="btn-ghost-sm"
             onClick={handleExtractVolumes}
             disabled={extractLoading || outlineWorkflowLoading !== ''}
-            title="从大纲总纲一次性提取各卷剧情"
+            title="从大纲总纲（五幕式/AI创作/AI识别/手编均可）一次性提取各卷剧情"
           >
             {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
           </button>
@@ -2713,11 +2756,49 @@ function PlotPanel(props: {
           >
             📥 导入剧情大纲
           </button>
+          <button
+            className="btn-ghost-sm"
+            onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }}
+            title="AI 协同创作各卷剧情"
+          >
+            ✨ AI创作
+          </button>
         </div>
+        {/* 工作流提示：打通总纲→分卷→提取→导入→AI创作 */}
+        {bible?.plot_design?.trim() ? (
+          <div style={{ fontSize: 11, color: '#00b894', marginTop: 4 }}>
+            ✓ 已有总纲，可：分卷规划 → 提取各卷 / 导入大纲 / AI创作（任选其一填充各卷剧情）
+          </div>
+        ) : (
+          <div style={{ fontSize: 11, color: '#e17055', marginTop: 4 }}>
+            ⚠ 尚无总纲，建议先「生成五幕式总纲」，再做分卷规划/提取/导入
+          </div>
+        )}
         {outlineWorkflowProgress && (
           <div style={{ fontSize: 12, color: '#0984e3', marginTop: 6 }}>{outlineWorkflowProgress}</div>
         )}
       </div>
+
+      {/* 自动分卷规划表单（点击按钮后展开） */}
+      {showVolumeCalc && (
+        <div className="volume-calc-section" style={{ marginBottom: 8 }}>
+          <div className="volume-calc-form">
+            <label className="volume-calc-label">输入小说目标字数，按每卷50章×2400字自动分卷</label>
+            <div className="volume-calc-input-row">
+              <input className="input" type="number" value={targetWords || ''} onChange={e => setTargetWords(parseInt(e.target.value) || 0)} placeholder="如：1000000（100万字）" />
+              <span className="volume-calc-unit">字</span>
+              <button className="btn-primary-sm" onClick={generateVolumeBreakdown}>生成分卷框架</button>
+              <button className="btn-ghost-sm" onClick={() => setShowVolumeCalc(false)}>收起</button>
+            </div>
+            <p className="text-muted" style={{fontSize:11,marginTop:4}}>按金番作者体系：每卷50章×2400字，五幕弧线自动分配，生成5-8个情节节点/卷</p>
+            {targetWords > 0 && (
+              <div className="volume-calc-preview">
+                预计 {Math.ceil(targetWords / 2400 / 50)}卷 · {Math.ceil(targetWords / 2400)}章 · {(targetWords / 10000).toFixed(1)}万字
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 导入剧情大纲弹窗 */}
       {importModalOpen && (
@@ -2742,39 +2823,15 @@ function PlotPanel(props: {
         </div>
       )}
 
-      {/* 自动分卷规划 */}
-      <div className="volume-calc-section">
-        {!showVolumeCalc ? (
-          <button className="btn-ghost-sm volume-calc-btn" onClick={() => setShowVolumeCalc(true)}>
-            📊 自动分卷规划
-          </button>
-        ) : (
-          <div className="volume-calc-form">
-            <label className="volume-calc-label">输入小说目标字数，按每卷50章×2400字自动分卷</label>
-            <div className="volume-calc-input-row">
-              <input className="input" type="number" value={targetWords || ''} onChange={e => setTargetWords(parseInt(e.target.value) || 0)} placeholder="如：1000000（100万字）" />
-              <span className="volume-calc-unit">字</span>
-              <button className="btn-primary-sm" onClick={generateVolumeBreakdown}>生成分卷框架</button>
-              <button className="btn-ghost-sm" onClick={() => setShowVolumeCalc(false)}>取消</button>
+      {/* 分卷规划数据展示 */}
+      {volumeData.length > 0 && (
+        <div className="volume-plan-display">
+          <div className="volume-plan-header">
+            <h4>📚 分卷规划（{(targetWords / 10000).toFixed(1)}万字 · {volumeData.length}卷）</h4>
+            <div style={{display:'flex',gap:6}}>
+              <button className="btn-ghost-sm" onClick={exportVolumePlan}>📝 导出到大纲</button>
             </div>
-            <p className="text-muted" style={{fontSize:11,marginTop:4}}>按金番作者体系：每卷50章×2400字，五幕弧线自动分配，生成5-8个情节节点/卷</p>
-            {targetWords > 0 && (
-              <div className="volume-calc-preview">
-                预计 {Math.ceil(targetWords / 2400 / 50)}卷 · {Math.ceil(targetWords / 2400)}章 · {(targetWords / 10000).toFixed(1)}万字
-              </div>
-            )}
           </div>
-        )}
-
-        {/* 分卷数据展示 */}
-        {volumeData.length > 0 && (
-          <div className="volume-plan-display">
-            <div className="volume-plan-header">
-              <h4>📚 分卷规划（{(targetWords / 10000).toFixed(1)}万字 · {volumeData.length}卷）</h4>
-              <div style={{display:'flex',gap:6}}>
-                <button className="btn-ghost-sm" onClick={exportVolumePlan}>📝 导出到大纲</button>
-              </div>
-            </div>
 
             {volumeData.map((vol, idx) => {
               const expanded = expandedVol.has(idx);
@@ -2856,7 +2913,6 @@ function PlotPanel(props: {
             })}
           </div>
         )}
-      </div>
 
       {displayVolumes.length === 0 ? (
         <div className="bible-empty">
@@ -3753,7 +3809,7 @@ function DynamicMemoryPanel(props: {
         每5章自动汇总人物、事件、时间、地点、势力、伏笔、境界、关系等信息（≤500字/份），AI写作时优先读取动态文件替代全文，大幅降低token消耗
       </p>
 
-      {/* 章节进度指示 */}
+      {/* 章节进度指示：只保留章数和报告数，移除 1-5/6-10 等 chips（下方已有可编辑报告目录） */}
       <div className="dm-progress-bar">
         <div className="dm-progress-info">
           <span>📊 已有 {chapterCount} 章 · {reports.length} 份报告</span>
@@ -3762,23 +3818,6 @@ function DynamicMemoryPanel(props: {
               下次自动生成：第{(Math.floor(chapterCount / 5) + 1) * 5}章保存时
             </span>
           )}
-        </div>
-        <div className="dm-progress-track">
-          {Array.from({ length: Math.max(Math.ceil(chapterCount / 5), 1) }, (_, i) => {
-            const start = i * 5 + 1;
-            const end = (i + 1) * 5;
-            const hasReport = reports.some(r => r.chapter_start === start && r.chapter_end === end);
-            const isPartial = chapterCount >= start && chapterCount < end;
-            return (
-              <div
-                key={i}
-                className={`dm-progress-chip ${hasReport ? 'done' : isPartial ? 'partial' : 'pending'}`}
-                title={`第${start}-${end}章${hasReport ? '（已生成）' : isPartial ? '（进行中）' : '（待生成）'}`}
-              >
-                {start}-{end}
-              </div>
-            );
-          })}
         </div>
       </div>
 

@@ -3533,20 +3533,50 @@ def ai_outline_master(book_id):
 
 
 def _extract_volume_index(text):
-    """从卷名/卷ID中提取卷号数字，如'第3卷'/'卷三'/'Volume 2' → 3/3/2"""
+    """从卷名/卷ID中提取卷号数字，如'第3卷'/'卷三'/'卷二十三'/'Volume 2' → 3/3/23/2
+    支持阿拉伯数字与复合中文数字（十一/二十三/一百零五/壹貳叁等）。"""
     if not text:
         return 0
     s = str(text)
     import re as _re
-    # 阿拉伯数字
+    # 阿拉伯数字优先
     m = _re.search(r'(\d+)', s)
     if m:
         return int(m.group(1))
-    # 中文数字
-    cn_map = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
-    for cn, num in cn_map.items():
-        if cn in s:
-            return num
+    # 复合中文数字解析（支持 一~九十九、百、零、大写壹貳叁）
+    cn_digits = {
+        '零': 0, '〇': 0,
+        '一': 1, '壹': 1, '乙': 1,
+        '二': 2, '贰': 2, '貳': 2, '两': 2,
+        '三': 3, '叁': 3, '參': 3,
+        '四': 4, '肆': 4,
+        '五': 5, '伍': 5,
+        '六': 6, '陆': 6, '陸': 6,
+        '七': 7, '柒': 7, '漆': 7,
+        '八': 8, '捌': 8,
+        '九': 9, '玖': 9,
+    }
+    cn_units = {'十': 10, '拾': 10, '百': 100, '佰': 100, '千': 1000, '仟': 1000}
+    # 提取连续的中文数字片段（含单位）
+    cn_str_match = _re.search(r'[零〇一二贰貳两三叁參四肆五伍六陆陸七柒漆八捌九玖十拾百佰千仟]+', s)
+    if cn_str_match:
+        cn_str = cn_str_match.group()
+        total = 0
+        current = 0
+        for ch in cn_str:
+            if ch in cn_digits:
+                current = cn_digits[ch]
+            elif ch in cn_units:
+                unit = cn_units[ch]
+                if current == 0:
+                    current = 1 if unit >= 10 else 0
+                total += current * unit
+                current = 0
+            else:
+                current = 0
+        total += current
+        if total > 0:
+            return total
     return 0
 
 
@@ -3879,8 +3909,8 @@ def ai_import_plot_outline(book_id):
     matches = list(vol_pattern.finditer(outline_text))
 
     volumes = []
-    if matches and len(matches) >= 2:
-        # 有标准格式，按卷拆分
+    if matches:
+        # 有标准格式，按卷拆分（即使只有 1 个 match 也处理，避免单卷被丢弃）
         for i, m in enumerate(matches):
             # 提取卷号
             vol_num_str = m.group(1) or m.group(2) or m.group(3) or m.group(4) or m.group(6) or ''
@@ -3892,7 +3922,7 @@ def ai_import_plot_outline(book_id):
                 vol_idx = 0 if special in ('序章', '楔子', '引子') else 999
             else:
                 vol_title = (m.group(7) or '').strip() or f'第{vol_idx}卷'
-            # 内容范围：从当前匹配结束到下一个匹配开始
+            # 内容范围：从当前匹配结束到下一个匹配开始（最后一卷取到文末，不丢尾部）
             content_start = m.end()
             content_end = matches[i + 1].start() if i + 1 < len(matches) else len(outline_text)
             vol_content = outline_text[content_start:content_end].strip()
@@ -3913,8 +3943,16 @@ def ai_import_plot_outline(book_id):
                 'raw_text': vol_content,
             })
 
-    # ===== 第二步：正则匹配失败或卷数<2，调用 AI 智能拆卷（改进版） =====
-    if len(volumes) < 2:
+    # 如果正则匹配到第一个 match 之前还有内容，作为"开篇/引言"归入第一卷或单独成卷
+    if matches and matches[0].start() > 0:
+        head_content = outline_text[:matches[0].start()].strip()
+        if head_content and len(head_content) > 20:
+            # 归入第一卷的 main_plot 前置
+            if volumes:
+                volumes[0]['main_plot'] = head_content[:300] + '\n' + volumes[0]['main_plot']
+
+    # ===== 第二步：正则匹配失败或卷数<1，调用 AI 智能拆卷（改进版） =====
+    if len(volumes) < 1:
         skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
         # 上下文增强：注入总纲、规则、已有卷、世界观、人物
         ctx_parts = []
@@ -3992,52 +4030,96 @@ def ai_import_plot_outline(book_id):
         if err:
             return jsonify({'error': err}), 500
 
-        arr_match = re.search(r'\[[\s\S]*\]', content)
-        if not arr_match:
-            return jsonify({'error': 'AI返回格式错误，无法解析为JSON数组', 'raw': content[:500]}), 500
-        try:
-            volumes = json.loads(arr_match.group())
-            if not isinstance(volumes, list) or not volumes:
-                return jsonify({'error': 'AI返回的JSON数组为空'}), 500
-        except (json.JSONDecodeError, ValueError):
-            return jsonify({'error': 'JSON解析失败', 'raw': content[:500]}), 500
+        # 稳健解析 AI 返回（三策略：整段→对象包裹→正则数组），与 ai_extract_volumes_from_outline 一致
+        import re as _re2
+        cleaned = content.strip()
+        fence_match = _re2.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
+        if fence_match:
+            cleaned = fence_match.group(1).strip()
 
-        # 补全字段
+        ai_volumes = None
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, list):
+                ai_volumes = parsed
+            elif isinstance(parsed, dict):
+                for k in ('volumes', 'data', 'result', 'items', 'list'):
+                    if isinstance(parsed.get(k), list):
+                        ai_volumes = parsed[k]
+                        break
+                if ai_volumes is None and 'volume' in parsed:
+                    ai_volumes = [parsed]
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        if not ai_volumes:
+            for pattern in (r'\[\s*\{[\s\S]*\}\s*\]', r'\[[\s\S]*\]'):
+                m = _re2.search(pattern, cleaned)
+                if m:
+                    try:
+                        cand = json.loads(m.group())
+                        if isinstance(cand, list) and cand:
+                            ai_volumes = cand
+                            break
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+
+        if not ai_volumes:
+            return jsonify({'error': 'AI返回格式错误，无法解析为JSON数组', 'raw': content[:500]}), 500
+
+        volumes = ai_volumes
+
+        # 补全字段 + 安全 volume_index（避免 int() 异常）
+        def _safe_idx(v, i):
+            raw = v.get('volume_index')
+            if raw is None:
+                raw = v.get('volume', v.get('volume_id', ''))
+            idx = _extract_volume_index(raw)
+            return idx if idx > 0 else (i + 1)
+
         for i, v in enumerate(volumes):
+            v['volume_index'] = _safe_idx(v, i)
             if 'volume_id' not in v:
-                v['volume_id'] = str(v.get('volume_index', i + 1))
-            if 'volume_index' not in v:
-                v['volume_index'] = _extract_volume_index(v.get('volume', v.get('volume_id', ''))) or (i + 1)
+                v['volume_id'] = str(v['volume_index'])
             if 'volume' not in v:
-                v['volume'] = f'第{v.get("volume_index", i+1)}卷'
+                v['volume'] = f'第{v["volume_index"]}卷'
             if 'nodes' not in v:
                 v['nodes'] = []
 
-    # 按 volume_index 排序
-    volumes.sort(key=lambda v: int(v.get('volume_index', 0) or 0))
-    # 合并到已有 timeline（按 volume_index 替换或追加）
+    # 合并到已有 timeline：按 volume_index(int) 精确替换或追加，避免空 index 互相覆盖
     existing_volumes = []
     if bb.timeline:
         try:
             parsed = json.loads(bb.timeline)
             if isinstance(parsed, list):
-                existing_volumes = parsed
+                existing_volumes = [v for v in parsed if isinstance(v, dict)]
         except (json.JSONDecodeError, ValueError):
             existing_volumes = []
 
-    # 用导入的卷替换同 volume_index 的旧卷，或追加
+    def _vol_int_idx(v, fallback=0):
+        """安全提取 int 卷号，失败回退 fallback。"""
+        raw = v.get('volume_index')
+        if raw is None:
+            raw = v.get('volume', v.get('volume_id', ''))
+        idx = _extract_volume_index(raw)
+        return idx if idx > 0 else fallback
+
+    # 建立 existing 的 index→位置 映射（用 int 精确匹配，不再用 str 比对）
+    existing_idx_map = {}
+    for i, ev in enumerate(existing_volumes):
+        ei = _vol_int_idx(ev)
+        if ei > 0 and ei not in existing_idx_map:
+            existing_idx_map[ei] = i
+
     for new_v in volumes:
-        new_idx = str(new_v.get('volume_index', ''))
-        replaced = False
-        for i, ev in enumerate(existing_volumes):
-            ev_idx = str(ev.get('volume_index', '') or _extract_volume_index(ev.get('volume', ev.get('volume_id', ''))))
-            if ev_idx == new_idx:
-                existing_volumes[i] = new_v
-                replaced = True
-                break
-        if not replaced:
+        ni = _vol_int_idx(new_v)
+        if ni > 0 and ni in existing_idx_map:
+            existing_volumes[existing_idx_map[ni]] = new_v
+        else:
             existing_volumes.append(new_v)
-    existing_volumes.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
+
+    # 按 int 卷号稳定排序（相同 index 保持原顺序，不会前后颠倒）
+    existing_volumes.sort(key=lambda v: _vol_int_idx(v, 9999))
 
     bb.timeline = json.dumps(existing_volumes, ensure_ascii=False, indent=2)
     db.session.commit()
