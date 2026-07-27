@@ -693,7 +693,7 @@ export default function WorkbenchPage() {
               {/* 创作指令 */}
               <div className="form-field" style={{ marginTop: 12 }}>
                 <label>额外指令（可选）</label>
-                <textarea className="input master-create-textarea" rows={6} placeholder="如：主角是穿越者，背景设定在末世..." value={masterCreateInstruction} onChange={e => setMasterCreateInstruction(e.target.value)} disabled={masterCreateLoading} />
+                <textarea className="input master-create-textarea" rows={8} placeholder="如：主角是穿越者，背景设定在末世..." value={masterCreateInstruction} onChange={e => setMasterCreateInstruction(e.target.value)} disabled={masterCreateLoading} />
               </div>
 
               {/* 开始按钮 */}
