@@ -13,9 +13,9 @@ const TAB_ROW_1 = [
 ];
 
 const TAB_ROW_2 = [
-  { key: 'dynamicMemory', label: '动态文件', icon: '🗂️', field: '', placeholder: '' },
-  { key: 'inventory', label: '物资库', icon: '🎒', field: 'inventory', placeholder: '按势力/角色记录物品、功法、法宝、境界...' },
   { key: 'chapters', label: '章节', icon: '📚', field: '', placeholder: '' },
+  { key: 'inventory', label: '物资库', icon: '🎒', field: 'inventory', placeholder: '按势力/角色记录物品、功法、法宝、境界...' },
+  { key: 'dynamicMemory', label: '动态文件', icon: '🗂️', field: '', placeholder: '' },
   { key: 'foreshadowing', label: '伏笔', icon: '🔮', field: 'foreshadowing', placeholder: '伏笔内容、埋设时机、回收方式...' },
   { key: 'map', label: '地图', icon: '🗺️', field: 'locations', placeholder: '' },
 ];
@@ -420,25 +420,7 @@ export default function WritePage() {
     });
   }
 
-  // 从动态文件报告提取维度信息（地图等）
-  const handleAnalyzeFromReports = useCallback(async (dimension: string) => {
-    if (!bookId) return;
-    const label = DIMENSION_LABELS[dimension] || dimension;
-    showConfirm(`将用 AI 从动态文件报告中提取并填充「${label}」信息，节省token。是否继续？`, async () => {
-      setDimAnalyzing(true);
-      try {
-        const result = await api.analyzeFromReports(bookId, dimension);
-        if (result.bible) setBible(result.bible);
-        alert(`AI识别完成！已从${result.source}提取并填充「${label}」信息`);
-      } catch (e: any) {
-        alert('AI识别失败：' + (e.message || '请检查AI配置'));
-      }
-      setDimAnalyzing(false);
-    });
-  }, [bookId]);
-
   // 稳定的维度回调
-  const onAnalyzeFromReportsLocations = useCallback(() => handleAnalyzeFromReports('locations'), [handleAnalyzeFromReports]);
   const onAnalyzeConcept = useCallback(() => handleAnalyzeDimension('concept'), [bookId]);
 
   // 地图更新回调 —— 必须在所有 early return 之前声明
@@ -875,6 +857,7 @@ export default function WritePage() {
   const isCharacterTab = activeTab === 'characters';
   const isPlotTab = activeTab === 'plot';
   const isInventoryTab = activeTab === 'inventory';
+  const isForeshadowingTab = activeTab === 'foreshadowing';
 
   return (
     <div className={`page write-page${isChapterTab ? ' chapter-mode' : ''}`}>
@@ -970,13 +953,29 @@ export default function WritePage() {
             selectedSkillPacks={selectedSkillPacks}
           />
         ) : isMapTab ? (
-          <MapPanel
-            bookId={bookId}
-            locations={bible?.locations || ''}
-            onUpdate={handleMapUpdate}
+          <LocationsPanel
+            bookId={bookId || ''}
+            bible={bible}
+            onBibleUpdate={setBible}
+            bookTitle={book?.title || ''}
+            chapters={chapters}
+            hasChapters={chapters.length > 0}
             showConfirm={showConfirm}
-            onAnalyzeFromReports={onAnalyzeFromReportsLocations}
-            dimAnalyzing={dimAnalyzing}
+            selectedSkillPackIds={selectedSkillPackIds}
+            onMapUpdate={handleMapUpdate}
+          />
+        ) : isForeshadowingTab ? (
+          <ForeshadowingPanel
+            bookId={bookId || ''}
+            bible={bible}
+            onBibleUpdate={setBible}
+            bookTitle={book?.title || ''}
+            chapters={chapters}
+            hasChapters={chapters.length > 0}
+            showConfirm={showConfirm}
+            skillPacks={skillPacks}
+            selectedSkillPackIds={selectedSkillPackIds}
+            selectedSkillPacks={selectedSkillPacks}
           />
         ) : isChapterTab ? (
           <ChapterPanel
@@ -1822,6 +1821,8 @@ function CharacterPanel(props: {
   const [charVolumes, setCharVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [collapsedVolChars, setCollapsedVolChars] = useState<Set<number>>(new Set());
+  // 卷选择器
+  const [volSelectorOpen, setVolSelectorOpen] = useState(false);
 
   function toggleChar(idx: number) {
     setCollapsedChars(prev => {
@@ -2158,14 +2159,26 @@ function CharacterPanel(props: {
       )}
       <div className="bible-edit-header">
         <h3>👤 人物及关系</h3>
-        <div className="bible-edit-actions">
+        <div className="bible-edit-actions" style={{position:'relative'}}>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }}>
             ✨ AI创作
           </button>
           {hasChapters && (
-            <button className="btn-ghost-sm" onClick={handleAnalyzeAll} disabled={analyzing} title="AI分析已有章节，自动识别全部角色">
-              {analyzing ? '🤖 识别中...' : '🔍 全部识别'}
-            </button>
+            <>
+              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
+                {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
+              </button>
+              {volSelectorOpen && (
+                <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
+                  <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
+                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeCharVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
+                  {displayCharVolumes.map((vol, idx) => (
+                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeCharVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
+                  ))}
+                  <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
+                </div>
+              )}
+            </>
           )}
           <button className="btn-primary-sm" onClick={startAddNew}>＋ 添加角色</button>
         </div>
@@ -2175,7 +2188,7 @@ function CharacterPanel(props: {
       {displayCharVolumes.length > 0 && (
         <div className="plot-volume-list" style={{marginBottom:16}}>
           <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
-            📚 按卷识别人物：每卷可单独 AI 识别本卷出现的角色，识别后可合并到下方全局人物档案。
+            📚 按卷识别人物：点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下，可合并到下方全局人物档案。
           </p>
           {displayCharVolumes.map((vol, idx) => (
             <div key={idx} className="plot-volume-card">
@@ -2185,11 +2198,7 @@ function CharacterPanel(props: {
                 {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                 <span className="text-muted" style={{fontSize:12}}>{(vol.characters || []).length}人</span>
                 <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                  {hasChapters && (
-                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeCharVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume)} title="AI识别此卷人物">
-                      {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}
-                    </button>
-                  )}
+                  {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
                   {(vol.characters || []).length > 0 && (
                     <>
                       <button className="btn-ghost-sm" onClick={() => mergeVolumeToGlobal(idx)} title="合并到全局人物档案" style={{color:'#27ae60'}}>⬇ 合并</button>
@@ -2201,7 +2210,7 @@ function CharacterPanel(props: {
               {!collapsedVolChars.has(idx) && (
                 <div className="plot-volume-body">
                   {(!vol.characters || vol.characters.length === 0) ? (
-                    <p className="text-muted" style={{fontSize:13}}>暂无人物识别数据，点击「识别」自动提取本卷角色</p>
+                    <p className="text-muted" style={{fontSize:13}}>暂无人物识别数据，点击「🔍 AI识别」选择此卷进行识别</p>
                   ) : (
                     <div className="character-cards-grid">
                       {vol.characters.map((char: any, ci: number) => (
@@ -3307,6 +3316,8 @@ function InventoryPanel(props: {
   const [aiAssisting, setAiAssisting] = useState(false);
   const [aiError, setAiError] = useState('');
   const [skillExpanded, setSkillExpanded] = useState(false);
+  // 卷选择器
+  const [volSelectorOpen, setVolSelectorOpen] = useState(false);
 
   // 从 chapters 表筛 is_volume 卷，作为可识别的卷列表
   const volumeChapters = chapters.filter(c => c.is_volume);
@@ -3494,14 +3505,31 @@ function InventoryPanel(props: {
       )}
       <div className="bible-edit-header">
         <h3>🎒 物资库（按卷）</h3>
-        <div className="bible-edit-actions">
+        <div className="bible-edit-actions" style={{position:'relative'}}>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }} title="AI 协同创作物资库">
             ✨ AI创作
           </button>
+          {hasChapters && (
+            <>
+              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
+                {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
+              </button>
+              {volSelectorOpen && (
+                <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
+                  <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
+                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
+                  {displayVolumes.map((vol, idx) => (
+                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
+                  ))}
+                  <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
       <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
-        按卷记录主要势力和角色拥有的物品、功法、法宝、境界等。每卷可单独 AI 识别。
+        按卷记录主要势力和角色拥有的物品、功法、法宝、境界等。点击「🔍 AI识别」选择卷进行识别。
       </p>
 
       {displayVolumes.length === 0 ? (
@@ -3511,11 +3539,6 @@ function InventoryPanel(props: {
           <p className="text-muted">先在剧情维度创建分卷，或用 AI 创作生成物资库</p>
           <div className="bible-empty-actions">
             <button className="btn-primary-sm" onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }}>✨ AI创作</button>
-            {hasChapters && (
-              <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume('', '全部章节')} disabled={analyzingVol === '全部章节'}>
-                {analyzingVol === '全部章节' ? '🤖 识别中...' : '🔍 AI识别全部'}
-              </button>
-            )}
           </div>
         </div>
       ) : (
@@ -3528,11 +3551,7 @@ function InventoryPanel(props: {
                 {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                 <span className="text-muted" style={{fontSize:12}}>{(vol.items || []).length}项物资</span>
                 <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                  {hasChapters && (
-                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume)} title="AI识别此卷物资">
-                      {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}
-                    </button>
-                  )}
+                  {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
                   {(vol.items || []).length > 0 && (
                     <button className="btn-ghost-sm" onClick={() => deleteVolumeInventory(idx)} style={{color:'#e74c3c'}} title="删除此卷物资数据">🗑️</button>
                   )}
@@ -3541,7 +3560,7 @@ function InventoryPanel(props: {
               {!collapsedVols.has(idx) && (
                 <div className="plot-volume-body">
                   {(!vol.items || vol.items.length === 0) && (!vol.realms || vol.realms.length === 0) ? (
-                    <p className="text-muted" style={{fontSize:13}}>暂无物资数据，点击「识别」自动提取</p>
+                    <p className="text-muted" style={{fontSize:13}}>暂无物资数据，点击「🔍 AI识别」选择此卷进行识别</p>
                   ) : (
                     <>
                       {vol.items && vol.items.length > 0 && (
@@ -4151,6 +4170,8 @@ function DynamicMemoryPanel(props: {
   const [dynVolumes, setDynVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [collapsedVolDyn, setCollapsedVolDyn] = useState<Set<number>>(new Set());
+  // 卷选择器
+  const [volSelectorOpen, setVolSelectorOpen] = useState(false);
 
   const chapterCount = chapters.filter(c => !c.is_volume).length;
 
@@ -4477,9 +4498,28 @@ function DynamicMemoryPanel(props: {
       {/* 按卷动态文件识别 */}
       {displayDynVolumes.length > 0 && (
         <div className="plot-volume-list" style={{marginBottom:16}}>
-          <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
-            📚 按卷动态文件：每卷可单独 AI 识别本卷的人物/事件/时间线/地点/势力/伏笔/境界/关系摘要。
-          </p>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
+            <p className="text-muted" style={{fontSize:12, margin:0}}>
+              📚 按卷动态文件：点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下。
+            </p>
+            {chapterCount > 0 && (
+              <div style={{position:'relative'}}>
+                <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
+                  {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
+                </button>
+                {volSelectorOpen && (
+                  <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
+                    <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
+                    <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeDynVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
+                    {displayDynVolumes.map((vol, idx) => (
+                      <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeDynVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
+                    ))}
+                    <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           {displayDynVolumes.map((vol, idx) => {
             const d = vol.data || {};
             const hasData = vol.data && (d.summary || d.characters || d.events);
@@ -4491,11 +4531,7 @@ function DynamicMemoryPanel(props: {
                   {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                   {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
                   <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                    {chapterCount > 0 && (
-                      <button className="btn-ghost-sm" onClick={() => handleAnalyzeDynVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume)} title="AI识别此卷动态文件">
-                        {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}
-                      </button>
-                    )}
+                    {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
                     {hasData && (
                       <button className="btn-ghost-sm" onClick={() => deleteVolumeDynamic(idx)} style={{color:'#e74c3c'}} title="删除此卷动态文件数据">🗑️</button>
                     )}
@@ -4504,7 +4540,7 @@ function DynamicMemoryPanel(props: {
                 {!collapsedVolDyn.has(idx) && (
                   <div className="plot-volume-body">
                     {!hasData ? (
-                      <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据，点击「识别」自动生成本卷摘要</p>
+                      <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据，点击「🔍 AI识别」选择此卷生成摘要</p>
                     ) : (
                       <div className="plot-events">
                         {d.summary && <p><b>综合摘要：</b>{d.summary}</p>}
@@ -4702,8 +4738,548 @@ function DynamicMemoryPanel(props: {
   );
 }
 
-/* ===== 地图面板（三级分类） ===== */
-function MapPanel(props: {
+/* ===== 伏笔面板（按卷） ===== */
+function ForeshadowingPanel(props: {
+  bookId: string;
+  bible: BookBible | null;
+  onBibleUpdate: (b: BookBible) => void;
+  bookTitle: string;
+  chapters: Chapter[];
+  hasChapters: boolean;
+  showConfirm: (message: string, onConfirm: () => void) => void;
+  skillPacks: SkillPack[];
+  selectedSkillPackIds: string[];
+  selectedSkillPacks: SkillPack[];
+}) {
+  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks } = props;
+  const [foreshadowing, setForeshadowing] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [foreVolumes, setForeVolumes] = useState<any[]>([]);
+  const [analyzingVol, setAnalyzingVol] = useState('');
+  const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
+  const [volSelectorOpen, setVolSelectorOpen] = useState(false);
+  const [aiMode, setAiMode] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiAssisting, setAiAssisting] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [skillExpanded, setSkillExpanded] = useState(false);
+
+  // 解析全局伏笔
+  useEffect(() => {
+    setForeshadowing(bible?.foreshadowing || '');
+  }, [bible?.foreshadowing]);
+
+  // 解析按卷伏笔
+  useEffect(() => {
+    if (!bible?.foreshadowing_volumes) { setForeVolumes([]); return; }
+    try {
+      const parsed = JSON.parse(bible.foreshadowing_volumes);
+      if (Array.isArray(parsed)) { setForeVolumes(parsed); return; }
+    } catch { /* not JSON */ }
+    setForeVolumes([]);
+  }, [bible?.foreshadowing_volumes]);
+
+  const volumeChapters = chapters.filter(c => c.is_volume);
+
+  const displayVolumes = useMemo(() => {
+    const result: any[] = [];
+    const usedIds = new Set<string>();
+    for (const vc of volumeChapters) {
+      const fvData = foreVolumes.find(v => v.volume_id === vc.id) || foreVolumes.find(v => v.volume === vc.title);
+      result.push({
+        volume_id: vc.id,
+        volume: vc.title,
+        data: fvData?.data || null,
+        chapter_count: chapters.filter(c => c.parent_id === vc.id).length,
+      });
+      if (fvData) { usedIds.add(fvData.volume_id || ''); usedIds.add(fvData.volume || ''); }
+    }
+    for (const v of foreVolumes) {
+      const id = v.volume_id || '';
+      const name = v.volume || '';
+      if (!usedIds.has(id) && !usedIds.has(name)) {
+        result.push({ ...v, chapter_count: 0 });
+      }
+    }
+    return result;
+  }, [volumeChapters, foreVolumes, chapters]);
+
+  function toggleVol(idx: number) {
+    setCollapsedVols(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  }
+
+  async function saveForeshadowing(val: string) {
+    setSaving(true);
+    try {
+      const updated = await api.updateBible(bookId, { foreshadowing: val } as any);
+      onBibleUpdate(updated);
+      setForeshadowing(val);
+    } catch (e: any) {
+      alert('保存失败: ' + e.message);
+    }
+    setSaving(false);
+  }
+
+  async function handleAnalyzeVolume(volId: string, volTitle: string) {
+    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，识别本卷埋设/回收的伏笔。是否继续？`, async () => {
+      setAnalyzingVol(volId || volTitle);
+      try {
+        const result = await api.analyzeForeshadowingVolume(bookId, volId, volTitle, selectedSkillPackIds);
+        if (result.bible) onBibleUpdate(result.bible);
+        alert(`AI识别完成！已为「${volTitle}」生成伏笔分析`);
+      } catch (e: any) {
+        alert('AI识别失败：' + (e.message || '请检查AI配置'));
+      }
+      setAnalyzingVol('');
+    });
+  }
+
+  async function deleteVolumeFore(idx: number) {
+    const vol = displayVolumes[idx];
+    if (!vol) return;
+    showConfirm(`确定删除「${vol.volume || '该卷'}」的伏笔识别数据？`, async () => {
+      const newList = foreVolumes.filter((v: any) => {
+        const vId = v.volume_id || '';
+        const vName = v.volume || '';
+        if (vol.volume_id && vId === vol.volume_id) return false;
+        if (vol.volume && vName === vol.volume) return false;
+        return true;
+      });
+      try {
+        const updated = await api.updateBible(bookId, { foreshadowing_volumes: JSON.stringify(newList, null, 2) } as any);
+        onBibleUpdate(updated);
+      } catch (e: any) {
+        alert('删除失败: ' + e.message);
+      }
+    });
+  }
+
+  async function executeAi() {
+    if (!aiPrompt.trim()) { alert('请输入创作要求'); return; }
+    setAiAssisting(true);
+    setAiError('');
+    try {
+      const skillKeys = ['foreshadow_register', 'narrative_debt'];
+      const skillPrompt = extractSkillPrompt(selectedSkillPacks, skillKeys);
+      const skillNote = selectedSkillPacks.length > 0 ? `\n\n【已加载技能包：${selectedSkillPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
+      const messages = [
+        { role: 'system', content: `你是专业网文伏笔设计师。请根据用户要求生成伏笔设计。${skillNote}` },
+        { role: 'user', content: `构思：${bible?.concept || '暂无'}\n已有伏笔：${(foreshadowing || '').slice(0, 500) || '无'}\n\n用户要求：${aiPrompt}\n\n请生成伏笔设计，包括埋设时机、回收方式、关联角色。` },
+      ];
+      const result = await api.aiChat(messages);
+      if (result.content) {
+        await saveForeshadowing(result.content);
+        setAiMode(false);
+        setAiPrompt('');
+      } else {
+        setAiError('AI返回为空，请重试');
+      }
+    } catch (e: any) {
+      setAiError(e.message || 'AI创作失败');
+    }
+    setAiAssisting(false);
+  }
+
+  const handlePromptKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      if (!aiAssisting && aiPrompt.trim()) executeAi();
+    }
+  };
+
+  if (aiMode) {
+    return (
+      <div className="bible-edit-panel">
+        <div className="bible-edit-header">
+          <h3>🔮 AI协同创作 · 伏笔</h3>
+          <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
+        </div>
+        {skillPacks.length > 0 && (
+          <div className="skill-pack-collapsible">
+            <button className="skill-pack-toggle" onClick={() => setSkillExpanded(v => !v)} disabled={aiAssisting}>
+              <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
+              <span>📦 协同技能包</span>
+              {selectedSkillPackIds.length > 0 && <span className="skill-pack-toggle-badge">{selectedSkillPackIds.length}</span>}
+            </button>
+            {skillExpanded && (
+              <div className="skill-pack-checkbox-list">
+                {skillPacks.map(p => (
+                  <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
+                    <input type="checkbox" checked={selectedSkillPackIds.includes(p.id)} onChange={() => {}} disabled={aiAssisting} />
+                    <span className="skill-pack-checkbox-icon">{p.icon}</span>
+                    <span className="skill-pack-checkbox-name">{p.name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="ai-prompt-vertical">
+          <textarea className="input bible-ai-prompt-input" rows={6} value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} onKeyDown={handlePromptKeyDown} placeholder="例如：设计贯穿全书的核心伏笔，埋设3个关键悬念..." disabled={aiAssisting} autoFocus />
+          <div className="ai-prompt-bottom-row">
+            <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
+            <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? '⏳ 创作中...' : '🚀 发送'}</button>
+          </div>
+        </div>
+        {aiError && <div className="error-msg" style={{marginTop:8}}>{aiError}</div>}
+        {aiAssisting && <div className="bible-ai-loading"><div className="loading-spinner" /><p>AI正在生成伏笔设计...</p></div>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="bible-edit-panel">
+      {bookTitle && (
+        <div className="bible-context-bar">
+          <span className="bible-context-book">📖 {bookTitle}</span>
+          <span className="bible-context-sep">›</span>
+          <span className="bible-context-dim">🔮 伏笔</span>
+        </div>
+      )}
+      <div className="bible-edit-header">
+        <h3>🔮 伏笔（按卷）</h3>
+        <div className="bible-edit-actions" style={{position:'relative'}}>
+          <button className="btn-ghost-sm" onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }}>
+            ✨ AI创作
+          </button>
+          {hasChapters && (
+            <>
+              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
+                {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
+              </button>
+              {volSelectorOpen && (
+                <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
+                  <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
+                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
+                  {displayVolumes.map((vol, idx) => (
+                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
+                  ))}
+                  <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
+        记录伏笔的埋设时机、回收方式、关联角色。点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下。
+      </p>
+
+      {/* 按卷伏笔识别 */}
+      {displayVolumes.length > 0 && (
+        <div className="plot-volume-list" style={{marginBottom:16}}>
+          {displayVolumes.map((vol, idx) => {
+            const d = vol.data || {};
+            const hasData = vol.data && (d.summary || (d.planted && d.planted.length) || (d.resolved && d.resolved.length));
+            return (
+              <div key={idx} className="plot-volume-card">
+                <div className="plot-volume-header" onClick={() => toggleVol(idx)} style={{cursor:'pointer'}}>
+                  <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVols.has(idx) ? '▶' : '▼'}</span>
+                  <h4>{vol.volume || `第${idx + 1}卷`}</h4>
+                  {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
+                  {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
+                  <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+                    {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
+                    {hasData && (
+                      <button className="btn-ghost-sm" onClick={() => deleteVolumeFore(idx)} style={{color:'#e74c3c'}} title="删除此卷伏笔数据">🗑️</button>
+                    )}
+                  </div>
+                </div>
+                {!collapsedVols.has(idx) && (
+                  <div className="plot-volume-body">
+                    {!hasData ? (
+                      <p className="text-muted" style={{fontSize:13}}>暂无伏笔识别数据，点击「🔍 AI识别」选择此卷进行识别</p>
+                    ) : (
+                      <div className="plot-events">
+                        {d.summary && <p><b>综述：</b>{d.summary}</p>}
+                        {d.planted && d.planted.length > 0 && (
+                          <div><b>本卷埋设伏笔（{d.planted.length}）：</b><ul>
+                            {d.planted.map((p: any, i: number) => (
+                              <li key={i}><span style={{color:'#e87d3e',fontWeight:600}}>{p.content}</span>{p.chapter && <span style={{color:'#888'}}> · {p.chapter}</span>}{p.purpose && <span style={{color:'#666'}}> — {p.purpose}</span>}{p.status && <span style={{color:'#e74c3c'}}> · {p.status}</span>}</li>
+                            ))}
+                          </ul></div>
+                        )}
+                        {d.resolved && d.resolved.length > 0 && (
+                          <div><b>本卷回收伏笔（{d.resolved.length}）：</b><ul>
+                            {d.resolved.map((p: any, i: number) => (
+                              <li key={i}><span style={{color:'#27ae60',fontWeight:600}}>{p.content}</span>{p.planted_at && <span style={{color:'#888'}}> · 埋于{p.planted_at}</span>}{p.resolved_at && <span style={{color:'#27ae60'}}> · 回收于{p.resolved_at}</span>}{p.effect && <span style={{color:'#666'}}> — {p.effect}</span>}</li>
+                            ))}
+                          </ul></div>
+                        )}
+                        {d.pending && d.pending.length > 0 && (
+                          <div><b>未回收悬念（{d.pending.length}）：</b><ul>
+                            {d.pending.map((p: any, i: number) => (
+                              <li key={i}><span style={{color:'#e74c3c',fontWeight:600}}>{p.content}</span>{p.planted_at && <span style={{color:'#888'}}> · 埋于{p.planted_at}</span>}{p.importance && <span style={{color:'#e74c3c'}}> · {p.importance}</span>}</li>
+                            ))}
+                          </ul></div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 全局伏笔编辑 */}
+      <div className="bible-edit-section">
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <b>📝 全局伏笔档案</b>
+          {!editing ? (
+            <button className="btn-ghost-sm" onClick={() => { setEditing(true); setEditValue(foreshadowing); }}>✏️ 编辑</button>
+          ) : (
+            <div style={{display:'flex',gap:6}}>
+              <button className="btn-primary-sm" onClick={() => { saveForeshadowing(editValue); setEditing(false); }} disabled={saving}>{saving ? '保存中...' : '💾 保存'}</button>
+              <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
+            </div>
+          )}
+        </div>
+        {editing ? (
+          <textarea className="input" rows={12} value={editValue} onChange={e => setEditValue(e.target.value)} placeholder="记录伏笔内容、埋设时机、回收方式..." />
+        ) : (
+          <div className="bible-content-view" style={{whiteSpace:'pre-wrap',minHeight:80,padding:12,background:'var(--bg-tertiary)',borderRadius:8}}>
+            {foreshadowing || <span className="text-muted">暂无全局伏笔档案，点击「编辑」手动添加或用AI创作</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ===== 地图/地点面板（按卷） ===== */
+function LocationsPanel(props: {
+  bookId: string;
+  bible: BookBible | null;
+  onBibleUpdate: (b: BookBible) => void;
+  bookTitle: string;
+  chapters: Chapter[];
+  hasChapters: boolean;
+  showConfirm: (message: string, onConfirm: () => void) => void;
+  selectedSkillPackIds: string[];
+  onMapUpdate: (val: string) => Promise<void>;
+}) {
+  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, selectedSkillPackIds, onMapUpdate } = props;
+  const [locations, setLocations] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [locVolumes, setLocVolumes] = useState<any[]>([]);
+  const [analyzingVol, setAnalyzingVol] = useState('');
+  const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
+  const [volSelectorOpen, setVolSelectorOpen] = useState(false);
+
+  useEffect(() => {
+    setLocations(bible?.locations || '');
+  }, [bible?.locations]);
+
+  useEffect(() => {
+    if (!bible?.locations_volumes) { setLocVolumes([]); return; }
+    try {
+      const parsed = JSON.parse(bible.locations_volumes);
+      if (Array.isArray(parsed)) { setLocVolumes(parsed); return; }
+    } catch { /* not JSON */ }
+    setLocVolumes([]);
+  }, [bible?.locations_volumes]);
+
+  const volumeChapters = chapters.filter(c => c.is_volume);
+
+  const displayVolumes = useMemo(() => {
+    const result: any[] = [];
+    const usedIds = new Set<string>();
+    for (const vc of volumeChapters) {
+      const lvData = locVolumes.find(v => v.volume_id === vc.id) || locVolumes.find(v => v.volume === vc.title);
+      result.push({
+        volume_id: vc.id,
+        volume: vc.title,
+        data: lvData?.data || null,
+        chapter_count: chapters.filter(c => c.parent_id === vc.id).length,
+      });
+      if (lvData) { usedIds.add(lvData.volume_id || ''); usedIds.add(lvData.volume || ''); }
+    }
+    for (const v of locVolumes) {
+      const id = v.volume_id || '';
+      const name = v.volume || '';
+      if (!usedIds.has(id) && !usedIds.has(name)) {
+        result.push({ ...v, chapter_count: 0 });
+      }
+    }
+    return result;
+  }, [volumeChapters, locVolumes, chapters]);
+
+  function toggleVol(idx: number) {
+    setCollapsedVols(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  }
+
+  async function saveLocations(val: string) {
+    setSaving(true);
+    try {
+      await onMapUpdate(val);
+      setLocations(val);
+    } catch (e: any) {
+      alert('保存失败: ' + e.message);
+    }
+    setSaving(false);
+  }
+
+  async function handleAnalyzeVolume(volId: string, volTitle: string) {
+    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，识别本卷涉及的地点、场景、地理信息。是否继续？`, async () => {
+      setAnalyzingVol(volId || volTitle);
+      try {
+        const result = await api.analyzeLocationsVolume(bookId, volId, volTitle, selectedSkillPackIds);
+        if (result.bible) onBibleUpdate(result.bible);
+        alert(`AI识别完成！已为「${volTitle}」生成地点分析`);
+      } catch (e: any) {
+        alert('AI识别失败：' + (e.message || '请检查AI配置'));
+      }
+      setAnalyzingVol('');
+    });
+  }
+
+  async function deleteVolumeLoc(idx: number) {
+    const vol = displayVolumes[idx];
+    if (!vol) return;
+    showConfirm(`确定删除「${vol.volume || '该卷'}」的地点识别数据？`, async () => {
+      const newList = locVolumes.filter((v: any) => {
+        const vId = v.volume_id || '';
+        const vName = v.volume || '';
+        if (vol.volume_id && vId === vol.volume_id) return false;
+        if (vol.volume && vName === vol.volume) return false;
+        return true;
+      });
+      try {
+        const updated = await api.updateBible(bookId, { locations_volumes: JSON.stringify(newList, null, 2) } as any);
+        onBibleUpdate(updated);
+      } catch (e: any) {
+        alert('删除失败: ' + e.message);
+      }
+    });
+  }
+
+  return (
+    <div className="bible-edit-panel">
+      {bookTitle && (
+        <div className="bible-context-bar">
+          <span className="bible-context-book">📖 {bookTitle}</span>
+          <span className="bible-context-sep">›</span>
+          <span className="bible-context-dim">🗺️ 地图</span>
+        </div>
+      )}
+      <div className="bible-edit-header">
+        <h3>🗺️ 地图（按卷）</h3>
+        <div className="bible-edit-actions" style={{position:'relative'}}>
+          {hasChapters && (
+            <>
+              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
+                {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
+              </button>
+              {volSelectorOpen && (
+                <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
+                  <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
+                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
+                  {displayVolumes.map((vol, idx) => (
+                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
+                  ))}
+                  <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+      <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
+        记录地点、场景、地理信息。点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下。
+      </p>
+
+      {/* 按卷地点识别 */}
+      {displayVolumes.length > 0 && (
+        <div className="plot-volume-list" style={{marginBottom:16}}>
+          {displayVolumes.map((vol, idx) => {
+            const d = vol.data || {};
+            const hasData = vol.data && (d.summary || (d.locations && d.locations.length) || (d.regions && d.regions.length));
+            return (
+              <div key={idx} className="plot-volume-card">
+                <div className="plot-volume-header" onClick={() => toggleVol(idx)} style={{cursor:'pointer'}}>
+                  <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVols.has(idx) ? '▶' : '▼'}</span>
+                  <h4>{vol.volume || `第${idx + 1}卷`}</h4>
+                  {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
+                  {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
+                  <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+                    {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
+                    {hasData && (
+                      <button className="btn-ghost-sm" onClick={() => deleteVolumeLoc(idx)} style={{color:'#e74c3c'}} title="删除此卷地点数据">🗑️</button>
+                    )}
+                  </div>
+                </div>
+                {!collapsedVols.has(idx) && (
+                  <div className="plot-volume-body">
+                    {!hasData ? (
+                      <p className="text-muted" style={{fontSize:13}}>暂无地点识别数据，点击「🔍 AI识别」选择此卷进行识别</p>
+                    ) : (
+                      <div className="plot-events">
+                        {d.summary && <p><b>地理概况：</b>{d.summary}</p>}
+                        {d.locations && d.locations.length > 0 && (
+                          <div><b>地点（{d.locations.length}）：</b><ul>
+                            {d.locations.map((l: any, i: number) => (
+                              <li key={i}><span style={{color:'#5b8def',fontWeight:600}}>{l.name}</span>{l.type && <span style={{color:'#27ae60'}}> · {l.type}</span>}{l.importance && <span style={{color:'#e74c3c'}}> · {l.importance}</span>}{l.description && <span style={{color:'#666'}}> — {l.description}</span>}{l.events && <span style={{color:'#888'}}> · 事件：{l.events}</span>}</li>
+                            ))}
+                          </ul></div>
+                        )}
+                        {d.regions && d.regions.length > 0 && (
+                          <div><b>区域（{d.regions.length}）：</b><ul>
+                            {d.regions.map((r: any, i: number) => (
+                              <li key={i}><span style={{color:'#9b59b6',fontWeight:600}}>{r.name}</span>{r.scope && <span style={{color:'#888'}}> · {r.scope}</span>}{r.feature && <span style={{color:'#666'}}> — {r.feature}</span>}</li>
+                            ))}
+                          </ul></div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 全局地点编辑 */}
+      <div className="bible-edit-section">
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <b>📝 全局地点档案</b>
+          {!editing ? (
+            <button className="btn-ghost-sm" onClick={() => { setEditing(true); setEditValue(locations); }}>✏️ 编辑</button>
+          ) : (
+            <div style={{display:'flex',gap:6}}>
+              <button className="btn-primary-sm" onClick={() => { saveLocations(editValue); setEditing(false); }} disabled={saving}>{saving ? '保存中...' : '💾 保存'}</button>
+              <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
+            </div>
+          )}
+        </div>
+        {editing ? (
+          <textarea className="input" rows={12} value={editValue} onChange={e => setEditValue(e.target.value)} placeholder="记录主要地点、区域、地理特征..." />
+        ) : (
+          <div className="bible-content-view" style={{whiteSpace:'pre-wrap',minHeight:80,padding:12,background:'var(--bg-tertiary)',borderRadius:8}}>
+            {locations || <span className="text-muted">暂无全局地点档案，点击「编辑」手动添加</span>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ===== 地图面板（三级分类，已弃用，由 LocationsPanel 替代；保留导出避免tree-shake报错） ===== */
+export function _MapPanel_unused(props: {
   bookId: string;
   locations: string;
   onUpdate: (val: string) => Promise<void>;

@@ -1277,6 +1277,7 @@ textarea{resize:vertical;line-height:1.8}
 .plot-volume-header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-tertiary)}
 .plot-volume-header h4{font-size:15px;font-weight:700;color:var(--text-primary);margin:0;flex:1}
 .plot-volume-actions{display:flex;gap:4px}
+.vol-selector-item:hover{background:var(--bg-tertiary)!important}
 .plot-volume-body{padding:10px 14px;font-size:13px;line-height:1.7;color:var(--text-secondary)}
 .plot-volume-body p{margin:4px 0}
 .plot-events{margin:6px 0}

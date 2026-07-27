@@ -503,6 +503,20 @@ export const api = {
       body: JSON.stringify({ volume_id: volumeId, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [] }),
     }),
 
+  // AI识别指定卷的伏笔（按卷）
+  analyzeForeshadowingVolume: (bookId: string, volumeId: string, volumeTitle: string, skillPackIds?: string[]) =>
+    request<{ success: boolean; volume_data: any; foreshadowing_volumes: any[]; bible: any }>(`/books/${bookId}/ai-analyze-foreshadowing-volume`, {
+      method: 'POST',
+      body: JSON.stringify({ volume_id: volumeId, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [] }),
+    }),
+
+  // AI识别指定卷的地点/地图（按卷）
+  analyzeLocationsVolume: (bookId: string, volumeId: string, volumeTitle: string, skillPackIds?: string[]) =>
+    request<{ success: boolean; volume_data: any; locations_volumes: any[]; bible: any }>(`/books/${bookId}/ai-analyze-locations-volume`, {
+      method: 'POST',
+      body: JSON.stringify({ volume_id: volumeId, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [] }),
+    }),
+
   // ==== 总 AI 创作：总览全局各维度 ====
   aiMasterCreate: (bookId: string, dimensions: string[], skillPackIds?: string[], instruction?: string) =>
     request<{ results: Array<{ dimension: string; label: string; field: string; content?: string; error?: string }> }>(`/books/${bookId}/ai-master-create`, {

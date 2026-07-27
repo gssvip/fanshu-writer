@@ -98,6 +98,8 @@ export interface BookBible {
   inventory?: string;
   character_volumes?: string;
   dynamic_volumes?: string;
+  foreshadowing_volumes?: string;
+  locations_volumes?: string;
 }
 
 export interface SkillPack {

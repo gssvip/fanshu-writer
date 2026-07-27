@@ -437,6 +437,10 @@ class BookBible(db.Model):
     character_volumes = db.Column(db.Text, default='')
     # 动态文件按卷：JSON 数组，每卷的动态分类摘要
     dynamic_volumes = db.Column(db.Text, default='')
+    # 伏笔按卷：JSON 数组，每卷的伏笔识别数据
+    foreshadowing_volumes = db.Column(db.Text, default='')
+    # 地图按卷：JSON 数组，每卷的地点识别数据
+    locations_volumes = db.Column(db.Text, default='')
     last_synced_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -453,6 +457,8 @@ class BookBible(db.Model):
             'inventory': self.inventory or '',
             'character_volumes': self.character_volumes or '',
             'dynamic_volumes': self.dynamic_volumes or '',
+            'foreshadowing_volumes': self.foreshadowing_volumes or '',
+            'locations_volumes': self.locations_volumes or '',
             'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None
         }
 
@@ -2334,7 +2340,7 @@ def update_book_bible(book_id):
         bb = BookBible(book_id=book_id)
         db.session.add(bb)
     data = request.json
-    for field in ['worldbuilding', 'character_profiles', 'timeline', 'foreshadowing', 'style_guide', 'key_rules', 'locations', 'concept', 'plot_design', 'relation_graph', 'inventory', 'character_volumes', 'dynamic_volumes']:
+    for field in ['worldbuilding', 'character_profiles', 'timeline', 'foreshadowing', 'style_guide', 'key_rules', 'locations', 'concept', 'plot_design', 'relation_graph', 'inventory', 'character_volumes', 'dynamic_volumes', 'foreshadowing_volumes', 'locations_volumes']:
         if field in data:
             setattr(bb, field, data[field])
     db.session.commit()
@@ -5512,6 +5518,201 @@ def ai_analyze_dynamic_volume(book_id):
     })
 
 
+@app.route('/api/books/<book_id>/ai-analyze-foreshadowing-volume', methods=['POST'])
+@login_required
+def ai_analyze_foreshadowing_volume(book_id):
+    """AI识别指定卷的伏笔。按卷分析章节内容，识别本卷埋设/回收的伏笔并写入 foreshadowing_volumes。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Book not found'}), 404
+
+    data = request.get_json() or {}
+    volume_id = data.get('volume_id', '')
+    volume_title = data.get('volume_title', '')
+    skill_pack_ids = data.get('skill_pack_ids', [])
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    config = AIConfig.query.first()
+    api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
+    base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
+    model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    chapter_text, ch_count = _collect_volume_chapters(book_id, volume_id)
+    if not chapter_text and ch_count == 0:
+        return jsonify({'error': '该卷没有章节内容，无法识别伏笔'}), 400
+
+    ctx_parts = []
+    if bb.foreshadowing:
+        ctx_parts.append(f'【全局伏笔档案（参考，避免重复）】\n{bb.foreshadowing[:800]}')
+    if bb.key_rules:
+        ctx_parts.append(f'【核心规则】\n{bb.key_rules[:400]}')
+    extra_ctx = '\n\n'.join(ctx_parts)
+
+    skill_note = _get_skill_prompts(skill_pack_ids, ['foreshadow_register', 'narrative_debt'], mode='agent')
+
+    vol_label = volume_title or '全部章节'
+    system_prompt = f"""你是专业的小说伏笔分析师。请从以下「{vol_label}」的章节内容中，识别本卷埋设的伏笔、回收的伏笔、以及尚未回收的悬念。
+
+{extra_ctx and f"【已有参考】{chr(10)}{extra_ctx}" or ""}
+
+严格按JSON对象格式输出（不要任何其他文字）：
+{{
+  "volume": "{vol_label}",
+  "planted": [
+    {{"content": "伏笔内容", "chapter": "埋设章节/位置", "purpose": "埋设目的", "status": "待回收"}}
+  ],
+  "resolved": [
+    {{"content": "伏笔内容", "planted_at": "埋设位置", "resolved_at": "回收位置", "effect": "回收效果"}}
+  ],
+  "pending": [
+    {{"content": "未回收悬念", "planted_at": "埋设位置", "importance": "高/中/低"}}
+  ],
+  "summary": "本卷伏笔综述（150字内）"
+}}
+
+{skill_note}"""
+
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容）"}'
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=2500, temperature=0.3
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    try:
+        analysis = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        import re as _re_fv
+        m = _re_fv.search(r'\{[\s\S]*\}', content)
+        if m:
+            analysis = json.loads(m.group())
+        else:
+            return jsonify({'error': 'AI返回格式无法解析', 'raw': content[:300]}), 500
+
+    entry = {
+        'volume_id': volume_id,
+        'volume': vol_label,
+        'volume_index': _extract_volume_index(vol_label) or 0,
+        'data': analysis if isinstance(analysis, dict) else {},
+    }
+    data_list = _upsert_volume_entry(bb, 'foreshadowing_volumes', entry)
+    bb.last_synced_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'volume_data': entry,
+        'foreshadowing_volumes': data_list,
+        'bible': bb.to_dict()
+    })
+
+
+@app.route('/api/books/<book_id>/ai-analyze-locations-volume', methods=['POST'])
+@login_required
+def ai_analyze_locations_volume(book_id):
+    """AI识别指定卷的地点/地图。按卷分析章节内容，识别本卷涉及的地点并写入 locations_volumes。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Book not found'}), 404
+
+    data = request.get_json() or {}
+    volume_id = data.get('volume_id', '')
+    volume_title = data.get('volume_title', '')
+    skill_pack_ids = data.get('skill_pack_ids', [])
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    config = AIConfig.query.first()
+    api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
+    base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
+    model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    chapter_text, ch_count = _collect_volume_chapters(book_id, volume_id)
+    if not chapter_text and ch_count == 0:
+        return jsonify({'error': '该卷没有章节内容，无法识别地点'}), 400
+
+    ctx_parts = []
+    if bb.locations:
+        ctx_parts.append(f'【全局地点档案（参考）】\n{bb.locations[:800]}')
+    if bb.worldbuilding:
+        ctx_parts.append(f'【世界观设定】\n{bb.worldbuilding[:500]}')
+    extra_ctx = '\n\n'.join(ctx_parts)
+
+    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'world_setting'], mode='agent')
+
+    vol_label = volume_title or '全部章节'
+    system_prompt = f"""你是专业的小说地图分析师。请从以下「{vol_label}」的章节内容中，识别本卷涉及的所有地点、场景、地理信息。
+
+{extra_ctx and f"【已有参考】{chr(10)}{extra_ctx}" or ""}
+
+严格按JSON对象格式输出（不要任何其他文字）：
+{{
+  "volume": "{vol_label}",
+  "locations": [
+    {{"name": "地点名", "type": "城市/山脉/秘境/建筑/其它", "description": "地点描述", "events": "该地点发生的重要事件", "importance": "高/中/低"}}
+  ],
+  "regions": [
+    {{"name": "区域名", "scope": "范围描述", "feature": "区域特征"}}
+  ],
+  "summary": "本卷地理概况（150字内）"
+}}
+
+{skill_note}"""
+
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容）"}'
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=2500, temperature=0.3
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    try:
+        analysis = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        import re as _re_lv
+        m = _re_lv.search(r'\{[\s\S]*\}', content)
+        if m:
+            analysis = json.loads(m.group())
+        else:
+            return jsonify({'error': 'AI返回格式无法解析', 'raw': content[:300]}), 500
+
+    entry = {
+        'volume_id': volume_id,
+        'volume': vol_label,
+        'volume_index': _extract_volume_index(vol_label) or 0,
+        'data': analysis if isinstance(analysis, dict) else {},
+    }
+    data_list = _upsert_volume_entry(bb, 'locations_volumes', entry)
+    bb.last_synced_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'volume_data': entry,
+        'locations_volumes': data_list,
+        'bible': bb.to_dict()
+    })
+
+
 @app.route('/api/books/<book_id>/clear-timeline', methods=['POST'])
 @login_required
 def clear_timeline(book_id):
@@ -6443,6 +6644,9 @@ def init_db():
         _add_column('book_bible', 'inventory TEXT')
         _add_column('book_bible', 'character_volumes TEXT')
         _add_column('book_bible', 'dynamic_volumes TEXT')
+        # Migration: 伏笔按卷、地图按卷
+        _add_column('book_bible', 'foreshadowing_volumes TEXT')
+        _add_column('book_bible', 'locations_volumes TEXT')
         _add_column('ai_config', 'recognition_model TEXT')
         # Migration: skill_packs 添加 github_source 和 github_synced_at 字段
         _add_column('skill_packs', "github_source VARCHAR(500) DEFAULT ''")
