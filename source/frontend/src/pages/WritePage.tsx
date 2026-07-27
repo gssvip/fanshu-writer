@@ -5157,12 +5157,22 @@ function parseRelationGraph(data: string, title: string, charactersData?: string
   const colors = ['#4a8b4a', '#e87d3e', '#5b8def', '#c44d58', '#9b59b6', '#1abc9c', '#f39c12', '#e91e63'];
   const nodeMap = new Map<string, GraphNode>();
 
-  const relationWords = ['关系', '好友', '敌人', '朋友', '伙伴', '兄弟', '姐妹', '父亲', '母亲', '儿子', '女儿', '丈夫', '妻子', '师傅', '徒弟', '师兄', '师姐', '师弟', '师妹', '对手', '盟友', '恋人', '爱人', '仇人', '恩人', '下属', '上司', '同事', '同学', '邻居', '亲人', '同族', '同乡', '伙伴'];
+  const relationWords = ['关系', '好友', '敌人', '朋友', '伙伴', '兄弟', '姐妹', '父亲', '母亲', '儿子', '女儿', '丈夫', '妻子', '师傅', '徒弟', '师兄', '师姐', '师弟', '师妹', '对手', '盟友', '恋人', '爱人', '仇人', '恩人', '下属', '上司', '同事', '同学', '邻居', '亲人', '同族', '同乡', '师徒', '夫妻', '亲子', '主仆', '关系图', '关系网', '关系图谱', '亲属关系', '人物关系', '角色关系', '关系类型', '关系说明', '姓名', '身份', '性格', '动机', '背景', '人物', '角色'];
 
-  function ensureNode(name: string, desc?: string): GraphNode {
+  // 判断是否为关系词/非人物词（精确匹配 + 包含"关系"二字的短词）
+  function isRelationWord(name: string): boolean {
+    const n = name.trim();
+    if (!n) return true;
+    if (relationWords.includes(n)) return true;
+    // 包含"关系"且较短（如"亲属关系"、"敌对关系"），视为关系词
+    if (n.includes('关系') && n.length <= 6) return true;
+    return false;
+  }
+
+  function ensureNode(name: string, desc?: string): GraphNode | null {
     const cleanName = name.trim();
-    if (!cleanName) return nodes[0];
-    if (relationWords.includes(cleanName)) return nodes[0];
+    if (!cleanName) return null;
+    if (isRelationWord(cleanName)) return null; // 过滤关系词，不再返回 nodes[0] 避免脏数据
     if (nodeMap.has(cleanName)) {
       if (desc && !nodeMap.get(cleanName)!.desc) nodeMap.get(cleanName)!.desc = desc;
       return nodeMap.get(cleanName)!;
@@ -5184,7 +5194,7 @@ function parseRelationGraph(data: string, title: string, charactersData?: string
 
   function addEdge(source: string, target: string, label: string) {
     if (source === target || !source || !target) return;
-    if (relationWords.includes(source) || relationWords.includes(target)) return;
+    if (isRelationWord(source) || isRelationWord(target)) return;
     const exists = edges.some(e =>
       (e.source === source && e.target === target) ||
       (e.source === target && e.target === source && e.label === label)
@@ -5260,7 +5270,7 @@ function parseRelationGraph(data: string, title: string, charactersData?: string
           if (Array.isArray(char.relationships)) {
             char.relationships.forEach((rel: any) => {
               const targetName = rel.target_name || rel.target || rel.name;
-              if (targetName) {
+              if (targetName && !isRelationWord(targetName)) {
                 ensureNode(targetName, rel.target_desc || '');
                 addEdge(name, targetName, rel.relation || rel.type || rel.label || '');
               }

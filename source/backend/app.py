@@ -4684,31 +4684,82 @@ def ai_analyze_from_reports(book_id):
     if not api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
-    # 获取动态报告作为分析源（优先），没有时回退到章节内容
-    reports = DynamicReport.query.filter_by(book_id=book_id).order_by(
-        DynamicReport.chapter_start
-    ).all()
-
-    if reports:
-        source_text = '\n\n'.join([f'【{r.title}】\n{r.content}' for r in reports if r.content])
-        source_type = '动态文件报告'
-    else:
-        # 回退：取章节内容摘要
-        chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
-        if not chapters:
-            return jsonify({'error': '作品没有章节内容，无法分析'}), 400
-        source_text = ''
-        max_chars = 8000
-        for ch in chapters:
-            segment = f'【{ch.title}】\n{(ch.content or "")[:800]}\n\n'
-            if len(source_text) + len(segment) > max_chars:
-                break
-            source_text += segment
-        source_type = '章节内容'
-
     # 获取已有的bible字段内容
     bible = BookBible.query.filter_by(book_id=book_id).first()
     existing_value = getattr(bible, field, '') if bible else ''
+
+    # 按维度组装数据源（用户要求：不同图谱从不同维度读取数据供AI识别）
+    # 1. 关系图谱：从「人物及关系」+「剧情」维度读取，再补充动态文件
+    # 2. 地点图谱：首先从「设定」+「大纲」维度读取，再从动态文件补充
+    # 3. 境界图谱：首先从「设定」+「大纲」维度读取，再从动态文件补充
+    # 4. 地图(locations)：保持动态文件优先，回退章节内容
+
+    def _bible_val(attr):
+        return getattr(bible, attr, '') if bible else ''
+
+    # 动态文件报告（补充数据源）
+    reports = DynamicReport.query.filter_by(book_id=book_id).order_by(
+        DynamicReport.chapter_start
+    ).all()
+    dynamic_text = '\n\n'.join([f'【{r.title}】\n{r.content}' for r in reports if r.content]) if reports else ''
+
+    # 章节内容（最终回退）
+    chapter_text = ''
+    chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+    if chapters:
+        max_chars = 8000
+        for ch in chapters:
+            segment = f'【{ch.title}】\n{(ch.content or "")[:800]}\n\n'
+            if len(chapter_text) + len(segment) > max_chars:
+                break
+            chapter_text += segment
+
+    source_parts = []  # [(标签, 内容)]
+    if dimension == 'relationGraph':
+        # 关系图谱：人物及关系 + 剧情 + 动态文件
+        cp = _bible_val('character_profiles')
+        tl = _bible_val('timeline')
+        if cp.strip():
+            source_parts.append(('人物及关系维度', cp[:3000]))
+        if tl.strip():
+            source_parts.append(('剧情维度', tl[:3000]))
+        if dynamic_text.strip():
+            source_parts.append(('动态文件补充', dynamic_text[:3000]))
+        elif chapter_text.strip():
+            source_parts.append(('章节内容补充', chapter_text[:2000]))
+    elif dimension in ('locationGraph', 'realmGraph'):
+        # 地点图谱/境界图谱：设定 + 大纲 + 动态文件
+        wb = _bible_val('worldbuilding')
+        kr = _bible_val('key_rules')
+        pd = _bible_val('plot_design')
+        if wb.strip():
+            source_parts.append(('设定维度(世界观)', wb[:3000]))
+        if kr.strip():
+            source_parts.append(('设定维度(核心规则)', kr[:2000]))
+        if pd.strip():
+            source_parts.append(('大纲维度', pd[:3000]))
+        if dynamic_text.strip():
+            source_parts.append(('动态文件补充', dynamic_text[:3000]))
+        elif chapter_text.strip():
+            source_parts.append(('章节内容补充', chapter_text[:2000]))
+    else:
+        # locations 及其他：动态文件优先，回退章节内容
+        if dynamic_text.strip():
+            source_parts.append(('动态文件报告', dynamic_text[:8000]))
+        elif chapter_text.strip():
+            source_parts.append(('章节内容', chapter_text[:8000]))
+        else:
+            # 没有任何数据源时，尝试从设定/大纲补充
+            for attr, label in [('worldbuilding', '世界观设定'), ('key_rules', '核心规则'), ('plot_design', '大纲'), ('character_profiles', '人物及关系'), ('timeline', '剧情')]:
+                v = _bible_val(attr)
+                if v.strip():
+                    source_parts.append((label, v[:3000]))
+
+    if not source_parts:
+        return jsonify({'error': '没有可用的数据源，请先在相关维度填写内容或生成动态文件'}), 400
+
+    source_type = '、'.join([p[0] for p in source_parts])
+    source_text = '\n\n'.join([f'--- {label} ---\n{content}' for label, content in source_parts])
 
     # 不同维度的提取提示
     dim_prompts = {
@@ -4718,6 +4769,10 @@ def ai_analyze_from_reports(book_id):
 如果没有明确地点信息，输出空数组。""",
 
         'relationGraph': """请从以下内容中提取所有人物及其关系，整理为关系图谱数据。
+重要规则：
+- 只提取真实的人物姓名作为节点，绝对不要把"关系"、"好友"、"敌人"、"师徒"等关系类型词当作人物节点。
+- 每个人物用姓名开头，关系单独列为"关系: A与B-关系类型"。
+
 输出JSON格式：
 {"relation_graph": "人物1: 姓名|身份|性格|动机\\n人物2: 姓名|身份|性格|动机\\n关系: A与B-关系类型"}
 如果没有人物信息，输出空字符串。""",
