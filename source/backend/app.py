@@ -3818,9 +3818,18 @@ def ai_import_plot_outline(book_id):
 
     import re
 
-    # ===== 第一步：正则匹配标准卷格式 =====
-    # 匹配 "第X卷"、"卷X"、"Volume X"、"第X部"、"第X章"（作为卷）等开头的行
-    vol_pattern = re.compile(r'^(?:第\s*([一二三四五六七八九十百\d]+)\s*[卷部]|卷\s*([一二三四五六七八九十百\d]+)|Volume\s*(\d+)|#*\s*第\s*([一二三四五六七八九十百\d]+)\s*卷)\s*[：:．.、\s]*(.*)$', re.MULTILINE)
+    # ===== 第一步：增强正则匹配卷标题 =====
+    # 支持格式：第X卷/卷X/Volume X/第X部/第X篇/第X部分/Chapter X/序章/楔子/卷壹貳叁/# 第X卷 等
+    vol_pattern = re.compile(
+        r'^(?:'
+        r'第\s*([一二三四五六七八九十百零壹貳贰叁肆伍陆陸柒捌玖拾\d]+)\s*[卷部篇部分]'  # 第X卷/部/篇/部分
+        r'|卷\s*([一二三四五六七八九十百零壹貳贰叁肆伍陆陸柒捌玖拾\d]+)'  # 卷X
+        r'|Volume\s*(\d+)|Chapter\s*(\d+)'  # Volume X / Chapter X
+        r'|(序章|楔子|引子|终章|尾声)'  # 序章/楔子等
+        r'|#*\s*第\s*([一二三四五六七八九十百零壹貳贰叁肆伍陆陸柒捌玖拾\d]+)\s*卷'
+        r')\s*[：:．.、\s\-—]*(.*)$',
+        re.MULTILINE
+    )
     matches = list(vol_pattern.finditer(outline_text))
 
     volumes = []
@@ -3828,9 +3837,15 @@ def ai_import_plot_outline(book_id):
         # 有标准格式，按卷拆分
         for i, m in enumerate(matches):
             # 提取卷号
-            vol_num_str = m.group(1) or m.group(2) or m.group(3) or m.group(4) or ''
+            vol_num_str = m.group(1) or m.group(2) or m.group(3) or m.group(4) or m.group(6) or ''
             vol_idx = _extract_volume_index(vol_num_str) or (i + 1)
-            vol_title = (m.group(5) or '').strip() or f'第{vol_idx}卷'
+            # 序章/楔子等特殊章节
+            special = m.group(5)
+            if special:
+                vol_title = special
+                vol_idx = 0 if special in ('序章', '楔子', '引子') else 999
+            else:
+                vol_title = (m.group(7) or '').strip() or f'第{vol_idx}卷'
             # 内容范围：从当前匹配结束到下一个匹配开始
             content_start = m.end()
             content_end = matches[i + 1].start() if i + 1 < len(matches) else len(outline_text)
@@ -3838,12 +3853,12 @@ def ai_import_plot_outline(book_id):
 
             volumes.append({
                 'volume_id': str(vol_idx),
-                'volume': f'第{vol_idx}卷 {vol_title}' if vol_title and not vol_title.startswith('第') else vol_title,
+                'volume': f'第{vol_idx}卷 {vol_title}' if vol_title and not vol_title.startswith('第') and not special else vol_title,
                 'volume_index': vol_idx,
                 'main_plot': vol_content[:500],
                 'core_conflict': '',
                 'emotion_driver': '',
-                'key_events': [l.strip() for l in vol_content.split('\n') if l.strip() and len(l.strip()) > 5][:5],
+                'key_events': [l.strip().lstrip('·•*-') for l in vol_content.split('\n') if l.strip() and len(l.strip()) > 5][:8],
                 'turning_points': [],
                 'climax': '',
                 'ending': '',
@@ -3852,22 +3867,42 @@ def ai_import_plot_outline(book_id):
                 'raw_text': vol_content,
             })
 
-    # ===== 第二步：正则匹配失败或卷数<2，调用 AI 智能拆卷 =====
+    # ===== 第二步：正则匹配失败或卷数<2，调用 AI 智能拆卷（改进版） =====
     if len(volumes) < 2:
         skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
-        # 上下文：已有 bible 设定辅助识别
+        # 上下文增强：注入总纲、规则、已有卷、世界观、人物
         ctx_parts = []
+        if bb.plot_design:
+            ctx_parts.append(f'【五幕式总纲（重要：决定全书卷数和卷目标）】\n{bb.plot_design[:2500]}')
+        if bb.key_rules:
+            ctx_parts.append(f'【核心规则】\n{bb.key_rules[:800]}')
         if bb.worldbuilding:
-            ctx_parts.append(f'【世界观】\n{bb.worldbuilding[:600]}')
+            ctx_parts.append(f'【世界观】\n{bb.worldbuilding[:800]}')
         if bb.character_profiles:
-            ctx_parts.append(f'【人物】\n{bb.character_profiles[:600]}')
+            ctx_parts.append(f'【人物档案】\n{bb.character_profiles[:800]}')
+        if bb.timeline:
+            try:
+                existing_vols = json.loads(bb.timeline)
+                if isinstance(existing_vols, list) and existing_vols:
+                    existing_summary = '；'.join([f"第{v.get('volume_index','?')}卷:{v.get('main_plot','')[:30]}" for v in existing_vols[:10]])
+                    ctx_parts.append(f'【已有卷剧情（避免冲突，可按volume_index合并或追加）】\n{existing_summary}')
+            except (json.JSONDecodeError, ValueError):
+                pass
         extra_ctx = '\n\n'.join(ctx_parts)
 
         system_prompt = f"""你是番茄小说金番作者级别的剧情架构师。
-任务：将用户粘贴的大纲文本按卷拆分为 JSON 数组。
+任务：将用户粘贴的大纲文本**严格按原文的卷划分**拆分为 JSON 数组。
 
 【已有设定参考】
 {extra_ctx or '（暂无）'}
+
+【拆卷铁律】
+1. **必须严格按原文的卷划分提取**，不得合并、拆分、重排原文卷
+2. 原文有明确的卷标题（如"第X卷/卷X/Volume X/序章/楔子"）时，每个标题对应一个卷对象
+3. 原文没有明确卷划分时，才可按剧情自然分段（每卷对应一个完整的故事弧线）
+4. **不得遗漏任何卷**：从原文开头到结尾，每个段落都必须归属到某个卷
+5. main_plot 必须从原文对应段落提取或概括，不得凭空捏造
+6. 卷数应与【五幕式总纲】中暗示的卷数一致（若总纲存在）
 
 【输出要求】严格输出 JSON 数组（不要包裹在 markdown 代码块中）。
 每卷结构：
@@ -3875,7 +3910,7 @@ def ai_import_plot_outline(book_id):
   "volume_id": "1",
   "volume": "第1卷 卷名",
   "volume_index": 1,
-  "main_plot": "本卷主线剧情（100-300字）",
+  "main_plot": "本卷主线剧情（100-300字，从原文提取）",
   "core_conflict": "核心冲突",
   "emotion_driver": "情感驱动",
   "key_events": ["关键事件1", "关键事件2"],
@@ -3883,19 +3918,30 @@ def ai_import_plot_outline(book_id):
   "climax": "高潮",
   "ending": "结局/钩子",
   "foreshadowing": ["伏笔1"],
-  "nodes": []
+  "nodes": [
+    {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "爽点类型"}}
+  ]
 }}
 
-如果大纲文本没有明确的卷划分，请根据剧情自然分段（通常3-8卷）。
-每卷的 main_plot 必须从原文中提取或概括，不要凭空捏造。
+【情节节点设计要求】
+- 每卷生成 5-8 个情节节点
+- 章型配额：M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
+- 相邻节点章型不同，每卷覆盖整卷章节范围
+- 小故事闭环：新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
 
 {skill_note}"""
 
-        user_prompt = f'请将以下大纲文本按卷拆分：\n\n{outline_text[:6000]}'
+        # 取消 6000 字截断，支持超长大纲（分块处理）
+        max_input = 12000
+        outline_chunk = outline_text[:max_input]
+        if len(outline_text) > max_input:
+            outline_chunk += f'\n\n[注：原文共 {len(outline_text)} 字，已截取前 {max_input} 字，请确保覆盖全部卷]'
+
+        user_prompt = f'请严格按原文卷划分拆分以下大纲文本，不得遗漏任何卷：\n\n{outline_chunk}'
 
         content, err = _call_llm(
             [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-            max_tokens=6000, temperature=0.3
+            max_tokens=10000, temperature=0.2
         )
         if err:
             return jsonify({'error': err}), 500
@@ -3918,6 +3964,8 @@ def ai_import_plot_outline(book_id):
                 v['volume_index'] = _extract_volume_index(v.get('volume', v.get('volume_id', ''))) or (i + 1)
             if 'volume' not in v:
                 v['volume'] = f'第{v.get("volume_index", i+1)}卷'
+            if 'nodes' not in v:
+                v['nodes'] = []
 
     # 按 volume_index 排序
     volumes.sort(key=lambda v: int(v.get('volume_index', 0) or 0))
@@ -4539,7 +4587,10 @@ def ai_analyze_character(book_id):
 @app.route('/api/books/<book_id>/ai-analyze-plot-volume', methods=['POST'])
 @login_required
 def ai_analyze_plot_volume(book_id):
-    """AI识别指定卷的剧情大纲"""
+    """AI识别指定卷的剧情大纲。
+    优化版：数据源从单一章节内容扩展为 设定+大纲+人物+规则+章节+动态文件，
+    输出增加 nodes 情节节点字段，与 ai_outline_volume 输出结构一致。
+    这是相互提供资料数据的过程：识别结果会回流到 timeline 供其他维度使用。"""
     book = Book.query.get(book_id)
     if not book:
         return jsonify({'error': 'Book not found'}), 404
@@ -4547,6 +4598,9 @@ def ai_analyze_plot_volume(book_id):
     data = request.get_json() or {}
     volume_id = data.get('volume_id', '')
     volume_title = data.get('volume_title', '')
+    skill_pack_ids = data.get('skill_pack_ids', [])
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
 
     config = AIConfig.query.first()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
@@ -4556,7 +4610,7 @@ def ai_analyze_plot_volume(book_id):
     if not api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
-    # 获取该卷下的章节
+    # ===== 1. 收集该卷章节内容 =====
     all_chapters = Chapter.query.filter_by(book_id=book_id).order_by(Chapter.order_index).all()
     volume_chapters = []
     if volume_id:
@@ -4572,33 +4626,108 @@ def ai_analyze_plot_volume(book_id):
     else:
         volume_chapters = [c for c in all_chapters if not c.is_volume]
 
-    if not volume_chapters:
-        return jsonify({'error': '该卷没有章节内容'}), 400
-
-    full_text = ''
-    max_chars = 10000
+    # 章节内容组装（优先用 summary，其次前 800 字 + 末 200 字）
+    chapter_text = ''
+    max_chars = 12000
     for ch in volume_chapters:
-        segment = f'【{ch.title}】\n{(ch.content or "")[:1500]}\n\n'
-        if len(full_text) + len(segment) > max_chars:
-            remaining = max_chars - len(full_text)
+        ch_content = (ch.content or '')
+        # 优先用章节摘要
+        if getattr(ch, 'summary', None) and ch.summary:
+            segment = f'【{ch.title}】{ch.summary[:500]}\n'
+        elif len(ch_content) > 1000:
+            segment = f'【{ch.title}】{ch_content[:800]}…{ch_content[-200:]}\n'
+        else:
+            segment = f'【{ch.title}】{ch_content}\n'
+        if len(chapter_text) + len(segment) > max_chars:
+            remaining = max_chars - len(chapter_text)
             if remaining > 200:
-                full_text += segment[:remaining]
+                chapter_text += segment[:remaining]
             break
-        full_text += segment
+        chapter_text += segment
+
+    # ===== 2. 收集多维度上下文（相互提供资料数据） =====
+    ctx_parts = []
+    if bb:
+        # 大纲维度（五幕式总纲）
+        if bb.plot_design:
+            ctx_parts.append(f'【五幕式总纲（本卷应在此弧线内）】\n{bb.plot_design[:2000]}')
+        # 设定维度（世界观+规则）
+        if bb.worldbuilding:
+            ctx_parts.append(f'【世界观设定】\n{bb.worldbuilding[:1000]}')
+        if bb.key_rules:
+            ctx_parts.append(f'【核心规则（金手指/能力限制，识别时不可违反）】\n{bb.key_rules[:800]}')
+        # 人物及关系维度
+        if bb.character_profiles:
+            ctx_parts.append(f'【人物档案】\n{bb.character_profiles[:1000]}')
+        # 已有该卷剧情（若有，作为参考而非覆盖）
+        if bb.timeline:
+            try:
+                existing_vols = json.loads(bb.timeline)
+                if isinstance(existing_vols, list):
+                    # 找到该卷的已有数据
+                    for ev in existing_vols:
+                        ev_vid = str(ev.get('volume_id', ''))
+                        ev_vol = str(ev.get('volume', ''))
+                        if (volume_id and ev_vid == str(volume_id)) or (volume_title and ev_vol == volume_title):
+                            ctx_parts.append(f'【该卷已有剧情（参考，可补充完善）】\n{json.dumps(ev, ensure_ascii=False)[:600]}')
+                            break
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+    # ===== 3. 从动态文件补充数据 =====
+    dyn_memories = DynamicMemory.query.filter_by(book_id=book_id).all()
+    for dm in dyn_memories:
+        if dm.category in ('narrative_engine', 'plot_progress', 'timeline') and dm.content:
+            ctx_parts.append(f'【动态文件-{dm.category}】\n{dm.content[:800]}')
+            break  # 只取一份，避免过多
+
+    extra_ctx = '\n\n'.join(ctx_parts[-5:])  # 最多 5 块上下文，避免超长
+
+    # 技能包提示
+    skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
+
+    if not volume_chapters and not extra_ctx:
+        return jsonify({'error': '该卷没有章节内容，也没有可参考的设定'}), 400
 
     vol_label = volume_title or '全部章节'
 
-    system_prompt = f"""你是专业的小说分析师。请分析以下「{vol_label}」的章节内容，提取该卷的剧情大纲。
-严格按JSON格式输出，不要任何其他文字：
+    system_prompt = f"""你是番茄小说金番作者级别的剧情分析师。请综合【设定/大纲/人物/规则/章节内容/动态文件】多维度数据，识别「{vol_label}」的剧情大纲和情节节点。
+
+【多维度上下文（相互提供资料数据）】
+{extra_ctx or '（暂无设定参考，仅依据章节内容识别）'}
+
+【识别要求】
+1. 识别出的剧情必须与【五幕式总纲】中该卷的弧线一致，若有偏差在 main_plot 中标注
+2. 识别人物互动时参考【人物档案】，确保角色名字和行为准确
+3. 识别金手指/能力使用时参考【核心规则】，违反规则的标注为"待修正"
+4. 结合【动态文件】中的叙事记录，补充章节内容未体现的关键事件和伏笔
+
+严格按JSON格式输出（不要任何其他文字）：
 {{
   "volume": "{vol_label}",
-  "main_plot": "该卷主线剧情概述（100字内）",
+  "main_plot": "该卷主线剧情概述（100-200字，标注与总纲的偏差）",
+  "core_conflict": "核心冲突",
+  "emotion_driver": "情感驱动",
   "key_events": ["关键事件1", "关键事件2", "关键事件3"],
   "turning_points": ["转折点1", "转折点2"],
   "climax": "高潮场景描述",
-  "ending": "该卷结尾状态",
-  "foreshadowing": ["埋设的伏笔"]
-}}"""
+  "ending": "该卷结尾状态/钩子",
+  "foreshadowing": ["埋设的伏笔"],
+  "nodes": [
+    {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "爽点类型"}}
+  ]
+}}
+
+【情节节点识别要求】
+- 每卷识别 5-8 个情节节点
+- 章型：M主线/C角色/W世界观/D日常/F伏笔
+- 章型配额参考：M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
+- 节点章节范围不重叠，覆盖整卷
+- 小故事闭环：新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
+
+{skill_note}"""
+
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容，请根据设定推断）"}'
 
     try:
         base = base_url.rstrip('/')
@@ -4610,10 +4739,10 @@ def ai_analyze_plot_volume(book_id):
                 'model': model,
                 'messages': [
                     {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷内容：\n\n{full_text}'}
+                    {'role': 'user', 'content': user_prompt}
                 ],
                 'temperature': 0.3,
-                'max_tokens': 2000,
+                'max_tokens': 4000,
                 'response_format': {'type': 'json_object'}
             },
             timeout=120)
@@ -4621,8 +4750,7 @@ def ai_analyze_plot_volume(book_id):
         content = result['choices'][0]['message']['content']
         analysis = json.loads(content)
 
-        # 存储到 timeline 字段（JSON数组，按卷组织）
-        bb = BookBible.query.filter_by(book_id=book_id).first()
+        # 存储到 timeline 字段（深度合并：保留人工编辑字段，更新 AI 识别字段）
         if not bb:
             bb = BookBible(book_id=book_id)
             db.session.add(bb)
@@ -4635,22 +4763,40 @@ def ai_analyze_plot_volume(book_id):
         except:
             pass
 
-        # 更新或添加该卷的剧情
+        # 补全 volume_id 和 volume
         vol_data = analysis
-        vol_data['volume_id'] = volume_id
+        if volume_id:
+            vol_data['volume_id'] = volume_id
         vol_data['volume'] = vol_label
-        found = False
+        # 补全 volume_index
+        if 'volume_index' not in vol_data:
+            vol_data['volume_index'] = _extract_volume_index(vol_label) or (len(volumes_data) + 1)
+
+        # 深度合并：找到已有卷，保留人工编辑的 nodes（如果新数据没有 nodes），其他字段用新数据
+        found_idx = -1
         for i, v in enumerate(volumes_data):
-            if isinstance(v, dict) and v.get('volume_id') == volume_id:
-                volumes_data[i] = {**v, **vol_data}
-                found = True
+            if not isinstance(v, dict):
+                continue
+            ev_vid = str(v.get('volume_id', ''))
+            ev_vol = str(v.get('volume', ''))
+            if (volume_id and ev_vid == str(volume_id)) or (volume_title and ev_vol == volume_title):
+                found_idx = i
                 break
-            if isinstance(v, dict) and v.get('volume') == vol_label:
-                volumes_data[i] = {**v, **vol_data}
-                found = True
-                break
-        if not found:
+        if found_idx >= 0:
+            existing = volumes_data[found_idx]
+            # 保留人工编辑的 nodes（新数据 nodes 为空或缺失时）
+            if not vol_data.get('nodes') and existing.get('nodes'):
+                vol_data['nodes'] = existing['nodes']
+            # 保留人工编辑的字段（raw_text 等）
+            for k in ('raw_text',):
+                if k in existing and k not in vol_data:
+                    vol_data[k] = existing[k]
+            volumes_data[found_idx] = {**existing, **vol_data}
+        else:
             volumes_data.append(vol_data)
+
+        # 按 volume_index 排序
+        volumes_data.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
 
         bb.timeline = json.dumps(volumes_data, ensure_ascii=False, indent=2)
         bb.last_synced_at = datetime.now(timezone.utc)

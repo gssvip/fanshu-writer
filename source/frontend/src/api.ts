@@ -356,10 +356,10 @@ export const api = {
     }),
 
   // AI Analyze Plot Volume (按卷识别剧情)
-  analyzePlotVolume: (bookId: string, volumeId: string, volumeTitle: string) =>
+  analyzePlotVolume: (bookId: string, volumeId: string, volumeTitle: string, skillPackIds?: string[]) =>
     request<{ success: boolean; volume_data: any; volumes: any[]; bible: BookBible }>(`/books/${bookId}/ai-analyze-plot-volume`, {
       method: 'POST',
-      body: JSON.stringify({ volume_id: volumeId, volume_title: volumeTitle }),
+      body: JSON.stringify({ volume_id: volumeId, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [] }),
     }),
 
   // Dynamic Memory (动态文件库 - 旧5文件JSON系统)
