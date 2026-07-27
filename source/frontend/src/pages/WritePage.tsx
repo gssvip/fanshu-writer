@@ -2211,11 +2211,9 @@ function PlotPanel(props: {
   const [volumeGenerating, setVolumeGenerating] = useState(false);
   const [volumeData, setVolumeData] = useState<any[]>([]);
   const [expandedVol, setExpandedVol] = useState<Set<number>>(new Set());
-  // 滚动生成工作流状态
-  const [outlineWorkflowLoading, setOutlineWorkflowLoading] = useState<'' | 'master' | 'volume' | 'all'>('');
-  const [outlineWorkflowProgress, setOutlineWorkflowProgress] = useState('');
-  // 每卷章节数（默认50，与后端约定一致）
-  const CHAPTERS_PER_VOLUME = 50;
+  // 工作流状态（getter 仍被按钮 disabled 使用；setter 已废弃，因 generateOutlineMaster 已移除）
+  const [outlineWorkflowLoading] = useState<'' | 'master' | 'volume' | 'all'>('');
+  const [outlineWorkflowProgress] = useState('');
 
   // 五幕弧线模板
   const ARC_NAMES = ['立身', '立足', '立势', '立威', '立命'];
@@ -2349,21 +2347,21 @@ function PlotPanel(props: {
     });
   }
 
-  // AI情节节点设计：基于总纲+设定，为指定卷生成5-8个情节节点（调用后端 aiOutlineVolume）
+  // AI情节节点设计：基于总纲(若有)+卷剧情+设定，为指定卷生成5-8个情节节点（非强制，无总纲也能用）
   const [nodeDesigning, setNodeDesigning] = useState<string>('');
   async function handleDesignNodes(volId: string, volTitle: string, volIndex: number) {
-    if (!bible?.plot_design || !bible.plot_design.trim()) {
-      alert('请先在大纲维度生成五幕式总纲，再为各卷设计情节节点');
-      return;
-    }
-    showConfirm(`将基于五幕式总纲+设定+人物，为「${volTitle}」设计 5-8 个情节节点（含章型配额/爽点/钩子）。是否继续？`, async () => {
+    const hasMaster = !!(bible?.plot_design && bible.plot_design.trim());
+    const hint = hasMaster
+      ? `将基于五幕式总纲+设定+人物，为「${volTitle}」设计 5-8 个情节节点（含章型配额/爽点/钩子）。是否继续？`
+      : `暂无五幕式总纲，将基于本卷已有剧情+设定+人物，为「${volTitle}」设计 5-8 个情节节点。是否继续？`;
+    showConfirm(hint, async () => {
       setNodeDesigning(volId || volTitle);
       try {
         const result = await api.aiOutlineVolume(bookId, volIndex, volTitle, selectedSkillPackIds, 50);
         if (result.bible) onBibleUpdate(result.bible);
         alert(`情节节点设计完成！已为「${volTitle}」生成 ${result.volume_data?.nodes?.length || 0} 个情节节点`);
       } catch (e: any) {
-        alert('情节节点设计失败：' + (e.message || '请检查AI配置或先生成五幕式总纲'));
+        alert('情节节点设计失败：' + (e.message || '请检查AI配置'));
       }
       setNodeDesigning('');
     });
@@ -2410,24 +2408,6 @@ function PlotPanel(props: {
   };
 
   // ==== 大纲工作流相关函数（从大纲维度迁移） ====
-
-  // 生成五幕式总纲（写入 plot_design）
-  async function generateOutlineMaster() {
-    if (!bookId) return;
-    setOutlineWorkflowLoading('master');
-    setOutlineWorkflowProgress('⏳ 生成总纲中...');
-    try {
-      const result = await api.aiOutlineMaster(bookId, selectedSkillPackIds, undefined, CHAPTERS_PER_VOLUME);
-      const updated = await api.updateBible(bookId, { plot_design: result.master_outline } as any);
-      onBibleUpdate(updated);
-      setOutlineWorkflowProgress('');
-      alert(`五幕式总纲已生成并填入大纲（共 ${result.volume_count} 卷）`);
-    } catch (e: any) {
-      alert('生成总纲失败: ' + e.message);
-      setOutlineWorkflowProgress('');
-    }
-    setOutlineWorkflowLoading('');
-  }
 
   function generateVolumeBreakdown() {
     if (targetWords <= 0) { alert('请先输入小说目标字数'); return; }
@@ -2624,6 +2604,27 @@ function PlotPanel(props: {
     setImportLoading(false);
   }
 
+  // 反生成五幕式总纲：从各卷剧情(timeline)反向提炼，写入大纲维度(plot_design)
+  const [reverseLoading, setReverseLoading] = useState(false);
+  async function handleReverseGenerateOutline() {
+    if (!bookId) return;
+    if (!bible?.timeline || !bible.timeline.trim()) {
+      alert('请先「导入剧情大纲」或「从大纲提取各卷」生成各卷剧情，再反生成总纲');
+      return;
+    }
+    showConfirm('将根据已导入的各卷剧情，反向提炼生成五幕式总纲，并自动填入大纲维度。是否继续？', async () => {
+      setReverseLoading(true);
+      try {
+        const result = await api.reverseGenerateOutline(bookId, selectedSkillPackIds);
+        if (result.bible) onBibleUpdate(result.bible);
+        alert('已反生成五幕式总纲并填入大纲维度，可切换到「大纲」Tab 查看');
+      } catch (e: any) {
+        alert('反生成总纲失败：' + (e.message || '请检查AI配置或先导入各卷剧情'));
+      }
+      setReverseLoading(false);
+    });
+  }
+
   // 合并卷列表和已有数据
   const displayVolumes = useMemo(() => {
     const result: any[] = [];
@@ -2712,25 +2713,21 @@ function PlotPanel(props: {
       )}
       <div className="bible-edit-header">
         <h3>📖 剧情（按卷）</h3>
-        <div className="bible-edit-actions">
-          <button className="btn-ghost-sm" onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }}>✨ AI创作</button>
-          <button className="btn-primary-sm" onClick={addVolumeOutline}>＋ 添加卷大纲</button>
-        </div>
       </div>
 
-      {/* 大纲工作流（从大纲维度迁移）：总纲→分卷规划→提取→导入→AI创作 全部在同一行 */}
+      {/* 大纲工作流（从大纲维度迁移）：总纲→分卷规划→提取→导入→AI创作 全部在同一行，相互协作非强制 */}
       <div className="volume-calc-section" style={{ borderLeft: '3px solid #6c5ce7', paddingLeft: 10, marginBottom: 8 }}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          {!bible?.plot_design?.trim() && (
-            <button
-              className="btn-primary-sm"
-              onClick={generateOutlineMaster}
-              disabled={outlineWorkflowLoading !== ''}
-              title="生成五幕式总纲（写入大纲）"
-            >
-              {outlineWorkflowLoading === 'master' ? '⏳ 生成总纲中...' : '🎯 生成五幕式总纲'}
-            </button>
-          )}
+          {/* 反生成五幕式总纲：从已导入的各卷剧情反向提炼，写入大纲维度 */}
+          <button
+            className="btn-ghost-sm"
+            onClick={handleReverseGenerateOutline}
+            disabled={reverseLoading || outlineWorkflowLoading !== ''}
+            title="从已导入/提取的各卷剧情，反向提炼五幕式总纲，填入大纲维度"
+            style={{ color: '#6c5ce7' }}
+          >
+            {reverseLoading ? '⏳ 反生成中...' : '🔄 反生成五幕式总纲'}
+          </button>
           <button
             className="btn-ghost-sm"
             onClick={() => setShowVolumeCalc(s => !s)}
@@ -2763,17 +2760,22 @@ function PlotPanel(props: {
           >
             ✨ AI创作
           </button>
+          <button
+            className="btn-primary-sm"
+            onClick={addVolumeOutline}
+            title="手动添加一卷空大纲"
+          >
+            ＋ 添加卷大纲
+          </button>
         </div>
-        {/* 工作流提示：打通总纲→分卷→提取→导入→AI创作 */}
-        {bible?.plot_design?.trim() ? (
-          <div style={{ fontSize: 11, color: '#00b894', marginTop: 4 }}>
-            ✓ 已有总纲，可：分卷规划 → 提取各卷 / 导入大纲 / AI创作（任选其一填充各卷剧情）
-          </div>
-        ) : (
-          <div style={{ fontSize: 11, color: '#e17055', marginTop: 4 }}>
-            ⚠ 尚无总纲，建议先「生成五幕式总纲」，再做分卷规划/提取/导入
-          </div>
-        )}
+        {/* 工作流提示：打通总纲→分卷→提取→导入→AI创作，相互反哺非强制 */}
+        <div style={{ fontSize: 11, color: '#636e72', marginTop: 4, lineHeight: 1.6 }}>
+          💡 工作流可任选起点、相互反哺：
+          {bible?.plot_design?.trim() ? ' ✓有总纲' : ' ✗无总纲'}
+          {bible?.timeline?.trim() ? ' ✓有各卷' : ' ✗无各卷'}
+          <br />
+          有总纲→提取各卷；有各卷→反生成总纲；无总纲→分卷规划/导入/AI创作任选；节点设计无需总纲即可用
+        </div>
         {outlineWorkflowProgress && (
           <div style={{ fontSize: 12, color: '#0984e3', marginTop: 6 }}>{outlineWorkflowProgress}</div>
         )}

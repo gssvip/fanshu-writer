@@ -471,6 +471,13 @@ export const api = {
       body: JSON.stringify({ outline_text: outlineText, skill_pack_ids: skillPackIds || [] }),
     }),
 
+  // 反生成五幕式总纲：从各卷剧情(timeline)反向提炼总纲，写入大纲维度(plot_design)
+  reverseGenerateOutline: (bookId: string, skillPackIds?: string[]) =>
+    request<{ success: boolean; master_outline: string; bible: any }>(`/books/${bookId}/ai-reverse-generate-outline`, {
+      method: 'POST',
+      body: JSON.stringify({ skill_pack_ids: skillPackIds || [] }),
+    }),
+
   // ==== 总 AI 创作：总览全局各维度 ====
   aiMasterCreate: (bookId: string, dimensions: string[], skillPackIds?: string[], instruction?: string) =>
     request<{ results: Array<{ dimension: string; label: string; field: string; content?: string; error?: string }> }>(`/books/${bookId}/ai-master-create`, {

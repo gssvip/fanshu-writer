@@ -3587,8 +3587,12 @@ def ai_outline_volume(book_id):
     if not book:
         return jsonify({'error': 'Not found'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
-    if not bb or not bb.plot_design:
-        return jsonify({'error': '请先生成五幕式总纲'}), 400
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+    # 非强制：无总纲也能设计节点，基于已有卷剧情
+    has_master = bool(bb.plot_design and bb.plot_design.strip())
 
     data = request.json or {}
     skill_pack_ids = data.get('skill_pack_ids', [])
@@ -3639,14 +3643,15 @@ def ai_outline_volume(book_id):
 
     user_prompt = f"""书名：{book.title}
 
-【五幕式总纲】
-{master_outline}
+{f"【五幕式总纲】{chr(10)}{master_outline}" if has_master else "【五幕式总纲】（暂无，请基于下方已有剧情/卷大纲自行推演本卷情节节点）"}
 
 【已有剧情】
 {existing_timeline or '（暂无）'}
 
+【本卷在已有剧情中的定位】请优先基于本卷（第""" + f"{volume_index}卷「{volume_title}」" + """）已有的 main_plot/key_events 设计节点；若已有剧情为空，则基于世界观、规则、人物合理推演。
+
 【世界观设定】（情节节点需符合世界观规则）
-{worldbuilding_ctx or '（暂无）'}
+""" + (worldbuilding_ctx or '（暂无）') + f"""
 
 【核心规则】（金手指/能力限制等，不可违反）
 {key_rules_ctx or '（暂无）'}
@@ -3871,6 +3876,112 @@ def ai_extract_volumes_from_outline(book_id):
     bb.timeline = json.dumps(volumes, ensure_ascii=False, indent=2)
     db.session.commit()
     return jsonify({'success': True, 'volumes': volumes, 'bible': bb.to_dict()})
+
+
+@app.route('/api/books/<book_id>/ai-reverse-generate-outline', methods=['POST'])
+def ai_reverse_generate_outline(book_id):
+    """反生成五幕式总纲：从已导入的各卷剧情（timeline）反向提炼五幕式总纲，
+    自动填入大纲维度（plot_design）。打通「导入剧情大纲 → 大纲总纲」的反哺链路。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Not found'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    # 必须有各卷剧情才能反推总纲
+    volumes_data = []
+    if bb.timeline:
+        try:
+            parsed = json.loads(bb.timeline)
+            if isinstance(parsed, list) and parsed:
+                volumes_data = [v for v in parsed if isinstance(v, dict)]
+        except (json.JSONDecodeError, ValueError):
+            pass
+    if not volumes_data:
+        return jsonify({'error': '请先导入剧情大纲或提取各卷，再反生成总纲'}), 400
+
+    data = request.json or {}
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'tomato_outline'], mode='agent')
+
+    # 整理各卷剧情摘要
+    vol_summaries = []
+    for v in volumes_data:
+        idx = v.get('volume_index', '?')
+        name = v.get('volume', f'第{idx}卷')
+        main_plot = (v.get('main_plot') or '').strip()
+        climax = (v.get('climax') or '').strip()
+        ending = (v.get('ending') or '').strip()
+        key_events = v.get('key_events') or []
+        events_str = '；'.join(key_events) if key_events else ''
+        parts = [f'第{idx}卷「{name}」']
+        if main_plot:
+            parts.append(f'主线：{main_plot[:200]}')
+        if events_str:
+            parts.append(f'关键事件：{events_str[:150]}')
+        if climax:
+            parts.append(f'高潮：{climax[:100]}')
+        if ending:
+            parts.append(f'结局/钩子：{ending[:100]}')
+        vol_summaries.append(' | '.join(parts))
+    volumes_text = '\n'.join(vol_summaries)
+
+    # 五幕式总纲 = 立身卷/立足卷/立势卷/破局卷/收束卷 的全书结构
+    existing_master = (bb.plot_design or '').strip()
+    worldbuilding_ctx = (bb.worldbuilding or '')[:800]
+    characters_ctx = (bb.character_profiles or '')[:800]
+
+    system_prompt = f"""你是番茄小说金番作者级别的剧情架构师。
+任务：根据已有的各卷剧情，反向提炼生成「五幕式总纲」，写入大纲维度。
+
+【已有各卷剧情】
+{volumes_text}
+
+{f"【已有总纲（参考，可在其基础上完善）】{chr(10)}{existing_master[:1500]}" if existing_master else "【已有总纲】（暂无，需全新生成）"}
+
+【世界观设定】
+{worldbuilding_ctx or '（暂无）'}
+
+【人物档案】
+{characters_ctx or '（暂无）'}
+
+【五幕式总纲格式要求】
+严格按五幕结构输出，每幕对应一卷或多卷：
+1. 立身卷（开局）：主角起点、金手指觉醒、核心矛盾引入
+2. 立足卷（发展）：主角站稳脚跟、势力初成、第一波爽点
+3. 立势卷（升级）：格局打开、对手升级、伏笔展开
+4. 破局卷（高潮）：终极对决、伏笔回收、真相揭露
+5. 收束卷（结局）：收尾、升华、留白/续集钩子
+
+每幕需包含：本卷目标、核心冲突、关键转折、爽点设计、卷尾钩子。
+总纲长度 800-1500 字，要能统领全书各卷。
+
+{skill_note}"""
+
+    user_prompt = '请根据上述各卷剧情，反向生成完整的五幕式总纲。直接输出总纲文本，不要包裹在代码块中。'
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=2500, temperature=0.6
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    master_outline = content.strip()
+    # 去除可能的代码围栏
+    import re as _re3
+    fence = _re3.search(r'```(?:markdown|text)?\s*([\s\S]*?)\s*```', master_outline)
+    if fence:
+        master_outline = fence.group(1).strip()
+
+    # 写入 plot_design（大纲维度）
+    bb.plot_design = master_outline
+    db.session.commit()
+
+    return jsonify({'success': True, 'master_outline': master_outline, 'bible': bb.to_dict()})
 
 
 @app.route('/api/books/<book_id>/ai-import-plot-outline', methods=['POST'])
