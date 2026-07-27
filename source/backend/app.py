@@ -627,6 +627,124 @@ def count_words(text):
     numbers = len(re.findall(r'\d+', text))
     return cn_chars + en_words + numbers
 
+
+_CN_DIGITS = {'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'零':0}
+_CN_UNITS = {'十':10,'百':100,'千':1000,'万':10000}
+
+
+def _chinese_to_int(s):
+    """将中文数字（如 十一/二十三/一百零五/一千二百）转为 int。无法解析返回 None。"""
+    if not s:
+        return None
+    total = 0
+    cur = 0
+    wan_part = 0  # 万位以上的累积
+    for ch in s:
+        if ch in _CN_DIGITS:
+            cur = _CN_DIGITS[ch]
+        elif ch == '万':
+            if cur == 0:
+                cur = 1
+            wan_part = (total + cur) * 10000
+            total = 0
+            cur = 0
+        elif ch in _CN_UNITS:
+            if cur == 0:
+                cur = 1  # "十" 单独出现视为 10
+            total += cur * _CN_UNITS[ch]
+            cur = 0
+        else:
+            return None  # 含非数字字符，无法解析
+    result = wan_part + total + cur
+    return result if result > 0 else None
+
+
+def parse_chapter_number(title):
+    """从章节标题解析章节号，返回 int 或 None。
+    支持：第11章/第十一章/第11回/第11节/Chapter 11/11.标题/11、标题 等。"""
+    if not title:
+        return None
+    import re
+    t = title.strip()
+    # 1. 第N章/回/节/卷/部（阿拉伯数字）
+    m = re.search(r'第\s*(\d+)\s*[章节回卷部篇]', t)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            pass
+    # 2. 第N章/回/节（中文数字）
+    m = re.search(r'第\s*([零一二三四五六七八九十百千万两]+)\s*[章节回卷部篇]', t)
+    if m:
+        n = _chinese_to_int(m.group(1))
+        if n is not None:
+            return n
+    # 3. Chapter N / CHAPTER N
+    m = re.search(r'[Cc]hapter\s*(\d+)', t)
+    if m:
+        return int(m.group(1))
+    # 4. 行首 数字 + 分隔符（11. / 11、 / 11  / 11: / 11-）
+    m = re.match(r'\s*(\d+)\s*[\.、:：\-\)\]】]', t)
+    if m:
+        return int(m.group(1))
+    # 5. 行首纯数字
+    m = re.match(r'\s*(\d+)\s*$', t)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def resort_chapters_by_title(book_id, rebin_volumes=False):
+    """按章节标题中的章节号对作品章节重新排序（稳定排序）。
+    - 有章节号的按章节号升序排在前
+    - 无章节号的保持原相对顺序排在后面
+    - 重新分配 order_index 为 0..N-1
+    - rebin_volumes=True 时，按 50 章/卷重新归入卷（用于批量导入场景）
+    返回重排后的章节数。"""
+    chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+    if not chs:
+        return 0
+    # 构建排序键：(是否无章节号, 章节号, 原 order_index)
+    keyed = []
+    for ch in chs:
+        n = parse_chapter_number(ch.title or '')
+        if n is not None:
+            keyed.append((0, n, ch.order_index, ch))
+        else:
+            keyed.append((1, 0, ch.order_index, ch))
+    keyed.sort(key=lambda x: (x[0], x[1], x[2]))
+    # 重新分配 order_index
+    for i, item in enumerate(keyed):
+        item[3].order_index = i
+
+    # 可选：按 50 章/卷重新归入卷
+    if rebin_volumes:
+        vols = Chapter.query.filter_by(book_id=book_id, is_volume=True).order_by(Chapter.order_index).all()
+        total_chs = len(keyed)
+        needed_vols = max(1, (total_chs + 49) // 50) if total_chs > 0 else 0
+        # 不足的卷自动补建（保留已有卷名）
+        while len(vols) < needed_vols:
+            vidx = len(vols)
+            ch_start = vidx * 50 + 1
+            ch_end = min((vidx + 1) * 50, total_chs)
+            vol = Chapter(
+                book_id=book_id,
+                title=f'第{vidx + 1}卷（第{ch_start}-{ch_end}章）',
+                content='', order_index=total_chs + vidx,
+                is_volume=True, parent_id='', word_count=0,
+            )
+            db.session.add(vol)
+            db.session.flush()
+            vols.append(vol)
+        # 重新分配 parent_id
+        for i, item in enumerate(keyed):
+            vol_idx = i // 50
+            if vol_idx < len(vols):
+                item[3].parent_id = vols[vol_idx].id
+    db.session.flush()
+    return len(keyed)
+
+
 def update_book_stats(book_id):
     book = Book.query.get(book_id)
     if not book:
@@ -1002,6 +1120,13 @@ def create_chapter(book_id):
     db.session.add(ch)
     db.session.flush()
     update_book_stats(book_id)
+
+    # 若新章节标题含章节号（第N章/第N章等），按章节号自动重排顺序（不改动卷归入）
+    if not ch.is_volume and parse_chapter_number(ch.title or '') is not None:
+        try:
+            resort_chapters_by_title(book_id, rebin_volumes=False)
+        except Exception:
+            pass  # 重排失败不影响章节创建
 
     # 自动检测是否需要生成动态报告（每5章触发）
     auto_report = None
@@ -2043,6 +2168,10 @@ def import_book_files():
                 word_count=count_words(ch_data['content'])
             )
             db.session.add(ch)
+        db.session.flush()
+
+        # 按章节标题中的章节号（第N章/第N章等）自动排序
+        resort_chapters_by_title(book.id, rebin_volumes=False)
 
         # 自动按 50 章一组创建卷
         chapter_count = len(all_chapters)
@@ -2450,6 +2579,10 @@ def append_import_chapters(book_id):
             )
             db.session.add(ch)
             added += 1
+        db.session.flush()
+
+        # 按章节标题中的章节号自动重排（含已有章节），并按 50 章/卷重新归入卷
+        resort_chapters_by_title(book_id, rebin_volumes=True)
 
         update_book_stats(book_id)
         total = Chapter.query.filter_by(book_id=book_id, is_volume=False).count()
