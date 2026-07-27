@@ -447,9 +447,23 @@ export const api = {
     }),
 
   aiOutlineVolume: (bookId: string, volumeIndex: number, volumeTitle?: string, skillPackIds?: string[], chaptersPerVolume?: number) =>
-    request<{ volume_data: any; timeline: string }>(`/books/${bookId}/ai-outline-volume`, {
+    request<{ volume_data: any; timeline: string; bible: any }>(`/books/${bookId}/ai-outline-volume`, {
       method: 'POST',
       body: JSON.stringify({ volume_index: volumeIndex, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [], chapters_per_volume: chaptersPerVolume || 50 }),
+    }),
+
+  // 从大纲总纲一次性提取各卷剧情（替代逐卷循环，更稳定）
+  extractVolumesFromOutline: (bookId: string, skillPackIds?: string[], volumeCount?: number) =>
+    request<{ success: boolean; volumes: any[]; bible: any }>(`/books/${bookId}/ai-extract-volumes-from-outline`, {
+      method: 'POST',
+      body: JSON.stringify({ skill_pack_ids: skillPackIds || [], volume_count: volumeCount }),
+    }),
+
+  // 导入剧情大纲文本，自动识别拆分到各卷（正则优先，AI兜底）
+  importPlotOutline: (bookId: string, outlineText: string, skillPackIds?: string[]) =>
+    request<{ success: boolean; volumes: any[]; imported_count: number; bible: any }>(`/books/${bookId}/ai-import-plot-outline`, {
+      method: 'POST',
+      body: JSON.stringify({ outline_text: outlineText, skill_pack_ids: skillPackIds || [] }),
     }),
 
   // ==== 总 AI 创作：总览全局各维度 ====

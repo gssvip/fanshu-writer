@@ -1091,6 +1091,7 @@ export default function WritePage() {
             selectedSkillPackIds={selectedSkillPackIds}
             onToggleSkillPack={toggleSkillPack}
             selectedSkillPacks={selectedSkillPacks}
+            concept={concept}
           />
         ) : (
           <BibleEditPanel
@@ -2181,8 +2182,9 @@ function PlotPanel(props: {
   selectedSkillPackIds: string[];
   onToggleSkillPack: (id: string) => void;
   selectedSkillPacks: SkillPack[];
+  concept: string;
 }) {
-  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks } = props;
+  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept } = props;
   const [volumes, setVolumes] = useState<any[]>([]);
   const [editingVol, setEditingVol] = useState<string | null>(null);
   const [editForm, setEditForm] = useState('');
@@ -2195,6 +2197,41 @@ function PlotPanel(props: {
   const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
   const [editingVolName, setEditingVolName] = useState<string | null>(null);
   const [editVolName, setEditVolName] = useState('');
+
+  // ==== 大纲工作流相关 state（从大纲维度迁移） ====
+  const [extractLoading, setExtractLoading] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importLoading, setImportLoading] = useState(false);
+  const [scrollLoading, setScrollLoading] = useState(false);
+  // 自动分卷规划
+  const [targetWords, setTargetWords] = useState<number>(0);
+  const [showVolumeCalc, setShowVolumeCalc] = useState(false);
+  const [volumeGenerating, setVolumeGenerating] = useState(false);
+  const [volumeData, setVolumeData] = useState<any[]>([]);
+  const [expandedVol, setExpandedVol] = useState<Set<number>>(new Set());
+  // 滚动生成工作流状态
+  const [outlineWorkflowLoading, setOutlineWorkflowLoading] = useState<'' | 'master' | 'volume' | 'all'>('');
+  const [outlineWorkflowProgress, setOutlineWorkflowProgress] = useState('');
+  // 每卷章节数（默认50，与后端约定一致）
+  const CHAPTERS_PER_VOLUME = 50;
+
+  // 五幕弧线模板
+  const ARC_NAMES = ['立身', '立足', '立势', '立威', '立命'];
+  const ARC_THEMES: Record<string, string> = {
+    '立身': '底层→入门：觉醒金手指+首打脸+建立认知',
+    '立足': '新人→站稳：配角登场+世界观展开+5-8章小闭环',
+    '立势': '小角色→有分量：大舞台+强对手+团队建立',
+    '立威': '有分量→威名：组织级冲突+感情推进+信念考验',
+    '立命': '威名→蜕变：终极挑战+伏笔收束+续作种子',
+  };
+  const ARC_RATIOS = [0.05, 0.2, 0.25, 0.25, 0.25]; // 五幕占比
+
+  // 爽点类型库
+  const COOL_TYPES = ['实力碾压', '打脸装逼', '升级蜕变', '守护爆发', '荒诞反差', '社会认同', '信息差博弈', '扮猪吃虎'];
+
+  // 章型配额
+  const CHAPTER_TYPE_DESC = { M: '主线推进', C: '角色深挖', W: '世界观展开', D: '日常呼吸', F: '伏笔暗线' };
 
   function toggleVol(idx: number) {
     setCollapsedVols(prev => {
@@ -2319,6 +2356,490 @@ function PlotPanel(props: {
     }
   };
 
+  // ==== 大纲工作流相关函数（从大纲维度迁移） ====
+
+  // 解析已有 timeline 中已生成的卷数（用于滚动生成时计算下一卷号）
+  function parseExistingVolumeCount(): number {
+    try {
+      if (bible?.timeline) {
+        const existing = JSON.parse(bible.timeline);
+        if (Array.isArray(existing) && existing.length > 0) {
+          return existing.length;
+        }
+      }
+    } catch { /* ignore */ }
+    return 0;
+  }
+
+  // 生成五幕式总纲（写入 plot_design）
+  async function generateOutlineMaster() {
+    if (!bookId) return;
+    setOutlineWorkflowLoading('master');
+    setOutlineWorkflowProgress('⏳ 生成总纲中...');
+    try {
+      const result = await api.aiOutlineMaster(bookId, selectedSkillPackIds, undefined, CHAPTERS_PER_VOLUME);
+      const updated = await api.updateBible(bookId, { plot_design: result.master_outline } as any);
+      onBibleUpdate(updated);
+      setOutlineWorkflowProgress('');
+      alert(`五幕式总纲已生成并填入大纲（共 ${result.volume_count} 卷）`);
+    } catch (e: any) {
+      alert('生成总纲失败: ' + e.message);
+      setOutlineWorkflowProgress('');
+    }
+    setOutlineWorkflowLoading('');
+  }
+
+  // 滚动生成下一卷大纲（写入 timeline）
+  async function generateOutlineVolumeScroll() {
+    if (!bookId) return;
+    // 先检查是否有总纲（plotDesign 非空）
+    if (!bible?.plot_design || !bible.plot_design.trim()) {
+      alert('请先在大纲维度生成五幕式总纲');
+      return;
+    }
+    setScrollLoading(true);
+    setOutlineWorkflowProgress('⏳ 计算当前卷号...');
+    try {
+      // 自动计算当前应该生成第几卷：基于已生成卷数 + 1（已有 timeline 中的卷数 + 1）
+      const existingCount = parseExistingVolumeCount();
+      const volumeIndex = existingCount + 1;
+      const volumeTitle = `第${volumeIndex}卷`;
+
+      setOutlineWorkflowProgress(`⏳ 正在生成第 ${volumeIndex} 卷大纲...`);
+      const result = await api.aiOutlineVolume(bookId, volumeIndex, volumeTitle, selectedSkillPackIds, CHAPTERS_PER_VOLUME);
+
+      // 把返回的 timeline 填入剧情维度（通过 onBibleUpdate 更新 timeline 字段）
+      const updated = await api.updateBible(bookId, { timeline: result.timeline } as any);
+      onBibleUpdate(updated);
+
+      // 显示 volume_data 的情节节点（合并到 volumeData 状态）
+      if (result.volume_data) {
+        const newVols = Array.isArray(result.volume_data) ? result.volume_data : [result.volume_data];
+        setVolumeData(prev => {
+          const next = [...prev];
+          newVols.forEach((v, i) => {
+            const idx = volumeIndex - 1 + i;
+            if (idx < next.length) next[idx] = { ...next[idx], ...v };
+            else next[idx] = v;
+          });
+          return next;
+        });
+        // 展开新增的卷
+        setExpandedVol(prev => {
+          const n = new Set(prev);
+          n.add(volumeIndex - 1);
+          return n;
+        });
+      }
+
+      setOutlineWorkflowProgress('');
+      alert(`第${volumeIndex}卷大纲已生成并填入剧情`);
+    } catch (e: any) {
+      alert('生成本卷大纲失败: ' + e.message);
+      setOutlineWorkflowProgress('');
+    }
+    setScrollLoading(false);
+  }
+
+  // 一键全书大纲（分卷迭代，健壮版）
+  async function generateOutlineAllVolumes() {
+    if (!bookId) return;
+    setOutlineWorkflowLoading('all');
+    setOutlineWorkflowProgress('⏳ 准备生成全书大纲...');
+    try {
+      // 先确保有总纲（没有则先调 aiOutlineMaster）
+      let masterOutline = bible?.plot_design || '';
+      let volumeCount = 6; // 默认6卷
+      if (!masterOutline.trim()) {
+        setOutlineWorkflowProgress('⏳ 正在生成五幕式总纲...');
+        const masterResult = await api.aiOutlineMaster(bookId, selectedSkillPackIds, undefined, CHAPTERS_PER_VOLUME);
+        masterOutline = masterResult.master_outline;
+        volumeCount = masterResult.volume_count || volumeCount;
+        const updatedMaster = await api.updateBible(bookId, { plot_design: masterOutline } as any);
+        onBibleUpdate(updatedMaster);
+      } else {
+        // 尝试从已有 timeline 推断 volume_count
+        const existingCount = parseExistingVolumeCount();
+        if (existingCount > 0) volumeCount = Math.max(volumeCount, existingCount);
+      }
+
+      // 准备 timeline 数组：先加载已有的 timeline 数据
+      let allTimeline: any[] = [];
+      try {
+        if (bible?.timeline) {
+          const existing = JSON.parse(bible.timeline);
+          if (Array.isArray(existing)) allTimeline = [...existing];
+        }
+      } catch { /* ignore */ }
+
+      // 逐卷调用 aiOutlineVolume（从第1卷到 volume_count 卷）
+      let completed = 0;
+      const newVolumeData: any[] = [];
+      for (let v = 1; v <= volumeCount; v++) {
+        setOutlineWorkflowProgress(`⏳ 正在生成第 ${v}/${volumeCount} 卷...`);
+        try {
+          const volumeTitle = `第${v}卷`;
+          const result = await api.aiOutlineVolume(bookId, v, volumeTitle, selectedSkillPackIds, CHAPTERS_PER_VOLUME);
+
+          // 合并 timeline：尝试解析返回的 timeline，并替换/追加第v卷
+          let appended = false;
+          try {
+            const parsedTimeline = JSON.parse(result.timeline);
+            if (Array.isArray(parsedTimeline)) {
+              parsedTimeline.forEach((t, i) => {
+                const idx = (v - 1) + i;
+                if (idx < allTimeline.length) allTimeline[idx] = t;
+                else allTimeline[idx] = t;
+              });
+              appended = true;
+            } else {
+              allTimeline[v - 1] = parsedTimeline;
+              appended = true;
+            }
+          } catch {
+            // 如果 timeline 不是 JSON，直接用 volume_data
+          }
+          if (!appended && result.volume_data) {
+            const volData = Array.isArray(result.volume_data) ? result.volume_data[0] : result.volume_data;
+            allTimeline[v - 1] = volData;
+          }
+
+          // 收集 volume_data 用于展示情节节点
+          if (result.volume_data) {
+            const vols = Array.isArray(result.volume_data) ? result.volume_data : [result.volume_data];
+            vols.forEach((vd, i) => {
+              const idx = (v - 1) + i;
+              if (idx < newVolumeData.length) newVolumeData[idx] = { ...newVolumeData[idx], ...vd };
+              else newVolumeData[idx] = vd;
+            });
+          }
+          completed = v;
+        } catch (e: any) {
+          // 失败则停止并提示已完成的卷数
+          alert(`第${v}卷生成失败：${e.message}\n已完成 ${completed}/${volumeCount} 卷`);
+          break;
+        }
+      }
+
+      // 把合并后的 timeline 回填到剧情维度
+      const cleanedTimeline = allTimeline.filter(Boolean);
+      if (cleanedTimeline.length > 0) {
+        const updated = await api.updateBible(bookId, { timeline: JSON.stringify(cleanedTimeline, null, 2) } as any);
+        onBibleUpdate(updated);
+      }
+
+      // 显示新卷数据（情节节点）
+      if (newVolumeData.length > 0) {
+        setVolumeData(newVolumeData.filter(Boolean));
+        setExpandedVol(new Set(newVolumeData.map((_, i) => i)));
+      }
+
+      setOutlineWorkflowProgress('');
+      alert(`全书大纲生成完成：${completed}/${volumeCount} 卷`);
+    } catch (e: any) {
+      alert('一键全书大纲失败: ' + e.message);
+      setOutlineWorkflowProgress('');
+    }
+    setOutlineWorkflowLoading('');
+  }
+
+  function generateVolumeBreakdown() {
+    if (targetWords <= 0) { alert('请先输入小说目标字数'); return; }
+    const CH_PER_VOL = 50;
+    const WORDS_PER_CH = 2400;
+    const totalCh = Math.ceil(targetWords / WORDS_PER_CH);
+    const volCount = Math.ceil(totalCh / CH_PER_VOL);
+
+    const data: any[] = [];
+    for (let v = 0; v < volCount; v++) {
+      const progress = (v + 1) / volCount;
+      let arc = ARC_NAMES[0];
+      for (let a = 0; a < ARC_RATIOS.length; a++) {
+        if (progress <= ARC_RATIOS.slice(0, a + 1).reduce((s, r) => s + r, 0)) { arc = ARC_NAMES[a]; break; }
+        if (a === ARC_RATIOS.length - 1) arc = ARC_NAMES[a];
+      }
+      const startCh = v * CH_PER_VOL + 1;
+      const endCh = Math.min((v + 1) * CH_PER_VOL, totalCh);
+
+      // 生成5-8个情节节点
+      const nodeCount = 5 + (v % 4);
+      const nodes: any[] = [];
+      const nodeTypes = ['过渡', '蓄力', '高潮', '蓄力', '大高潮'];
+      for (let n = 0; n < nodeCount; n++) {
+        const typeIdx = Math.min(n, nodeTypes.length - 1);
+        const nodeChStart = startCh + Math.floor(n * (CH_PER_VOL / nodeCount));
+        const nodeChEnd = startCh + Math.floor((n + 1) * (CH_PER_VOL / nodeCount)) - 1;
+        const isFirstNode = n === 0;
+        const isLastNode = n === nodeCount - 1;
+        nodes.push({
+          index: n + 1,
+          type: isFirstNode ? '过渡' : isLastNode ? '大高潮' : nodeTypes[typeIdx],
+          chRange: `${nodeChStart}-${nodeChEnd}`,
+          coreEvent: '',
+          coolType: COOL_TYPES[(v * 7 + n * 3) % COOL_TYPES.length],
+          chM: isFirstNode ? 45 : isLastNode ? 55 : 50,
+          chC: isFirstNode ? 15 : isLastNode ? 5 : 10,
+          chW: isFirstNode ? 5 : isLastNode ? 5 : 10,
+          chD: isFirstNode ? 25 : isLastNode ? 15 : 20,
+          chF: isFirstNode ? 10 : isLastNode ? 20 : 10,
+          hook: '',
+        });
+      }
+
+      data.push({
+        index: v + 1,
+        arc,
+        arcTheme: ARC_THEMES[arc],
+        chRange: `${startCh}-${endCh}`,
+        words: (endCh - startCh + 1) * WORDS_PER_CH,
+        cognChange: '',
+        coreConflict: '',
+        emotionDriver: '',
+        boss: '',
+        bossCost: '',
+        foreshadowNew: 2,
+        foreshadowRecycle: 1,
+        hookType: ['悬念', '反转', '情感', '世界观'][v % 4],
+        nodes,
+      });
+    }
+    setVolumeData(data);
+    setExpandedVol(new Set());
+    setShowVolumeCalc(false);
+  }
+
+  // AI辅助生成卷大纲
+  async function aiGenerateVolumeOutline(volIdx: number) {
+    if (!bookId) return;
+    const vol = volumeData[volIdx];
+    if (!vol) return;
+    setVolumeGenerating(true);
+    try {
+      const contextConcept = concept || bible?.concept || '暂无构思';
+      const existingOutline = bible?.plot_design?.slice(0, 800) || '无';
+      const worldSetting = bible?.worldbuilding?.slice(0, 500) || '无';
+      const skillKeys = ['volume_breakdown', 'master_outline', 'tomato_outline'];
+      const skillPrompt = extractSkillPrompt(selectedSkillPacks, skillKeys);
+      const skillNote = selectedSkillPacks.length > 0 ? `\n\n【已加载技能包：${selectedSkillPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
+      const msgs = [
+        { role: 'system', content: `你是番茄小说金番作者。请按以下模板为第${vol.index}卷（第${vol.chRange}章，${ARC_NAMES[volIdx < volumeData.length ? Math.min(Math.floor(volIdx / Math.ceil(volumeData.length / 5)), 4) : 0]}幕）填写分卷大纲。输出必须是纯JSON格式。${skillNote}` },
+        { role: 'user', content: `【第${vol.index}卷大纲模板】
+{
+  "title": "卷标题（4-8字，吸引读者）",
+  "cognChange": "主角从__状态→__状态（不可逆的变化）",
+  "coreConflict": "本卷要解决的核心问题（一句话）",
+  "emotionDriver": "让读者追读本卷的情绪：憋屈/期待/好奇/心疼",
+  "boss": "比主角强1-2级+存在理由+击败需策略",
+  "bossCost": "击败付出的代价/引发的后续问题",
+  "foreshadowNew": 2,
+  "foreshadowRecycle": 1,
+  "hookType": "${['悬念', '反转', '情感', '世界观'][volIdx % 4]}",
+  "nodes": [
+    {"index":1,"type":"过渡","chRange":"${vol.nodes[0]?.chRange || ''}","coreEvent":"一句话核心事件","coolType":"${vol.nodes[0]?.coolType || '实力碾压'}","chM":45,"chC":15,"chW":5,"chD":25,"chF":10,"hook":"章末钩子"},
+    {"index":2,"type":"蓄力","chRange":"${vol.nodes[1]?.chRange || ''}","coreEvent":"","coolType":"${vol.nodes[1]?.coolType || '荒诞反差'}","chM":50,"chC":10,"chW":10,"chD":20,"chF":10,"hook":""},
+    {"index":3,"type":"高潮","chRange":"${vol.nodes[2]?.chRange || ''}","coreEvent":"","coolType":"${vol.nodes[2]?.coolType || '打脸装逼'}","chM":55,"chC":10,"chW":5,"chD":15,"chF":15,"hook":""},
+    {"index":4,"type":"蓄力","chRange":"${vol.nodes[3]?.chRange || ''}","coreEvent":"","coolType":"${vol.nodes[3]?.coolType || '升级蜕变'}","chM":50,"chC":10,"chW":10,"chD":20,"chF":10,"hook":""},
+    {"index":5,"type":"大高潮","chRange":"${vol.nodes[4]?.chRange || ''}","coreEvent":"","coolType":"${vol.nodes[4]?.coolType || '守护爆发'}","chM":55,"chC":5,"chW":5,"chD":15,"chF":20,"hook":"卷末大钩子"}
+  ]
+}
+
+已有构思：${contextConcept}
+已有世界观：${worldSetting}
+已有大纲：${existingOutline}
+小说题材：${bible?.worldbuilding ? '玄幻/仙侠' : '通用'}
+本卷章范围：第${vol.chRange}章，约${(vol.words / 10000).toFixed(1)}万字
+所属幕：${vol.arc}（${vol.arcTheme}）
+
+请填写完整的JSON，所有字段必填，情节节点的coreEvent要有具体内容。只输出JSON不要其他文字。` }
+      ];
+      const result = await api.aiChat(msgs);
+      let parsed: any;
+      try {
+        const match = result.content.match(/\{[\s\S]*\}/);
+        parsed = match ? JSON.parse(match[0]) : null;
+      } catch { /* ignore */ }
+      if (parsed && parsed.title) {
+        const updated = [...volumeData];
+        updated[volIdx] = { ...updated[volIdx], ...parsed, nodes: parsed.nodes?.length ? parsed.nodes : updated[volIdx].nodes };
+        setVolumeData(updated);
+      } else {
+        alert('AI返回格式异常，请重试');
+      }
+    } catch (e: any) { alert('AI生成失败: ' + e.message); }
+    setVolumeGenerating(false);
+  }
+
+  // 将当前分卷数据导出到 plot_design（通过 API 更新）
+  async function exportVolumePlan() {
+    if (volumeData.length === 0) { alert('请先生成分卷规划'); return; }
+    let text = `【分卷规划】目标${(targetWords / 10000).toFixed(1)}万字 · ${volumeData.length}卷 · ${Math.ceil(targetWords / 2400)}章 · 每章2400字\n\n`;
+    for (const vol of volumeData) {
+      text += `━━━ 第${vol.index}卷${vol.title ? '：' + vol.title : ''} ━━━\n`;
+      text += `章范围：${vol.chRange} · 约${(vol.words / 10000).toFixed(1)}万字 · ${vol.arc}幕\n`;
+      if (vol.cognChange) text += `认知质变：${vol.cognChange}\n`;
+      if (vol.coreConflict) text += `核心冲突：${vol.coreConflict}\n`;
+      if (vol.emotionDriver) text += `情感驱动：${vol.emotionDriver}\n`;
+      if (vol.boss) text += `卷BOSS：${vol.boss}\n`;
+      if (vol.bossCost) text += `击败代价：${vol.bossCost}\n`;
+      text += `伏笔：新埋${vol.foreshadowNew} · 回收${vol.foreshadowRecycle} · 钩子类型：${vol.hookType}\n`;
+      if (vol.nodes?.length) {
+        text += `  情节节点：\n`;
+        for (const n of vol.nodes) {
+          text += `    [节点${n.index}·${n.type}](${n.chRange})${n.coreEvent ? ' ' + n.coreEvent : ''}\n`;
+          if (n.coolType) text += `      爽点：${n.coolType} · 章型：M${n.chM}% C${n.chC}% W${n.chW}% D${n.chD}% F${n.chF}%`;
+          if (n.hook) text += ` · 钩子：${n.hook}`;
+          text += `\n`;
+        }
+      }
+      text += '\n';
+    }
+    try {
+      if (!bookId) return;
+      const updated = await api.updateBible(bookId, { plot_design: text } as any);
+      onBibleUpdate(updated);
+      alert('已将分卷规划导出到大纲（plot_design），切换到「大纲」Tab 可查看');
+    } catch (e: any) {
+      alert('导出失败: ' + e.message);
+    }
+  }
+
+  // 回填分卷规划到剧情（timeline）
+  async function exportToPlot() {
+    if (volumeData.length === 0) { alert('请先生成分卷规划'); return; }
+    const vols = volumeData.map(vol => ({
+      volume: `第${vol.index}卷${vol.title ? '：' + vol.title : ''}`,
+      volume_id: vol.chRange,
+      main_plot: [
+        vol.cognChange ? `认知质变：${vol.cognChange}` : '',
+        vol.coreConflict ? `核心冲突：${vol.coreConflict}` : '',
+        vol.emotionDriver ? `情感驱动：${vol.emotionDriver}` : '',
+        vol.boss ? `卷BOSS：${vol.boss}` : '',
+        vol.bossCost ? `击败代价：${vol.bossCost}` : '',
+      ].filter(Boolean).join('；') || '待填充',
+      key_events: vol.nodes?.map((n: any) => `[${n.type}] ${n.chRange}章 ${n.coreEvent || '待定'}`) || [],
+      turning_points: vol.nodes?.filter((n: any) => n.type === '高潮' || n.type === '大高潮').map((n: any) => `${n.coreEvent || '高潮节点'}`) || [],
+      climax: vol.nodes?.find((n: any) => n.type === '大高潮')?.coreEvent || '',
+      ending: vol.hookType || '',
+      foreshadowing: [
+        `新埋${vol.foreshadowNew}个伏笔`,
+        `回收${vol.foreshadowRecycle}个旧伏笔`,
+      ],
+    }));
+    try {
+      if (!bookId) return;
+      const updated = await api.updateBible(bookId, { timeline: JSON.stringify(vols, null, 2) } as any);
+      onBibleUpdate(updated);
+      alert(`已回填 ${vols.length} 卷的分卷规划到剧情`);
+    } catch (e: any) {
+      alert('回填失败: ' + e.message);
+    }
+  }
+
+  // 全部AI生成（一键生成全部分卷）
+  async function aiGenerateAllVolumes() {
+    if (!bookId || volumeData.length === 0) return;
+    setVolumeGenerating(true);
+    try {
+      const contextConcept = concept || bible?.concept || '暂无构思';
+      const worldSetting = bible?.worldbuilding?.slice(0, 500) || '无';
+      const skillKeys = ['volume_breakdown', 'master_outline', 'tomato_outline'];
+      const skillPrompt = extractSkillPrompt(selectedSkillPacks, skillKeys);
+      const skillNote = selectedSkillPacks.length > 0 ? `\n\n【已加载技能包：${selectedSkillPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
+
+      const volsSummary = volumeData.map(v =>
+        `第${v.index}卷[${v.arc}幕](${v.chRange}章,约${(v.words / 10000).toFixed(1)}万字)`
+      ).join('\n');
+
+      const msgs = [
+        { role: 'system', content: `你是番茄小说金番作者。按以下JSON数组格式生成全部${volumeData.length}卷的分卷大纲+情节节点。每卷50章=5-8个节点。严格按金番作者Step4+Step5模板。${skillNote}` },
+        { role: 'user', content: `请生成完整的分卷大纲JSON数组（length=${volumeData.length}）：
+
+每卷格式：
+{
+  "title": "卷标题(4-8字)",
+  "cognChange": "主角从__→__（不可逆变化）",
+  "coreConflict": "核心问题（一句）",
+  "emotionDriver": "情绪驱动力",
+  "boss": "卷BOSS+击败策略",
+  "bossCost": "击败代价",
+  "nodes": [5-8个节点，每个含：index,type(过渡/蓄力/高潮/大高潮),chRange,coreEvent,coolType,chM/chC/chW/chD/chF,hook]
+}
+
+卷结构：
+${volsSummary}
+
+构思：${contextConcept}
+世界观：${worldSetting}
+目标：${(targetWords / 10000).toFixed(1)}万字，分${volumeData.length}卷，每卷50章×2400字。
+
+五幕弧线：立身(1-5%卷)→立足(5-25%)→立势(25-50%)→立威(50-75%)→立命(75-100%)
+
+只输出JSON数组，不要其他文字。` }
+      ];
+      const result = await api.aiChat(msgs);
+      let parsed: any;
+      try {
+        const match = result.content.match(/\[[\s\S]*\]/);
+        parsed = match ? JSON.parse(match[0]) : null;
+      } catch { /* ignore */ }
+      if (parsed && Array.isArray(parsed) && parsed.length > 0) {
+        const updated = volumeData.map((vol, i) => {
+          const aiVol = parsed[i] || {};
+          return {
+            ...vol,
+            title: aiVol.title || vol.title,
+            cognChange: aiVol.cognChange || vol.cognChange,
+            coreConflict: aiVol.coreConflict || vol.coreConflict,
+            emotionDriver: aiVol.emotionDriver || vol.emotionDriver,
+            boss: aiVol.boss || vol.boss,
+            bossCost: aiVol.bossCost || vol.bossCost,
+            nodes: aiVol.nodes?.length ? aiVol.nodes : vol.nodes,
+          };
+        });
+        setVolumeData(updated);
+        setExpandedVol(new Set(updated.map((_, i) => i)));
+      } else {
+        alert('AI返回格式无法解析，请重试');
+      }
+    } catch (e: any) { alert('AI生成失败: ' + e.message); }
+    setVolumeGenerating(false);
+  }
+
+  // 从大纲总纲一次性提取各卷剧情
+  async function handleExtractVolumes() {
+    if (!bookId) return;
+    if (!bible?.plot_design || !bible.plot_design.trim()) {
+      alert('请先在大纲维度生成五幕式总纲');
+      return;
+    }
+    setExtractLoading(true);
+    try {
+      const result = await api.extractVolumesFromOutline(bookId, selectedSkillPackIds);
+      if (result.bible) onBibleUpdate(result.bible);
+      alert(`已从大纲提取 ${result.volumes?.length || 0} 卷剧情`);
+    } catch (e: any) {
+      alert('提取各卷失败：' + (e.message || '请检查AI配置'));
+    }
+    setExtractLoading(false);
+  }
+
+  // 导入剧情大纲文本，自动识别拆分到各卷
+  async function handleImportPlotOutline() {
+    if (!bookId) return;
+    if (!importText.trim()) { alert('请粘贴大纲文本'); return; }
+    setImportLoading(true);
+    try {
+      const result = await api.importPlotOutline(bookId, importText.trim(), selectedSkillPackIds);
+      if (result.bible) onBibleUpdate(result.bible);
+      setImportModalOpen(false);
+      setImportText('');
+      alert(`已导入 ${result.imported_count || 0} 卷剧情`);
+    } catch (e: any) {
+      alert('导入剧情大纲失败：' + (e.message || '请检查AI配置'));
+    }
+    setImportLoading(false);
+  }
+
   // 合并卷列表和已有数据
   const displayVolumes = useMemo(() => {
     const result: any[] = [];
@@ -2411,6 +2932,200 @@ function PlotPanel(props: {
           <button className="btn-ghost-sm" onClick={() => { setAiMode(true); setAiError(''); setAiPrompt(''); }}>✨ AI创作</button>
           <button className="btn-primary-sm" onClick={addVolumeOutline}>＋ 添加卷大纲</button>
         </div>
+      </div>
+
+      {/* 大纲工作流（从大纲维度迁移） */}
+      <div className="volume-calc-section" style={{ borderLeft: '3px solid #6c5ce7', paddingLeft: 10, marginBottom: 8 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {!bible?.plot_design?.trim() && (
+            <button
+              className="btn-primary-sm"
+              onClick={generateOutlineMaster}
+              disabled={outlineWorkflowLoading !== ''}
+              title="生成五幕式总纲（写入大纲）"
+            >
+              {outlineWorkflowLoading === 'master' ? '⏳ 生成总纲中...' : '🎯 生成五幕式总纲'}
+            </button>
+          )}
+          <button
+            className="btn-ghost-sm"
+            onClick={handleExtractVolumes}
+            disabled={extractLoading || outlineWorkflowLoading !== '' || scrollLoading}
+            title="从大纲总纲一次性提取各卷剧情"
+          >
+            {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
+          </button>
+          <button
+            className="btn-ghost-sm"
+            onClick={generateOutlineVolumeScroll}
+            disabled={scrollLoading || outlineWorkflowLoading !== '' || extractLoading}
+            title="滚动生成下一卷大纲"
+          >
+            {scrollLoading ? '⏳ 生成卷纲中...' : '📜 滚动生成下一卷'}
+          </button>
+          <button
+            className="btn-ghost-sm"
+            onClick={generateOutlineAllVolumes}
+            disabled={outlineWorkflowLoading !== '' || scrollLoading || extractLoading}
+            title="一键全书大纲：先总纲，再逐卷迭代生成"
+          >
+            {outlineWorkflowLoading === 'all' ? '⏳ 全书生成中...' : '⚡ 一键全书大纲'}
+          </button>
+          <button
+            className="btn-ghost-sm"
+            onClick={() => setImportModalOpen(true)}
+            disabled={importLoading}
+            title="导入剧情大纲文本，自动识别拆分到各卷"
+          >
+            📥 导入剧情大纲
+          </button>
+        </div>
+        {outlineWorkflowProgress && (
+          <div style={{ fontSize: 12, color: '#0984e3', marginTop: 6 }}>{outlineWorkflowProgress}</div>
+        )}
+      </div>
+
+      {/* 导入剧情大纲弹窗 */}
+      {importModalOpen && (
+        <div className="volume-calc-section" style={{ marginBottom: 8 }}>
+          <div className="volume-calc-form">
+            <label className="volume-calc-label">粘贴大纲文本，AI 会自动识别并拆分到各卷</label>
+            <textarea
+              className="input"
+              rows={8}
+              value={importText}
+              onChange={e => setImportText(e.target.value)}
+              placeholder="将各卷大纲文本粘贴到这里..."
+              autoFocus
+            />
+            <div className="volume-calc-input-row" style={{ marginTop: 8 }}>
+              <button className="btn-primary-sm" onClick={handleImportPlotOutline} disabled={importLoading || !importText.trim()}>
+                {importLoading ? '⏳ 导入中...' : '📥 提交导入'}
+              </button>
+              <button className="btn-ghost-sm" onClick={() => { setImportModalOpen(false); setImportText(''); }} disabled={importLoading}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 自动分卷规划 */}
+      <div className="volume-calc-section">
+        {!showVolumeCalc ? (
+          <button className="btn-ghost-sm volume-calc-btn" onClick={() => setShowVolumeCalc(true)}>
+            📊 自动分卷规划
+          </button>
+        ) : (
+          <div className="volume-calc-form">
+            <label className="volume-calc-label">输入小说目标字数，按每卷50章×2400字自动分卷</label>
+            <div className="volume-calc-input-row">
+              <input className="input" type="number" value={targetWords || ''} onChange={e => setTargetWords(parseInt(e.target.value) || 0)} placeholder="如：1000000（100万字）" />
+              <span className="volume-calc-unit">字</span>
+              <button className="btn-primary-sm" onClick={generateVolumeBreakdown}>生成分卷框架</button>
+              <button className="btn-ghost-sm" onClick={() => setShowVolumeCalc(false)}>取消</button>
+            </div>
+            <p className="text-muted" style={{fontSize:11,marginTop:4}}>按金番作者体系：每卷50章×2400字，五幕弧线自动分配，生成5-8个情节节点/卷</p>
+            {targetWords > 0 && (
+              <div className="volume-calc-preview">
+                预计 {Math.ceil(targetWords / 2400 / 50)}卷 · {Math.ceil(targetWords / 2400)}章 · {(targetWords / 10000).toFixed(1)}万字
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 分卷数据展示 */}
+        {volumeData.length > 0 && (
+          <div className="volume-plan-display">
+            <div className="volume-plan-header">
+              <h4>📚 分卷规划（{(targetWords / 10000).toFixed(1)}万字 · {volumeData.length}卷）</h4>
+              <div style={{display:'flex',gap:6}}>
+                <button className="btn-primary-sm" onClick={aiGenerateAllVolumes} disabled={volumeGenerating}>
+                  {volumeGenerating ? '⏳ AI生成中...' : '🤖 AI一键补全'}
+                </button>
+                <button className="btn-ghost-sm" onClick={exportVolumePlan}>📝 导出到大纲</button>
+                <button className="btn-ghost-sm" onClick={exportToPlot} disabled={volumeData.length === 0}>📖 回填剧情</button>
+              </div>
+            </div>
+
+            {volumeData.map((vol, idx) => {
+              const expanded = expandedVol.has(idx);
+              return (
+                <div key={idx} className="volume-plan-card">
+                  <div className="volume-plan-card-header" onClick={() => {
+                    setExpandedVol(prev => { const n = new Set(prev); if (n.has(idx)) n.delete(idx); else n.add(idx); return n; });
+                  }} style={{cursor:'pointer'}}>
+                    <span className="volume-plan-arrow">{expanded ? '▼' : '▶'}</span>
+                    <span className="volume-plan-vol-label">
+                      第{vol.index}卷{vol.title ? `·${vol.title}` : ''}
+                    </span>
+                    <span className="volume-plan-badge">{vol.arc}幕</span>
+                    <span className="volume-plan-badge">{vol.chRange}章</span>
+                    <span className="volume-plan-badge">{(vol.words / 10000).toFixed(1)}万字</span>
+                    <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); aiGenerateVolumeOutline(idx); }} disabled={volumeGenerating} title="AI补全此卷详情" style={{marginLeft:'auto'}}>
+                      {volumeGenerating ? '⏳' : '🤖'}
+                    </button>
+                  </div>
+                  {expanded && (
+                    <div className="volume-plan-body">
+                      <div className="volume-plan-grid">
+                        <div className="volume-plan-field">
+                          <span className="volume-plan-field-label">认知质变</span>
+                          <span className="volume-plan-field-val">{vol.cognChange || '—'}</span>
+                        </div>
+                        <div className="volume-plan-field">
+                          <span className="volume-plan-field-label">核心冲突</span>
+                          <span className="volume-plan-field-val">{vol.coreConflict || '—'}</span>
+                        </div>
+                        <div className="volume-plan-field">
+                          <span className="volume-plan-field-label">情感驱动</span>
+                          <span className="volume-plan-field-val">{vol.emotionDriver || '—'}</span>
+                        </div>
+                        <div className="volume-plan-field">
+                          <span className="volume-plan-field-label">卷BOSS</span>
+                          <span className="volume-plan-field-val">{vol.boss || '—'}</span>
+                        </div>
+                        <div className="volume-plan-field">
+                          <span className="volume-plan-field-label">击败代价</span>
+                          <span className="volume-plan-field-val">{vol.bossCost || '—'}</span>
+                        </div>
+                        <div className="volume-plan-field">
+                          <span className="volume-plan-field-label">伏笔/钩子</span>
+                          <span className="volume-plan-field-val">新埋{vol.foreshadowNew}·回收{vol.foreshadowRecycle}·{vol.hookType}钩子</span>
+                        </div>
+                      </div>
+                      {/* 情节节点 */}
+                      {vol.nodes?.length > 0 && (
+                        <div className="volume-plan-nodes">
+                          <h5>🎯 情节节点（{vol.nodes.length}个）</h5>
+                          <div className="node-list">
+                            {vol.nodes.map((n: any, ni: number) => (
+                              <div key={ni} className={`node-card node-type-${n.type}`}>
+                                <div className="node-card-header">
+                                  <span className="node-index">{n.index}</span>
+                                  <span className="node-type-badge">{n.type}</span>
+                                  <span className="node-ch-range">{n.chRange}章</span>
+                                  <span className="node-cool-type">{n.coolType}</span>
+                                </div>
+                                {n.coreEvent && <div className="node-core-event">{n.coreEvent}</div>}
+                                <div className="node-chap-breakdown">
+                                  {(['M','C','W','D','F'] as const).map(t => (
+                                    <span key={t} className="node-chap-type" title={`${CHAPTER_TYPE_DESC[t]}: ${(n as any)['ch'+t] || 0}%`}>
+                                      {t}:{(n as any)['ch'+t] || 0}%
+                                    </span>
+                                  ))}
+                                </div>
+                                {n.hook && <div className="node-hook">🪝 {n.hook}</div>}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {displayVolumes.length === 0 ? (
@@ -2770,9 +3485,6 @@ function OutlineCombinedPanel(props: {
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiError, setAiError] = useState('');
   const [skillExpanded, setSkillExpanded] = useState(false);
-  // 自动分卷
-  const [targetWords, setTargetWords] = useState<number>(0);
-  const [showVolumeCalc, setShowVolumeCalc] = useState(false);
 
   const { skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks } = props;
   const selectedCount = selectedSkillPackIds.length;
@@ -2846,290 +3558,12 @@ function OutlineCombinedPanel(props: {
     });
   }
 
-  // 自动分卷计算：每卷50章，每章2400字。按金番作者 Step 4 + Step 5 体系
-  const [volumeGenerating, setVolumeGenerating] = useState(false);
-  const [volumeData, setVolumeData] = useState<any[]>([]);
-  const [expandedVol, setExpandedVol] = useState<Set<number>>(new Set());
-
   // ==== 滚动生成工作流状态 ====
   // outlineWorkflowLoading: '' | 'master' | 'volume' | 'all'
   const [outlineWorkflowLoading, setOutlineWorkflowLoading] = useState<'' | 'master' | 'volume' | 'all'>('');
   const [outlineWorkflowProgress, setOutlineWorkflowProgress] = useState('');
   // 每卷章节数（默认50，与后端约定一致）
   const CHAPTERS_PER_VOLUME = 50;
-
-  // 五幕弧线模板
-  const ARC_NAMES = ['立身', '立足', '立势', '立威', '立命'];
-  const ARC_THEMES: Record<string, string> = {
-    '立身': '底层→入门：觉醒金手指+首打脸+建立认知',
-    '立足': '新人→站稳：配角登场+世界观展开+5-8章小闭环',
-    '立势': '小角色→有分量：大舞台+强对手+团队建立',
-    '立威': '有分量→威名：组织级冲突+感情推进+信念考验',
-    '立命': '威名→蜕变：终极挑战+伏笔收束+续作种子',
-  };
-  const ARC_RATIOS = [0.05, 0.2, 0.25, 0.25, 0.25]; // 五幕占比
-
-  // 爽点类型库
-  const COOL_TYPES = ['实力碾压', '打脸装逼', '升级蜕变', '守护爆发', '荒诞反差', '社会认同', '信息差博弈', '扮猪吃虎'];
-
-  // 章型配额
-  const CHAPTER_TYPE_DESC = { M: '主线推进', C: '角色深挖', W: '世界观展开', D: '日常呼吸', F: '伏笔暗线' };
-
-  function generateVolumeBreakdown() {
-    if (targetWords <= 0) { alert('请先输入小说目标字数'); return; }
-    const CH_PER_VOL = 50;
-    const WORDS_PER_CH = 2400;
-    const totalCh = Math.ceil(targetWords / WORDS_PER_CH);
-    const volCount = Math.ceil(totalCh / CH_PER_VOL);
-
-    const data: any[] = [];
-    for (let v = 0; v < volCount; v++) {
-      const progress = (v + 1) / volCount;
-      let arc = ARC_NAMES[0];
-      for (let a = 0; a < ARC_RATIOS.length; a++) {
-        if (progress <= ARC_RATIOS.slice(0, a + 1).reduce((s, r) => s + r, 0)) { arc = ARC_NAMES[a]; break; }
-        if (a === ARC_RATIOS.length - 1) arc = ARC_NAMES[a];
-      }
-      const startCh = v * CH_PER_VOL + 1;
-      const endCh = Math.min((v + 1) * CH_PER_VOL, totalCh);
-
-      // 生成5-8个情节节点
-      const nodeCount = 5 + (v % 4);
-      const nodes: any[] = [];
-      const nodeTypes = ['过渡', '蓄力', '高潮', '蓄力', '大高潮'];
-      for (let n = 0; n < nodeCount; n++) {
-        const typeIdx = Math.min(n, nodeTypes.length - 1);
-        const nodeChStart = startCh + Math.floor(n * (CH_PER_VOL / nodeCount));
-        const nodeChEnd = startCh + Math.floor((n + 1) * (CH_PER_VOL / nodeCount)) - 1;
-        const isFirstNode = n === 0;
-        const isLastNode = n === nodeCount - 1;
-        nodes.push({
-          index: n + 1,
-          type: isFirstNode ? '过渡' : isLastNode ? '大高潮' : nodeTypes[typeIdx],
-          chRange: `${nodeChStart}-${nodeChEnd}`,
-          coreEvent: '',
-          coolType: COOL_TYPES[(v * 7 + n * 3) % COOL_TYPES.length],
-          chM: isFirstNode ? 45 : isLastNode ? 55 : 50,
-          chC: isFirstNode ? 15 : isLastNode ? 5 : 10,
-          chW: isFirstNode ? 5 : isLastNode ? 5 : 10,
-          chD: isFirstNode ? 25 : isLastNode ? 15 : 20,
-          chF: isFirstNode ? 10 : isLastNode ? 20 : 10,
-          hook: '',
-        });
-      }
-
-      data.push({
-        index: v + 1,
-        arc,
-        arcTheme: ARC_THEMES[arc],
-        chRange: `${startCh}-${endCh}`,
-        words: (endCh - startCh + 1) * WORDS_PER_CH,
-        cognChange: '',
-        coreConflict: '',
-        emotionDriver: '',
-        boss: '',
-        bossCost: '',
-        foreshadowNew: 2,
-        foreshadowRecycle: 1,
-        hookType: ['悬念', '反转', '情感', '世界观'][v % 4],
-        nodes,
-      });
-    }
-    setVolumeData(data);
-    setExpandedVol(new Set());
-    setShowVolumeCalc(false);
-  }
-
-  // AI辅助生成卷大纲
-  async function aiGenerateVolumeOutline(volIdx: number) {
-    if (!bookId) return;
-    const vol = volumeData[volIdx];
-    if (!vol) return;
-    setVolumeGenerating(true);
-    try {
-      const contextConcept = concept || bible?.concept || '暂无构思';
-      const existingOutline = bible?.plot_design?.slice(0, 800) || '无';
-      const worldSetting = bible?.worldbuilding?.slice(0, 500) || '无';
-      const skillKeys = ['volume_breakdown', 'master_outline', 'tomato_outline'];
-      const skillPrompt = extractSkillPrompt(selectedSkillPacks, skillKeys);
-      const skillNote = selectedSkillPacks.length > 0 ? `\n\n【已加载技能包：${selectedSkillPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
-      const msgs = [
-        { role: 'system', content: `你是番茄小说金番作者。请按以下模板为第${vol.index}卷（第${vol.chRange}章，${ARC_NAMES[volIdx < volumeData.length ? Math.min(Math.floor(volIdx / Math.ceil(volumeData.length / 5)), 4) : 0]}幕）填写分卷大纲。输出必须是纯JSON格式。${skillNote}` },
-        { role: 'user', content: `【第${vol.index}卷大纲模板】
-{
-  "title": "卷标题（4-8字，吸引读者）",
-  "cognChange": "主角从__状态→__状态（不可逆的变化）",
-  "coreConflict": "本卷要解决的核心问题（一句话）",
-  "emotionDriver": "让读者追读本卷的情绪：憋屈/期待/好奇/心疼",
-  "boss": "比主角强1-2级+存在理由+击败需策略",
-  "bossCost": "击败付出的代价/引发的后续问题",
-  "foreshadowNew": 2,
-  "foreshadowRecycle": 1,
-  "hookType": "${['悬念', '反转', '情感', '世界观'][volIdx % 4]}",
-  "nodes": [
-    {"index":1,"type":"过渡","chRange":"${vol.nodes[0]?.chRange || ''}","coreEvent":"一句话核心事件","coolType":"${vol.nodes[0]?.coolType || '实力碾压'}","chM":45,"chC":15,"chW":5,"chD":25,"chF":10,"hook":"章末钩子"},
-    {"index":2,"type":"蓄力","chRange":"${vol.nodes[1]?.chRange || ''}","coreEvent":"","coolType":"${vol.nodes[1]?.coolType || '荒诞反差'}","chM":50,"chC":10,"chW":10,"chD":20,"chF":10,"hook":""},
-    {"index":3,"type":"高潮","chRange":"${vol.nodes[2]?.chRange || ''}","coreEvent":"","coolType":"${vol.nodes[2]?.coolType || '打脸装逼'}","chM":55,"chC":10,"chW":5,"chD":15,"chF":15,"hook":""},
-    {"index":4,"type":"蓄力","chRange":"${vol.nodes[3]?.chRange || ''}","coreEvent":"","coolType":"${vol.nodes[3]?.coolType || '升级蜕变'}","chM":50,"chC":10,"chW":10,"chD":20,"chF":10,"hook":""},
-    {"index":5,"type":"大高潮","chRange":"${vol.nodes[4]?.chRange || ''}","coreEvent":"","coolType":"${vol.nodes[4]?.coolType || '守护爆发'}","chM":55,"chC":5,"chW":5,"chD":15,"chF":20,"hook":"卷末大钩子"}
-  ]
-}
-
-已有构思：${contextConcept}
-已有世界观：${worldSetting}
-已有大纲：${existingOutline}
-小说题材：${bible?.worldbuilding ? '玄幻/仙侠' : '通用'}
-本卷章范围：第${vol.chRange}章，约${(vol.words / 10000).toFixed(1)}万字
-所属幕：${vol.arc}（${vol.arcTheme}）
-
-请填写完整的JSON，所有字段必填，情节节点的coreEvent要有具体内容。只输出JSON不要其他文字。` }
-      ];
-      const result = await api.aiChat(msgs);
-      let parsed: any;
-      try {
-        const match = result.content.match(/\{[\s\S]*\}/);
-        parsed = match ? JSON.parse(match[0]) : null;
-      } catch { /* ignore */ }
-      if (parsed && parsed.title) {
-        const updated = [...volumeData];
-        updated[volIdx] = { ...updated[volIdx], ...parsed, nodes: parsed.nodes?.length ? parsed.nodes : updated[volIdx].nodes };
-        setVolumeData(updated);
-      } else {
-        alert('AI返回格式异常，请重试');
-      }
-    } catch (e: any) { alert('AI生成失败: ' + e.message); }
-    setVolumeGenerating(false);
-  }
-
-  // 将当前分卷数据导出到plot_design
-  function exportVolumePlan() {
-    if (volumeData.length === 0) { alert('请先生成分卷规划'); return; }
-    let text = `【分卷规划】目标${(targetWords / 10000).toFixed(1)}万字 · ${volumeData.length}卷 · ${Math.ceil(targetWords / 2400)}章 · 每章2400字\n\n`;
-    for (const vol of volumeData) {
-      text += `━━━ 第${vol.index}卷${vol.title ? '：' + vol.title : ''} ━━━\n`;
-      text += `章范围：${vol.chRange} · 约${(vol.words / 10000).toFixed(1)}万字 · ${vol.arc}幕\n`;
-      if (vol.cognChange) text += `认知质变：${vol.cognChange}\n`;
-      if (vol.coreConflict) text += `核心冲突：${vol.coreConflict}\n`;
-      if (vol.emotionDriver) text += `情感驱动：${vol.emotionDriver}\n`;
-      if (vol.boss) text += `卷BOSS：${vol.boss}\n`;
-      if (vol.bossCost) text += `击败代价：${vol.bossCost}\n`;
-      text += `伏笔：新埋${vol.foreshadowNew} · 回收${vol.foreshadowRecycle} · 钩子类型：${vol.hookType}\n`;
-      if (vol.nodes?.length) {
-        text += `  情节节点：\n`;
-        for (const n of vol.nodes) {
-          text += `    [节点${n.index}·${n.type}](${n.chRange})${n.coreEvent ? ' ' + n.coreEvent : ''}\n`;
-          if (n.coolType) text += `      爽点：${n.coolType} · 章型：M${n.chM}% C${n.chC}% W${n.chW}% D${n.chD}% F${n.chF}%`;
-          if (n.hook) text += ` · 钩子：${n.hook}`;
-          text += `\n`;
-        }
-      }
-      text += '\n';
-    }
-    setEditValue(text);
-    setEditing(true);
-  }
-
-  // 回填分卷规划到剧情（timeline），PlotPanel可读取展示
-  async function exportToPlot() {
-    if (volumeData.length === 0) { alert('请先生成分卷规划'); return; }
-    const vols = volumeData.map(vol => ({
-      volume: `第${vol.index}卷${vol.title ? '：' + vol.title : ''}`,
-      volume_id: vol.chRange,
-      main_plot: [
-        vol.cognChange ? `认知质变：${vol.cognChange}` : '',
-        vol.coreConflict ? `核心冲突：${vol.coreConflict}` : '',
-        vol.emotionDriver ? `情感驱动：${vol.emotionDriver}` : '',
-        vol.boss ? `卷BOSS：${vol.boss}` : '',
-        vol.bossCost ? `击败代价：${vol.bossCost}` : '',
-      ].filter(Boolean).join('；') || '待填充',
-      key_events: vol.nodes?.map((n: any) => `[${n.type}] ${n.chRange}章 ${n.coreEvent || '待定'}`) || [],
-      turning_points: vol.nodes?.filter((n: any) => n.type === '高潮' || n.type === '大高潮').map((n: any) => `${n.coreEvent || '高潮节点'}`) || [],
-      climax: vol.nodes?.find((n: any) => n.type === '大高潮')?.coreEvent || '',
-      ending: vol.hookType || '',
-      foreshadowing: [
-        `新埋${vol.foreshadowNew}个伏笔`,
-        `回收${vol.foreshadowRecycle}个旧伏笔`,
-      ],
-    }));
-    try {
-      if (!bookId) return;
-      const updated = await api.updateBible(bookId, { timeline: JSON.stringify(vols, null, 2) } as any);
-      onBibleUpdate(updated);
-      alert(`已回填 ${vols.length} 卷的分卷规划到剧情面板，切换到「剧情」Tab 即可查看`);
-    } catch (e: any) {
-      alert('回填失败: ' + e.message);
-    }
-  }
-
-  // 全部AI生成（一键生成全部分卷）
-  async function aiGenerateAllVolumes() {
-    if (!bookId || volumeData.length === 0) return;
-    setVolumeGenerating(true);
-    try {
-      const contextConcept = concept || bible?.concept || '暂无构思';
-      const worldSetting = bible?.worldbuilding?.slice(0, 500) || '无';
-      const skillKeys = ['volume_breakdown', 'master_outline', 'tomato_outline'];
-      const skillPrompt = extractSkillPrompt(selectedSkillPacks, skillKeys);
-      const skillNote = selectedSkillPacks.length > 0 ? `\n\n【已加载技能包：${selectedSkillPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
-
-      const volsSummary = volumeData.map(v =>
-        `第${v.index}卷[${v.arc}幕](${v.chRange}章,约${(v.words / 10000).toFixed(1)}万字)`
-      ).join('\n');
-
-      const msgs = [
-        { role: 'system', content: `你是番茄小说金番作者。按以下JSON数组格式生成全部${volumeData.length}卷的分卷大纲+情节节点。每卷50章=5-8个节点。严格按金番作者Step4+Step5模板。${skillNote}` },
-        { role: 'user', content: `请生成完整的分卷大纲JSON数组（length=${volumeData.length}）：
-
-每卷格式：
-{
-  "title": "卷标题(4-8字)",
-  "cognChange": "主角从__→__（不可逆变化）",
-  "coreConflict": "核心问题（一句）",
-  "emotionDriver": "情绪驱动力",
-  "boss": "卷BOSS+击败策略",
-  "bossCost": "击败代价",
-  "nodes": [5-8个节点，每个含：index,type(过渡/蓄力/高潮/大高潮),chRange,coreEvent,coolType,chM/chC/chW/chD/chF,hook]
-}
-
-卷结构：
-${volsSummary}
-
-构思：${contextConcept}
-世界观：${worldSetting}
-目标：${(targetWords / 10000).toFixed(1)}万字，分${volumeData.length}卷，每卷50章×2400字。
-
-五幕弧线：立身(1-5%卷)→立足(5-25%)→立势(25-50%)→立威(50-75%)→立命(75-100%)
-
-只输出JSON数组，不要其他文字。` }
-      ];
-      const result = await api.aiChat(msgs);
-      let parsed: any;
-      try {
-        const match = result.content.match(/\[[\s\S]*\]/);
-        parsed = match ? JSON.parse(match[0]) : null;
-      } catch { /* ignore */ }
-      if (parsed && Array.isArray(parsed) && parsed.length > 0) {
-        const updated = volumeData.map((vol, i) => {
-          const aiVol = parsed[i] || {};
-          return {
-            ...vol,
-            title: aiVol.title || vol.title,
-            cognChange: aiVol.cognChange || vol.cognChange,
-            coreConflict: aiVol.coreConflict || vol.coreConflict,
-            emotionDriver: aiVol.emotionDriver || vol.emotionDriver,
-            boss: aiVol.boss || vol.boss,
-            bossCost: aiVol.bossCost || vol.bossCost,
-            nodes: aiVol.nodes?.length ? aiVol.nodes : vol.nodes,
-          };
-        });
-        setVolumeData(updated);
-        setExpandedVol(new Set(updated.map((_, i) => i)));
-      } else {
-        alert('AI返回格式无法解析，请重试');
-      }
-    } catch (e: any) { alert('AI生成失败: ' + e.message); }
-    setVolumeGenerating(false);
-  }
 
   const handlePromptKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -3138,22 +3572,7 @@ ${volsSummary}
     }
   };
 
-  // ==== 滚动生成工作流：按番茄金番作者skill工作原理重构 ====
-
-  // 解析已有 timeline 中已生成的卷数（用于滚动生成时计算下一卷号）
-  function parseExistingVolumeCount(): number {
-    try {
-      if (bible?.timeline) {
-        const existing = JSON.parse(bible.timeline);
-        if (Array.isArray(existing) && existing.length > 0) {
-          return existing.length;
-        }
-      }
-    } catch { /* ignore */ }
-    return 0;
-  }
-
-  // 1. 生成五幕式总纲（写入 plot_design）
+  // 生成五幕式总纲（写入 plot_design）
   async function generateOutlineMaster() {
     if (!bookId) return;
     setOutlineWorkflowLoading('master');
@@ -3169,162 +3588,6 @@ ${volsSummary}
       alert(`五幕式总纲已生成并填入大纲（共 ${result.volume_count} 卷）`);
     } catch (e: any) {
       alert('生成总纲失败: ' + e.message);
-      setOutlineWorkflowProgress('');
-    }
-    setOutlineWorkflowLoading('');
-  }
-
-  // 2. 滚动生成本卷大纲（写入 timeline）
-  async function generateOutlineVolumeScroll() {
-    if (!bookId) return;
-    // 先检查是否有总纲（plotDesign 非空）
-    if (!bible?.plot_design || !bible.plot_design.trim()) {
-      alert('请先生成五幕式总纲');
-      return;
-    }
-    setOutlineWorkflowLoading('volume');
-    setOutlineWorkflowProgress('⏳ 计算当前卷号...');
-    try {
-      // 自动计算当前应该生成第几卷：基于已生成卷数 + 1（已有 timeline 中的卷数 + 1）
-      const existingCount = parseExistingVolumeCount();
-      const volumeIndex = existingCount + 1;
-      const volumeTitle = `第${volumeIndex}卷`;
-
-      setOutlineWorkflowProgress(`⏳ 正在生成第 ${volumeIndex} 卷大纲...`);
-      const result = await api.aiOutlineVolume(bookId, volumeIndex, volumeTitle, selectedSkillPackIds, CHAPTERS_PER_VOLUME);
-
-      // 把返回的 timeline 填入剧情维度（通过 onBibleUpdate 更新 timeline 字段）
-      const updated = await api.updateBible(bookId, { timeline: result.timeline } as any);
-      onBibleUpdate(updated);
-
-      // 显示 volume_data 的情节节点（合并到 volumeData 状态）
-      if (result.volume_data) {
-        const newVols = Array.isArray(result.volume_data) ? result.volume_data : [result.volume_data];
-        setVolumeData(prev => {
-          const next = [...prev];
-          newVols.forEach((v, i) => {
-            const idx = volumeIndex - 1 + i;
-            if (idx < next.length) next[idx] = { ...next[idx], ...v };
-            else next[idx] = v;
-          });
-          return next;
-        });
-        // 展开新增的卷
-        setExpandedVol(prev => {
-          const n = new Set(prev);
-          n.add(volumeIndex - 1);
-          return n;
-        });
-      }
-
-      setOutlineWorkflowProgress('');
-      alert(`第${volumeIndex}卷大纲已生成并填入剧情`);
-    } catch (e: any) {
-      alert('生成本卷大纲失败: ' + e.message);
-      setOutlineWorkflowProgress('');
-    }
-    setOutlineWorkflowLoading('');
-  }
-
-  // 3. 一键全书大纲（分卷迭代，健壮版，解决"总是失败"问题）
-  async function generateOutlineAllVolumes() {
-    if (!bookId) return;
-    setOutlineWorkflowLoading('all');
-    setOutlineWorkflowProgress('⏳ 准备生成全书大纲...');
-    try {
-      // 先确保有总纲（没有则先调 aiOutlineMaster）
-      let masterOutline = bible?.plot_design || '';
-      let volumeCount = 6; // 默认6卷
-      if (!masterOutline.trim()) {
-        setOutlineWorkflowProgress('⏳ 正在生成五幕式总纲...');
-        const masterResult = await api.aiOutlineMaster(bookId, selectedSkillPackIds, undefined, CHAPTERS_PER_VOLUME);
-        masterOutline = masterResult.master_outline;
-        volumeCount = masterResult.volume_count || volumeCount;
-        const updatedMaster = await api.updateBible(bookId, { plot_design: masterOutline } as any);
-        onBibleUpdate(updatedMaster);
-        setEditValue(masterOutline);
-        setEditing(true);
-      } else {
-        // 尝试从已有 timeline 推断 volume_count
-        const existingCount = parseExistingVolumeCount();
-        if (existingCount > 0) volumeCount = Math.max(volumeCount, existingCount);
-      }
-
-      // 准备 timeline 数组：先加载已有的 timeline 数据
-      let allTimeline: any[] = [];
-      try {
-        if (bible?.timeline) {
-          const existing = JSON.parse(bible.timeline);
-          if (Array.isArray(existing)) allTimeline = [...existing];
-        }
-      } catch { /* ignore */ }
-
-      // 逐卷调用 aiOutlineVolume（从第1卷到 volume_count 卷）
-      let completed = 0;
-      const newVolumeData: any[] = [];
-      for (let v = 1; v <= volumeCount; v++) {
-        setOutlineWorkflowProgress(`⏳ 正在生成第 ${v}/${volumeCount} 卷...`);
-        try {
-          const volumeTitle = `第${v}卷`;
-          const result = await api.aiOutlineVolume(bookId, v, volumeTitle, selectedSkillPackIds, CHAPTERS_PER_VOLUME);
-
-          // 合并 timeline：尝试解析返回的 timeline，并替换/追加第v卷
-          let appended = false;
-          try {
-            const parsedTimeline = JSON.parse(result.timeline);
-            if (Array.isArray(parsedTimeline)) {
-              parsedTimeline.forEach((t, i) => {
-                const idx = (v - 1) + i;
-                if (idx < allTimeline.length) allTimeline[idx] = t;
-                else allTimeline[idx] = t;
-              });
-              appended = true;
-            } else {
-              allTimeline[v - 1] = parsedTimeline;
-              appended = true;
-            }
-          } catch {
-            // 如果 timeline 不是 JSON，直接用 volume_data
-          }
-          if (!appended && result.volume_data) {
-            const volData = Array.isArray(result.volume_data) ? result.volume_data[0] : result.volume_data;
-            allTimeline[v - 1] = volData;
-          }
-
-          // 收集 volume_data 用于展示情节节点
-          if (result.volume_data) {
-            const vols = Array.isArray(result.volume_data) ? result.volume_data : [result.volume_data];
-            vols.forEach((vd, i) => {
-              const idx = (v - 1) + i;
-              if (idx < newVolumeData.length) newVolumeData[idx] = { ...newVolumeData[idx], ...vd };
-              else newVolumeData[idx] = vd;
-            });
-          }
-          completed = v;
-        } catch (e: any) {
-          // 失败则停止并提示已完成的卷数
-          alert(`第${v}卷生成失败：${e.message}\n已完成 ${completed}/${volumeCount} 卷`);
-          break;
-        }
-      }
-
-      // 把合并后的 timeline 回填到剧情维度
-      const cleanedTimeline = allTimeline.filter(Boolean);
-      if (cleanedTimeline.length > 0) {
-        const updated = await api.updateBible(bookId, { timeline: JSON.stringify(cleanedTimeline, null, 2) } as any);
-        onBibleUpdate(updated);
-      }
-
-      // 显示新卷数据（情节节点）
-      if (newVolumeData.length > 0) {
-        setVolumeData(newVolumeData.filter(Boolean));
-        setExpandedVol(new Set(newVolumeData.map((_, i) => i)));
-      }
-
-      setOutlineWorkflowProgress('');
-      alert(`全书大纲生成完成：${completed}/${volumeCount} 卷`);
-    } catch (e: any) {
-      alert('一键全书大纲失败: ' + e.message);
       setOutlineWorkflowProgress('');
     }
     setOutlineWorkflowLoading('');
@@ -3445,12 +3708,9 @@ ${volsSummary}
         </button>
       </div>
 
-      {/* 滚动生成工作流（仅大纲tab显示，按番茄金番作者skill工作原理） */}
+      {/* 五幕式总纲生成（仅大纲tab显示） */}
       {subTab === 'outline' && (
         <div className="volume-calc-section" style={{ borderLeft: '3px solid #6c5ce7', paddingLeft: 10, marginBottom: 8 }}>
-          <div style={{ fontSize: 12, color: '#6c5ce7', marginBottom: 6, fontWeight: 600 }}>
-            🎯 番茄金番工作流：五幕总纲 → 滚动生成各卷大纲 → 回填剧情
-          </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <button
               className="btn-primary-sm"
@@ -3460,147 +3720,9 @@ ${volsSummary}
             >
               {outlineWorkflowLoading === 'master' ? '⏳ 生成总纲中...' : '🎯 生成五幕式总纲'}
             </button>
-            <button
-              className="btn-ghost-sm"
-              onClick={generateOutlineVolumeScroll}
-              disabled={outlineWorkflowLoading !== ''}
-              title="滚动生成本卷大纲（写入剧情）"
-            >
-              {outlineWorkflowLoading === 'volume' ? '⏳ 生成卷纲中...' : '📜 滚动生成本卷大纲'}
-            </button>
-            <button
-              className="btn-ghost-sm"
-              onClick={generateOutlineAllVolumes}
-              disabled={outlineWorkflowLoading !== ''}
-              title="一键全书大纲：先总纲，再逐卷迭代生成"
-            >
-              {outlineWorkflowLoading === 'all' ? '⏳ 全书生成中...' : '⚡ 一键全书大纲（分卷迭代）'}
-            </button>
           </div>
           {outlineWorkflowProgress && (
             <div style={{ fontSize: 12, color: '#0984e3', marginTop: 6 }}>{outlineWorkflowProgress}</div>
-          )}
-        </div>
-      )}
-
-      {/* 自动分卷规划（仅大纲tab显示） */}
-      {subTab === 'outline' && (
-        <div className="volume-calc-section">
-          {!showVolumeCalc ? (
-            <button className="btn-ghost-sm volume-calc-btn" onClick={() => setShowVolumeCalc(true)}>
-              📊 自动分卷规划
-            </button>
-          ) : (
-            <div className="volume-calc-form">
-              <label className="volume-calc-label">输入小说目标字数，按每卷50章×2400字自动分卷</label>
-              <div className="volume-calc-input-row">
-                <input className="input" type="number" value={targetWords || ''} onChange={e => setTargetWords(parseInt(e.target.value) || 0)} placeholder="如：1000000（100万字）" />
-                <span className="volume-calc-unit">字</span>
-                <button className="btn-primary-sm" onClick={generateVolumeBreakdown}>生成分卷框架</button>
-                <button className="btn-ghost-sm" onClick={() => setShowVolumeCalc(false)}>取消</button>
-              </div>
-              <p className="text-muted" style={{fontSize:11,marginTop:4}}>按金番作者体系：每卷50章×2400字，五幕弧线自动分配，生成5-8个情节节点/卷</p>
-              {targetWords > 0 && (
-                <div className="volume-calc-preview">
-                  预计 {Math.ceil(targetWords / 2400 / 50)}卷 · {Math.ceil(targetWords / 2400)}章 · {(targetWords / 10000).toFixed(1)}万字
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 分卷数据展示 */}
-          {volumeData.length > 0 && (
-            <div className="volume-plan-display">
-              <div className="volume-plan-header">
-                <h4>📚 分卷规划（{(targetWords / 10000).toFixed(1)}万字 · {volumeData.length}卷）</h4>
-                <div style={{display:'flex',gap:6}}>
-                  <button className="btn-primary-sm" onClick={aiGenerateAllVolumes} disabled={volumeGenerating}>
-                    {volumeGenerating ? '⏳ AI生成中...' : '🤖 AI一键补全'}
-                  </button>
-                  <button className="btn-ghost-sm" onClick={exportVolumePlan}>📝 导出到编辑器</button>
-                  <button className="btn-ghost-sm" onClick={exportToPlot} disabled={volumeData.length === 0}>📖 回填剧情</button>
-                </div>
-              </div>
-
-              {volumeData.map((vol, idx) => {
-                const expanded = expandedVol.has(idx);
-                return (
-                  <div key={idx} className="volume-plan-card">
-                    <div className="volume-plan-card-header" onClick={() => {
-                      setExpandedVol(prev => { const n = new Set(prev); if (n.has(idx)) n.delete(idx); else n.add(idx); return n; });
-                    }} style={{cursor:'pointer'}}>
-                      <span className="volume-plan-arrow">{expanded ? '▼' : '▶'}</span>
-                      <span className="volume-plan-vol-label">
-                        第{vol.index}卷{vol.title ? `·${vol.title}` : ''}
-                      </span>
-                      <span className="volume-plan-badge">{vol.arc}幕</span>
-                      <span className="volume-plan-badge">{vol.chRange}章</span>
-                      <span className="volume-plan-badge">{(vol.words / 10000).toFixed(1)}万字</span>
-                      <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); aiGenerateVolumeOutline(idx); }} disabled={volumeGenerating} title="AI补全此卷详情" style={{marginLeft:'auto'}}>
-                        {volumeGenerating ? '⏳' : '🤖'}
-                      </button>
-                    </div>
-                    {expanded && (
-                      <div className="volume-plan-body">
-                        <div className="volume-plan-grid">
-                          <div className="volume-plan-field">
-                            <span className="volume-plan-field-label">认知质变</span>
-                            <span className="volume-plan-field-val">{vol.cognChange || '—'}</span>
-                          </div>
-                          <div className="volume-plan-field">
-                            <span className="volume-plan-field-label">核心冲突</span>
-                            <span className="volume-plan-field-val">{vol.coreConflict || '—'}</span>
-                          </div>
-                          <div className="volume-plan-field">
-                            <span className="volume-plan-field-label">情感驱动</span>
-                            <span className="volume-plan-field-val">{vol.emotionDriver || '—'}</span>
-                          </div>
-                          <div className="volume-plan-field">
-                            <span className="volume-plan-field-label">卷BOSS</span>
-                            <span className="volume-plan-field-val">{vol.boss || '—'}</span>
-                          </div>
-                          <div className="volume-plan-field">
-                            <span className="volume-plan-field-label">击败代价</span>
-                            <span className="volume-plan-field-val">{vol.bossCost || '—'}</span>
-                          </div>
-                          <div className="volume-plan-field">
-                            <span className="volume-plan-field-label">伏笔/钩子</span>
-                            <span className="volume-plan-field-val">新埋{vol.foreshadowNew}·回收{vol.foreshadowRecycle}·{vol.hookType}钩子</span>
-                          </div>
-                        </div>
-                        {/* 情节节点 */}
-                        {vol.nodes?.length > 0 && (
-                          <div className="volume-plan-nodes">
-                            <h5>🎯 情节节点（{vol.nodes.length}个）</h5>
-                            <div className="node-list">
-                              {vol.nodes.map((n: any, ni: number) => (
-                                <div key={ni} className={`node-card node-type-${n.type}`}>
-                                  <div className="node-card-header">
-                                    <span className="node-index">{n.index}</span>
-                                    <span className="node-type-badge">{n.type}</span>
-                                    <span className="node-ch-range">{n.chRange}章</span>
-                                    <span className="node-cool-type">{n.coolType}</span>
-                                  </div>
-                                  {n.coreEvent && <div className="node-core-event">{n.coreEvent}</div>}
-                                  <div className="node-chap-breakdown">
-                                    {(['M','C','W','D','F'] as const).map(t => (
-                                      <span key={t} className="node-chap-type" title={`${CHAPTER_TYPE_DESC[t]}: ${(n as any)['ch'+t] || 0}%`}>
-                                        {t}:{(n as any)['ch'+t] || 0}%
-                                      </span>
-                                    ))}
-                                  </div>
-                                  {n.hook && <div className="node-hook">🪝 {n.hook}</div>}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
           )}
         </div>
       )}

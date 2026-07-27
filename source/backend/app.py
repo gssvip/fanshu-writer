@@ -3532,6 +3532,24 @@ def ai_outline_master(book_id):
     return jsonify({'master_outline': content, 'volume_count': volume_count})
 
 
+def _extract_volume_index(text):
+    """从卷名/卷ID中提取卷号数字，如'第3卷'/'卷三'/'Volume 2' → 3/3/2"""
+    if not text:
+        return 0
+    s = str(text)
+    import re as _re
+    # 阿拉伯数字
+    m = _re.search(r'(\d+)', s)
+    if m:
+        return int(m.group(1))
+    # 中文数字
+    cn_map = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
+    for cn, num in cn_map.items():
+        if cn in s:
+            return num
+    return 0
+
+
 @app.route('/api/books/<book_id>/ai-outline-volume', methods=['POST'])
 def ai_outline_volume(book_id):
     """生成单卷详细大纲（滚动生成）：基于总纲+已完成章节，写入 timeline"""
@@ -3639,13 +3657,298 @@ BOSS：{volume_data.get('boss', '')}
 情节节点：
 """ + '\n'.join([f"  {n.get('chapters','')}: {n.get('title','')}（{n.get('type','M')}）- {n.get('summary','')}" for n in volume_data.get('nodes', [])])
 
+    # 修复：timeline 写入改为 JSON 合并（按 volume_index 替换/追加），避免文本拼接导致前端 JSON.parse 失败
+    volumes_list = []
     if bb.timeline:
-        bb.timeline = bb.timeline + '\n\n' + volume_text
-    else:
-        bb.timeline = volume_text
+        try:
+            parsed_tl = json.loads(bb.timeline)
+            if isinstance(parsed_tl, list):
+                volumes_list = parsed_tl
+        except (json.JSONDecodeError, ValueError):
+            # 旧文本格式，丢弃重建（已在 volume_text 中保留可读副本，但优先用 JSON）
+            volumes_list = []
+    # 构造与 PlotPanel 兼容的卷对象
+    vol_obj = {
+        'volume_id': str(volume_index),
+        'volume': volume_data.get('volume_title', volume_title),
+        'volume_index': volume_index,
+        'main_plot': volume_data.get('core_goal', ''),
+        'core_conflict': volume_data.get('core_conflict', ''),
+        'emotion_driver': volume_data.get('emotion_driver', ''),
+        'key_events': volume_data.get('key_turns', []),
+        'turning_points': volume_data.get('key_turns', []),
+        'climax': volume_data.get('boss', ''),
+        'ending': volume_data.get('hook_type', ''),
+        'foreshadowing': volume_data.get('foreshadow_new', []),
+        'foreshadow_recycle': volume_data.get('foreshadow_recycle', []),
+        'nodes': volume_data.get('nodes', []),
+        'raw_text': volume_text,  # 保留可读文本副本
+    }
+    # 按 volume_index 替换或追加
+    replaced = False
+    for i, v in enumerate(volumes_list):
+        existing_idx = v.get('volume_index') or _extract_volume_index(v.get('volume', v.get('volume_id', '')))
+        if str(existing_idx) == str(volume_index):
+            volumes_list[i] = vol_obj
+            replaced = True
+            break
+    if not replaced:
+        volumes_list.append(vol_obj)
+    # 按 volume_index 排序
+    volumes_list.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
+    bb.timeline = json.dumps(volumes_list, ensure_ascii=False, indent=2)
     db.session.commit()
 
-    return jsonify({'volume_data': volume_data, 'timeline': bb.timeline})
+    return jsonify({'volume_data': volume_data, 'timeline': bb.timeline, 'bible': bb.to_dict()})
+
+
+@app.route('/api/books/<book_id>/ai-extract-volumes-from-outline', methods=['POST'])
+def ai_extract_volumes_from_outline(book_id):
+    """从 plot_design 总纲一次性提取全部卷的剧情 JSON 数组，写入 timeline。
+    替代前端逐卷循环调用 ai_outline_volume 的方式，更稳定不会中途失败。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Not found'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb or not bb.plot_design or not bb.plot_design.strip():
+        return jsonify({'error': '请先在大纲维度生成五幕式总纲'}), 400
+
+    data = request.json or {}
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    volume_count = data.get('volume_count')  # 可选，不传则让AI自行决定
+
+    skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
+
+    # 上下文：总纲 + 世界观 + 规则 + 人物
+    context_parts = [f'【五幕式总纲】\n{bb.plot_design[:4000]}']
+    if bb.worldbuilding:
+        context_parts.append(f'【世界观】\n{bb.worldbuilding[:1000]}')
+    if bb.key_rules:
+        context_parts.append(f'【核心规则】\n{bb.key_rules[:800]}')
+    if bb.character_profiles:
+        context_parts.append(f'【人物档案】\n{bb.character_profiles[:1000]}')
+    context = '\n\n'.join(context_parts)
+
+    count_hint = f'约 {volume_count} 卷' if volume_count else '根据总纲内容自行决定合理的卷数（通常5-8卷）'
+
+    system_prompt = f"""你是番茄小说金番作者级别的剧情架构师。
+任务：根据五幕式总纲，一次性提取全部卷的详细剧情，输出为 JSON 数组。
+
+【输入上下文】
+{context}
+
+【输出要求】严格输出 JSON 数组（不要包裹在 markdown 代码块中），{count_hint}。
+每卷结构如下：
+{{
+  "volume_id": "1",
+  "volume": "第1卷 卷名",
+  "volume_index": 1,
+  "main_plot": "本卷主线剧情（100-200字）",
+  "core_conflict": "本卷核心冲突",
+  "emotion_driver": "情感驱动力",
+  "key_events": ["关键事件1", "关键事件2", "关键事件3"],
+  "turning_points": ["转折点1", "转折点2"],
+  "climax": "本卷高潮/BOSS",
+  "ending": "本卷结局/卷尾钩子",
+  "foreshadowing": ["新埋伏笔1"],
+  "nodes": [
+    {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要"}}
+  ]
+}}
+
+【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
+【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
+每卷 5-8 个情节节点，节点章节范围不重叠，覆盖整卷。
+
+{skill_note}"""
+
+    user_prompt = f'请根据五幕式总纲提取全部卷的详细剧情，{count_hint}。'
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=8000, temperature=0.7
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    import re
+    # 尝试匹配 JSON 数组（优先）或单个对象
+    arr_match = re.search(r'\[[\s\S]*\]', content)
+    if arr_match:
+        try:
+            volumes = json.loads(arr_match.group())
+            if isinstance(volumes, list) and volumes:
+                # 补全字段
+                for i, v in enumerate(volumes):
+                    if 'volume_id' not in v:
+                        v['volume_id'] = str(v.get('volume_index', i + 1))
+                    if 'volume_index' not in v:
+                        v['volume_index'] = _extract_volume_index(v.get('volume', v.get('volume_id', ''))) or (i + 1)
+                    if 'volume' not in v:
+                        v['volume'] = f'第{v["volume_index"]}卷'
+                # 按 volume_index 排序
+                volumes.sort(key=lambda v: int(v.get('volume_index', 0) or 0))
+                bb.timeline = json.dumps(volumes, ensure_ascii=False, indent=2)
+                db.session.commit()
+                return jsonify({'success': True, 'volumes': volumes, 'bible': bb.to_dict()})
+        except (json.JSONDecodeError, ValueError) as e:
+            pass
+
+    return jsonify({'error': 'AI返回格式错误，无法解析为JSON数组', 'raw': content[:800]}), 500
+
+
+@app.route('/api/books/<book_id>/ai-import-plot-outline', methods=['POST'])
+def ai_import_plot_outline(book_id):
+    """导入剧情大纲文本，自动识别拆分到各卷（正则优先，AI兜底）。
+    支持格式：第X卷/卷X/Volume X 等开头的卷标题 + 后续内容。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Not found'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    data = request.json or {}
+    outline_text = (data.get('outline_text') or '').strip()
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    if not outline_text:
+        return jsonify({'error': '请输入大纲文本'}), 400
+
+    import re
+
+    # ===== 第一步：正则匹配标准卷格式 =====
+    # 匹配 "第X卷"、"卷X"、"Volume X"、"第X部"、"第X章"（作为卷）等开头的行
+    vol_pattern = re.compile(r'^(?:第\s*([一二三四五六七八九十百\d]+)\s*[卷部]|卷\s*([一二三四五六七八九十百\d]+)|Volume\s*(\d+)|#*\s*第\s*([一二三四五六七八九十百\d]+)\s*卷)\s*[：:．.、\s]*(.*)$', re.MULTILINE)
+    matches = list(vol_pattern.finditer(outline_text))
+
+    volumes = []
+    if matches and len(matches) >= 2:
+        # 有标准格式，按卷拆分
+        for i, m in enumerate(matches):
+            # 提取卷号
+            vol_num_str = m.group(1) or m.group(2) or m.group(3) or m.group(4) or ''
+            vol_idx = _extract_volume_index(vol_num_str) or (i + 1)
+            vol_title = (m.group(5) or '').strip() or f'第{vol_idx}卷'
+            # 内容范围：从当前匹配结束到下一个匹配开始
+            content_start = m.end()
+            content_end = matches[i + 1].start() if i + 1 < len(matches) else len(outline_text)
+            vol_content = outline_text[content_start:content_end].strip()
+
+            volumes.append({
+                'volume_id': str(vol_idx),
+                'volume': f'第{vol_idx}卷 {vol_title}' if vol_title and not vol_title.startswith('第') else vol_title,
+                'volume_index': vol_idx,
+                'main_plot': vol_content[:500],
+                'core_conflict': '',
+                'emotion_driver': '',
+                'key_events': [l.strip() for l in vol_content.split('\n') if l.strip() and len(l.strip()) > 5][:5],
+                'turning_points': [],
+                'climax': '',
+                'ending': '',
+                'foreshadowing': [],
+                'nodes': [],
+                'raw_text': vol_content,
+            })
+
+    # ===== 第二步：正则匹配失败或卷数<2，调用 AI 智能拆卷 =====
+    if len(volumes) < 2:
+        skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
+        # 上下文：已有 bible 设定辅助识别
+        ctx_parts = []
+        if bb.worldbuilding:
+            ctx_parts.append(f'【世界观】\n{bb.worldbuilding[:600]}')
+        if bb.character_profiles:
+            ctx_parts.append(f'【人物】\n{bb.character_profiles[:600]}')
+        extra_ctx = '\n\n'.join(ctx_parts)
+
+        system_prompt = f"""你是番茄小说金番作者级别的剧情架构师。
+任务：将用户粘贴的大纲文本按卷拆分为 JSON 数组。
+
+【已有设定参考】
+{extra_ctx or '（暂无）'}
+
+【输出要求】严格输出 JSON 数组（不要包裹在 markdown 代码块中）。
+每卷结构：
+{{
+  "volume_id": "1",
+  "volume": "第1卷 卷名",
+  "volume_index": 1,
+  "main_plot": "本卷主线剧情（100-300字）",
+  "core_conflict": "核心冲突",
+  "emotion_driver": "情感驱动",
+  "key_events": ["关键事件1", "关键事件2"],
+  "turning_points": ["转折点1"],
+  "climax": "高潮",
+  "ending": "结局/钩子",
+  "foreshadowing": ["伏笔1"],
+  "nodes": []
+}}
+
+如果大纲文本没有明确的卷划分，请根据剧情自然分段（通常3-8卷）。
+每卷的 main_plot 必须从原文中提取或概括，不要凭空捏造。
+
+{skill_note}"""
+
+        user_prompt = f'请将以下大纲文本按卷拆分：\n\n{outline_text[:6000]}'
+
+        content, err = _call_llm(
+            [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+            max_tokens=6000, temperature=0.3
+        )
+        if err:
+            return jsonify({'error': err}), 500
+
+        arr_match = re.search(r'\[[\s\S]*\]', content)
+        if not arr_match:
+            return jsonify({'error': 'AI返回格式错误，无法解析为JSON数组', 'raw': content[:500]}), 500
+        try:
+            volumes = json.loads(arr_match.group())
+            if not isinstance(volumes, list) or not volumes:
+                return jsonify({'error': 'AI返回的JSON数组为空'}), 500
+        except (json.JSONDecodeError, ValueError):
+            return jsonify({'error': 'JSON解析失败', 'raw': content[:500]}), 500
+
+        # 补全字段
+        for i, v in enumerate(volumes):
+            if 'volume_id' not in v:
+                v['volume_id'] = str(v.get('volume_index', i + 1))
+            if 'volume_index' not in v:
+                v['volume_index'] = _extract_volume_index(v.get('volume', v.get('volume_id', ''))) or (i + 1)
+            if 'volume' not in v:
+                v['volume'] = f'第{v.get("volume_index", i+1)}卷'
+
+    # 按 volume_index 排序
+    volumes.sort(key=lambda v: int(v.get('volume_index', 0) or 0))
+    # 合并到已有 timeline（按 volume_index 替换或追加）
+    existing_volumes = []
+    if bb.timeline:
+        try:
+            parsed = json.loads(bb.timeline)
+            if isinstance(parsed, list):
+                existing_volumes = parsed
+        except (json.JSONDecodeError, ValueError):
+            existing_volumes = []
+
+    # 用导入的卷替换同 volume_index 的旧卷，或追加
+    for new_v in volumes:
+        new_idx = str(new_v.get('volume_index', ''))
+        replaced = False
+        for i, ev in enumerate(existing_volumes):
+            ev_idx = str(ev.get('volume_index', '') or _extract_volume_index(ev.get('volume', ev.get('volume_id', ''))))
+            if ev_idx == new_idx:
+                existing_volumes[i] = new_v
+                replaced = True
+                break
+        if not replaced:
+            existing_volumes.append(new_v)
+    existing_volumes.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
+
+    bb.timeline = json.dumps(existing_volumes, ensure_ascii=False, indent=2)
+    db.session.commit()
+
+    return jsonify({'success': True, 'volumes': existing_volumes, 'imported_count': len(volumes), 'bible': bb.to_dict()})
 
 
 # ==== 总 AI 创作：总览全局各维度，用户确认后填入 ====
