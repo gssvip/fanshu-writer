@@ -304,9 +304,40 @@ export const api = {
   reviewBook: (bookId: string, scope?: string, content?: string) =>
     request<ReviewResult>(`/books/${bookId}/review`, { method: 'POST', body: JSON.stringify({ scope, content }) }),
 
-  // AI Continue
-  aiContinue: (bookId: string, instruction: string, skillPackIds?: string[]) =>
-    request<{ content: string }>(`/books/${bookId}/ai-continue`, { method: 'POST', body: JSON.stringify({ instruction, skill_pack_ids: skillPackIds || [] }) }),
+  // AI Continue（14项优化版）：返回正文+审校状态+章节计划+一致性检查结果等
+  aiContinue: (bookId: string, instruction: string, skillPackIds?: string[], enableConsistencyCheck?: boolean) =>
+    request<{
+      content: string;
+      draft?: string | null;
+      review_notes: string;
+      deai_status: 'skipped' | 'success' | 'failed';
+      chapter_plan: string;
+      current_chapter_num: number;
+      vol_index: number;
+      vol_title: string;
+      temperature: number;
+      consistency_passed: boolean;
+      consistency_issues: string;
+    }>(`/books/${bookId}/ai-continue`, {
+      method: 'POST',
+      body: JSON.stringify({
+        instruction,
+        skill_pack_ids: skillPackIds || [],
+        enable_consistency_check: enableConsistencyCheck !== false,
+      }),
+    }),
+
+  // AI Continue 流式版（#8：SSE 推送初稿）。返回原始 Response，前端用 ReadableStream 解析
+  aiContinueStream: (bookId: string, instruction: string, skillPackIds?: string[]) => {
+    const token = getToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-continue/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ instruction, skill_pack_ids: skillPackIds || [] }),
+    });
+  },
 
   // AI Analyze Book
   analyzeBook: (content: string) =>

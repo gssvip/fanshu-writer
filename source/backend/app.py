@@ -3831,102 +3831,536 @@ def analyze_book():
         return jsonify({'error': str(e)}), 500
 
 # AI 一致性检查 / 继续写作
-@app.route('/api/books/<book_id>/ai-continue', methods=['POST'])
-def ai_continue(book_id):
-    """正文滚动创作（agent 协同版）：
-    1. 分层注入 bible 上下文（key_rules/worldbuilding/character_profiles/plot_design/timeline/concept）保持一致性
-    2. 分层滚动记忆（即时层最近1章 + 近期层最近3份动态报告）防遗忘
-    3. 伏笔防遗忘：注入 bb.foreshadowing 待回收伏笔清单
-    4. 审校环节：正文生成后追加 tomato_deai 去AI味审校（参考番茄金番工作流后半段）"""
+# ==== 章节正文写作辅助函数（14项优化）====
+
+def _identify_current_volume(book_id, current_chapter_num):
+    """识别当前章节所属的卷。返回 (volume_chapter, volume_index) 或 (None, 0)。
+    卷按 order_index 升序，当前章号落在 [卷.order_index, 下一卷.order_index) 区间内则属于该卷。"""
+    vols = Chapter.query.filter_by(book_id=book_id, is_volume=True).order_by(Chapter.order_index).all()
+    if not vols:
+        return None, 0
+    for i, v in enumerate(vols):
+        next_v = vols[i + 1] if i + 1 < len(vols) else None
+        if v.order_index <= current_chapter_num and (not next_v or next_v.order_index > current_chapter_num):
+            return v, i + 1
+    # 章号在所有卷之前：归属于第一卷
+    return vols[0], 1
+
+
+def _inject_volume_dimensions(bb, vol_chapter, volume_index, sections):
+    """按卷注入对应卷的维度数据（人物/伏笔/地点/动态）。
+    这些字段是 JSON 数组，每条含 volume_id/volume/volume_index + 维度专属字段。
+    若对应卷无数据，则降级使用全局 bible 字段（character_profiles/foreshadowing/locations）。"""
+    if not vol_chapter:
+        return
+    vol_id = str(vol_chapter.id)
+    vol_label = vol_chapter.title or f'第{volume_index}卷'
+
+    def _find_entry(field_name):
+        try:
+            arr = json.loads(getattr(bb, field_name) or '[]')
+            if not isinstance(arr, list):
+                return None
+            for v in arr:
+                if not isinstance(v, dict):
+                    continue
+                if str(v.get('volume_id', '')) == vol_id or v.get('volume', '') == vol_label:
+                    return v
+            # 退化匹配：按 volume_index
+            for v in arr:
+                if isinstance(v, dict) and int(v.get('volume_index', 0) or 0) == volume_index:
+                    return v
+            return None
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return None
+
+    # 人物（本卷）
+    cv_entry = _find_entry('character_volumes')
+    if cv_entry and cv_entry.get('characters'):
+        chars_text = json.dumps(cv_entry['characters'], ensure_ascii=False)
+        sections.append(f'【本卷人物档案】（保持人设一致）\n{chars_text[:1500]}')
+
+    # 伏笔（本卷）
+    fv_entry = _find_entry('foreshadowing_volumes')
+    if fv_entry and fv_entry.get('data'):
+        fs_text = json.dumps(fv_entry['data'], ensure_ascii=False)
+        sections.append(f'【本卷伏笔清单】\n{fs_text[:1200]}')
+
+    # 地点（本卷）
+    lv_entry = _find_entry('locations_volumes')
+    if lv_entry and lv_entry.get('data'):
+        loc_text = json.dumps(lv_entry['data'], ensure_ascii=False)
+        sections.append(f'【本卷地点信息】\n{loc_text[:1000]}')
+
+    # 动态摘要（本卷）
+    dv_entry = _find_entry('dynamic_volumes')
+    if dv_entry and dv_entry.get('data'):
+        dyn_text = json.dumps(dv_entry['data'], ensure_ascii=False)
+        sections.append(f'【本卷动态摘要】\n{dyn_text[:1000]}')
+
+
+def _get_volume_outline(vol_chapter, volume_index):
+    """获取当前卷的卷纲（从 Outline 表 level=0 或匹配标题的条目）。
+    返回卷纲文本，用于让 AI 知道本卷目标。"""
+    if not vol_chapter:
+        return ''
+    try:
+        # 优先查 parent_id 关联的 level=0 outline
+        outlines = Outline.query.filter_by(book_id=vol_chapter.book_id).order_by(Outline.order_index).all()
+        # 优先匹配标题
+        for o in outlines:
+            if o.title and vol_chapter.title and (o.title in vol_chapter.title or vol_chapter.title in o.title):
+                if o.content and o.content.strip():
+                    return f'【本卷目标/卷纲】（第{volume_index}卷「{vol_chapter.title}」）\n{o.content[:1200]}'
+        # 退化：取 level=0 的第 volume_index 个
+        acts = [o for o in outlines if o.level == 0]
+        if 0 <= volume_index - 1 < len(acts):
+            o = acts[volume_index - 1]
+            if o.content and o.content.strip():
+                return f'【本卷目标/卷纲】（第{volume_index}卷）\n{o.content[:1200]}'
+    except Exception:
+        pass
+    return ''
+
+
+def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=5):
+    """伏笔按"到期紧迫度"排序，提取 Top N 待回收伏笔。
+    紧迫度 = |计划回收章号 - 当前章号|，越小越紧迫；无章号信息的排到最后。
+    优先从 foreshadowing_volumes 取结构化数据，否则从全局 foreshadowing 文本启发式提取。"""
+    pending = []
+
+    # 1. 优先从按卷结构化数据取
+    if vol_chapter:
+        try:
+            arr = json.loads(bb.foreshadowing_volumes or '[]')
+            for v in arr:
+                if not isinstance(v, dict):
+                    continue
+                data = v.get('data') or {}
+                items = data.get('foreshadowings') or data.get('items') or []
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    status = str(item.get('status', '')).lower()
+                    if any(kw in status for kw in ['已回收', '已揭示', '已解决', '已兑现', 'recycled', 'resolved']):
+                        continue
+                    planted = item.get('planted_chapter') or item.get('planted_at') or 0
+                    target = item.get('target_chapter') or item.get('planned_recall') or item.get('recall_at') or 0
+                    desc = item.get('description') or item.get('content') or item.get('title') or json.dumps(item, ensure_ascii=False)
+                    try:
+                        planted_n = int(planted) if planted else 0
+                    except (ValueError, TypeError):
+                        planted_n = 0
+                    try:
+                        target_n = int(target) if target else 0
+                    except (ValueError, TypeError):
+                        target_n = 0
+                    urgency = abs(target_n - current_chapter_num) if target_n else 9999
+                    pending.append((urgency, planted_n, target_n, desc))
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+    # 2. 回退：从全局 foreshadowing 文本启发式提取
+    if not pending and bb.foreshadowing and bb.foreshadowing.strip():
+        for line in bb.foreshadowing.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            if any(kw in line for kw in ['已回收', '已揭示', '已解决', '已兑现']):
+                continue
+            # 启发式：从文本中提取章号
+            import re as _re_fs
+            nums = _re_fs.findall(r'第?(\d+)\s*章', line)
+            target_n = int(nums[-1]) if nums else 0
+            urgency = abs(target_n - current_chapter_num) if target_n else 9999
+            pending.append((urgency, 0, target_n, line))
+
+    # 按紧迫度升序排序，取 Top N
+    pending.sort(key=lambda x: x[0])
+    return pending[:top_n]
+
+
+def _extract_appearing_characters(recent_chapters):
+    """从最近章节正文中启发式提取出场角色名。
+    简单策略：识别"X说"、"X道"、"X想"、"X看"等模式中的 X。"""
+    if not recent_chapters:
+        return set()
+    import re as _re_char
+    text = '\n'.join([(c.content or '') for c in recent_chapters])
+    names = set()
+    # 中文姓名 2-4 字
+    for m in _re_char.finditer(r'([\u4e00-\u9fa5]{2,4})(?:说|道|想|看|笑|怒|惊|叹|问|答|吼|喊|冷哼|微笑|皱眉)', text):
+        name = m.group(1)
+        # 排除常见动词误判
+        if name not in {'这是', '那是', '于是', '然后', '突然', '只见', '心想', '不禁', '不由'}:
+            names.add(name)
+    return names
+
+
+def _filter_bible_by_relevance(bb, appearing_chars, max_per_field=None):
+    """按出场角色相关性筛选 bible 维度。
+    - character_profiles: 优先包含出场角色的档案块
+    - 其他维度保持原样（不相关性筛选）
+    返回筛选后的字段字典。"""
+    if max_per_field is None:
+        max_per_field = {'character_profiles': 1500, 'worldbuilding': 1000, 'plot_design': 1000,
+                         'timeline': 800, 'concept': 500, 'key_rules': 1200, 'style_guide': 500}
+    result = {}
+
+    # key_rules / worldbuilding / concept / plot_design / timeline / style_guide：直接截断
+    for field in ['key_rules', 'worldbuilding', 'concept', 'plot_design', 'timeline', 'style_guide']:
+        val = getattr(bb, field, '') or ''
+        result[field] = val[:max_per_field.get(field, 1000)] if val else ''
+
+    # character_profiles：按出场角色筛选
+    cp = bb.character_profiles or ''
+    if cp and appearing_chars:
+        # 简单分块：按空行或【】标题分块
+        import re as _re_cp
+        blocks = _re_cp.split(r'\n(?=[【\[])', cp)
+        relevant = []
+        other = []
+        for block in blocks:
+            block = block.strip()
+            if not block:
+                continue
+            if any(name in block for name in appearing_chars):
+                relevant.append(block)
+            else:
+                other.append(block)
+        # 优先相关性块，剩余空间补其他
+        budget = max_per_field.get('character_profiles', 1500)
+        selected = []
+        used = 0
+        for block in relevant:
+            if used + len(block) > budget:
+                # 截断该块
+                remain = budget - used
+                if remain > 100:
+                    selected.append(block[:remain])
+                    used = budget
+                break
+            selected.append(block)
+            used += len(block)
+        # 剩余预算补其他
+        for block in other:
+            if used >= budget:
+                break
+            remain = budget - used
+            if remain < 100:
+                break
+            truncated = block[:remain]
+            selected.append(truncated)
+            used += len(truncated)
+        result['character_profiles'] = '\n\n'.join(selected) if selected else cp[:budget]
+    else:
+        result['character_profiles'] = (cp or '')[:max_per_field.get('character_profiles', 1500)]
+
+    return result
+
+
+def _collect_relevant_reports(book_id, current_chapter_num, window=10, max_reports=3, per_report_limit=800):
+    """收集当前章号 ±window 范围内的动态报告，每份截取摘要。
+    优先时效性（接近当前章号），其次数量上限。"""
+    try:
+        reports = DynamicReport.query.filter_by(book_id=book_id).order_by(DynamicReport.chapter_start).all()
+    except Exception:
+        return []
+    if not reports:
+        return []
+    # 筛选在窗口内的报告
+    relevant = []
+    for r in reports:
+        # 报告覆盖区间 [chapter_start, chapter_end] 与 [current-window, current+window] 有交集
+        if r.chapter_end >= current_chapter_num - window and r.chapter_start <= current_chapter_num + window:
+            relevant.append(r)
+    # 按接近度排序（距离当前章号最近者优先）
+    relevant.sort(key=lambda r: abs((r.chapter_start + r.chapter_end) / 2 - current_chapter_num))
+    # 取前 max_reports 份，每份截取摘要
+    result = []
+    for r in relevant[:max_reports]:
+        content = (r.content or '')[:per_report_limit]
+        result.append({
+            'title': r.title,
+            'chapter_start': r.chapter_start,
+            'chapter_end': r.chapter_end,
+            'content': content,
+        })
+    return result
+
+
+def _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, chapters_in_vol):
+    """根据章节在卷中的位置动态计算 temperature。
+    - 卷开篇（第1章）：0.8（需要更多创意建立场景）
+    - 卷日常推进：0.7
+    - 卷收尾（最后2章）：0.5（需要稳定收束）
+    - 全书第一章：0.8"""
+    if current_chapter_num == 1:
+        return 0.8
+    if vol_chapter and chapters_in_vol > 0:
+        # 章节在卷内的相对位置
+        pos_in_vol = current_chapter_num - vol_chapter.order_index + 1
+        if pos_in_vol <= 1:
+            return 0.8  # 卷开篇
+        if pos_in_vol >= chapters_in_vol - 1:
+            return 0.5  # 卷收尾
+    return 0.7  # 日常推进
+
+
+def _build_smart_instruction(instruction, last_chapter, current_chapter_num):
+    """生成智能默认指令。若用户未提供 instruction，结合上一章章尾内容生成承接指令。"""
+    if instruction and instruction.strip():
+        return instruction
+    if not last_chapter:
+        return f'请继续写第 {current_chapter_num} 章（开篇章节，建立场景与基调）。'
+    # 启发式提取上一章章尾钩子类型
+    tail = (last_chapter.content or '')[-300:]
+    hook_hint = '承接上一章章尾的悬念/钩子，自然展开新场景'
+    if any(kw in tail for kw in ['？', '?', '究竟', '为何', '怎么']):
+        hook_hint = '承接上一章末尾的疑问钩子，本章给出部分线索但不完全揭示'
+    elif any(kw in tail for kw in ['危险', '危机', '攻击', '杀机', '威胁']):
+        hook_hint = '承接上一章末尾的危机钩子，本章处理危机并展现主角应对'
+    elif any(kw in tail for kw in ['发现', '出现', '现身', '传来']):
+        hook_hint = '承接上一章末尾的新信息钩子，本章展开新信息的影响'
+    return f'请继续写第 {current_chapter_num} 章。{hook_hint}。'
+
+
+def _apply_budget_management(sections_with_labels, total_budget=8000):
+    """上下文窗口预算管理：按权重分配总预算给各段，避免单段超长挤掉关键信息。
+    sections_with_labels: [(label, content, weight), ...]  weight 越大优先级越高
+    返回拼接后的文本。"""
+    if not sections_with_labels:
+        return ''
+    total_weight = sum(w for _, _, w in sections_with_labels)
+    if total_weight <= 0:
+        return '\n\n'.join(c for _, c, _ in sections_with_labels)
+    parts = []
+    for label, content, weight in sections_with_labels:
+        if not content or not content.strip():
+            continue
+        budget = int(total_budget * (weight / total_weight))
+        if len(content) > budget:
+            content = content[:budget]
+        parts.append(content if not label else f'{label}\n{content}')
+    return '\n\n'.join(parts)
+
+
+def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_index,
+                           memory_section, foreshadowing_section, skill_pack_ids,
+                           api_key, base_url, model, max_tokens=600):
+    """章节计划前置（chapter_plan Agent）：在写正文前生成 200 字以内的本章三段式计划。
+    返回计划文本，失败时返回空串（不阻塞正文生成）。"""
+    plan_skill_note = _get_skill_prompts(skill_pack_ids, ['chapter_plan'], max_per_prompt=800, mode='single')
+    vol_label = f'第{vol_index}卷「{vol_chapter.title}」' if vol_chapter else '当前卷'
+
+    plan_system = f"""你是小说章节策划师。为第 {current_chapter_num} 章生成一份简洁的章节计划（200字以内）。
+
+当前所在卷：{vol_label}
+
+{memory_section[:1500]}
+
+{foreshadowing_section[:800] if foreshadowing_section else ''}
+
+{plan_skill_note}
+
+【输出格式】严格按以下三段式输出，每段不超过70字：
+1. 本章核心冲突：
+2. 关键场景/事件：
+3. 章尾钩子设计：
+
+【要求】
+- 必须承接前文，不可矛盾
+- 若有"待回收伏笔清单"，本章应考虑回收其中1条
+- 只输出计划，不要解释"""
+
+    try:
+        resp = requests.post(f'{base_url}/chat/completions',
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            json={'model': model, 'messages': [{'role': 'system', 'content': plan_system},
+                                                {'role': 'user', 'content': f'请为第 {current_chapter_num} 章生成计划'}],
+                  'temperature': 0.5, 'max_tokens': max_tokens},
+            timeout=60)
+        result = resp.json()
+        plan = result['choices'][0]['message']['content'].strip()
+        if plan and len(plan) > 20:
+            return plan
+    except Exception:
+        pass
+    return ''
+
+
+def _consistency_check(book_id, bb, draft_content, current_chapter_num,
+                       api_key, base_url, model, max_tokens=800):
+    """一致性检查 Agent：检查正文是否违反 key_rules/人设，返回 (passed, issues_text)。
+    失败时返回 (True, '')（不阻塞）。"""
+    if not draft_content or len(draft_content) < 100:
+        return True, ''
+    key_rules = (bb.key_rules or '')[:800]
+    chars = (bb.character_profiles or '')[:800]
+    if not key_rules and not chars:
+        return True, ''
+
+    check_system = f"""你是小说一致性审查员。检查以下章节正文是否违反"项目宪法"。
+只检查，不修改。返回 JSON：{{"passed": true/false, "issues": ["问题1", "问题2"]}}
+
+【项目宪法】
+核心规则/金手指：
+{key_rules}
+
+人物档案（节选）：
+{chars}
+
+【待检查正文】
+{draft_content[:3000]}"""
+
+    try:
+        resp = requests.post(f'{base_url}/chat/completions',
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            json={'model': model, 'messages': [{'role': 'system', 'content': check_system},
+                                                {'role': 'user', 'content': '请检查一致性，返回JSON'}],
+                  'temperature': 0.2, 'max_tokens': max_tokens},
+            timeout=60)
+        result = resp.json()
+        content = result['choices'][0]['message']['content'].strip()
+        # 尝试解析 JSON
+        import re as _re_con
+        m = _re_con.search(r'\{[\s\S]*\}', content)
+        if m:
+            parsed = json.loads(m.group())
+            return bool(parsed.get('passed', True)), '; '.join(parsed.get('issues', []))
+        return True, ''
+    except Exception:
+        return True, ''
+
+
+def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
+    """构建章节正文写作的完整上下文（被 ai_continue 和 ai_continue_stream 共用）。
+    返回 dict，包含 system_prompt, user_prompt, temperature, max_tokens, chapter_plan, api 信息等。"""
     book = Book.query.get(book_id)
-    if not book: return jsonify({'error': 'Not found'}), 404
     config = AIConfig.query.first()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.model if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+    if not base_url.endswith('/v1'):
+        base_url = base_url.rstrip('/') + '/v1'
 
-    bb = BookBible.query.filter_by(book_id=book_id).first()
-    if not bb:
-        bb = BookBible(book_id=book_id)
-        db.session.add(bb)
-        db.session.commit()
+    # ===== 0. 章号计算（#9：改用 max(order_index)+1，健壮性）=====
+    all_chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+    if all_chapters:
+        current_chapter_num = max(c.order_index for c in all_chapters) + 1
+    else:
+        current_chapter_num = 1
+    last_chapter = all_chapters[-1] if all_chapters else None
 
-    chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
-    current_chapter_num = len(chapters) + 1
+    # ===== 1. 识别当前卷（#1+#3）=====
+    vol_chapter, vol_index = _identify_current_volume(book_id, current_chapter_num)
+    # 统计当前卷已有章节数（用于 temperature 计算）
+    chapters_in_vol = 0
+    if vol_chapter:
+        next_vols = Chapter.query.filter(
+            Chapter.book_id == book_id,
+            Chapter.is_volume == True,
+            Chapter.order_index > vol_chapter.order_index
+        ).order_by(Chapter.order_index).all()
+        upper_bound = next_vols[0].order_index if next_vols else 999999
+        chapters_in_vol = Chapter.query.filter(
+            Chapter.book_id == book_id,
+            Chapter.is_volume == False,
+            Chapter.order_index >= vol_chapter.order_index,
+            Chapter.order_index < upper_bound
+        ).count()
 
-    # ===== 1. 分层 bible 上下文（按优先级截断，保持上下文一致性）=====
-    # 优先级：key_rules(金手指/能力限制，绝不可违反) > character_profiles(人设一致) > worldbuilding > plot_design(当前卷目标) > timeline > concept
+    # ===== 2. 分层 bible 上下文（#5：相关性筛选 + #14：预算管理）=====
+    # 提取最近3章出场角色，用于 character_profiles 相关性筛选
+    recent_for_chars = all_chapters[-3:] if all_chapters else []
+    appearing_chars = _extract_appearing_characters(recent_for_chars)
+    filtered_bible = _filter_bible_by_relevance(bb, appearing_chars)
+
     bible_sections = []
-    if bb.key_rules and bb.key_rules.strip():
-        bible_sections.append(f'【核心规则/金手指】（绝不可违反）\n{bb.key_rules[:1200]}')
-    if bb.character_profiles and bb.character_profiles.strip():
-        bible_sections.append(f'【人物档案】（保持人设一致）\n{bb.character_profiles[:1200]}')
-    if bb.worldbuilding and bb.worldbuilding.strip():
-        bible_sections.append(f'【世界观设定】\n{bb.worldbuilding[:1000]}')
-    if bb.plot_design and bb.plot_design.strip():
-        bible_sections.append(f'【五幕式总纲】（参考当前进度对齐走向）\n{bb.plot_design[:1000]}')
-    if bb.timeline and bb.timeline.strip():
-        bible_sections.append(f'【已有剧情】\n{bb.timeline[:800]}')
-    if bb.concept and bb.concept.strip():
-        bible_sections.append(f'【核心构思】\n{bb.concept[:500]}')
-    if bb.style_guide and bb.style_guide.strip():
-        bible_sections.append(f'【文风指南】\n{bb.style_guide[:500]}')
-    bible_context = '\n\n'.join(bible_sections) if bible_sections else (bb.generated_summary or '')[:2000]
+    if filtered_bible.get('key_rules'):
+        bible_sections.append(('【核心规则/金手指】（绝不可违反）', filtered_bible['key_rules'], 3))
+    if filtered_bible.get('character_profiles'):
+        bible_sections.append(('【人物档案】（保持人设一致）', filtered_bible['character_profiles'], 3))
+    if filtered_bible.get('worldbuilding'):
+        bible_sections.append(('【世界观设定】', filtered_bible['worldbuilding'], 2))
+    if filtered_bible.get('plot_design'):
+        bible_sections.append(('【五幕式总纲】（参考当前进度对齐走向）', filtered_bible['plot_design'], 2))
+    if filtered_bible.get('timeline'):
+        bible_sections.append(('【已有剧情】', filtered_bible['timeline'], 2))
+    if filtered_bible.get('concept'):
+        bible_sections.append(('【核心构思】', filtered_bible['concept'], 1))
+    if filtered_bible.get('style_guide'):
+        bible_sections.append(('【文风指南】', filtered_bible['style_guide'], 1))
 
-    # ===== 2. 分层滚动记忆（防遗忘）=====
-    recent_reports = DynamicReport.query.filter_by(book_id=book_id).order_by(
-        DynamicReport.chapter_start.desc()
-    ).limit(3).all()
-    recent_reports.reverse()
+    # 按卷注入维度数据（#1）
+    vol_dim_sections = []
+    _inject_volume_dimensions(bb, vol_chapter, vol_index, vol_dim_sections)
+    for s in vol_dim_sections:
+        # vol_dim_sections 是已格式化的字符串，拆出 label
+        first_line = s.split('\n')[0]
+        body = '\n'.join(s.split('\n')[1:]).strip()
+        bible_sections.append((first_line, body, 2))
 
-    if recent_reports:
-        report_context = '\n\n'.join([f'【{r.title}】\n{r.content}' for r in recent_reports if r.content])
-        # 即时层：最近1章尾部 1200 字（衔接语气和当前场景）
-        recent_text = (chapters[-1].content or '')[-1200:] if chapters else ''
-        memory_section = f"""前文动态记忆（防遗忘摘要）：
+    # 卷目标对齐（#3）
+    vol_outline = _get_volume_outline(vol_chapter, vol_index)
+    if vol_outline:
+        first_line = vol_outline.split('\n')[0]
+        body = '\n'.join(vol_outline.split('\n')[1:]).strip()
+        bible_sections.append((first_line, body, 2))
+
+    bible_context = _apply_budget_management(bible_sections, total_budget=4000) if bible_sections else (bb.generated_summary or '')[:2000]
+
+    # ===== 3. 分层滚动记忆（#7：相关性+时效性）=====
+    relevant_reports = _collect_relevant_reports(book_id, current_chapter_num, window=10, max_reports=3, per_report_limit=800)
+    if relevant_reports:
+        report_context = '\n\n'.join([f'【{r["title"]}（{r["chapter_start"]}-{r["chapter_end"]}章）】\n{r["content"]}' for r in relevant_reports])
+        recent_text = (last_chapter.content or '')[-1200:] if last_chapter else ''
+        memory_section = f"""前文动态记忆（防遗忘摘要，按当前章号±10窗口筛选）：
 {report_context}
 
 最近章节衔接（即时层）：
 {recent_text or '（开篇第一章）'}"""
     else:
-        # 回退：最近3章前800字
-        recent_text = '\n\n'.join([f'【第{c.order_index}章 {c.title or ""}】\n{(c.content or "")[:800]}' for c in chapters[-3:]]) if chapters else ''
+        recent_text = '\n\n'.join([f'【第{c.order_index}章 {c.title or ""}】\n{(c.content or "")[:800]}' for c in all_chapters[-3:]]) if all_chapters else ''
         memory_section = f'最近内容（防遗忘）：\n{recent_text[:3000]}'
 
-    # ===== 3. 伏笔防遗忘：注入待回收伏笔清单 =====
+    # ===== 4. 伏笔防遗忘（#2：按到期紧迫度排序）=====
+    pending_fs = _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=5)
     foreshadowing_section = ''
-    if bb.foreshadowing and bb.foreshadowing.strip():
-        # 从 foreshadowing 文本中提取未回收伏笔（简单启发式：含"待回收/未回收/埋设"等关键词的行）
-        fs_lines = bb.foreshadowing.split('\n')
-        pending_fs = []
-        for line in fs_lines:
-            line = line.strip()
-            if not line:
-                continue
-            # 排除已回收的伏笔
-            if any(kw in line for kw in ['已回收', '已揭示', '已解决', '已兑现']):
-                continue
-            pending_fs.append(line)
-        if pending_fs:
-            # 取最近 8 条待回收伏笔
-            pending_text = '\n'.join(pending_fs[-8:])
-            foreshadowing_section = f"""【待回收伏笔清单】（本章节应考虑回收其中1-2条，避免遗忘；若无合适时机可暂缓，但不可永久遗忘）
+    if pending_fs:
+        fs_lines = []
+        for urgency, planted, target, desc in pending_fs:
+            target_hint = f'（计划回收于第{target}章）' if target else '（无明确回收点）'
+            fs_lines.append(f'- {desc}{target_hint}')
+        pending_text = '\n'.join(fs_lines)
+        foreshadowing_section = f"""【待回收伏笔清单】（按到期紧迫度排序，本章节应考虑回收其中1-2条，避免遗忘；若无合适时机可暂缓，但不可永久遗忘）
 {pending_text}"""
 
-    instruction = request.json.get('instruction', '继续写下一章')
-    skill_pack_ids = request.json.get('skill_pack_ids', [])
+    # ===== 5. 章节计划前置（#4：chapter_plan Agent）=====
+    chapter_plan = _generate_chapter_plan(
+        book_id, bb, current_chapter_num, vol_chapter, vol_index,
+        memory_section, foreshadowing_section, skill_pack_ids,
+        api_key, base_url, model, max_tokens=600
+    )
+    plan_section = f'【本章计划】（由 chapter_plan Agent 生成，请严格遵循）\n{chapter_plan}' if chapter_plan else ''
 
-    # 注入技能包提示词（章节写作 + 去AI味审校 + 诊断规则，让 AI 知道完整工作流后半段）
+    # ===== 6. 技能包提示词 =====
     skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_chapter', 'tomato_deai', 'tomato_diagnosis', 'write_chapter', 'draft_writing', 'chapter_plan'])
 
+    # ===== 7. 智能默认指令（#11）=====
+    smart_instruction = _build_smart_instruction(instruction, last_chapter, current_chapter_num)
+
+    # ===== 8. 组装 system_prompt =====
     system_prompt = f"""你是番茄小说金番作者级别的写手，正在协作写一本小说，当前准备写第 {current_chapter_num} 章。
 
 【项目宪法 - 已确认设定】（必须严格遵守，不可矛盾）
-{bible_context[:3500]}
+{bible_context[:4000]}
 
 {memory_section}
 
 {foreshadowing_section}
+
+{plan_section}
 
 {skill_note}
 
@@ -3937,23 +4371,77 @@ def ai_continue(book_id):
 4. 每章 2400 字 ±100，对话占比 ≥30%
 5. 主动考虑回收"待回收伏笔清单"中的伏笔（若有），避免长线遗忘
 6. 三明治结构：苦(困境)→甜(获得)→爽(反击)→钩子(新信息/新困境)
-7. 章尾必留钩子，七种类型不重复"""
+7. 章尾必留钩子，七种类型不重复
+8. 若存在【本章计划】，必须严格按计划展开剧情"""
 
-    user_prompt = instruction or f'请继续写第 {current_chapter_num} 章。'
+    # ===== 9. 动态 temperature（#10）=====
+    temperature = _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, chapters_in_vol)
+
+    return {
+        'system_prompt': system_prompt,
+        'user_prompt': smart_instruction,
+        'temperature': temperature,
+        'max_tokens': 3200,  # #12：从 4000 降到 3200，省 token 又防止水字数
+        'chapter_plan': chapter_plan,
+        'current_chapter_num': current_chapter_num,
+        'vol_chapter': vol_chapter,
+        'vol_index': vol_index,
+        'api_key': api_key,
+        'base_url': base_url,
+        'model': model,
+    }
+
+
+@app.route('/api/books/<book_id>/ai-continue', methods=['POST'])
+@login_required
+def ai_continue(book_id):
+    """正文滚动创作（多 Agent 协同版，14项优化）：
+    1. 分层注入 bible 上下文（key_rules/worldbuilding/character_profiles/plot_design/timeline/concept）+ 按卷维度数据 + 卷纲对齐
+    2. 分层滚动记忆（即时层最近1章 + 近期层动态报告按当前章号±10窗口筛选）防遗忘
+    3. 伏笔防遗忘：按到期紧迫度排序，注入 Top 5 待回收伏笔清单
+    4. 章节计划前置（chapter_plan Agent）：先生成200字计划，再写正文
+    5. 正文生成（动态 temperature + 智能 instruction）
+    6. 去 AI 味审校 Agent：容错+可观测（deai_status）
+    7. 一致性检查 Agent：检查是否违反 key_rules/人设
+    优化项：#1按卷注入 #2伏笔紧迫度 #3卷目标对齐 #4章节计划前置 #5相关性筛选
+           #6审校容错 #7动态报告相关性 #10动态temperature #11智能instruction #12 max_tokens
+           #13多Agent协同 #14预算管理 #9章号健壮性"""
+    book = Book.query.get(book_id)
+    if not book: return jsonify({'error': 'Not found'}), 404
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    instruction = request.json.get('instruction', '')
+    skill_pack_ids = request.json.get('skill_pack_ids', [])
+    enable_consistency_check = request.json.get('enable_consistency_check', True)  # 默认开启一致性检查
 
     try:
+        ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids)
+        system_prompt = ctx['system_prompt']
+        user_prompt = ctx['user_prompt']
+        temperature = ctx['temperature']
+        max_tokens = ctx['max_tokens']
+        api_key = ctx['api_key']
+        base_url = ctx['base_url']
+        model = ctx['model']
+
+        # ===== 正文生成 =====
         resp = requests.post(f'{base_url}/chat/completions',
             headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
             json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}],
-                  'temperature': 0.7, 'max_tokens': 4000},
+                  'temperature': temperature, 'max_tokens': max_tokens},
             timeout=180)
         result = resp.json()
         draft_content = result['choices'][0]['message']['content']
 
-        # ===== 4. 审校环节：去AI味审校（参考番茄金番工作流 tomato_deai）=====
-        # 仅当用户选了技能包时执行审校（避免无技能包时多消耗 token）
+        # ===== 去 AI 味审校 Agent（#6：容错+可观测）=====
         polished_content = draft_content
         review_notes = ''
+        deai_status = 'skipped'  # skipped / success / failed
         if skill_pack_ids:
             deai_skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_deai'], max_per_prompt=1200, mode='agent')
             if deai_skill_note:
@@ -3972,19 +4460,112 @@ def ai_continue(book_id):
                         json={'model': model,
                               'messages': [{'role':'system','content':deai_system},
                                            {'role':'user','content':f'请审校以下章节正文：\n\n{draft_content}'}],
-                              'temperature': 0.5, 'max_tokens': 4000},
+                              'temperature': 0.5, 'max_tokens': max_tokens},
                         timeout=180)
                     deai_result = deai_resp.json()
                     polished = deai_result['choices'][0]['message']['content'].strip()
-                    if polished and len(polished) > 500:  # 简单校验，避免空返回
+                    # #6：字数校验从 len>500 改为 2200≤len≤2700，否则视为失败回滚用初稿
+                    if polished and 2200 <= len(polished) <= 2700:
                         polished_content = polished
                         review_notes = '已自动去AI味审校'
-                except Exception:
-                    pass  # 审校失败不影响返回初稿
+                        deai_status = 'success'
+                    elif polished and len(polished) > 500:
+                        # 字数不达标但有内容，标记为失败但仍返回初稿
+                        review_notes = f'去AI味审校返回字数异常({len(polished)}字)，已回滚使用初稿'
+                        deai_status = 'failed'
+                    else:
+                        review_notes = '去AI味审校返回为空，已回滚使用初稿'
+                        deai_status = 'failed'
+                except Exception as e:
+                    review_notes = f'去AI味审校异常：{str(e)[:100]}，已回滚使用初稿'
+                    deai_status = 'failed'
 
-        return jsonify({'content': polished_content, 'draft': draft_content if review_notes else None, 'review_notes': review_notes})
+        # ===== 一致性检查 Agent（#13：独立 Agent）=====
+        consistency_passed = True
+        consistency_issues = ''
+        if enable_consistency_check:
+            consistency_passed, consistency_issues = _consistency_check(
+                book_id, bb, polished_content, ctx['current_chapter_num'],
+                api_key, base_url, model, max_tokens=800
+            )
+
+        return jsonify({
+            'content': polished_content,
+            'draft': draft_content if deai_status == 'success' else None,
+            'review_notes': review_notes,
+            'deai_status': deai_status,  # #6：新增可观测字段
+            'chapter_plan': ctx.get('chapter_plan', ''),  # #4：返回计划供前端展示
+            'current_chapter_num': ctx['current_chapter_num'],
+            'vol_index': ctx.get('vol_index', 0),
+            'vol_title': ctx['vol_chapter'].title if ctx.get('vol_chapter') else '',
+            'temperature': temperature,  # #10：返回实际使用的 temperature
+            'consistency_passed': consistency_passed,  # #13：一致性检查结果
+            'consistency_issues': consistency_issues,
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/books/<book_id>/ai-continue/stream', methods=['POST'])
+@login_required
+def ai_continue_stream(book_id):
+    """正文滚动创作流式版（#8：SSE 推送初稿）。
+    前端可通过 EventSource 接收 chunks，审校与一致性检查在流结束后由前端单独触发或忽略。
+    返回 text/event-stream，每个 chunk 形如 data: {"content": "..."}\n\n"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Not found'}), 404
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    instruction = request.json.get('instruction', '')
+    skill_pack_ids = request.json.get('skill_pack_ids', [])
+
+    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids)
+    api_key = ctx['api_key']
+    base_url = ctx['base_url']
+    model = ctx['model']
+
+    def generate():
+        try:
+            # 先推送元信息（计划、章号、卷信息、temperature）
+            meta = {
+                'meta': True,
+                'chapter_plan': ctx.get('chapter_plan', ''),
+                'current_chapter_num': ctx['current_chapter_num'],
+                'vol_index': ctx.get('vol_index', 0),
+                'vol_title': ctx['vol_chapter'].title if ctx.get('vol_chapter') else '',
+                'temperature': ctx['temperature'],
+            }
+            yield f'data: {json.dumps(meta, ensure_ascii=False)}\n\n'
+
+            # 流式生成正文初稿
+            resp = requests.post(f'{base_url}/chat/completions',
+                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                json={'model': model,
+                      'messages': [{'role': 'system', 'content': ctx['system_prompt']},
+                                   {'role': 'user', 'content': ctx['user_prompt']}],
+                      'temperature': ctx['temperature'],
+                      'max_tokens': ctx['max_tokens'],
+                      'stream': True},
+                stream=True, timeout=180)
+            for line in resp.iter_lines():
+                if line:
+                    line = line.decode('utf-8')
+                    if line.startswith('data: '):
+                        chunk = line[6:]
+                        if chunk == '[DONE]':
+                            yield 'data: [DONE]\n\n'
+                            break
+                        yield f'data: {chunk}\n\n'
+        except Exception as e:
+            yield f'data: {{"error": "{str(e)[:200]}"}}\n\n'
+
+    return app.response_class(generate(), mimetype='text/event-stream')
 
 
 # ==== LLM 调用辅助函数 ====
