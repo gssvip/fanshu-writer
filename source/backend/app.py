@@ -2072,6 +2072,327 @@ def import_book_files():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+@app.route('/api/books/<book_id>/ai-import-recognize', methods=['POST'])
+@login_required
+def ai_import_recognize(book_id):
+    """导入作品后，根据文件名/章节标题/章节内容样本，AI自动识别并填入各创作维度。
+    可识别：构思、设定、大纲、人物、剧情、伏笔、地图、物资库。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Book not found'}), 404
+
+    data = request.get_json() or {}
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    # 可选：指定要识别的维度；为空则识别全部
+    target_dims = data.get('dimensions', [])
+
+    config = AIConfig.query.first()
+    if not config or not config.api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    # 收集文件名/章节标题 + 内容样本
+    all_chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+    if not all_chs:
+        return jsonify({'error': '该作品暂无章节，无法识别'}), 400
+
+    # 章节标题列表（即文件名/章节名）
+    titles = [ch.title for ch in all_chs[:200]]
+    # 内容样本：取前几章 + 中间几章的片段
+    samples = []
+    sample_chs = all_chs[:3] + all_chs[len(all_chs)//2:len(all_chs)//2+2] if len(all_chs) > 5 else all_chs
+    for ch in sample_chs:
+        content = (ch.content or '')[:600]
+        if content:
+            samples.append(f'【{ch.title}】\n{content}')
+
+    titles_text = '\n'.join(titles)
+    samples_text = '\n\n'.join(samples)[:4000]
+
+    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'master_outline', 'character_design', 'world_setting'], mode='agent')
+
+    # 识别哪些维度为空（仅填充空维度，避免覆盖已有内容）
+    dim_status = {
+        'concept': bool(bb.concept and bb.concept.strip()),
+        'settings': bool(bb.key_rules and bb.key_rules.strip()),
+        'outline': bool(bb.plot_design and bb.plot_design.strip()),
+        'characters': bool(bb.character_profiles and bb.character_profiles.strip()),
+        'plot': bool(bb.timeline and bb.timeline.strip()),
+        'foreshadowing': bool(bb.foreshadowing and bb.foreshadowing.strip()),
+        'locations': bool(bb.locations and bb.locations.strip()),
+        'inventory': bool(bb.inventory and bb.inventory.strip()),
+    }
+    # 默认只填空维度
+    empty_dims = [k for k, v in dim_status.items() if not v]
+    dims_to_fill = target_dims if target_dims else empty_dims
+    if not dims_to_fill:
+        return jsonify({'success': True, 'message': '所有维度已有内容，未做修改', 'bible': bb.to_dict(), 'filled': []})
+
+    dims_label = '、'.join(dims_to_fill)
+    system_prompt = f"""你是专业的小说设定分析师。请根据导入作品的【文件名/章节标题】和【内容样本】，自动识别并填充以下空维度：{dims_label}。
+
+【识别规则】
+1. 仅根据文件名和内容样本推断，不要编造未提供的设定
+2. 文件名/章节标题往往暗含卷名、人物名、地点、事件等关键信息，重点提取
+3. 每个维度输出对应内容，无法判断的维度输出"（信息不足，待补充）"
+4. 保持各维度内容一致性（人物名、地点、能力体系等需统一）
+
+{skill_note}
+
+严格按JSON对象格式输出（不要任何其他文字）：
+{{
+  "concept": "一句话核心创意（30字内）",
+  "settings": "核心规则/能力体系/世界观禁忌（多条用换行分隔）",
+  "outline": "主线冲突+卷纲拆解（基于章节标题推断卷结构）",
+  "characters": "主要角色档案（JSON数组：[{{\"name\":\"\",\"role\":\"\",\"personality\":\"\",\"motivation\":\"\"}}]，纯文本也可）",
+  "plot": "按章节标题梳理的关键事件时间线",
+  "foreshadowing": "从内容样本中识别的伏笔（若无则留空）",
+  "locations": "从标题/内容识别的地点（若无则留空）",
+  "inventory": "从内容识别的物品/功法/法宝（若无则留空）"
+}}"""
+
+    user_prompt = f'作品标题：{book.title}\n作品类型：{book.genre}\n\n【文件名/章节标题列表（共{len(titles)}项）】\n{titles_text}\n\n【内容样本】\n{samples_text or "（无内容样本）"}'
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=3000, temperature=0.3
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    try:
+        analysis = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        import re as _re_ir
+        m = _re_ir.search(r'\{[\s\S]*\}', content)
+        if m:
+            analysis = json.loads(m.group())
+        else:
+            return jsonify({'error': 'AI返回格式无法解析', 'raw': content[:300]}), 500
+
+    # 字段映射：维度 -> bible字段
+    dim_field_map = {
+        'concept': 'concept',
+        'settings': 'key_rules',
+        'outline': 'plot_design',
+        'characters': 'character_profiles',
+        'plot': 'timeline',
+        'foreshadowing': 'foreshadowing',
+        'locations': 'locations',
+        'inventory': 'inventory',
+    }
+
+    filled = []
+    for dim in dims_to_fill:
+        field = dim_field_map.get(dim)
+        if not field:
+            continue
+        val = analysis.get(dim, '')
+        if isinstance(val, (list, dict)):
+            val = json.dumps(val, ensure_ascii=False, indent=2)
+        val = str(val).strip()
+        if val and val != '（信息不足，待补充）' and not val.startswith('无'):
+            setattr(bb, field, val)
+            filled.append(dim)
+
+    bb.last_synced_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'message': f'已识别填充 {len(filled)} 个维度：{"、".join(filled) if filled else "无"}',
+        'filled': filled,
+        'bible': bb.to_dict()
+    })
+
+
+@app.route('/api/books/<book_id>/ai-anti-forget-check', methods=['POST'])
+@login_required
+def ai_anti_forget_check(book_id):
+    """长篇小说防遗忘与一致性检查（综合诊断）。
+    整合技能包「长篇小说防遗忘系统」的 consistency_check / lock_facts / narrative_debt / foreshadow_register / character_cognition 提示词，
+    扫描全部维度+近期章节，输出：锁定事实清单、一致性违规清单、待回收伏笔、叙事债务、改进建议。
+    结果写入 DynamicMemory.health_dashboard，并返回前端展示。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Book not found'}), 404
+
+    data = request.get_json() or {}
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    # 检查范围：recent(近10章) / all(全部章节，按卷抽样) / dimensions(仅维度)
+    scope = data.get('scope', 'recent')
+
+    config = AIConfig.query.first()
+    if not config or not config.api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': '该作品暂无创作维度数据，请先填写设定/大纲/剧情等维度。'}), 400
+
+    # 收集章节内容（按 scope 决定范围）
+    all_chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+    chapter_text = ''
+    ch_count = len(all_chs)
+    source_label = '章节正文'
+    if ch_count > 0:
+        if scope == 'dimensions':
+            # 仅维度模式：不读章节
+            chapter_text, source_label = _collect_dimension_source(bb, '全部维度')
+        elif scope == 'all' and ch_count > 20:
+            # 全部模式：抽样 首中尾 各几章
+            sample = all_chs[:5] + all_chs[len(all_chs)//2-2:len(all_chs)//2+3] + all_chs[-5:]
+            seen = set()
+            parts = []
+            for ch in sample:
+                if ch.id in seen:
+                    continue
+                seen.add(ch.id)
+                parts.append(f'【{ch.title}】\n{(ch.content or "")[:800]}')
+            chapter_text = '\n\n'.join(parts)[:8000]
+        else:
+            # 近期模式（默认）：最近 10 章
+            recent = all_chs[-10:]
+            parts = [f'【{ch.title}】\n{(ch.content or "")[:1000]}' for ch in recent]
+            chapter_text = '\n\n'.join(parts)[:8000]
+    else:
+        # 无章节：回退到维度数据
+        chapter_text, source_label = _collect_dimension_source(bb, '全部维度')
+        if not chapter_text:
+            return jsonify({'error': '该作品暂无章节，且设定/大纲/剧情维度也为空，无法进行检查。请先填写维度或导入章节。'}), 400
+
+    # 收集已有动态文件（若有），作为额外上下文
+    dm = DynamicMemory.query.filter_by(book_id=book_id).first()
+    dyn_ctx = ''
+    if dm:
+        for fk in ['foreshadowing_tracker', 'character_ecosystem', 'ability_world']:
+            v = getattr(dm, fk, '') or ''
+            if v.strip():
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, dict):
+                        # 取摘要性字段
+                        summary = parsed.get('summary') or parsed.get('pending') or parsed.get('world_facts') or ''
+                        if summary:
+                            dyn_ctx += f'【{fk}】\n{str(summary)[:600]}\n\n'
+                except (json.JSONDecodeError, ValueError):
+                    dyn_ctx += f'【{fk}】\n{v[:600]}\n\n'
+
+    # 提取防遗忘系统的核心提示词（这些 prompt 此前未被任何端点调用）
+    skill_note = _get_skill_prompts(
+        skill_pack_ids,
+        ['consistency_check', 'lock_facts', 'narrative_debt', 'foreshadow_register', 'character_cognition'],
+        max_per_prompt=1200, mode='agent'
+    )
+
+    # 构建维度全景上下文
+    dim_ctx_parts = []
+    dim_fields = [
+        ('concept', '构思'), ('key_rules', '设定/核心规则'), ('worldbuilding', '世界观'),
+        ('plot_design', '大纲/总纲'), ('character_profiles', '人物档案'),
+        ('timeline', '剧情/时间线'), ('foreshadowing', '伏笔'),
+        ('locations', '地点'), ('inventory', '物资库'),
+    ]
+    for f, lbl in dim_fields:
+        v = getattr(bb, f, '') or ''
+        if v.strip():
+            dim_ctx_parts.append(f'【{lbl}】\n{v[:800]}')
+    dim_ctx = '\n\n'.join(dim_ctx_parts) or '（维度数据为空）'
+
+    system_prompt = f"""你是「长篇小说防遗忘与一致性审查员」，整合多个防遗忘技能协同工作：
+1. 设定锁定员(lock_facts)：从各维度提取不可变核心事实清单
+2. 一致性审查员(consistency_check)：检查近期章节是否违反已锁定设定
+3. 伏笔管理师(foreshadow_register)：盘点伏笔状态，标记待回收
+4. 叙事债务追踪师(narrative_debt)：盘点悬念承诺与兑现平衡
+5. 角色认知管理师(character_cognition)：检查角色认知边界是否被破坏
+
+{skill_note}
+
+【审查重点】
+- 人物设定：名字记错/能力超限/性格突变/关系前后矛盾
+- 世界规则：违反已建立的物理/魔法/力量体系法则
+- 时间线：时间倒流/年龄错误/事件顺序混乱
+- 角色认知：角色知道了不该知道的信息（信息差破坏）
+- 伏笔状态：已回收伏笔又被当作未回收/待回收伏笔遗忘过久
+- 物资/能力：物品/功法/境界前后不一致（跳变/重复获得）
+
+严格按JSON格式输出（不要任何其他文字）：
+{{
+  "locked_facts": ["不可变核心事实1", "不可变核心事实2", "...（最多15条）"],
+  "violations": [
+    {{"type": "人物/世界规则/时间线/认知/伏笔/物资", "severity": "严重/警告/提示", "location": "出现位置（章节/维度）", "desc": "违规描述", "fix": "修正建议"}}
+  ],
+  "pending_foreshadowing": [
+    {{"content": "伏笔内容", "buried_at": "埋设位置", "urgency": "紧急/一般/可缓", "suggest_chapter": "建议回收章节"}}
+  ],
+  "narrative_debt": [
+    {{"promise": "悬念/承诺", "status": "待兑现/过度透支/已遗忘", "priority": "高/中/低", "note": "说明"}}
+  ],
+  "character_cognition_issues": ["角色认知边界问题1", "问题2"],
+  "suggestions": ["针对性改进建议1", "建议2", "建议3"],
+  "health_score": 0-100的整数,
+  "summary": "本次检查总体结论（100字内）"
+}}"""
+
+    user_prompt = f'作品标题：{book.title}\n数据来源：{source_label}（共{ch_count}章）\n\n【各维度全景】\n{dim_ctx}\n\n【已有动态文件摘要】\n{dyn_ctx or "（无）"}\n\n【待审查内容】\n{chapter_text}'
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=3500, temperature=0.3
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    try:
+        report = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        import re as _re_af
+        m = _re_af.search(r'\{[\s\S]*\}', content)
+        if m:
+            try:
+                report = json.loads(m.group())
+            except (json.JSONDecodeError, ValueError):
+                report = {'summary': content[:500], 'raw': True}
+        else:
+            report = {'summary': content[:500], 'raw': True}
+
+    # 持久化到 DynamicMemory.health_dashboard（防遗忘仪表盘）
+    if not dm:
+        dm = DynamicMemory(book_id=book_id)
+        for key in DynamicMemory.FILE_KEYS:
+            setattr(dm, key, DynamicMemory.get_empty_template(key))
+        db.session.add(dm)
+    try:
+        hd = json.loads(dm.health_dashboard or '{}') if dm.health_dashboard else {}
+    except (json.JSONDecodeError, ValueError):
+        hd = {}
+    hd['last_anti_forget_check'] = {
+        'checked_at': datetime.now(timezone.utc).isoformat(),
+        'scope': scope,
+        'ch_count': ch_count,
+        'health_score': report.get('health_score'),
+        'summary': report.get('summary', ''),
+        'violation_count': len(report.get('violations', [])),
+        'pending_foreshadowing_count': len(report.get('pending_foreshadowing', [])),
+    }
+    hd['alerts'] = report.get('violations', [])[:20]
+    dm.health_dashboard = json.dumps(hd, ensure_ascii=False, indent=2)
+    db.session.commit()
+
+    return jsonify({
+        'success': True,
+        'report': report,
+        'scope': scope,
+        'ch_count': ch_count,
+        'source_label': source_label
+    })
+
+
 @app.route('/api/books/<book_id>/import-chapters', methods=['POST'])
 @login_required
 def append_import_chapters(book_id):
@@ -5102,6 +5423,48 @@ def _collect_volume_chapters(book_id, volume_id):
     return chapter_text, len(volume_chapters)
 
 
+def _collect_dimension_source(bb, volume_title=''):
+    """当无章节时，从设定/大纲/剧情等主要维度收集基础数据作为识别来源。
+    返回 (source_text, source_label)。source_label 标识数据来源（用于提示AI）。"""
+    if not bb:
+        return '', ''
+    parts = []
+    if bb.concept and bb.concept.strip():
+        parts.append(f'【构思】\n{bb.concept.strip()[:600]}')
+    if bb.key_rules and bb.key_rules.strip():
+        parts.append(f'【设定/核心规则】\n{bb.key_rules.strip()[:1200]}')
+    if bb.worldbuilding and bb.worldbuilding.strip():
+        parts.append(f'【世界观】\n{bb.worldbuilding.strip()[:800]}')
+    if bb.plot_design and bb.plot_design.strip():
+        parts.append(f'【大纲/总纲】\n{bb.plot_design.strip()[:1500]}')
+    if bb.timeline and bb.timeline.strip():
+        # timeline 可能是 JSON（卷列表）或纯文本
+        tl_text = bb.timeline.strip()
+        try:
+            tl_parsed = json.loads(tl_text)
+            if isinstance(tl_parsed, list):
+                tl_lines = []
+                for v in tl_parsed:
+                    if isinstance(v, dict):
+                        vol_name = v.get('volume', '')
+                        vol_content = v.get('content', '') or v.get('outline', '') or v.get('plot', '')
+                        if vol_content:
+                            tl_lines.append(f'卷「{vol_name}」: {str(vol_content)[:300]}')
+                if tl_lines:
+                    tl_text = '\n'.join(tl_lines)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        parts.append(f'【剧情/时间线】\n{tl_text[:1500]}')
+    if bb.character_profiles and bb.character_profiles.strip():
+        parts.append(f'【人物档案】\n{bb.character_profiles.strip()[:800]}')
+
+    source_text = '\n\n'.join(parts)
+    label = '设定/大纲/剧情维度' if source_text else ''
+    if volume_title and source_text:
+        label = f'设定/大纲/剧情维度（针对「{volume_title}」）'
+    return source_text, label
+
+
 def _get_volume_list(bb):
     """从 bible.timeline 解析卷列表，返回 [{volume_id, volume, volume_index}]"""
     if not bb or not bb.timeline:
@@ -5173,8 +5536,12 @@ def ai_analyze_character_volume(book_id):
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
     chapter_text, ch_count = _collect_volume_chapters(book_id, volume_id)
-    if not chapter_text and ch_count == 0:
-        return jsonify({'error': '该卷没有章节内容，无法识别人物'}), 400
+    source_label = ''
+    if not chapter_text or ch_count == 0:
+        # 无章节时，从设定/大纲/剧情维度提取基础数据
+        chapter_text, source_label = _collect_dimension_source(bb, volume_title or '全部章节')
+        if not chapter_text:
+            return jsonify({'error': '该卷暂无章节，且设定/大纲/剧情维度也为空，无法识别人物。请先填写设定、大纲或剧情维度。'}), 400
 
     # 上下文：全局人物档案 + 设定 + 该卷剧情
     ctx_parts = []
@@ -5224,7 +5591,7 @@ def ai_analyze_character_volume(book_id):
 
 {skill_note}"""
 
-    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容）"}'
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n{source_label and f"（数据来源：{source_label}）" or ""}\n\n以下是该卷内容：\n\n{chapter_text or "（无内容，请根据设定推断）"}'
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
@@ -5291,8 +5658,12 @@ def ai_analyze_inventory_volume(book_id):
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
     chapter_text, ch_count = _collect_volume_chapters(book_id, volume_id)
-    if not chapter_text and ch_count == 0:
-        return jsonify({'error': '该卷没有章节内容，无法识别物资'}), 400
+    source_label = ''
+    if not chapter_text or ch_count == 0:
+        # 无章节时，从设定/大纲/剧情维度提取基础数据
+        chapter_text, source_label = _collect_dimension_source(bb, volume_title or '全部章节')
+        if not chapter_text:
+            return jsonify({'error': '该卷暂无章节，且设定/大纲/剧情维度也为空，无法识别物资。请先填写设定、大纲或剧情维度。'}), 400
 
     # 上下文
     ctx_parts = []
@@ -5347,7 +5718,7 @@ def ai_analyze_inventory_volume(book_id):
 
 {skill_note}"""
 
-    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容）"}'
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n{source_label and f"（数据来源：{source_label}）" or ""}\n\n以下是该卷内容：\n\n{chapter_text or "（无内容，请根据设定推断）"}'
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
@@ -5416,8 +5787,12 @@ def ai_analyze_dynamic_volume(book_id):
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
     chapter_text, ch_count = _collect_volume_chapters(book_id, volume_id)
-    if not chapter_text and ch_count == 0:
-        return jsonify({'error': '该卷没有章节内容，无法识别动态文件'}), 400
+    source_label = ''
+    if not chapter_text or ch_count == 0:
+        # 无章节时，从设定/大纲/剧情维度提取基础数据
+        chapter_text, source_label = _collect_dimension_source(bb, volume_title or '全部章节')
+        if not chapter_text:
+            return jsonify({'error': '该卷暂无章节，且设定/大纲/剧情维度也为空，无法识别动态文件。请先填写设定、大纲或剧情维度。'}), 400
 
     # 收集该卷区间内的已有动态报告（5章一份）
     dyn_reports = DynamicReport.query.filter_by(book_id=book_id).order_by(DynamicReport.chapter_start).all()
@@ -5481,7 +5856,7 @@ def ai_analyze_dynamic_volume(book_id):
 
 {skill_note}"""
 
-    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容，依据报告生成）"}'
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n{source_label and f"（数据来源：{source_label}）" or ""}\n\n以下是该卷内容：\n\n{chapter_text or "（无章节内容，依据报告生成）"}'
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
@@ -5546,8 +5921,12 @@ def ai_analyze_foreshadowing_volume(book_id):
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
     chapter_text, ch_count = _collect_volume_chapters(book_id, volume_id)
-    if not chapter_text and ch_count == 0:
-        return jsonify({'error': '该卷没有章节内容，无法识别伏笔'}), 400
+    source_label = ''
+    if not chapter_text or ch_count == 0:
+        # 无章节时，从设定/大纲/剧情维度提取基础数据
+        chapter_text, source_label = _collect_dimension_source(bb, volume_title or '全部章节')
+        if not chapter_text:
+            return jsonify({'error': '该卷暂无章节，且设定/大纲/剧情维度也为空，无法识别伏笔。请先填写设定、大纲或剧情维度。'}), 400
 
     ctx_parts = []
     if bb.foreshadowing:
@@ -5580,7 +5959,7 @@ def ai_analyze_foreshadowing_volume(book_id):
 
 {skill_note}"""
 
-    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容）"}'
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n{source_label and f"（数据来源：{source_label}）" or ""}\n\n以下是该卷内容：\n\n{chapter_text or "（无内容，请根据设定推断）"}'
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
@@ -5645,8 +6024,12 @@ def ai_analyze_locations_volume(book_id):
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
     chapter_text, ch_count = _collect_volume_chapters(book_id, volume_id)
-    if not chapter_text and ch_count == 0:
-        return jsonify({'error': '该卷没有章节内容，无法识别地点'}), 400
+    source_label = ''
+    if not chapter_text or ch_count == 0:
+        # 无章节时，从设定/大纲/剧情维度提取基础数据
+        chapter_text, source_label = _collect_dimension_source(bb, volume_title or '全部章节')
+        if not chapter_text:
+            return jsonify({'error': '该卷暂无章节，且设定/大纲/剧情维度也为空，无法识别地点。请先填写设定、大纲或剧情维度。'}), 400
 
     ctx_parts = []
     if bb.locations:
@@ -5676,7 +6059,7 @@ def ai_analyze_locations_volume(book_id):
 
 {skill_note}"""
 
-    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n\n以下是该卷章节内容：\n\n{chapter_text or "（无章节内容）"}'
+    user_prompt = f'作品标题：{book.title}\n卷名：{vol_label}\n{source_label and f"（数据来源：{source_label}）" or ""}\n\n以下是该卷内容：\n\n{chapter_text or "（无内容，请根据设定推断）"}'
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],

@@ -8,8 +8,8 @@ const TAB_ROW_1 = [
   { key: 'concept', label: '构思', icon: '💡', field: 'concept', placeholder: '一句话描述你的故事核心创意...' },
   { key: 'settings', label: '设定', icon: '⚙️', field: 'key_rules', placeholder: '核心规则、能力限制、世界观禁忌...' },
   { key: 'outline', label: '大纲', icon: '📋', field: 'plot_design', placeholder: '主线冲突、卷纲拆解、章节规划...' },
-  { key: 'characters', label: '人物及关系', icon: '👤', field: 'character_profiles', placeholder: '主角、配角的姓名、身份、性格、动机、人物关系...' },
   { key: 'plot', label: '剧情', icon: '📖', field: 'timeline', placeholder: '按时间顺序列出关键事件...' },
+  { key: 'characters', label: '人物及关系', icon: '👤', field: 'character_profiles', placeholder: '主角、配角的姓名、身份、性格、动机、人物关系...' },
 ];
 
 const TAB_ROW_2 = [
@@ -1422,6 +1422,28 @@ function ChapterPanel(props: {
     }
   }
 
+  // 导入作品后，按文件名/章节标题AI自动识别填入各空维度
+  const [aiImportRecognizing, setAiImportRecognizing] = useState(false);
+  async function handleAiImportRecognize() {
+    if (!bookId) return;
+    const confirmFill = confirm(
+      `将根据导入作品的【文件名/章节标题】+【内容样本】，AI自动识别并填充空的创作维度。\n\n仅填充空维度，不会覆盖已有内容。是否继续？`
+    );
+    if (!confirmFill) return;
+    setAiImportRecognizing(true);
+    try {
+      // dimensions 传空数组，后端自动识别空维度并填充
+      const result = await api.aiImportRecognize(bookId, [], selectedSkillPackIds);
+      alert(result.message || '识别完成');
+      // 刷新页面以重新加载维度数据
+      window.location.reload();
+    } catch (err: any) {
+      alert('AI识别填充失败：' + (err.message || '请检查AI配置或网络'));
+    } finally {
+      setAiImportRecognizing(false);
+    }
+  }
+
   // Enter快捷发送（Shift+Enter换行）
   const handlePromptKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -1646,6 +1668,15 @@ function ChapterPanel(props: {
           <button className="btn-ghost-sm" onClick={() => onCreateVolume()} title="新建卷">📂 新卷</button>
           <button className="btn-secondary-sm" onClick={() => importChaptersRef.current?.click()} disabled={importingChapters || !bookId} title="从 txt/md/docx/zip 文件追加章节，不影响已有章节">
             {importingChapters ? '⏳ 导入中...' : '📥 导入章节'}
+          </button>
+          <button
+            className="btn-primary-sm"
+            onClick={handleAiImportRecognize}
+            disabled={aiImportRecognizing || !bookId || chapters.filter(c => !c.is_volume).length === 0}
+            title="根据导入作品的文件名/章节标题+内容样本，AI自动识别填入空的创作维度（不覆盖已有内容）"
+            style={{background:'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)'}}
+          >
+            {aiImportRecognizing ? '⏳ 识别中...' : '🤖 AI识别填维度'}
           </button>
           <button className="btn-primary-sm" onClick={() => onCreateChapter()}>+ 新章节</button>
         </div>
@@ -3818,9 +3849,15 @@ function BibleEditPanel(props: {
           {showTips && (
             <div className="bible-tips-box">
               <p>✨ 点击「AI创作」可让AI根据构思和设定自动生成{tab.label}内容</p>
-              <p>🔍 点击「AI识别」可从已有章节中提取{tab.label}信息</p>
+              <p>🔍 点击「AI识别」可从已有章节中提取{tab.label}信息（无章节时自动从设定/大纲/剧情维度提取）</p>
               <p>✏️ 点击内容区域可直接编辑</p>
               {selectedSkillPacks.length > 0 && <p>📦 已选{selectedCount}个技能包协同创作</p>}
+              <p style={{marginTop:6,color:'var(--accent)',fontSize:12,borderTop:'1px dashed var(--border-color)',paddingTop:6}}>
+                🔗 维度协同工作流（参考：番茄金番作者 / 长篇小说创作全流程 / 长篇小说防遗忘系统）：<br/>
+                构思→设定→大纲→剧情→人物 相互反哺；大纲⇄剧情双向（提取各卷/反生成总纲）；<br/>
+                各维度AI识别会读取其他维度作"已确认"上下文保持一致；<br/>
+                🛡️ 动态文件面板「防遗忘检查」定期扫描一致性/伏笔/叙事债务，防长篇遗忘。
+              </p>
             </div>
           )}
         </>
@@ -4172,8 +4209,27 @@ function DynamicMemoryPanel(props: {
   const [collapsedVolDyn, setCollapsedVolDyn] = useState<Set<number>>(new Set());
   // 卷选择器
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
+  // 防遗忘与一致性检查
+  const [antiForgetChecking, setAntiForgetChecking] = useState(false);
+  const [antiForgetReport, setAntiForgetReport] = useState<any>(null);
+  const [antiForgetScope, setAntiForgetScope] = useState<'recent' | 'all' | 'dimensions'>('recent');
+  const [showAntiForgetModal, setShowAntiForgetModal] = useState(false);
 
   const chapterCount = chapters.filter(c => !c.is_volume).length;
+
+  async function handleAntiForgetCheck() {
+    if (!bookId) return;
+    setAntiForgetChecking(true);
+    try {
+      const result = await api.aiAntiForgetCheck(bookId, antiForgetScope, selectedSkillPackIds);
+      setAntiForgetReport(result.report);
+      setShowAntiForgetModal(true);
+    } catch (err: any) {
+      alert('防遗忘检查失败：' + (err.message || '请检查AI配置或网络'));
+    } finally {
+      setAntiForgetChecking(false);
+    }
+  }
 
   function loadReports() {
     if (!bookId) return;
@@ -4459,7 +4515,16 @@ function DynamicMemoryPanel(props: {
       <div className="dm-header">
         <h3>🗂️ 动态文件</h3>
         <div className="dm-header-actions">
-          <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating || batchMode} title="检查并自动生成缺失的报告">
+          <button
+            className="btn-primary-sm"
+            onClick={handleAntiForgetCheck}
+            disabled={antiForgetChecking || !bookId}
+            title="整合防遗忘技能包(consistency_check/lock_facts/伏笔/叙事债务)扫描全维度+章节，检查一致性违规、待回收伏笔、叙事债务"
+            style={{background:'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)'}}
+          >
+            {antiForgetChecking ? '⏳ 检查中...' : '🛡️ 防遗忘检查'}
+          </button>
+          <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating || batchMode || antiForgetChecking} title="检查并自动生成缺失的报告">
             {generating ? '⏳ 处理中...' : '🔄 自动检查'}
           </button>
           {reports.length > 0 && (
@@ -4480,6 +4545,23 @@ function DynamicMemoryPanel(props: {
       <p className="text-muted dm-desc">
         每5章自动汇总人物、事件、时间、地点、势力、伏笔、境界、关系等信息（≤500字/份），AI写作时优先读取动态文件替代全文，大幅降低token消耗
       </p>
+
+      {/* 防遗忘检查范围选择（整合防遗忘技能包：一致性/锁定事实/伏笔/叙事债务/角色认知） */}
+      <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:10,fontSize:11,color:'var(--text-muted)',flexWrap:'wrap'}}>
+        <span>🛡️ 防遗忘检查范围:</span>
+        {(['recent','all','dimensions'] as const).map(s => (
+          <button
+            key={s}
+            className={antiForgetScope === s ? 'btn-primary-sm' : 'btn-ghost-sm'}
+            style={{fontSize:11,padding:'2px 8px'}}
+            onClick={() => setAntiForgetScope(s)}
+            disabled={antiForgetChecking}
+          >
+            {s === 'recent' ? '近10章' : s === 'all' ? '全章抽样' : '仅维度'}
+          </button>
+        ))}
+        <span style={{fontSize:10,opacity:0.7}}>（无章节时自动从设定/大纲/剧情维度提取）</span>
+      </div>
 
       {/* 章节进度指示：只保留章数和报告数，移除 1-5/6-10 等 chips（下方已有可编辑报告目录） */}
       <div className="dm-progress-bar">
@@ -4729,6 +4811,113 @@ function DynamicMemoryPanel(props: {
               <button className="btn-ghost-sm" onClick={() => setShowCreateModal(false)}>取消</button>
               <button className="btn-primary-sm" onClick={handleCreate} disabled={generating}>
                 {generating ? '🤖 AI生成中...' : '✨ 生成'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 防遗忘与一致性检查报告弹窗 */}
+      {showAntiForgetModal && antiForgetReport && (
+        <div className="modal-overlay" onClick={() => setShowAntiForgetModal(false)}>
+          <div className="modal" style={{maxWidth:620}} onClick={e => e.stopPropagation()}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+              <h2 style={{margin:0}}>🛡️ 防遗忘与一致性检查</h2>
+              <button className="btn-ghost-sm" onClick={() => setShowAntiForgetModal(false)}>✕</button>
+            </div>
+
+            {/* 健康度评分 + 总览 */}
+            {typeof antiForgetReport.health_score === 'number' && (
+              <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:12,padding:'10px 14px',background:'var(--bg-tertiary)',borderRadius:8}}>
+                <div style={{fontSize:28,fontWeight:700,color: antiForgetReport.health_score >= 80 ? 'var(--success)' : antiForgetReport.health_score >= 60 ? 'var(--accent)' : 'var(--danger)'}}>
+                  {antiForgetReport.health_score}
+                </div>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600}}>健康度评分</div>
+                  <div style={{fontSize:11,color:'var(--text-muted)'}}>综合一致性/伏笔/叙事债务评估</div>
+                </div>
+              </div>
+            )}
+            {antiForgetReport.summary && (
+              <p style={{fontSize:13,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.6}}>{antiForgetReport.summary}</p>
+            )}
+
+            {/* 一致性违规清单 */}
+            {Array.isArray(antiForgetReport.violations) && antiForgetReport.violations.length > 0 && (
+              <div style={{marginBottom:14}}>
+                <h3 style={{fontSize:14,color:'var(--danger)',marginBottom:6}}>⚠️ 一致性违规（{antiForgetReport.violations.length}）</h3>
+                {antiForgetReport.violations.map((v:any,i:number) => (
+                  <div key={i} style={{fontSize:12,padding:'8px 10px',marginBottom:6,background:'var(--bg-tertiary)',borderLeft:`3px solid ${v.severity==='严重'?'var(--danger)':v.severity==='警告'?'var(--accent)':'var(--text-muted)'}`,borderRadius:4}}>
+                    <div style={{fontWeight:600,marginBottom:2}}>
+                      <span style={{color:'var(--danger)'}}>[{v.severity||'提示'}]</span> {v.type||''} · {v.location||''}
+                    </div>
+                    <div style={{color:'var(--text-secondary)'}}>{v.desc||''}</div>
+                    {v.fix && <div style={{color:'var(--success)',marginTop:2}}>💡 {v.fix}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 待回收伏笔 */}
+            {Array.isArray(antiForgetReport.pending_foreshadowing) && antiForgetReport.pending_foreshadowing.length > 0 && (
+              <div style={{marginBottom:14}}>
+                <h3 style={{fontSize:14,color:'var(--accent)',marginBottom:6}}>🔮 待回收伏笔（{antiForgetReport.pending_foreshadowing.length}）</h3>
+                {antiForgetReport.pending_foreshadowing.map((f:any,i:number) => (
+                  <div key={i} style={{fontSize:12,padding:'6px 10px',marginBottom:4,background:'var(--bg-tertiary)',borderRadius:4}}>
+                    <div>{f.content||''} <span style={{color: f.urgency==='紧急'?'var(--danger)':'var(--text-muted)',fontSize:11}}>[{f.urgency||''}]</span></div>
+                    {(f.buried_at || f.suggest_chapter) && <div style={{color:'var(--text-muted)',fontSize:11}}>埋设:{f.buried_at||'未知'} · 建议回收:{f.suggest_chapter||'待定'}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 叙事债务 */}
+            {Array.isArray(antiForgetReport.narrative_debt) && antiForgetReport.narrative_debt.length > 0 && (
+              <div style={{marginBottom:14}}>
+                <h3 style={{fontSize:14,color:'var(--accent)',marginBottom:6}}>📊 叙事债务（{antiForgetReport.narrative_debt.length}）</h3>
+                {antiForgetReport.narrative_debt.map((d:any,i:number) => (
+                  <div key={i} style={{fontSize:12,padding:'6px 10px',marginBottom:4,background:'var(--bg-tertiary)',borderRadius:4}}>
+                    <div>{d.promise||''} <span style={{color: d.priority==='高'?'var(--danger)':'var(--text-muted)',fontSize:11}}>[{d.status||''}/{d.priority||''}]</span></div>
+                    {d.note && <div style={{color:'var(--text-muted)',fontSize:11}}>{d.note}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 角色认知问题 */}
+            {Array.isArray(antiForgetReport.character_cognition_issues) && antiForgetReport.character_cognition_issues.length > 0 && (
+              <div style={{marginBottom:14}}>
+                <h3 style={{fontSize:14,color:'var(--accent)',marginBottom:6}}>👥 角色认知边界问题</h3>
+                {antiForgetReport.character_cognition_issues.map((c:string,i:number) => (
+                  <div key={i} style={{fontSize:12,padding:'6px 10px',marginBottom:4,background:'var(--bg-tertiary)',borderRadius:4}}>{c}</div>
+                ))}
+              </div>
+            )}
+
+            {/* 锁定事实清单 */}
+            {Array.isArray(antiForgetReport.locked_facts) && antiForgetReport.locked_facts.length > 0 && (
+              <div style={{marginBottom:14}}>
+                <h3 style={{fontSize:14,color:'var(--success)',marginBottom:6}}>🔒 锁定事实清单（{antiForgetReport.locked_facts.length}）</h3>
+                <div style={{fontSize:12,padding:'8px 10px',background:'var(--bg-tertiary)',borderRadius:4,lineHeight:1.7}}>
+                  {antiForgetReport.locked_facts.map((f:string,i:number) => <div key={i}>· {f}</div>)}
+                </div>
+              </div>
+            )}
+
+            {/* 改进建议 */}
+            {Array.isArray(antiForgetReport.suggestions) && antiForgetReport.suggestions.length > 0 && (
+              <div style={{marginBottom:8}}>
+                <h3 style={{fontSize:14,color:'var(--accent)',marginBottom:6}}>💡 改进建议</h3>
+                {antiForgetReport.suggestions.map((s:string,i:number) => (
+                  <div key={i} style={{fontSize:12,padding:'4px 10px',marginBottom:2,color:'var(--text-secondary)'}}>{i+1}. {s}</div>
+                ))}
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button className="btn-ghost-sm" onClick={() => { setShowAntiForgetModal(false); setAntiForgetScope('recent'); }}>关闭</button>
+              <button className="btn-primary-sm" onClick={() => { setShowAntiForgetModal(false); handleAntiForgetCheck(); }} disabled={antiForgetChecking}>
+                {antiForgetChecking ? '⏳ 重新检查中...' : '🔄 重新检查'}
               </button>
             </div>
           </div>

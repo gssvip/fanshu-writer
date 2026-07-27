@@ -341,6 +341,20 @@ export const api = {
   analyzeContent: (bookId: string) =>
     request<{ success: boolean; updated_fields: string[]; bible: BookBible }>(`/books/${bookId}/ai-analyze-content`, { method: 'POST' }),
 
+  // AI Import Recognize (导入作品后按文件名/章节标题自动识别填入各空维度)
+  aiImportRecognize: (bookId: string, dimensions: string[] = [], skillPackIds: string[] = []) =>
+    request<{ success: boolean; message: string; filled: string[]; bible: BookBible }>(`/books/${bookId}/ai-import-recognize`, {
+      method: 'POST',
+      body: JSON.stringify({ dimensions, skill_pack_ids: skillPackIds }),
+    }),
+
+  // AI Anti-Forget Check (长篇小说防遗忘与一致性检查)
+  aiAntiForgetCheck: (bookId: string, scope: 'recent' | 'all' | 'dimensions' = 'recent', skillPackIds: string[] = []) =>
+    request<{ success: boolean; report: any; scope: string; ch_count: number; source_label: string }>(`/books/${bookId}/ai-anti-forget-check`, {
+      method: 'POST',
+      body: JSON.stringify({ scope, skill_pack_ids: skillPackIds }),
+    }),
+
   // AI Analyze Single Dimension (单维度AI识别)
   analyzeDimension: (bookId: string, dimension: string) =>
     request<{ success: boolean; dimension: string; field: string; value: string; bible: BookBible }>(`/books/${bookId}/ai-analyze-dimension`, {
