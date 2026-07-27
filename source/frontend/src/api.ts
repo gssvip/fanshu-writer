@@ -305,8 +305,8 @@ export const api = {
     request<ReviewResult>(`/books/${bookId}/review`, { method: 'POST', body: JSON.stringify({ scope, content }) }),
 
   // AI Continue
-  aiContinue: (bookId: string, instruction: string) =>
-    request<{ content: string }>(`/books/${bookId}/ai-continue`, { method: 'POST', body: JSON.stringify({ instruction }) }),
+  aiContinue: (bookId: string, instruction: string, skillPackIds?: string[]) =>
+    request<{ content: string }>(`/books/${bookId}/ai-continue`, { method: 'POST', body: JSON.stringify({ instruction, skill_pack_ids: skillPackIds || [] }) }),
 
   // AI Analyze Book
   analyzeBook: (content: string) =>
@@ -334,8 +334,8 @@ export const api = {
     request<{ success: boolean; pack: SkillPack }>(`/books/${bookId}/apply-skill-pack`, { method: 'POST', body: JSON.stringify({ pack_id: packId }) }),
 
   // AI Brainstorm (协同创作)
-  brainstorm: (bookId: string, concept: string, dimension?: string) =>
-    request<BrainstormResult>(`/books/${bookId}/brainstorm`, { method: 'POST', body: JSON.stringify({ concept, dimension: dimension || 'all' }) }),
+  brainstorm: (bookId: string, concept: string, dimension?: string, skillPackIds?: string[]) =>
+    request<BrainstormResult>(`/books/${bookId}/brainstorm`, { method: 'POST', body: JSON.stringify({ concept, dimension: dimension || 'all', skill_pack_ids: skillPackIds || [] }) }),
 
   // AI Analyze Content (导入作品后自动识别)
   analyzeContent: (bookId: string) =>
@@ -438,4 +438,24 @@ export const api = {
   // Sync Analysis Result to Book Bible (for 仿写/同人文)
   syncAnalysisToBook: (bookId: string, analysis: AnalysisResult, mode: string) =>
     request<{ success: boolean; bible: BookBible; updated_fields: string[] }>(`/books/${bookId}/sync-analysis`, { method: 'POST', body: JSON.stringify({ analysis, mode }) }),
+
+  // ==== 大纲工作流：五幕式总纲 + 卷纲滚动生成 ====
+  aiOutlineMaster: (bookId: string, skillPackIds?: string[], totalChapters?: number, chaptersPerVolume?: number) =>
+    request<{ master_outline: string; volume_count: number }>(`/books/${bookId}/ai-outline-master`, {
+      method: 'POST',
+      body: JSON.stringify({ skill_pack_ids: skillPackIds || [], total_chapters: totalChapters || 300, chapters_per_volume: chaptersPerVolume || 50 }),
+    }),
+
+  aiOutlineVolume: (bookId: string, volumeIndex: number, volumeTitle?: string, skillPackIds?: string[], chaptersPerVolume?: number) =>
+    request<{ volume_data: any; timeline: string }>(`/books/${bookId}/ai-outline-volume`, {
+      method: 'POST',
+      body: JSON.stringify({ volume_index: volumeIndex, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [], chapters_per_volume: chaptersPerVolume || 50 }),
+    }),
+
+  // ==== 总 AI 创作：总览全局各维度 ====
+  aiMasterCreate: (bookId: string, dimensions: string[], skillPackIds?: string[], instruction?: string) =>
+    request<{ results: Array<{ dimension: string; label: string; field: string; content?: string; error?: string }> }>(`/books/${bookId}/ai-master-create`, {
+      method: 'POST',
+      body: JSON.stringify({ dimensions, skill_pack_ids: skillPackIds || [], instruction: instruction || '' }),
+    }),
 };

@@ -3252,12 +3252,18 @@ def ai_continue(book_id):
         memory_section = f'最近内容：\n{recent_text[:2000]}'
 
     instruction = request.json.get('instruction', '继续写下一章')
+    skill_pack_ids = request.json.get('skill_pack_ids', [])  # 支持技能包注入
+
+    # 注入技能包提示词（章节写作相关）
+    skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_chapter', 'write_chapter', 'draft_writing', 'chapter_plan'])
 
     system_prompt = f"""你是专业网文作者，正在协作写一本小说。
 项目宪法（必须严格遵守）：
 {bible_context[:3000]}
 
 {memory_section}
+
+{skill_note}
 
 写作要求：
 1. 严格遵循项目宪法中的设定
@@ -3275,6 +3281,302 @@ def ai_continue(book_id):
         return jsonify({'content': result['choices'][0]['message']['content']})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ==== LLM 调用辅助函数 ====
+def _call_llm(messages, max_tokens=None, temperature=None):
+    """统一的 LLM 调用辅助函数，返回 (content, error)"""
+    cfg = AIConfig.query.first()
+    if not cfg or not cfg.api_key:
+        return None, '请先配置 AI 模型 API Key'
+    try:
+        base = cfg.base_url.rstrip('/')
+        if not base.endswith('/v1'):
+            base += '/v1'
+        payload = {
+            'model': cfg.model,
+            'messages': messages,
+            'temperature': temperature if temperature is not None else cfg.temperature,
+            'max_tokens': max_tokens if max_tokens else cfg.max_tokens,
+            'stream': False
+        }
+        resp = requests.post(f'{base}/chat/completions',
+            headers={'Authorization': f'Bearer {cfg.api_key}', 'Content-Type': 'application/json'},
+            json=payload, timeout=180)
+        result = resp.json()
+        if 'choices' in result and len(result['choices']) > 0:
+            return result['choices'][0]['message']['content'], None
+        return None, str(result)
+    except Exception as e:
+        return None, str(e)
+
+
+def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500):
+    """从技能包提取指定 prompt_keys 的提示词（token优化：每个prompt截断，每包只取第一个匹配key）"""
+    if not skill_pack_ids:
+        return ''
+    try:
+        packs = SkillPack.query.filter(SkillPack.id.in_(skill_pack_ids)).all()
+    except Exception:
+        return ''
+    if not packs:
+        return ''
+    notes = []
+    for pack in packs:
+        try:
+            prompts = json.loads(pack.prompts_json) if pack.prompts_json else {}
+        except Exception:
+            prompts = {}
+        for key in prompt_keys:
+            if key in prompts and prompts[key]:
+                p = prompts[key][:max_per_prompt]
+                notes.append(f'【{pack.name}】\n{p}')
+                break
+    return '\n\n'.join(notes)
+
+
+# ==== 大纲工作流：五幕式总纲 + 卷纲滚动生成 ====
+@app.route('/api/books/<book_id>/ai-outline-master', methods=['POST'])
+def ai_outline_master(book_id):
+    """生成五幕式总纲：控制全书大体走向，写入 plot_design"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Not found'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    data = request.json or {}
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    total_chapters = data.get('total_chapters', 300)
+    chapters_per_volume = data.get('chapters_per_volume', 50)
+    volume_count = max(1, total_chapters // chapters_per_volume)
+
+    skill_note = _get_skill_prompts(skill_pack_ids, ['master_outline', 'tomato_outline', 'volume_breakdown'])
+
+    context_parts = []
+    if bb.concept:
+        context_parts.append(f'【构思】\n{bb.concept[:2000]}')
+    if bb.key_rules:
+        context_parts.append(f'【设定/规则】\n{bb.key_rules[:2000]}')
+    if bb.worldbuilding:
+        context_parts.append(f'【世界观】\n{bb.worldbuilding[:2000]}')
+    context = '\n\n'.join(context_parts) or '（暂无构思和设定，请基于书名和题材自由发挥）'
+
+    system_prompt = f"""你是番茄小说金番作者级别的总纲设计师。
+任务：为这本小说设计五幕式总纲，控制全书大体走向。
+
+【五幕模型】
+- 立身(1-5%)：底层→入门，觉醒金手指+首打脸+建立认知
+- 立足(5-25%)：新人→站稳，配角登场+世界观展开+5-8章小闭环
+- 立势(25-50%)：小角色→有分量，大舞台+强对手+团队建立
+- 立威(50-75%)：有分量→威名，组织级冲突+感情推进+信念考验
+- 立命(75-100%)：威名→蜕变，终极挑战+伏笔收束+续作种子
+
+【输出要求】
+全书约 {total_chapters} 章，分 {volume_count} 卷（每卷约 {chapters_per_volume} 章）。
+为每卷输出：卷号与卷名、所属幕、本卷核心目标（一句话）、主要冲突、关键转折点（2-3个）、卷尾高潮与悬念。
+只输出总纲文本，不要输出各卷的详细情节节点（详细节点在卷纲滚动生成阶段产生）。
+
+{skill_note}"""
+
+    user_prompt = f"""书名：{book.title}
+题材：{book.genre}
+
+已有设定：
+{context}
+
+请生成五幕式总纲。"""
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=4000, temperature=0.7
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    bb.plot_design = content
+    db.session.commit()
+    return jsonify({'master_outline': content, 'volume_count': volume_count})
+
+
+@app.route('/api/books/<book_id>/ai-outline-volume', methods=['POST'])
+def ai_outline_volume(book_id):
+    """生成单卷详细大纲（滚动生成）：基于总纲+已完成章节，写入 timeline"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Not found'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb or not bb.plot_design:
+        return jsonify({'error': '请先生成五幕式总纲'}), 400
+
+    data = request.json or {}
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    volume_index = data.get('volume_index', 1)
+    volume_title = data.get('volume_title', f'第{volume_index}卷')
+    chapters_per_volume = data.get('chapters_per_volume', 50)
+
+    skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'])
+
+    chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+    completed_summary = ''
+    if chapters:
+        recent = chapters[-5:]
+        completed_summary = '\n'.join([f'第{c.order_index}章 {c.title or ""}：{(c.content or "")[:200]}' for c in recent])
+
+    existing_timeline = (bb.timeline or '')[:2000]
+    master_outline = (bb.plot_design or '')[:3000]
+
+    system_prompt = f"""你是番茄小说金番作者级别的卷纲设计师。
+任务：为第 {volume_index} 卷「{volume_title}」生成详细大纲+情节节点。
+
+【输出格式】严格输出以下JSON（不要包裹在markdown代码块中）：
+{{
+  "volume_index": {volume_index},
+  "volume_title": "{volume_title}",
+  "core_goal": "本卷核心目标",
+  "core_conflict": "本卷主要冲突",
+  "emotion_driver": "情感驱动力",
+  "key_turns": ["转折点1", "转折点2", "转折点3"],
+  "boss": "本卷BOSS",
+  "foreshadow_new": ["新埋伏笔1"],
+  "foreshadow_recycle": ["回收伏笔1"],
+  "hook_type": "卷尾钩子类型",
+  "nodes": [
+    {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
+  ]
+}}
+
+【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
+【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
+本卷约 {chapters_per_volume} 章，分5-8个情节节点。
+
+{skill_note}"""
+
+    user_prompt = f"""书名：{book.title}
+
+【五幕式总纲】
+{master_outline}
+
+【已有剧情】
+{existing_timeline or '（暂无）'}
+
+【最近已完成章节】
+{completed_summary or '（本卷为第一卷，无前文）'}
+
+请为第 {volume_index} 卷生成详细大纲。"""
+
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+        max_tokens=3000, temperature=0.7
+    )
+    if err:
+        return jsonify({'error': err}), 500
+
+    import re
+    json_match = re.search(r'\{[\s\S]*\}', content)
+    if not json_match:
+        return jsonify({'error': 'AI返回格式错误，无法解析JSON', 'raw': content[:500]}), 500
+    try:
+        volume_data = json.loads(json_match.group())
+    except Exception:
+        return jsonify({'error': 'JSON解析失败', 'raw': content[:500]}), 500
+
+    volume_text = f"""【第{volume_index}卷：{volume_data.get('volume_title', volume_title)}】
+核心目标：{volume_data.get('core_goal', '')}
+核心冲突：{volume_data.get('core_conflict', '')}
+情感驱动：{volume_data.get('emotion_driver', '')}
+关键转折：{', '.join(volume_data.get('key_turns', []))}
+BOSS：{volume_data.get('boss', '')}
+新埋伏笔：{', '.join(volume_data.get('foreshadow_new', []))}
+回收伏笔：{', '.join(volume_data.get('foreshadow_recycle', []))}
+卷尾钩子：{volume_data.get('hook_type', '')}
+情节节点：
+""" + '\n'.join([f"  {n.get('chapters','')}: {n.get('title','')}（{n.get('type','M')}）- {n.get('summary','')}" for n in volume_data.get('nodes', [])])
+
+    if bb.timeline:
+        bb.timeline = bb.timeline + '\n\n' + volume_text
+    else:
+        bb.timeline = volume_text
+    db.session.commit()
+
+    return jsonify({'volume_data': volume_data, 'timeline': bb.timeline})
+
+
+# ==== 总 AI 创作：总览全局各维度，用户确认后填入 ====
+@app.route('/api/books/<book_id>/ai-master-create', methods=['POST'])
+def ai_master_create(book_id):
+    """总AI创作：一次性为多个维度生成内容，返回结果供用户确认后填入"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Not found'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    data = request.json or {}
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    dimensions = data.get('dimensions', ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design'])
+    instruction = data.get('instruction', '')
+
+    # 维度→技能包prompt_key映射 + 生成提示
+    DIM_MAP = {
+        'concept': {'field': 'concept', 'label': '构思', 'keys': ['tomato_plan', 'one_line_concept', 'brainstorm'],
+                    'prompt': '生成核心构思：一句话概念、核心卖点、主线冲突、独特亮点、目标读者。'},
+        'key_rules': {'field': 'key_rules', 'label': '设定/规则', 'keys': ['tomato_setting', 'worldbuilding'],
+                      'prompt': '生成核心设定：金手指四法则、代价反噬、世界观框架、五不妥协原则。'},
+        'worldbuilding': {'field': 'worldbuilding', 'label': '世界观', 'keys': ['worldbuilding', 'tomato_setting'],
+                          'prompt': '生成世界观：修炼体系/势力格局/地理环境/核心规则。'},
+        'character_profiles': {'field': 'character_profiles', 'label': '人物', 'keys': ['tomato_character', 'character_design'],
+                               'prompt': '生成主要人物：主角模板+CDL档案+配角六功能，含性格/动机/成长弧线。'},
+        'plot_design': {'field': 'plot_design', 'label': '大纲', 'keys': ['master_outline', 'tomato_outline', 'volume_breakdown'],
+                        'prompt': '生成五幕式总纲：每卷核心目标/主要冲突/关键转折/卷尾悬念。'},
+        'timeline': {'field': 'timeline', 'label': '剧情', 'keys': ['volume_breakdown', 'chapter_plan', 'tomato_outline'],
+                     'prompt': '生成第1卷详细剧情：5-8个情节节点+章型配额+小故事闭环。'},
+    }
+
+    # 已有上下文（供AI参考，截断省token）
+    ctx_parts = []
+    if bb.concept: ctx_parts.append(f'构思：{bb.concept[:800]}')
+    if bb.key_rules: ctx_parts.append(f'设定：{bb.key_rules[:800]}')
+    if bb.worldbuilding: ctx_parts.append(f'世界观：{bb.worldbuilding[:800]}')
+    existing_ctx = '\n'.join(ctx_parts)
+
+    results = []
+    for dim in dimensions:
+        if dim not in DIM_MAP:
+            continue
+        info = DIM_MAP[dim]
+        skill_note = _get_skill_prompts(skill_pack_ids, info['keys'])
+
+        system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师。
+任务：{info['prompt']}
+
+书名：{book.title}
+题材：{book.genre}
+已有设定：
+{existing_ctx or '（暂无）'}
+
+{skill_note}
+
+直接输出{info['label']}内容（纯文本，不要JSON包裹）。"""
+
+        user_prompt = instruction or f'请为这本小说生成{info["label"]}。'
+
+        content, err = _call_llm(
+            [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+            max_tokens=2500, temperature=0.7
+        )
+        if err:
+            results.append({'dimension': dim, 'label': info['label'], 'field': info['field'], 'error': err})
+        else:
+            results.append({'dimension': dim, 'label': info['label'], 'field': info['field'], 'content': content})
+
+    return jsonify({'results': results})
 
 
 # ==== AI 共创 / 头脑风暴 ====
@@ -3296,6 +3598,7 @@ def ai_brainstorm(book_id):
 
     concept = request.json.get('concept', '')
     dimension = request.json.get('dimension', 'all')  # all/worldview/character/plot/locations/foreshadowing
+    skill_pack_ids = request.json.get('skill_pack_ids', [])  # 支持技能包注入
 
     if not concept.strip():
         return jsonify({'error': '请输入一句话构思'}), 400
@@ -3304,6 +3607,9 @@ def ai_brainstorm(book_id):
     existing_context = ''
     if bb and bb.generated_summary:
         existing_context = bb.generated_summary[:2000]
+
+    # 注入技能包提示词（brainstorm 相关）
+    skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_plan', 'one_line_concept', 'brainstorm', 'master_outline'])
 
     dimension_prompts = {
         'concept': '构思扩展：为这个构思设计3个不同方向的创意方案。每个方案包含：核心卖点、目标读者、主线冲突、独特亮点。每个方案100-200字。',
@@ -3329,6 +3635,8 @@ def ai_brainstorm(book_id):
 用户的一句话构思：{concept}
 
 {f'已有设定上下文：{existing_context}' if existing_context else '这是全新创作，暂无已有设定。'}
+
+{skill_note}
 
 请根据构思生成创作建议。严格按JSON格式输出，不要任何其他文字：
 {{
