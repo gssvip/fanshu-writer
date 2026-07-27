@@ -44,6 +44,7 @@ export default function WorkbenchPage() {
   const [masterCreateLoading, setMasterCreateLoading] = useState(false);
   const [masterCreateResults, setMasterCreateResults] = useState<Array<{ dimension: string; label: string; field: string; content?: string; error?: string }>>([]);
   const [masterCreatePacksExpanded, setMasterCreatePacksExpanded] = useState(false);
+  const [showMasterCreateModal, setShowMasterCreateModal] = useState(false);
 
   async function handleRenameBook(book: Book) {
     setEditBookId(book.id);
@@ -369,109 +370,24 @@ export default function WorkbenchPage() {
         </div>
       )}
 
-      {/* AI 总创作面板 */}
-      {recentBook ? (
-        <div className="home-section">
-          <div className="home-section-header">
-            <h2>🤖 AI 总创作</h2>
-          </div>
-          <div className="home-card" style={{ padding: 16, background: 'linear-gradient(135deg,var(--bg-secondary) 0%,rgba(240,248,244,0.5) 100%)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
-            {/* 作品选择 */}
-            <div className="form-field">
-              <label>选择作品</label>
-              <select className="input" value={masterCreateBookId} onChange={e => setMasterCreateBookId(e.target.value)} disabled={masterCreateLoading}>
-                {books.map(b => <option key={b.id} value={b.id}>{b.title}</option>)}
-              </select>
-            </div>
-
-            {/* 折叠技能包选择器 */}
-            <div style={{ marginTop: 12 }}>
-              <div
-                style={{ cursor: 'pointer', userSelect: 'none', padding: '8px 0', fontWeight: 600, fontSize: 14 }}
-                onClick={() => setMasterCreatePacksExpanded(!masterCreatePacksExpanded)}
-              >
-                📂 协同技能包（可选）{masterCreatePacksExpanded ? ' ▾' : ' ▸'}
-                {masterCreateSelectedPackIds.length > 0 && ` · 已选 ${masterCreateSelectedPackIds.length} 个`}
-              </div>
-              {masterCreatePacksExpanded && (
-                <div className="skill-pack-checkbox-list">
-                  {masterCreatePacks.length === 0 ? (
-                    <div className="text-muted" style={{ fontSize: 12, padding: '4px 0' }}>暂无可用技能包</div>
-                  ) : masterCreatePacks.map(p => (
-                    <label key={p.id} className={`skill-pack-checkbox-item ${masterCreateSelectedPackIds.includes(p.id) ? 'checked' : ''}`}>
-                      <input type="checkbox" checked={masterCreateSelectedPackIds.includes(p.id)} onChange={() => toggleMasterPack(p.id)} disabled={masterCreateLoading} />
-                      <span className="skill-pack-checkbox-icon">{p.icon}</span>
-                      <span className="skill-pack-checkbox-name">{p.name}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* 维度选择 */}
-            <div className="form-field" style={{ marginTop: 12 }}>
-              <label>创作维度（默认全选）</label>
-              <div className="skill-pack-checkbox-list">
-                {MASTER_DIMS.map(d => (
-                  <label key={d.key} className={`skill-pack-checkbox-item ${masterCreateDims.includes(d.key) ? 'checked' : ''}`}>
-                    <input type="checkbox" checked={masterCreateDims.includes(d.key)} onChange={() => toggleMasterDim(d.key)} disabled={masterCreateLoading} />
-                    <span className="skill-pack-checkbox-name">{d.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* 创作指令 */}
-            <div className="form-field" style={{ marginTop: 12 }}>
-              <label>额外指令（可选）</label>
-              <textarea className="input" rows={2} placeholder="如：主角是穿越者，背景设定在末世..." value={masterCreateInstruction} onChange={e => setMasterCreateInstruction(e.target.value)} disabled={masterCreateLoading} />
-            </div>
-
-            {/* 开始按钮 */}
-            <div style={{ marginTop: 12 }}>
-              <button className="btn-primary" onClick={handleMasterCreate} disabled={masterCreateLoading || !masterCreateBookId || masterCreateDims.length === 0}>
-                {masterCreateLoading ? '⏳ 创作中...' : '✨ 开始 AI 总创作'}
-              </button>
-            </div>
-
-            {/* 结果展示区 */}
-            {masterCreateResults.length > 0 && (
-              <div style={{ marginTop: 16, borderTop: '1px solid #eee', paddingTop: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
-                  <strong>创作结果（{masterCreateResults.length}）</strong>
-                  <button className="btn-secondary" onClick={handleApplyAllMasterResults} disabled={masterCreateLoading}>✅ 一键全部填入</button>
-                </div>
-                {masterCreateResults.map(r => (
-                  <div key={r.field} style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
-                      <strong>
-                        {r.label}
-                        {r.error && <span style={{ color: '#e74c3c', marginLeft: 6 }}>· {r.error}</span>}
-                      </strong>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn-primary" onClick={() => handleApplyMasterResult(r.field)} disabled={!r.content || masterCreateLoading}>✅ 确认填入</button>
-                        <button className="btn-ghost" onClick={() => handleDiscardMasterResult(r.field)}>❌ 丢弃</button>
-                      </div>
-                    </div>
-                    {r.content !== undefined && (
-                      <textarea className="input" rows={6} value={r.content} onChange={e => updateMasterResultContent(r.field, e.target.value)} disabled={masterCreateLoading} />
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+      {/* AI 总创作入口 */}
+      <div className="home-section">
+        <div className="home-section-header">
+          <h2>🤖 AI 总创作</h2>
         </div>
-      ) : (
-        <div className="home-section">
-          <div className="home-section-header">
-            <h2>🤖 AI 总创作</h2>
+        <button
+          className="master-create-entry"
+          onClick={() => setShowMasterCreateModal(true)}
+          disabled={!recentBook}
+        >
+          <div className="master-create-entry-icon">🤖</div>
+          <div className="master-create-entry-content">
+            <div className="master-create-entry-label">总览全局创作</div>
+            <div className="master-create-entry-desc">{recentBook ? `为「${recentBook.title}」生成构思/设定/世界观/人物/大纲/剧情` : '请先创建作品'}</div>
           </div>
-          <div className="home-card" style={{ padding: 16, textAlign: 'center', color: '#888', background: 'linear-gradient(135deg,var(--bg-secondary) 0%,rgba(240,248,244,0.5) 100%)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
-            请先创建作品后使用 AI 总创作
-          </div>
-        </div>
-      )}
+          <div className="master-create-entry-arrow">{recentBook ? '→' : ''}</div>
+        </button>
+      </div>
 
       {/* 全部作品列表 */}
       {books.length > 0 && (
@@ -715,6 +631,104 @@ export default function WorkbenchPage() {
               <button className="btn-primary" onClick={handleSaveEditBook} disabled={!editBookForm.title.trim() || editBookSaving}>
                 {editBookSaving ? '保存中...' : '保存'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI 总创作半屏模态框 */}
+      {showMasterCreateModal && (
+        <div className="modal-overlay" onClick={() => setShowMasterCreateModal(false)}>
+          <div className="master-create-modal" onClick={e => e.stopPropagation()}>
+            <div className="master-create-modal-header">
+              <h2>🤖 AI 总创作</h2>
+              <button className="btn-ghost" onClick={() => setShowMasterCreateModal(false)}>✕</button>
+            </div>
+            <div className="master-create-modal-body">
+              {/* 作品选择 */}
+              <div className="form-field">
+                <label>选择作品</label>
+                <select className="input" value={masterCreateBookId} onChange={e => setMasterCreateBookId(e.target.value)} disabled={masterCreateLoading}>
+                  {books.map(b => <option key={b.id} value={b.id}>{b.title}</option>)}
+                </select>
+              </div>
+
+              {/* 折叠技能包选择器 */}
+              <div style={{ marginTop: 12 }}>
+                <div
+                  style={{ cursor: 'pointer', userSelect: 'none', padding: '8px 0', fontWeight: 600, fontSize: 14 }}
+                  onClick={() => setMasterCreatePacksExpanded(!masterCreatePacksExpanded)}
+                >
+                  📂 协同技能包（可选）{masterCreatePacksExpanded ? ' ▾' : ' ▸'}
+                  {masterCreateSelectedPackIds.length > 0 && ` · 已选 ${masterCreateSelectedPackIds.length} 个`}
+                </div>
+                {masterCreatePacksExpanded && (
+                  <div className="skill-pack-checkbox-list">
+                    {masterCreatePacks.length === 0 ? (
+                      <div className="text-muted" style={{ fontSize: 12, padding: '4px 0' }}>暂无可用技能包</div>
+                    ) : masterCreatePacks.map(p => (
+                      <label key={p.id} className={`skill-pack-checkbox-item ${masterCreateSelectedPackIds.includes(p.id) ? 'checked' : ''}`}>
+                        <input type="checkbox" checked={masterCreateSelectedPackIds.includes(p.id)} onChange={() => toggleMasterPack(p.id)} disabled={masterCreateLoading} />
+                        <span className="skill-pack-checkbox-icon">{p.icon}</span>
+                        <span className="skill-pack-checkbox-name">{p.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 维度选择 */}
+              <div className="form-field" style={{ marginTop: 12 }}>
+                <label>创作维度（默认全选）</label>
+                <div className="skill-pack-checkbox-list">
+                  {MASTER_DIMS.map(d => (
+                    <label key={d.key} className={`skill-pack-checkbox-item ${masterCreateDims.includes(d.key) ? 'checked' : ''}`}>
+                      <input type="checkbox" checked={masterCreateDims.includes(d.key)} onChange={() => toggleMasterDim(d.key)} disabled={masterCreateLoading} />
+                      <span className="skill-pack-checkbox-name">{d.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* 创作指令 */}
+              <div className="form-field" style={{ marginTop: 12 }}>
+                <label>额外指令（可选）</label>
+                <textarea className="input" rows={3} placeholder="如：主角是穿越者，背景设定在末世..." value={masterCreateInstruction} onChange={e => setMasterCreateInstruction(e.target.value)} disabled={masterCreateLoading} />
+              </div>
+
+              {/* 开始按钮 */}
+              <div style={{ marginTop: 12 }}>
+                <button className="btn-primary" onClick={handleMasterCreate} disabled={masterCreateLoading || !masterCreateBookId || masterCreateDims.length === 0}>
+                  {masterCreateLoading ? '⏳ 创作中...' : '✨ 开始 AI 总创作'}
+                </button>
+              </div>
+
+              {/* 结果展示区 */}
+              {masterCreateResults.length > 0 && (
+                <div style={{ marginTop: 16, borderTop: '1px solid #eee', paddingTop: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+                    <strong>创作结果（{masterCreateResults.length}）</strong>
+                    <button className="btn-secondary" onClick={handleApplyAllMasterResults} disabled={masterCreateLoading}>✅ 一键全部填入</button>
+                  </div>
+                  {masterCreateResults.map(r => (
+                    <div key={r.field} style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+                        <strong>
+                          {r.label}
+                          {r.error && <span style={{ color: '#e74c3c', marginLeft: 6 }}>· {r.error}</span>}
+                        </strong>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button className="btn-primary" onClick={() => handleApplyMasterResult(r.field)} disabled={!r.content || masterCreateLoading}>✅ 确认填入</button>
+                          <button className="btn-ghost" onClick={() => handleDiscardMasterResult(r.field)}>❌ 丢弃</button>
+                        </div>
+                      </div>
+                      {r.content !== undefined && (
+                        <textarea className="input" rows={6} value={r.content} onChange={e => updateMasterResultContent(r.field, e.target.value)} disabled={masterCreateLoading} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
