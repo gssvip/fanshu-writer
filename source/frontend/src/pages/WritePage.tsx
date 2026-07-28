@@ -544,6 +544,10 @@ export default function WritePage() {
             await api.deleteChapter(bookId, ch.id);
           }
         } else {
+          // 先清空子章节的 parent_id，使其变为未分卷（避免删除卷后章节变孤儿不可见）
+          for (const ch of children) {
+            await api.updateChapter(bookId, ch.id, { parent_id: '' } as any);
+          }
           await api.deleteChapter(bookId, volId);
         }
         const updated = await api.listChapters(bookId);
@@ -1728,7 +1732,9 @@ function ChapterPanel(props: {
 
   // 分离卷和章节
   const volumes = chapters.filter(c => c.is_volume);
-  const orphanChapters = chapters.filter(c => !c.is_volume && !c.parent_id);
+  const volumeIds = new Set(volumes.map(v => v.id));
+  // 未分卷 = 无 parent_id，或 parent_id 指向已不存在的卷（删除卷后避免章节变孤儿不可见）
+  const orphanChapters = chapters.filter(c => !c.is_volume && (!c.parent_id || !volumeIds.has(c.parent_id)));
   const volumeChapters = (volId: string) => chapters.filter(c => !c.is_volume && c.parent_id === volId);
 
   return (

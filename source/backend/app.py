@@ -1261,6 +1261,9 @@ def delete_chapter(book_id, chapter_id):
     ch = Chapter.query.filter_by(id=chapter_id, book_id=book_id).first()
     if not ch:
         return jsonify({'error': 'Chapter not found'}), 404
+    # 若删除的是卷，清空其下章节的 parent_id，避免章节变孤儿（指向已删除卷）而不可见
+    if ch.is_volume:
+        Chapter.query.filter_by(book_id=book_id, parent_id=chapter_id, is_volume=False).update({'parent_id': ''})
     # 先删除章节版本（兼容 PostgreSQL 外键约束）
     ChapterVersion.query.filter_by(chapter_id=chapter_id).delete(synchronize_session=False)
     db.session.delete(ch)
