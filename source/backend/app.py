@@ -4021,22 +4021,43 @@ def _get_volume_outline(vol_chapter, volume_index):
                             parts = []
                             if v.get('volume'):
                                 parts.append(f'卷名：{v["volume"]}')
-                            if v.get('main_plot'):
-                                parts.append(f'主线：{v["main_plot"]}')
+                            if v.get('act'):
+                                parts.append(f'五幕定位：{v["act"]}')
+                            if v.get('main_plot') or v.get('core_goal'):
+                                parts.append(f'主线：{v.get("main_plot") or v.get("core_goal")}')
                             if v.get('core_conflict'):
                                 parts.append(f'核心冲突：{v["core_conflict"]}')
+                            # ===== 【P0弊端10修复】保留 nodes 完整信息：chapters/type/summary/cool_type =====
                             if v.get('nodes'):
                                 nodes = v['nodes']
                                 if isinstance(nodes, list):
-                                    nodes_text = '; '.join([n.get('title', str(n)) if isinstance(n, dict) else str(n) for n in nodes[:8]])
-                                    parts.append(f'关键节点：{nodes_text}')
+                                    nodes_lines = []
+                                    for n in nodes[:8]:
+                                        if not isinstance(n, dict):
+                                            nodes_lines.append(str(n))
+                                            continue
+                                        n_title = n.get('title', '')
+                                        n_chapters = n.get('chapters', '')
+                                        n_type = n.get('type', 'M')
+                                        n_summary = n.get('summary', '')
+                                        n_cool = n.get('cool_type', '')
+                                        line = f'  · [{n_type}] {n_chapters}章 {n_title}'
+                                        if n_summary:
+                                            line += f'：{n_summary}'
+                                        if n_cool:
+                                            line += f'（爽点：{n_cool}）'
+                                        nodes_lines.append(line)
+                                    if nodes_lines:
+                                        parts.append('关键节点：\n' + '\n'.join(nodes_lines))
                             if v.get('volume_goal') or v.get('goal'):
                                 parts.append(f'卷目标：{v.get("volume_goal") or v.get("goal")}')
-                            if v.get('ending_hook') or v.get('climax'):
-                                parts.append(f'卷尾钩子：{v.get("ending_hook") or v.get("climax")}')
+                            if v.get('ending_hook'):
+                                parts.append(f'卷尾钩子：{v["ending_hook"]}')
+                            elif v.get('ending') or v.get('climax'):
+                                parts.append(f'卷尾钩子：{v.get("ending") or v.get("climax")}')
                             if parts:
                                 content = '\n'.join(parts)
-                                return f'【本卷目标/卷纲】（第{volume_index}卷「{vol_label}」）\n{content[:1500]}'
+                                return f'【本卷目标/卷纲】（第{volume_index}卷「{vol_label}」）\n{content[:1800]}'
             else:
                 # 纯文本格式（旧数据或手动填写），直接返回
                 if timeline_raw:
@@ -4309,9 +4330,69 @@ def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_in
                            memory_section, foreshadowing_section, skill_pack_ids,
                            api_key, base_url, model, max_tokens=600):
     """章节计划前置（chapter_plan Agent）：在写正文前生成 200 字以内的本章三段式计划。
+    【P0弊端5修复】注入当前卷纲的 nodes 列表，让章纲对齐卷纲节点节奏。
     返回计划文本，失败时返回空串（不阻塞正文生成）。"""
     plan_skill_note = _get_skill_prompts(skill_pack_ids, ['chapter_plan'], max_per_prompt=800, mode='single')
     vol_label = f'第{vol_index}卷「{vol_chapter.title}」' if vol_chapter else '当前卷'
+
+    # ===== 【P0弊端5修复】提取当前卷纲 nodes，定位本章对应的节点 =====
+    volume_nodes_section = ''
+    current_node_hint = ''
+    if vol_chapter:
+        try:
+            if bb.timeline and bb.timeline.strip().startswith('['):
+                arr = json.loads(bb.timeline)
+                if isinstance(arr, list):
+                    for v in arr:
+                        if not isinstance(v, dict):
+                            continue
+                        v_idx = v.get('volume_index') or _extract_volume_index(v.get('volume', v.get('volume_id', '')))
+                        if str(v_idx) == str(vol_index):
+                            nodes = v.get('nodes') or []
+                            if isinstance(nodes, list) and nodes:
+                                # 列出本卷所有节点
+                                nodes_lines = []
+                                for n in nodes:
+                                    if not isinstance(n, dict):
+                                        continue
+                                    n_title = n.get('title', '')
+                                    n_chapters = str(n.get('chapters', ''))
+                                    n_type = n.get('type', 'M')
+                                    n_summary = n.get('summary', '')
+                                    nodes_lines.append(f'  · [{n_type}] {n_chapters}章 {n_title}：{n_summary}')
+                                if nodes_lines:
+                                    volume_nodes_section = f"""【本卷情节节点】（章纲必须对齐到本章所属节点）
+{chr(10).join(nodes_lines)}"""
+                                    # 定位本章对应的节点
+                                    for n in nodes:
+                                        if not isinstance(n, dict):
+                                            continue
+                                        ch_range = str(n.get('chapters', ''))
+                                        nums = re.findall(r'\d+', ch_range)
+                                        if len(nums) >= 2:
+                                            start_n, end_n = int(nums[0]), int(nums[-1])
+                                            if start_n <= current_chapter_num <= end_n:
+                                                current_node_hint = f"""【本章所属节点】第{current_chapter_num}章对应节点「{n.get('title','')}」（{ch_range}章，类型{n.get('type','M')}）：{n.get('summary','')}
+章纲必须围绕此节点的核心事件展开，不得偏离到其他节点。"""
+                                                break
+                                        elif len(nums) == 1:
+                                            if int(nums[0]) == current_chapter_num:
+                                                current_node_hint = f"""【本章所属节点】第{current_chapter_num}章对应节点「{n.get('title','')}」（类型{n.get('type','M')}）：{n.get('summary','')}"""
+                                                break
+                            break
+                # 也提取上一卷卷尾钩子作为衔接提示
+                if vol_index > 1:
+                    for v in arr:
+                        if not isinstance(v, dict):
+                            continue
+                        v_idx = v.get('volume_index') or _extract_volume_index(v.get('volume', v.get('volume_id', '')))
+                        if str(v_idx) == str(vol_index - 1):
+                            prev_hook = v.get('ending_hook') or v.get('ending') or v.get('climax') or ''
+                            if prev_hook:
+                                current_node_hint = f'【上一卷卷尾钩子】（本卷开头需承接）：{prev_hook}\n' + current_node_hint
+                            break
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
 
     plan_system = f"""你是小说章节策划师。为第 {current_chapter_num} 章生成一份简洁的章节计划（200字以内）。
 
@@ -4320,6 +4401,10 @@ def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_in
 {memory_section[:1500]}
 
 {foreshadowing_section[:800] if foreshadowing_section else ''}
+
+{volume_nodes_section}
+
+{current_node_hint}
 
 {plan_skill_note}
 
@@ -4331,6 +4416,8 @@ def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_in
 【要求】
 - 必须承接前文，不可矛盾
 - 若有"待回收伏笔清单"，本章应考虑回收其中1条
+- 【节点对齐铁律】若存在【本章所属节点】，章纲必须围绕该节点核心事件展开，不得偏离
+- 【卷间衔接】若为卷首章节，必须承接上一卷卷尾钩子
 - 只输出计划，不要解释"""
 
     try:
@@ -5029,10 +5116,51 @@ def ai_outline_volume(book_id):
     skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'])
 
     chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
-    completed_summary = ''
-    if chapters:
-        recent = chapters[-5:]
-        completed_summary = '\n'.join([f'第{c.order_index}章 {c.title or ""}：{(c.content or "")[:200]}' for c in recent])
+
+    # ===== 【P0弊端2修复】已完成章节摘要：取上一卷结尾章节，而非全局最后5章 =====
+    # 解析已有 timeline，获取上一卷（volume_index-1）的节点章节范围
+    prev_volume_end_chapter = 0
+    prev_volume_ending_hook = ''
+    prev_volume_summary = ''
+    existing_volumes_for_ctx = []
+    if bb.timeline:
+        try:
+            parsed_tl = json.loads(bb.timeline)
+            if isinstance(parsed_tl, list):
+                existing_volumes_for_ctx = parsed_tl
+                # 找上一卷
+                for v in parsed_tl:
+                    if not isinstance(v, dict):
+                        continue
+                    v_idx = v.get('volume_index') or _extract_volume_index(v.get('volume', v.get('volume_id', '')))
+                    if str(v_idx) == str(volume_index - 1):
+                        # 提取上一卷的卷尾钩子
+                        prev_volume_ending_hook = v.get('ending') or v.get('ending_hook') or v.get('climax') or ''
+                        prev_volume_summary = v.get('main_plot') or v.get('core_goal') or ''
+                        # 提取上一卷 nodes 的最大结束章号
+                        nodes = v.get('nodes') or []
+                        for n in nodes:
+                            if isinstance(n, dict):
+                                ch_range = str(n.get('chapters', ''))
+                                # 解析 "1-10" 或 "50" 格式
+                                nums = re.findall(r'\d+', ch_range)
+                                if nums:
+                                    end_n = int(nums[-1])
+                                    if end_n > prev_volume_end_chapter:
+                                        prev_volume_end_chapter = end_n
+                        break
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+    # 上一卷结尾章节正文（用于卷间衔接，取最后2章各300字）
+    prev_volume_end_summary = ''
+    if chapters and volume_index > 1:
+        # 优先取上一卷结尾章节；若无法定位，回退取全书最后3章
+        if prev_volume_end_chapter > 0:
+            prev_end_chapters = [c for c in chapters if c.order_index <= prev_volume_end_chapter][-2:]
+        else:
+            prev_end_chapters = chapters[-3:]
+        prev_volume_end_summary = '\n'.join([f'第{c.order_index}章 {c.title or ""}：{(c.content or "")[-300:]}' for c in prev_end_chapters])
 
     existing_timeline = (bb.timeline or '')[:2000]
     master_outline = (bb.plot_design or '')[:3000]
@@ -5041,13 +5169,54 @@ def ai_outline_volume(book_id):
     characters_ctx = (bb.character_profiles or '')[:1500]
     key_rules_ctx = (bb.key_rules or '')[:1000]
 
+    # ===== 【P1弊端7修复】五幕模型对齐：确定本卷对应的幕 =====
+    act_mapping = {1: '立身', 2: '立足', 3: '立势', 4: '立威', 5: '立命'}
+    total_volumes = len(existing_volumes_for_ctx) + 1
+    # 简单映射：5卷对应5幕；卷数不固定时按比例分配
+    if total_volumes <= 5:
+        current_act = act_mapping.get(volume_index, '立身')
+    else:
+        # 超过5卷时，按进度比例映射到5幕
+        act_idx = min(5, max(1, int((volume_index / total_volumes) * 5) + 1))
+        current_act = act_mapping.get(act_idx, '立身')
+    act_descriptions = {
+        '立身': '主角登场、金手指获得、确立生存基础（1-5%）',
+        '立足': '主角站稳脚跟、初露锋芒、建立基本人际网（5-25%）',
+        '立势': '主角势力扩张、主要冲突激化、BOSS浮出（25-50%）',
+        '立威': '主角与BOSS正面对抗、实力跃升、打脸高潮（50-75%）',
+        '立命': '终局决战、伏笔回收、世界观全貌揭示（75-100%）',
+    }
+
+    # ===== 【P1弊端9修复】本卷起始章号 = 上一卷结束章号 + 1 =====
+    start_chapter = prev_volume_end_chapter + 1 if prev_volume_end_chapter > 0 else 1
+
+    # ===== 【P0弊端1修复】卷间衔接约束提示词 =====
+    cohesion_constraint = ''
+    if volume_index > 1 and prev_volume_ending_hook:
+        cohesion_constraint = f"""
+【卷间衔接铁律】（本卷为第{volume_index}卷，必须严格承接第{volume_index-1}卷）
+- 上一卷卷尾钩子：{prev_volume_ending_hook}
+- 上一卷核心主线：{prev_volume_summary[:200] if prev_volume_summary else '（无）'}
+- 本卷开头必须承接上一卷卷尾钩子的悬念/危机，不得凭空开启新场景
+- 本卷第一个情节节点的起始章号必须为 {start_chapter}（上一卷结束于第{prev_volume_end_chapter}章）
+- 本卷 nodes 的 chapters 字段必须从 {start_chapter} 开始连续编号，不得与上一卷重叠"""
+    elif volume_index > 1:
+        cohesion_constraint = f"""
+【卷间衔接铁律】（本卷为第{volume_index}卷）
+- 本卷开头必须承接上一卷的结尾场景与悬念，不得凭空跳跃
+- 本卷第一个情节节点的起始章号必须为 {start_chapter}"""
+
     system_prompt = f"""你是番茄小说金番作者级别的卷纲设计师。
 任务：为第 {volume_index} 卷「{volume_title}」生成详细大纲+情节节点。
+
+【五幕模型对齐】本卷对应五幕中的「{current_act}」幕：{act_descriptions.get(current_act, '')}
+本卷情节设计必须服务于该幕的核心目标，不得脱离五幕结构。
 
 【输出格式】严格输出以下JSON（不要包裹在markdown代码块中）：
 {{
   "volume_index": {volume_index},
   "volume_title": "{volume_title}",
+  "act": "{current_act}",
   "core_goal": "本卷核心目标",
   "core_conflict": "本卷主要冲突",
   "emotion_driver": "情感驱动力",
@@ -5056,22 +5225,24 @@ def ai_outline_volume(book_id):
   "foreshadow_new": ["新埋伏笔1"],
   "foreshadow_recycle": ["回收伏笔1"],
   "hook_type": "卷尾钩子类型",
+  "ending_hook": "本卷卷尾钩子具体内容（下一卷开头需承接此钩子）",
   "nodes": [
-    {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
+    {{"title": "节点1", "chapters": "{start_chapter}-{start_chapter+9}", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
   ]
 }}
+{cohesion_constraint}
 
 【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
 【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
-本卷约 {chapters_per_volume} 章，分5-8个情节节点。
+本卷约 {chapters_per_volume} 章，分5-8个情节节点。节点 chapters 必须从 {start_chapter} 开始连续递增。
 
 {skill_note}"""
 
     user_prompt = f"""书名：{book.title}
 
-{f"【五幕式总纲】{chr(10)}{master_outline}" if has_master else "【五幕式总纲】（暂无，请基于下方已有剧情/卷大纲自行推演本卷情节节点）"}
+{f"【五幕式总纲】{chr(10)}{master_outline}" if has_master else "【五幕式总纲】（暂无，请基于下方已有剧情/卷大纲自行推演本卷情节节点，但必须符合五幕模型中「" + current_act + "」幕的定位）"}
 
-【已有剧情】
+【已有剧情】（含已生成卷纲，本卷需与之衔接）
 {existing_timeline or '（暂无）'}
 
 【本卷在已有剧情中的定位】请优先基于本卷（第""" + f"{volume_index}卷「{volume_title}」" + """）已有的 main_plot/key_events 设计节点；若已有剧情为空，则基于世界观、规则、人物合理推演。
@@ -5085,8 +5256,8 @@ def ai_outline_volume(book_id):
 【人物档案】（情节节点需涉及这些角色，安排其互动）
 {characters_ctx or '（暂无）'}
 
-【最近已完成章节】
-{completed_summary or '（本卷为第一卷，无前文）'}
+【上一卷结尾章节正文】（卷间衔接依据，本卷开头必须承接）
+{prev_volume_end_summary or '（本卷为第一卷，无前文）'}
 
 请为第 {volume_index} 卷生成详细大纲。"""
 
@@ -5192,8 +5363,30 @@ def ai_extract_volumes_from_outline(book_id):
 
     count_hint = f'约 {volume_count} 卷' if volume_count else '根据总纲内容自行决定合理的卷数（通常5-8卷）'
 
+    # ===== 【P1弊端7修复】五幕模型对齐约束 =====
+    act_descriptions = {
+        '立身': '主角登场、金手指获得、确立生存基础（1-5%）',
+        '立足': '主角站稳脚跟、初露锋芒、建立基本人际网（5-25%）',
+        '立势': '主角势力扩张、主要冲突激化、BOSS浮出（25-50%）',
+        '立威': '主角与BOSS正面对抗、实力跃升、打脸高潮（50-75%）',
+        '立命': '终局决战、伏笔回收、世界观全貌揭示（75-100%）',
+    }
+
     system_prompt = f"""你是番茄小说金番作者级别的剧情架构师。
 任务：根据五幕式总纲，一次性提取全部卷的详细剧情，输出为 JSON 数组。
+
+【五幕模型对齐】各卷必须对应五幕模型，确保全书结构完整：
+- 第1卷对应「立身」幕：{act_descriptions['立身']}
+- 第2卷对应「立足」幕：{act_descriptions['立足']}
+- 第3卷对应「立势」幕：{act_descriptions['立势']}
+- 第4卷对应「立威」幕：{act_descriptions['立威']}
+- 第5卷对应「立命」幕：{act_descriptions['立命']}
+（若卷数超过5卷，按进度比例映射到五幕；每卷 main_plot 中需标注所属幕）
+
+【卷间衔接铁律】（多卷必须保持连贯）
+- 第N卷的 ending_hook 必须与第N+1卷开头场景直接衔接
+- 第N+1卷第一个节点的 chapters 必须紧接第N卷最后一个节点的结束章号
+- 卷间不得出现章节范围空洞或重叠
 
 【输入上下文】
 {context}
@@ -5204,26 +5397,29 @@ def ai_extract_volumes_from_outline(book_id):
   "volume_id": "1",
   "volume": "第1卷 卷名",
   "volume_index": 1,
-  "main_plot": "本卷主线剧情（100-200字）",
+  "act": "立身",
+  "main_plot": "本卷主线剧情（100-200字，需标注所属幕）",
   "core_conflict": "本卷核心冲突",
   "emotion_driver": "情感驱动力",
   "key_events": ["关键事件1", "关键事件2", "关键事件3"],
   "turning_points": ["转折点1", "转折点2"],
   "climax": "本卷高潮/BOSS",
   "ending": "本卷结局/卷尾钩子",
+  "ending_hook": "本卷卷尾钩子具体内容（下一卷开头需承接此钩子）",
   "foreshadowing": ["新埋伏笔1"],
   "nodes": [
-    {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要"}}
+    {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
   ]
 }}
 
 【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
 【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
 每卷 5-8 个情节节点，节点章节范围不重叠，覆盖整卷。
+各卷 nodes 的 chapters 必须全书连续编号（第1卷1-50，第2卷51-100，依此类推）。
 
 {skill_note}"""
 
-    user_prompt = f'请根据五幕式总纲提取全部卷的详细剧情，{count_hint}。'
+    user_prompt = f'请根据五幕式总纲提取全部卷的详细剧情，{count_hint}。注意各卷必须符合五幕模型定位，且卷间 ending_hook 与开头严格衔接。'
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
@@ -5299,9 +5495,26 @@ def ai_extract_volumes_from_outline(book_id):
     # 按 volume_index 排序（已确保为 int，不会抛异常）
     volumes.sort(key=lambda v: v['volume_index'])
 
-    bb.timeline = json.dumps(volumes, ensure_ascii=False, indent=2)
+    # ===== 【P0弊端3修复】写入逻辑改为 upsert 合并，而非整体覆盖 =====
+    # 保留用户手工微调的卷数据，只更新本次生成的卷
+    existing_volumes_list = []
+    if bb.timeline:
+        try:
+            parsed_tl = json.loads(bb.timeline)
+            if isinstance(parsed_tl, list):
+                existing_volumes_list = [v for v in parsed_tl if isinstance(v, dict)]
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+    # 用本次生成的卷覆盖同 volume_index 的旧卷，保留未涉及的卷
+    new_idx_set = {v['volume_index'] for v in volumes}
+    merged_volumes = [v for v in existing_volumes_list if v.get('volume_index') not in new_idx_set]
+    merged_volumes.extend(volumes)
+    merged_volumes.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
+
+    bb.timeline = json.dumps(merged_volumes, ensure_ascii=False, indent=2)
     db.session.commit()
-    return jsonify({'success': True, 'volumes': volumes, 'bible': bb.to_dict()})
+    return jsonify({'success': True, 'volumes': merged_volumes, 'bible': bb.to_dict()})
 
 
 @app.route('/api/books/<book_id>/ai-reverse-generate-outline', methods=['POST'])
@@ -5697,7 +5910,7 @@ def ai_master_create(book_id):
         'plot_design': {'field': 'plot_design', 'label': '大纲', 'keys': ['master_outline', 'tomato_outline', 'volume_breakdown'],
                         'prompt': '生成五幕式总纲：每卷核心目标/主要冲突/关键转折/卷尾悬念。'},
         'timeline': {'field': 'timeline', 'label': '剧情', 'keys': ['volume_breakdown', 'chapter_plan', 'tomato_outline'],
-                     'prompt': '生成第1卷详细剧情：5-8个情节节点+章型配额+小故事闭环。'},
+                     'prompt': '生成分卷详细剧情（JSON数组）：每卷含main_plot/core_conflict/nodes等，5-8个情节节点+章型配额+小故事闭环。'},
     }
 
     # agent 协同：串行执行，本轮产出回流到下一轮上下文
@@ -5738,7 +5951,44 @@ def ai_master_create(book_id):
         if downstream_names:
             position_note += f'（下游将基于你的产出继续：{"→".join(downstream_names)}）'
 
-        system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
+        # ===== 【P0弊端4修复】timeline 维度输出 JSON 数组格式，与 _get_volume_outline 兼容 =====
+        is_timeline_dim = (dim == 'timeline')
+        if is_timeline_dim:
+            system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
+{position_note}
+
+任务：{info['prompt']}
+
+书名：{book.title}
+题材：{book.genre}
+
+【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
+{upstream_ctx}
+
+【五幕模型对齐】各卷对应五幕：立身→立足→立势→立威→立命
+【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 nodes.chapters 全书连续编号。
+
+{skill_note}
+
+【输出格式铁律】严格输出 JSON 数组（不要包裹在 markdown 代码块中），每卷结构如下：
+[
+  {{
+    "volume_id": "1",
+    "volume": "第1卷 卷名",
+    "volume_index": 1,
+    "act": "立身",
+    "main_plot": "本卷主线剧情（100-200字）",
+    "core_conflict": "本卷核心冲突",
+    "ending_hook": "本卷卷尾钩子具体内容",
+    "nodes": [
+      {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
+    ]
+  }}
+]
+直接输出 JSON 数组，不要任何解释性文字。"""
+            user_prompt = instruction or f'请为这本小说生成分卷剧情JSON数组，与已确认的上游维度保持一致，各卷符合五幕模型且卷间严格衔接。'
+        else:
+            system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
 {position_note}
 
 任务：{info['prompt']}
@@ -5752,16 +6002,42 @@ def ai_master_create(book_id):
 {skill_note}
 
 直接输出{info['label']}内容（纯文本，不要JSON包裹）。确保与上游维度衔接一致。"""
+            user_prompt = instruction or f'请为这本小说生成{info["label"]}，与已确认的上游维度保持一致。'
 
-        user_prompt = instruction or f'请为这本小说生成{info["label"]}，与已确认的上游维度保持一致。'
-
+        max_tokens = 8000 if is_timeline_dim else 2500
         content, err = _call_llm(
             [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-            max_tokens=2500, temperature=0.7
+            max_tokens=max_tokens, temperature=0.7
         )
         if err:
             results.append({'dimension': dim, 'label': info['label'], 'field': info['field'], 'error': err})
         else:
+            # timeline 维度：校验 JSON 格式，失败则保留原文但标记警告
+            if is_timeline_dim:
+                import re as _re_mc
+                cleaned_mc = content.strip()
+                fence_mc = _re_mc.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned_mc)
+                if fence_mc:
+                    cleaned_mc = fence_mc.group(1).strip()
+                parsed_tl_mc = None
+                try:
+                    parsed_tl_mc = json.loads(cleaned_mc)
+                    if isinstance(parsed_tl_mc, dict):
+                        for k in ('volumes', 'data', 'result', 'items', 'list'):
+                            if isinstance(parsed_tl_mc.get(k), list):
+                                parsed_tl_mc = parsed_tl_mc[k]
+                                break
+                except (json.JSONDecodeError, ValueError):
+                    # 尝试正则提取数组
+                    m_mc = _re_mc.search(r'\[\s*\{[\s\S]*\}\s*\]', cleaned_mc) or _re_mc.search(r'\[[\s\S]*\]', cleaned_mc)
+                    if m_mc:
+                        try:
+                            parsed_tl_mc = json.loads(m_mc.group())
+                        except (json.JSONDecodeError, ValueError):
+                            parsed_tl_mc = None
+                if isinstance(parsed_tl_mc, list) and parsed_tl_mc:
+                    content = json.dumps(parsed_tl_mc, ensure_ascii=False, indent=2)
+                # 若解析失败，content 保留原文（纯文本），_get_volume_outline 会走纯文本回退分支
             results.append({'dimension': dim, 'label': info['label'], 'field': info['field'], 'content': content})
             # 关键：本轮产出回流到 ctx，供下一轮维度作为上游上下文
             ctx[dim] = content
