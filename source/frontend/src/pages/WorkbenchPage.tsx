@@ -278,10 +278,14 @@ export default function WorkbenchPage() {
 
   return (
     <div className="page home-page">
-      {/* 顶部 Logo（含蚂蚁写作/mayi.chat/专业AI小说创作平台） */}
-      <div className="home-topbar">
+      {/* 手机端顶部：左文字 + 右 wangbiao logo */}
+      <div className="home-topbar-mobile">
+        <div className="home-topbar-text">
+          <span className="home-topbar-title">蚂蚁写作</span>
+          <span className="home-topbar-sub">mayi.chat · 专业AI小说创作平台</span>
+        </div>
         <picture className="home-topbar-logo">
-          <img src="wangbiao.webp" alt="蚂蚁写作 - 专业AI小说创作平台" />
+          <img src="wangbiao.webp" alt="蚂蚁写作" />
         </picture>
       </div>
 

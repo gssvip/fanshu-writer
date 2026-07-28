@@ -152,10 +152,13 @@ textarea{resize:vertical;line-height:1.8}
 .header-actions-row{display:flex;align-items:center;gap:8px}
 .skills-header-actions{display:flex;gap:8px;flex-shrink:0}
 
-/* 顶部 Logo（完整图标，含文字/域名/标语） */
-.home-topbar{display:flex;justify-content:center;align-items:center;padding:12px 16px 4px;margin:0 0 4px}
-.home-topbar-logo{display:flex;align-items:center;justify-content:center}
-.home-topbar-logo img{width:auto;height:72px;max-width:100%;object-fit:contain}
+/* 手机端顶部：左文字 + 右 wangbiao logo（仅移动端显示） */
+.home-topbar-mobile{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px 6px;margin:0 0 4px}
+.home-topbar-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.home-topbar-title{font-size:20px;font-weight:700;color:#4a7a5a;letter-spacing:2px;line-height:1.2}
+.home-topbar-sub{font-size:11px;color:#7a9a8a;letter-spacing:0.5px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-topbar-logo{flex:0 0 auto;display:flex;align-items:center}
+.home-topbar-logo img{width:auto;height:64px;max-width:120px;object-fit:contain}
 
 /* Import File Zone */
 .import-file-zone{border:2px dashed var(--border-color);border-radius:var(--radius-md);padding:16px;margin-bottom:12px;background:var(--bg-tertiary)}
@@ -645,6 +648,8 @@ textarea{resize:vertical;line-height:1.8}
   .stage-sidebar{width:180px;min-width:180px}
   .ai-panel{width:350px;min-width:350px}
   .mine-page{max-width:600px;margin:0 auto}
+  /* 手机端顶部 topbar 仅移动端显示，电脑端隐藏 */
+  .home-topbar-mobile{display:none}
 }
 
 /* Mobile only */
