@@ -4200,11 +4200,16 @@ def _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, ch
 
 
 def _build_smart_instruction(instruction, last_chapter, current_chapter_num):
-    """生成智能默认指令。若用户未提供 instruction，结合上一章章尾内容生成承接指令。"""
+    """生成智能默认指令。若用户未提供 instruction，结合上一章章尾内容生成承接指令。
+    【字数铁律】无论何种情况，user_prompt 末尾必须强制追加字数限定，确保 AI 在正文生成框明确看到 2400±100 约束。"""
+    # 字数强制限定尾注（追加到任何指令后，确保字数约束出现在正文生成框）
+    word_count_clause = f'请为「第{current_chapter_num}章」创作完整章节内容，要求上下文剧情连贯、对话自然、节奏紧凑、章末留悬念，字数2400±100字。'
+
     if instruction and instruction.strip():
-        return instruction
+        # 用户自定义指令：末尾追加字数限定，避免用户指令未提字数导致失控
+        return f'{instruction.strip()}\n\n{word_count_clause}'
     if not last_chapter:
-        return f'请继续写第 {current_chapter_num} 章（开篇章节，建立场景与基调）。'
+        return f'请继续写第 {current_chapter_num} 章（开篇章节，建立场景与基调）。\n\n{word_count_clause}'
     # 启发式提取上一章章尾钩子类型
     tail = (last_chapter.content or '')[-300:]
     hook_hint = '承接上一章章尾的悬念/钩子，自然展开新场景'
@@ -4214,7 +4219,7 @@ def _build_smart_instruction(instruction, last_chapter, current_chapter_num):
         hook_hint = '承接上一章末尾的危机钩子，本章处理危机并展现主角应对'
     elif any(kw in tail for kw in ['发现', '出现', '现身', '传来']):
         hook_hint = '承接上一章末尾的新信息钩子，本章展开新信息的影响'
-    return f'请继续写第 {current_chapter_num} 章。{hook_hint}。'
+    return f'请继续写第 {current_chapter_num} 章。{hook_hint}。\n\n{word_count_clause}'
 
 
 def _apply_budget_management(sections_with_labels, total_budget=8000):
