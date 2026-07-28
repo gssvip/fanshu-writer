@@ -1955,6 +1955,9 @@ function CharacterPanel(props: {
   const [collapsedVolChars, setCollapsedVolChars] = useState<Set<number>>(new Set());
   // 卷选择器
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
+  // 按卷编辑：editingVolIdx 为正在编辑的卷索引，editVolJson 为编辑中的 JSON 文本
+  const [editingVolIdx, setEditingVolIdx] = useState<number | null>(null);
+  const [editVolJson, setEditVolJson] = useState('');
 
   function toggleChar(idx: number) {
     setCollapsedChars(prev => {
@@ -2069,6 +2072,55 @@ function CharacterPanel(props: {
         alert('删除失败: ' + e.message);
       }
     });
+  }
+
+  // 开始按卷编辑：将该卷的完整数据序列化为 JSON 供编辑
+  function startEditVolCharacters(idx: number) {
+    const vol = displayCharVolumes[idx];
+    if (!vol) return;
+    const editTarget = {
+      volume_id: vol.volume_id || '',
+      volume: vol.volume || '',
+      characters: vol.characters || [],
+    };
+    setEditingVolIdx(idx);
+    setEditVolJson(JSON.stringify(editTarget, null, 2));
+    setCollapsedVolChars(prev => { const n = new Set(prev); n.delete(idx); return n; });
+  }
+
+  // 保存按卷编辑：解析编辑后的 JSON，写回 character_volumes
+  async function saveEditVolCharacters(idx: number) {
+    try {
+      const parsed = JSON.parse(editVolJson);
+      const vol = displayCharVolumes[idx];
+      const matchKey = vol.volume_id || vol.volume;
+      const newList = charVolumes.map((v: any) => {
+        const vKey = v.volume_id || v.volume;
+        if (vKey === matchKey) {
+          return {
+            volume_id: parsed.volume_id || v.volume_id || '',
+            volume: parsed.volume || v.volume || '',
+            characters: Array.isArray(parsed.characters) ? parsed.characters : (v.characters || []),
+          };
+        }
+        return v;
+      });
+      // 若该卷尚未在 charVolumes 中（纯展示卷），则追加
+      const exists = newList.some((v: any) => (v.volume_id || v.volume) === matchKey);
+      if (!exists) {
+        newList.push({
+          volume_id: parsed.volume_id || vol.volume_id || '',
+          volume: parsed.volume || vol.volume || '',
+          characters: Array.isArray(parsed.characters) ? parsed.characters : [],
+        });
+      }
+      const updated = await api.updateBible(bookId, { character_volumes: JSON.stringify(newList, null, 2) } as any);
+      onBibleUpdate(updated);
+      setEditingVolIdx(null);
+      setEditVolJson('');
+    } catch (e: any) {
+      alert('保存失败：JSON 格式错误 - ' + e.message);
+    }
   }
 
   // 将某卷识别的角色合并到全局人物档案
@@ -2331,6 +2383,7 @@ function CharacterPanel(props: {
                 <span className="text-muted" style={{fontSize:12}}>{(vol.characters || []).length}人</span>
                 <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
                   {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
+                  <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolCharacters(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷人物数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
                   {(vol.characters || []).length > 0 && (
                     <>
                       <button className="btn-ghost-sm" onClick={() => mergeVolumeToGlobal(idx)} title="合并到全局人物档案" style={{color:'#27ae60'}}>⬇ 合并</button>
@@ -2341,7 +2394,16 @@ function CharacterPanel(props: {
               </div>
               {!collapsedVolChars.has(idx) && (
                 <div className="plot-volume-body">
-                  {(!vol.characters || vol.characters.length === 0) ? (
+                  {editingVolIdx === idx ? (
+                    <div style={{marginTop:8}}>
+                      <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑本卷人物数据（JSON 格式），可直接修改 characters 数组中各角色的字段。</p>
+                      <textarea className="input" value={editVolJson} onChange={e => setEditVolJson(e.target.value)} rows={16} style={{fontFamily:'monospace',fontSize:12}} />
+                      <div style={{display:'flex',gap:6,marginTop:8}}>
+                        <button className="btn-primary-sm" onClick={() => saveEditVolCharacters(idx)}>💾 保存</button>
+                        <button className="btn-ghost-sm" onClick={() => { setEditingVolIdx(null); setEditVolJson(''); }}>取消</button>
+                      </div>
+                    </div>
+                  ) : (!vol.characters || vol.characters.length === 0) ? (
                     <p className="text-muted" style={{fontSize:13}}>暂无人物识别数据，点击「🔍 AI识别」选择此卷进行识别</p>
                   ) : (
                     <div className="character-cards-grid">
@@ -3450,6 +3512,9 @@ function InventoryPanel(props: {
   const [skillExpanded, setSkillExpanded] = useState(false);
   // 卷选择器
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
+  // 按卷编辑
+  const [editingVolIdx, setEditingVolIdx] = useState<number | null>(null);
+  const [editVolJson, setEditVolJson] = useState('');
 
   // 从 chapters 表筛 is_volume 卷，作为可识别的卷列表
   const volumeChapters = chapters.filter(c => c.is_volume);
@@ -3538,6 +3603,48 @@ function InventoryPanel(props: {
       });
       await saveInventory(newList);
     });
+  }
+
+  // 开始按卷编辑：将该卷的完整数据（items + realms）序列化为 JSON 供编辑
+  function startEditVolInventory(idx: number) {
+    const vol = displayVolumes[idx];
+    if (!vol) return;
+    const editTarget = {
+      volume_id: vol.volume_id || '',
+      volume: vol.volume || '',
+      items: vol.items || [],
+      realms: vol.realms || [],
+    };
+    setEditingVolIdx(idx);
+    setEditVolJson(JSON.stringify(editTarget, null, 2));
+    setCollapsedVols(prev => { const n = new Set(prev); n.delete(idx); return n; });
+  }
+
+  // 保存按卷编辑：解析编辑后的 JSON，写回 inventory
+  async function saveEditVolInventory(idx: number) {
+    try {
+      const parsed = JSON.parse(editVolJson);
+      const vol = displayVolumes[idx];
+      const matchKey = vol.volume_id || vol.volume;
+      const newList = [...inventory];
+      const existIdx = newList.findIndex((v: any) => (v.volume_id || v.volume) === matchKey);
+      const entry = {
+        volume_id: parsed.volume_id || vol.volume_id || '',
+        volume: parsed.volume || vol.volume || '',
+        items: Array.isArray(parsed.items) ? parsed.items : (vol.items || []),
+        realms: Array.isArray(parsed.realms) ? parsed.realms : (vol.realms || []),
+      };
+      if (existIdx >= 0) {
+        newList[existIdx] = { ...newList[existIdx], ...entry };
+      } else {
+        newList.push(entry);
+      }
+      await saveInventory(newList);
+      setEditingVolIdx(null);
+      setEditVolJson('');
+    } catch (e: any) {
+      alert('保存失败：JSON 格式错误 - ' + e.message);
+    }
   }
 
   // AI协同创作（生成物资数据）
@@ -3684,6 +3791,7 @@ function InventoryPanel(props: {
                 <span className="text-muted" style={{fontSize:12}}>{(vol.items || []).length}项物资</span>
                 <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
                   {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
+                  <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolInventory(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷物资数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
                   {(vol.items || []).length > 0 && (
                     <button className="btn-ghost-sm" onClick={() => deleteVolumeInventory(idx)} style={{color:'#e74c3c'}} title="删除此卷物资数据">🗑️</button>
                   )}
@@ -3691,7 +3799,16 @@ function InventoryPanel(props: {
               </div>
               {!collapsedVols.has(idx) && (
                 <div className="plot-volume-body">
-                  {(!vol.items || vol.items.length === 0) && (!vol.realms || vol.realms.length === 0) ? (
+                  {editingVolIdx === idx ? (
+                    <div style={{marginTop:8}}>
+                      <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑本卷物资数据（JSON 格式）：items（物资清单）、realms（境界变化）。</p>
+                      <textarea className="input" value={editVolJson} onChange={e => setEditVolJson(e.target.value)} rows={16} style={{fontFamily:'monospace',fontSize:12}} />
+                      <div style={{display:'flex',gap:6,marginTop:8}}>
+                        <button className="btn-primary-sm" onClick={() => saveEditVolInventory(idx)}>💾 保存</button>
+                        <button className="btn-ghost-sm" onClick={() => { setEditingVolIdx(null); setEditVolJson(''); }}>取消</button>
+                      </div>
+                    </div>
+                  ) : (!vol.items || vol.items.length === 0) && (!vol.realms || vol.realms.length === 0) ? (
                     <p className="text-muted" style={{fontSize:13}}>暂无物资数据，点击「🔍 AI识别」选择此卷进行识别</p>
                   ) : (
                     <>
@@ -4318,6 +4435,9 @@ function DynamicMemoryPanel(props: {
   const [collapsedVolDyn, setCollapsedVolDyn] = useState<Set<number>>(new Set());
   // 卷选择器
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
+  // 按卷编辑
+  const [editingVolIdx, setEditingVolIdx] = useState<number | null>(null);
+  const [editVolJson, setEditVolJson] = useState('');
   // 防遗忘与一致性检查
   const [antiForgetChecking, setAntiForgetChecking] = useState(false);
   const [antiForgetReport, setAntiForgetReport] = useState<any>(null);
@@ -4476,6 +4596,43 @@ function DynamicMemoryPanel(props: {
         alert('删除失败: ' + e.message);
       }
     });
+  }
+
+  // 开始按卷编辑：将该卷的 data 序列化为 JSON 供编辑
+  function startEditVolDynamic(idx: number) {
+    const vol = displayDynVolumes[idx];
+    if (!vol) return;
+    const editTarget = vol.data || { summary: '', characters: '', events: '', timeline: '', locations: '', factions: '', foreshadowing: '', realms: '', relationships: '' };
+    setEditingVolIdx(idx);
+    setEditVolJson(JSON.stringify(editTarget, null, 2));
+    setCollapsedVolDyn(prev => { const n = new Set(prev); n.delete(idx); return n; });
+  }
+
+  // 保存按卷编辑：解析编辑后的 JSON，写回 dynamic_volumes
+  async function saveEditVolDynamic(idx: number) {
+    try {
+      const parsed = JSON.parse(editVolJson);
+      const vol = displayDynVolumes[idx];
+      const matchKey = vol.volume_id || vol.volume;
+      const newList = [...dynVolumes];
+      const existIdx = newList.findIndex((v: any) => (v.volume_id || v.volume) === matchKey);
+      const entry = {
+        volume_id: vol.volume_id || '',
+        volume: vol.volume || '',
+        data: parsed,
+      };
+      if (existIdx >= 0) {
+        newList[existIdx] = { ...newList[existIdx], ...entry };
+      } else {
+        newList.push(entry);
+      }
+      const updated = await api.updateBible(bookId, { dynamic_volumes: JSON.stringify(newList, null, 2) } as any);
+      onBibleUpdate(updated);
+      setEditingVolIdx(null);
+      setEditVolJson('');
+    } catch (e: any) {
+      alert('保存失败：JSON 格式错误 - ' + e.message);
+    }
   }
 
   const selectedReport = reports.find(r => r.id === selectedId) || null;
@@ -4754,6 +4911,7 @@ function DynamicMemoryPanel(props: {
                     {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
                     {/* P0-4: 新增"识别卷动态摘要"按钮，调用 analyzeDynamicVolume 写入 dynamic_volumes */}
                     <button className="btn-ghost-sm" onClick={() => handleAnalyzeDynamicVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={!!analyzingVol} title="AI识别本卷动态摘要（人物/事件/伏笔/关系）写入按卷动态文件">📝 摘要</button>
+                    <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolDynamic(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷动态文件数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
                     {hasData && (
                       <button className="btn-ghost-sm" onClick={() => deleteVolumeDynamic(idx)} style={{color:'#e74c3c'}} title="删除此卷动态文件数据">🗑️</button>
                     )}
@@ -4761,7 +4919,16 @@ function DynamicMemoryPanel(props: {
                 </div>
                 {!collapsedVolDyn.has(idx) && (
                   <div className="plot-volume-body">
-                    {!hasData ? (
+                    {editingVolIdx === idx ? (
+                      <div style={{marginTop:8}}>
+                        <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑本卷动态文件数据（JSON 格式）：summary/characters/events/timeline/locations/factions/foreshadowing/realms/relationships。</p>
+                        <textarea className="input" value={editVolJson} onChange={e => setEditVolJson(e.target.value)} rows={18} style={{fontFamily:'monospace',fontSize:12}} />
+                        <div style={{display:'flex',gap:6,marginTop:8}}>
+                          <button className="btn-primary-sm" onClick={() => saveEditVolDynamic(idx)}>💾 保存</button>
+                          <button className="btn-ghost-sm" onClick={() => { setEditingVolIdx(null); setEditVolJson(''); }}>取消</button>
+                        </div>
+                      </div>
+                    ) : !hasData ? (
                       <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据，点击「🔍 AI识别」选择此卷生成摘要</p>
                     ) : (
                       <div className="plot-events">
@@ -5097,6 +5264,8 @@ function ForeshadowingPanel(props: {
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
+  const [editingVolIdx, setEditingVolIdx] = useState<number | null>(null);
+  const [editVolJson, setEditVolJson] = useState('');
   const [aiMode, setAiMode] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiAssisting, setAiAssisting] = useState(false);
@@ -5195,6 +5364,43 @@ function ForeshadowingPanel(props: {
         alert('删除失败: ' + e.message);
       }
     });
+  }
+
+  // 开始按卷编辑：将该卷的 data 序列化为 JSON 供编辑
+  function startEditVolFore(idx: number) {
+    const vol = displayVolumes[idx];
+    if (!vol) return;
+    const editTarget = vol.data || { summary: '', planted: [], resolved: [], pending: [] };
+    setEditingVolIdx(idx);
+    setEditVolJson(JSON.stringify(editTarget, null, 2));
+    setCollapsedVols(prev => { const n = new Set(prev); n.delete(idx); return n; });
+  }
+
+  // 保存按卷编辑：解析编辑后的 JSON，写回 foreshadowing_volumes
+  async function saveEditVolFore(idx: number) {
+    try {
+      const parsed = JSON.parse(editVolJson);
+      const vol = displayVolumes[idx];
+      const matchKey = vol.volume_id || vol.volume;
+      const newList = [...foreVolumes];
+      const existIdx = newList.findIndex((v: any) => (v.volume_id || v.volume) === matchKey);
+      const entry = {
+        volume_id: vol.volume_id || '',
+        volume: vol.volume || '',
+        data: parsed,
+      };
+      if (existIdx >= 0) {
+        newList[existIdx] = { ...newList[existIdx], ...entry };
+      } else {
+        newList.push(entry);
+      }
+      const updated = await api.updateBible(bookId, { foreshadowing_volumes: JSON.stringify(newList, null, 2) } as any);
+      onBibleUpdate(updated);
+      setEditingVolIdx(null);
+      setEditVolJson('');
+    } catch (e: any) {
+      alert('保存失败：JSON 格式错误 - ' + e.message);
+    }
   }
 
   async function executeAi() {
@@ -5322,15 +5528,25 @@ function ForeshadowingPanel(props: {
                   {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                   {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
                   <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                    {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
-                    {hasData && (
-                      <button className="btn-ghost-sm" onClick={() => deleteVolumeFore(idx)} style={{color:'#e74c3c'}} title="删除此卷伏笔数据">🗑️</button>
-                    )}
-                  </div>
+                  {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
+                  <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolFore(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷伏笔数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
+                  {hasData && (
+                    <button className="btn-ghost-sm" onClick={() => deleteVolumeFore(idx)} style={{color:'#e74c3c'}} title="删除此卷伏笔数据">🗑️</button>
+                  )}
                 </div>
-                {!collapsedVols.has(idx) && (
-                  <div className="plot-volume-body">
-                    {!hasData ? (
+              </div>
+              {!collapsedVols.has(idx) && (
+                <div className="plot-volume-body">
+                  {editingVolIdx === idx ? (
+                    <div style={{marginTop:8}}>
+                      <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑本卷伏笔数据（JSON 格式）：summary（综述）、planted（埋设）、resolved（回收）、pending（未回收）。</p>
+                      <textarea className="input" value={editVolJson} onChange={e => setEditVolJson(e.target.value)} rows={16} style={{fontFamily:'monospace',fontSize:12}} />
+                      <div style={{display:'flex',gap:6,marginTop:8}}>
+                        <button className="btn-primary-sm" onClick={() => saveEditVolFore(idx)}>💾 保存</button>
+                        <button className="btn-ghost-sm" onClick={() => { setEditingVolIdx(null); setEditVolJson(''); }}>取消</button>
+                      </div>
+                    </div>
+                  ) : !hasData ? (
                       <p className="text-muted" style={{fontSize:13}}>暂无伏笔识别数据，点击「🔍 AI识别」选择此卷进行识别</p>
                     ) : (
                       <div className="plot-events">
@@ -5412,6 +5628,8 @@ function LocationsPanel(props: {
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
+  const [editingVolIdx, setEditingVolIdx] = useState<number | null>(null);
+  const [editVolJson, setEditVolJson] = useState('');
   const [globalLocCollapsed, setGlobalLocCollapsed] = useState(true); // 全局地点档案默认折叠
 
   useEffect(() => {
@@ -5505,6 +5723,43 @@ function LocationsPanel(props: {
     });
   }
 
+  // 开始按卷编辑：将该卷的 data 序列化为 JSON 供编辑
+  function startEditVolLoc(idx: number) {
+    const vol = displayVolumes[idx];
+    if (!vol) return;
+    const editTarget = vol.data || { summary: '', locations: [], regions: [] };
+    setEditingVolIdx(idx);
+    setEditVolJson(JSON.stringify(editTarget, null, 2));
+    setCollapsedVols(prev => { const n = new Set(prev); n.delete(idx); return n; });
+  }
+
+  // 保存按卷编辑：解析编辑后的 JSON，写回 locations_volumes
+  async function saveEditVolLoc(idx: number) {
+    try {
+      const parsed = JSON.parse(editVolJson);
+      const vol = displayVolumes[idx];
+      const matchKey = vol.volume_id || vol.volume;
+      const newList = [...locVolumes];
+      const existIdx = newList.findIndex((v: any) => (v.volume_id || v.volume) === matchKey);
+      const entry = {
+        volume_id: vol.volume_id || '',
+        volume: vol.volume || '',
+        data: parsed,
+      };
+      if (existIdx >= 0) {
+        newList[existIdx] = { ...newList[existIdx], ...entry };
+      } else {
+        newList.push(entry);
+      }
+      const updated = await api.updateBible(bookId, { locations_volumes: JSON.stringify(newList, null, 2) } as any);
+      onBibleUpdate(updated);
+      setEditingVolIdx(null);
+      setEditVolJson('');
+    } catch (e: any) {
+      alert('保存失败：JSON 格式错误 - ' + e.message);
+    }
+  }
+
   return (
     <div className="bible-edit-panel">
       {bookTitle && (
@@ -5555,6 +5810,7 @@ function LocationsPanel(props: {
                   {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
                   <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
                     {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
+                    <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolLoc(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷地点数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
                     {hasData && (
                       <button className="btn-ghost-sm" onClick={() => deleteVolumeLoc(idx)} style={{color:'#e74c3c'}} title="删除此卷地点数据">🗑️</button>
                     )}
@@ -5562,7 +5818,16 @@ function LocationsPanel(props: {
                 </div>
                 {!collapsedVols.has(idx) && (
                   <div className="plot-volume-body">
-                    {!hasData ? (
+                    {editingVolIdx === idx ? (
+                      <div style={{marginTop:8}}>
+                        <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑本卷地点数据（JSON 格式）：summary（地理概况）、locations（地点）、regions（区域）。</p>
+                        <textarea className="input" value={editVolJson} onChange={e => setEditVolJson(e.target.value)} rows={16} style={{fontFamily:'monospace',fontSize:12}} />
+                        <div style={{display:'flex',gap:6,marginTop:8}}>
+                          <button className="btn-primary-sm" onClick={() => saveEditVolLoc(idx)}>💾 保存</button>
+                          <button className="btn-ghost-sm" onClick={() => { setEditingVolIdx(null); setEditVolJson(''); }}>取消</button>
+                        </div>
+                      </div>
+                    ) : !hasData ? (
                       <p className="text-muted" style={{fontSize:13}}>暂无地点识别数据，点击「🔍 AI识别」选择此卷进行识别</p>
                     ) : (
                       <div className="plot-events">
