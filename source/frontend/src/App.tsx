@@ -116,14 +116,13 @@ export default function App() {
     }
   }, [theme, customColors]);
 
-  // 应用启动时加载背景图片
   useEffect(() => {
+    // 清理已废弃的背景图片配置（功能已移除）
     const savedBg = localStorage.getItem('fanshu-bg-image');
     if (savedBg) {
-      document.body.style.backgroundImage = `url(${savedBg})`;
-      document.body.style.backgroundSize = 'cover';
-      document.body.style.backgroundPosition = 'center';
-      document.body.style.backgroundAttachment = 'fixed';
+      localStorage.removeItem('fanshu-bg-image');
+      localStorage.removeItem('fanshu-bg-opacity');
+      document.body.style.backgroundImage = '';
     }
   }, []);
 

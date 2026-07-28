@@ -63,11 +63,6 @@ export default function MinePage() {
   const [serverUrl, setServerUrl] = useState('');
   const [serverStatus, setServerStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
 
-  // 主题背景图片
-  const [bgImage, setBgImage] = useState('');
-  const [bgOpacity, setBgOpacity] = useState(1.0);
-  const bgImageInputRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => {
     const savedPath = localStorage.getItem('fanshu-local-path') || '';
     const savedMode = (localStorage.getItem('fanshu-storage-mode') as 'cloud' | 'local') || 'cloud';
@@ -78,33 +73,15 @@ export default function MinePage() {
       const saved = localStorage.getItem('fanshu-custom-models');
       if (saved) setCustomModels(JSON.parse(saved));
     } catch { /* ignore */ }
-    // 加载背景图片
-    const savedBg = localStorage.getItem('fanshu-bg-image') || '';
-    const savedOpacity = parseFloat(localStorage.getItem('fanshu-bg-opacity') || '1');
-    setBgImage(savedBg);
-    setBgOpacity(savedOpacity);
-    applyBgImage(savedBg, savedOpacity);
+    // 清理已废弃的背景图片配置（功能已移除）
+    localStorage.removeItem('fanshu-bg-image');
+    localStorage.removeItem('fanshu-bg-opacity');
+    const bgDiv = document.getElementById('bg-image-layer');
+    if (bgDiv) bgDiv.remove();
+    document.body.style.backgroundImage = '';
     // 加载后端服务器地址配置
     setServerUrl(localStorage.getItem('fanshu-api-base-url') || '');
   }, []);
-
-  // 应用背景图片到独立图层（支持透明度）
-  function applyBgImage(img: string, opacity: number) {
-    let bgDiv = document.getElementById('bg-image-layer');
-    if (!img) {
-      if (bgDiv) bgDiv.remove();
-      document.body.style.backgroundImage = '';
-      return;
-    }
-    if (!bgDiv) {
-      bgDiv = document.createElement('div');
-      bgDiv.id = 'bg-image-layer';
-      bgDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background-size:cover;background-position:center;background-attachment:fixed;pointer-events:none;';
-      document.body.insertBefore(bgDiv, document.body.firstChild);
-    }
-    bgDiv.style.backgroundImage = `url(${img})`;
-    bgDiv.style.opacity = String(opacity);
-  }
 
   useEffect(() => {
     // 当AI配置加载后，同步识别模型开关状态
@@ -235,41 +212,6 @@ export default function MinePage() {
       alert('拉取模型失败：' + e.message);
     }
     setFetchingRecModels(false);
-  }
-
-  function handleBgImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert('请选择图片文件');
-      return;
-    }
-    // 限制大小 2MB
-    if (file.size > 2 * 1024 * 1024) {
-      alert('图片大小不能超过 2MB');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setBgImage(dataUrl);
-      localStorage.setItem('fanshu-bg-image', dataUrl);
-      applyBgImage(dataUrl, bgOpacity);
-    };
-    reader.readAsDataURL(file);
-    if (bgImageInputRef.current) bgImageInputRef.current.value = '';
-  }
-
-  function handleRemoveBgImage() {
-    setBgImage('');
-    localStorage.removeItem('fanshu-bg-image');
-    applyBgImage('', 1);
-  }
-
-  function handleBgOpacityChange(val: number) {
-    setBgOpacity(val);
-    localStorage.setItem('fanshu-bg-opacity', String(val));
-    applyBgImage(bgImage, val);
   }
 
   function handleFolderSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -746,49 +688,6 @@ export default function MinePage() {
               </button>
             </div>
             <p className="text-muted" style={{ marginTop: 10 }}>护眼绿适合长时间码字，深色适合夜间写作</p>
-
-            {/* 背景图片设置 */}
-            <div className="bg-image-section" style={{marginTop:16}}>
-              <h4 style={{marginBottom:8}}>🖼️ 背景图片</h4>
-              <p className="text-muted" style={{fontSize:12,marginBottom:8}}>从本地选择图片作为应用背景，营造沉浸式写作氛围</p>
-              <div className="bg-image-controls">
-                <button className="btn-secondary" onClick={() => bgImageInputRef.current?.click()}>
-                  📁 选择图片
-                </button>
-                {bgImage && (
-                  <button className="btn-ghost-sm" onClick={handleRemoveBgImage} style={{color:'var(--danger)'}}>
-                    🗑️ 移除背景
-                  </button>
-                )}
-              </div>
-              <input
-                ref={bgImageInputRef}
-                type="file"
-                accept="image/*"
-                style={{display:'none'}}
-                onChange={handleBgImageUpload}
-              />
-              {bgImage && (
-                <div className="bg-image-preview" style={{marginTop:8}}>
-                  <img src={bgImage} alt="背景预览" style={{width:'100%',maxHeight:120,objectFit:'cover',borderRadius:8}} />
-                  <div style={{marginTop:10}}>
-                    <label style={{fontSize:12,color:'var(--text-secondary)',display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
-                      <span>🖼️ 背景透明度</span>
-                      <span>{Math.round(bgOpacity * 100)}%</span>
-                    </label>
-                    <input
-                      type="range"
-                      min={0.1}
-                      max={1}
-                      step={0.05}
-                      value={bgOpacity}
-                      onChange={e => handleBgOpacityChange(parseFloat(e.target.value))}
-                      style={{width:'100%',accentColor:'var(--accent)'}}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
 
             {theme === 'custom' && customColors && (
               <div className="custom-theme-editor">
