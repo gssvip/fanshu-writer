@@ -34,9 +34,9 @@ export default function Home() {
   return (
     <div className="home-root">
       <header className="home-header">
-        <div className="home-brand">
+        <div className="home-brand" style={{width:'100%',justifyContent:'center'}}>
           <img src="shouye.png" alt="蚂蚁写作" style={{height:40,objectFit:'contain',boxShadow:'var(--shadow-sm)',borderRadius:6}} />
-          <div><h1>蚂蚁写作</h1><p className="home-subtitle">AI小说创作平台</p></div>
+          <p className="home-subtitle">AI小说创作平台</p>
         </div>
         <div className="home-actions">
           <button className="btn-ghost mob-hide" onClick={() => setTheme(theme==='light'?'dark':'light')}>

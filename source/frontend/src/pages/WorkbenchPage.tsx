@@ -278,9 +278,6 @@ export default function WorkbenchPage() {
 
   return (
     <div className="page home-page">
-      <header className="page-header">
-        <h1>蚂蚁写作</h1>
-      </header>
 
       {/* 今日写作统计卡片 */}
       <div className="home-stats-banner">
