@@ -278,6 +278,12 @@ export default function WorkbenchPage() {
 
   return (
     <div className="page home-page">
+      {/* 顶部 Logo */}
+      <div style={{display:'flex',justifyContent:'center',padding:'12px 0 4px'}}>
+        <picture>
+          <img src="shouye.webp" alt="蚂蚁写作" style={{height:44,objectFit:'contain'}} />
+        </picture>
+      </div>
 
       {/* 今日写作统计卡片 */}
       <div className="home-stats-banner">

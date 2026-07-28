@@ -128,7 +128,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    api.getMe().then(u => { setCurrentUser?.(u); }).catch(() => {}).finally(() => setAuthChecked(true));
+    // 鉴权非阻塞：3秒超时降级，避免手机端因 Render 冷启动长时间白屏
+    let done = false;
+    const finish = () => { if (!done) { done = true; setAuthChecked(true); } };
+    api.getMe().then(u => { setCurrentUser?.(u); }).catch(() => {}).finally(finish);
+    // 超时兜底：3秒后无论鉴权是否完成都先渲染界面
+    const timer = setTimeout(finish, 3000);
+    return () => clearTimeout(timer);
   }, []);
 
   // 后端预热：应对 Render 免费版冷启动（15 分钟无访问会休眠）
