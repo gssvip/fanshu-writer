@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import type { Book, BookBible, BrainstormResult, BrainstormSuggestion, Chapter, SkillPack, DynamicReport } from '../types';
@@ -1384,6 +1384,75 @@ function ConceptPanel(props: {
 }
 
 /* ===== 章节管理面板 ===== */
+// 单个卷分组子组件：用 memo 包裹，折叠/展开某个卷时其他卷不会重渲染
+interface VolumeGroupProps {
+  volId: string;
+  volTitle: string;
+  volChs: Chapter[];
+  expanded: boolean;
+  renaming: boolean;
+  renameValue: string;
+  onToggle: (volId: string) => void;
+  onSelectChapter: (id: string) => void;
+  onCreateChapter: (volId: string) => void;
+  onDeleteVolume: (volId: string) => void;
+  onStartRename: (volId: string, currentTitle: string) => void;
+  onRenameSubmit: (volId: string, newTitle: string) => void;
+  onCancelRename: () => void;
+  onRenameChange: (v: string) => void;
+}
+const VolumeGroup = memo(function VolumeGroup({
+  volId, volTitle, volChs, expanded, renaming, renameValue,
+  onToggle, onSelectChapter, onCreateChapter, onDeleteVolume,
+  onStartRename, onRenameSubmit, onCancelRename, onRenameChange,
+}: VolumeGroupProps) {
+  return (
+    <div className="chapter-volume-group">
+      <div className="chapter-volume-header">
+        <span className="chapter-volume-arrow" onClick={() => onToggle(volId)}>
+          {expanded ? '▼' : '▶'}
+        </span>
+        {renaming ? (
+          <input
+            className="input chapter-volume-rename-input"
+            value={renameValue}
+            onChange={e => onRenameChange(e.target.value)}
+            onBlur={() => {
+              if (renameValue.trim()) onRenameSubmit(volId, renameValue.trim());
+              else onCancelRename();
+            }}
+            onKeyDown={e => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } if (e.key === 'Escape') onCancelRename(); }}
+            autoFocus
+            onClick={e => e.stopPropagation()}
+          />
+        ) : (
+          <span className="chapter-volume-title">📁 {volTitle}</span>
+        )}
+        <span className="chapter-volume-count">{volChs.length}章</span>
+        <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onStartRename(volId, volTitle); }} title="重命名">✏️</button>
+        <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onCreateChapter(volId); }} title="在此卷下添加章节">+</button>
+        <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onDeleteVolume(volId); }} title="删除此卷" style={{color:'#e74c3c'}}>🗑️</button>
+      </div>
+      {expanded && (
+        <div className="chapter-volume-children">
+          {volChs.length === 0 ? (
+            <div className="chapter-volume-empty">暂无章节，点击 + 添加</div>
+          ) : volChs.map((ch, i) => (
+            <div key={ch.id} className="chapter-list-item" onClick={() => onSelectChapter(ch.id)}>
+              <div className="chapter-list-index">{i + 1}</div>
+              <div className="chapter-list-info">
+                <div className="chapter-list-title">{ch.title}</div>
+                <div className="chapter-list-meta">{ch.word_count} 字</div>
+              </div>
+              <div className="chapter-list-arrow">›</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
 function ChapterPanel(props: {
   chapters: Chapter[];
   activeChapter: Chapter | null;
@@ -1439,6 +1508,31 @@ function ChapterPanel(props: {
   const [renamingVolId, setRenamingVolId] = useState<string | null>(null);
   const [renameVolTitle, setRenameVolTitle] = useState('');
   const selectedCount = selectedSkillPackIds.length;
+
+  // 稳定回调（useCallback）：避免每次 ChapterPanel 重渲染时生成新函数引用，
+  // 配合 VolumeGroup 的 memo，使折叠/展开某个卷时其他卷不重渲染。
+  const toggleVolume = useCallback((volId: string) => {
+    setExpandedVolumes(prev => ({ ...prev, [volId]: prev[volId] === false }));
+  }, []);
+  const startRenameVolume = useCallback((volId: string, currentTitle: string) => {
+    setRenamingVolId(volId);
+    setRenameVolTitle(currentTitle);
+  }, []);
+  const cancelRenameVolume = useCallback(() => {
+    setRenamingVolId(null);
+  }, []);
+  const submitRenameVolume = useCallback(async (volId: string, newTitle: string) => {
+    if (newTitle.trim()) {
+      try { await onRenameVolume(volId, newTitle.trim()); } catch { /* 忽略，保持编辑态 */ }
+    }
+    setRenamingVolId(null);
+  }, [onRenameVolume]);
+  const createChapterInVolume = useCallback((volId: string) => {
+    onCreateChapter(volId);
+  }, [onCreateChapter]);
+  const removeVolume = useCallback((volId: string) => {
+    onDeleteVolume(volId);
+  }, [onDeleteVolume]);
 
   // 追加导入章节（已有作品继续添加章节，尤其适合导入的小说继续更新）
   const importChaptersRef = useRef<HTMLInputElement>(null);
@@ -1813,69 +1907,37 @@ function ChapterPanel(props: {
         </div>
       ) : (
         <div className="chapter-list">
-          {/* 按卷分组显示 */}
+          {/* 按卷分组显示 - 使用 memo 化的 VolumeGroup 子组件，折叠某卷时其他卷不重渲染 */}
           {volumes.map(vol => {
             const volChs = volumeChapters(vol.id);
             const expanded = expandedVolumes[vol.id] !== false; // 默认展开
             const isRenaming = renamingVolId === vol.id;
             return (
-              <div key={vol.id} className="chapter-volume-group">
-                <div
-                  className="chapter-volume-header"
-                >
-                  <span className="chapter-volume-arrow" onClick={() => setExpandedVolumes(prev => ({ ...prev, [vol.id]: !expanded }))}>
-                    {expanded ? '▼' : '▶'}
-                  </span>
-                  {isRenaming ? (
-                    <input
-                      className="input chapter-volume-rename-input"
-                      value={renameVolTitle}
-                      onChange={e => setRenameVolTitle(e.target.value)}
-                      onBlur={async () => {
-                        if (renameVolTitle.trim()) { await onRenameVolume(vol.id, renameVolTitle.trim()); }
-                        setRenamingVolId(null);
-                      }}
-                      onKeyDown={e => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
-                      autoFocus
-                      onClick={e => e.stopPropagation()}
-                    />
-                  ) : (
-                    <span className="chapter-volume-title">📁 {vol.title}</span>
-                  )}
-                  <span className="chapter-volume-count">{volChs.length}章</span>
-                  <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); setRenamingVolId(vol.id); setRenameVolTitle(vol.title); }} title="重命名">✏️</button>
-                  <button
-                    className="btn-ghost-sm chapter-volume-add"
-                    onClick={e => { e.stopPropagation(); onCreateChapter(vol.id); }}
-                    title="在此卷下添加章节"
-                  >+</button>
-                  <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onDeleteVolume(vol.id); }} title="删除此卷" style={{color:'#e74c3c'}}>🗑️</button>
-                </div>
-                {expanded && (
-                  <div className="chapter-volume-children">
-                    {volChs.length === 0 ? (
-                      <div className="chapter-volume-empty">暂无章节，点击 + 添加</div>
-                    ) : volChs.map((ch, i) => (
-                      <div key={ch.id} className="chapter-list-item" onClick={() => onSelectChapter(ch.id)}>
-                        <div className="chapter-list-index">{i + 1}</div>
-                        <div className="chapter-list-info">
-                          <div className="chapter-list-title">{ch.title}</div>
-                          <div className="chapter-list-meta">{ch.word_count} 字</div>
-                        </div>
-                        <div className="chapter-list-arrow">›</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <VolumeGroup
+                key={vol.id}
+                volId={vol.id}
+                volTitle={vol.title}
+                volChs={volChs}
+                expanded={expanded}
+                renaming={isRenaming}
+                renameValue={renameVolTitle}
+                onToggle={toggleVolume}
+                onSelectChapter={onSelectChapter}
+                onCreateChapter={createChapterInVolume}
+                onDeleteVolume={removeVolume}
+                onStartRename={startRenameVolume}
+                onRenameSubmit={submitRenameVolume}
+                onCancelRename={cancelRenameVolume}
+                onRenameChange={setRenameVolTitle}
+              />
             );
           })}
-          {/* 未分卷的章节 */}
+          {/* 未分卷的章节 - 单独处理（不复用 VolumeGroup，因其重命名逻辑不同：转未分卷为命名卷） */}
           {orphanChapters.length > 0 && (
             <div className="chapter-volume-group">
               <div
                 className="chapter-volume-header"
-                onClick={() => volumes.length > 0 && setExpandedVolumes(prev => ({ ...prev, '__orphan__': prev['__orphan__'] === false }))}
+                onClick={() => volumes.length > 0 && toggleVolume('__orphan__')}
               >
                 {volumes.length > 0 && (
                   <span className="chapter-volume-arrow">{expandedVolumes['__orphan__'] !== false ? '▼' : '▶'}</span>
