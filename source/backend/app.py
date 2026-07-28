@@ -2467,7 +2467,7 @@ def ai_import_recognize(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=3000, temperature=0.3
+        max_tokens=3000, temperature=0.3, task_type='recognition'
     )
     if err:
         return jsonify({'error': err}), 500
@@ -2700,7 +2700,7 @@ def ai_anti_forget_check(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=3500, temperature=0.3
+        max_tokens=3500, temperature=0.3, task_type='recognition'
     )
     if err:
         return jsonify({'error': err}), 500
@@ -4756,6 +4756,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.model if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+    # 识别/检查类任务（章节计划、一致性检查）用识别模型，为空时回退主模型
+    recognition_model = config.get_model_for_task('recognition') if config else model
     if not base_url.endswith('/v1'):
         base_url = base_url.rstrip('/') + '/v1'
 
@@ -4876,10 +4878,11 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
 {pending_text}"""
 
     # ===== 5. 章节计划前置（#4：chapter_plan Agent）=====
+    # 章节计划属"读数据→提炼→注入"的识别类任务，用识别模型（便宜快），正文生成本身仍用主模型
     chapter_plan = _generate_chapter_plan(
         book_id, bb, current_chapter_num, vol_chapter, vol_index,
         memory_section, foreshadowing_section, skill_pack_ids,
-        api_key, base_url, model, max_tokens=600
+        api_key, base_url, recognition_model, max_tokens=600
     )
     plan_section = f'【本章计划】（由 chapter_plan Agent 生成，请严格遵循）\n{chapter_plan}' if chapter_plan else ''
 
@@ -4932,6 +4935,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
         'api_key': api_key,
         'base_url': base_url,
         'model': model,
+        'recognition_model': recognition_model,  # 识别/检查类任务用
     }
 
 
@@ -5069,12 +5073,13 @@ def ai_continue(book_id):
                     deai_status = 'failed'
 
         # ===== 一致性检查 Agent（#13：独立 Agent，P1扩展：含 chapter_plan 比对）=====
+        # 一致性检查属识别/检查类任务，用识别模型
         consistency_passed = True
         consistency_issues = ''
         if enable_consistency_check:
             consistency_passed, consistency_issues = _consistency_check(
                 book_id, bb, polished_content, ctx['current_chapter_num'],
-                api_key, base_url, model, max_tokens=800,
+                api_key, base_url, ctx.get('recognition_model', model), max_tokens=800,
                 chapter_plan=ctx.get('chapter_plan', '')
             )
 
@@ -5158,8 +5163,9 @@ def ai_continue_stream(book_id):
 
 
 # ==== LLM 调用辅助函数 ====
-def _call_llm(messages, max_tokens=None, temperature=None):
-    """统一的 LLM 调用辅助函数，返回 (content, error)"""
+def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation'):
+    """统一的 LLM 调用辅助函数，返回 (content, error)
+    task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)"""
     cfg = AIConfig.query.first()
     if not cfg or not cfg.api_key:
         return None, '请先配置 AI 模型 API Key'
@@ -5167,8 +5173,9 @@ def _call_llm(messages, max_tokens=None, temperature=None):
         base = cfg.base_url.rstrip('/')
         if not base.endswith('/v1'):
             base += '/v1'
+        model = cfg.get_model_for_task(task_type)
         payload = {
-            'model': cfg.model,
+            'model': model,
             'messages': messages,
             'temperature': temperature if temperature is not None else cfg.temperature,
             'max_tokens': max_tokens if max_tokens else cfg.max_tokens,
@@ -7324,7 +7331,7 @@ def ai_analyze_character_volume(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=3000, temperature=0.3
+        max_tokens=3000, temperature=0.3, task_type='recognition'
     )
     if err:
         return jsonify({'error': err}), 500
@@ -7451,7 +7458,7 @@ def ai_analyze_inventory_volume(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=3000, temperature=0.3
+        max_tokens=3000, temperature=0.3, task_type='recognition'
     )
     if err:
         return jsonify({'error': err}), 500
@@ -7583,7 +7590,7 @@ def ai_analyze_dynamic_volume(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=2500, temperature=0.3
+        max_tokens=2500, temperature=0.3, task_type='recognition'
     )
     if err:
         return jsonify({'error': err}), 500
@@ -7686,7 +7693,7 @@ def ai_analyze_foreshadowing_volume(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=2500, temperature=0.3
+        max_tokens=2500, temperature=0.3, task_type='recognition'
     )
     if err:
         return jsonify({'error': err}), 500
@@ -7787,7 +7794,7 @@ def ai_analyze_locations_volume(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=2500, temperature=0.3
+        max_tokens=2500, temperature=0.3, task_type='recognition'
     )
     if err:
         return jsonify({'error': err}), 500
