@@ -6420,28 +6420,35 @@ def ai_analyze_plot_volume(book_id):
         return jsonify({'error': str(e)}), 500
 
 
+def _get_volume_chapters_ordered(book_id, volume_id):
+    """返回指定卷下的非卷章节列表（按 order_index 排序）。
+    优先用 parent_id 关联（标准结构）；若该卷无任何 parent_id 指向它的章节，
+    回退到顺序遍历法（兼容旧数据：卷记录紧挨在其子章节之前）。
+    volume_id 为空则返回全部非卷章节。"""
+    all_chapters = Chapter.query.filter_by(book_id=book_id).order_by(Chapter.order_index).all()
+    if not volume_id:
+        return [c for c in all_chapters if not c.is_volume]
+    # 优先：parent_id 关联（标准结构）
+    vol_chs = [c for c in all_chapters if not c.is_volume and c.parent_id == volume_id]
+    if vol_chs:
+        return vol_chs
+    # 回退：顺序遍历法（兼容卷紧挨子章节之前的旧数据）
+    collecting = False
+    for ch in all_chapters:
+        if ch.id == volume_id:
+            collecting = True
+            continue
+        if collecting:
+            if ch.is_volume:
+                break
+            vol_chs.append(ch)
+    return vol_chs
+
+
 def _collect_volume_chapters(book_id, volume_id):
     """收集指定卷的章节内容文本。volume_id 为空则取全部非卷章节。
-    优先用 parent_id 关联（标准结构）；若该卷无任何 parent_id 指向它的章节，
-    回退到顺序遍历法（兼容旧数据：卷记录紧挨在其子章节之前）。"""
-    all_chapters = Chapter.query.filter_by(book_id=book_id).order_by(Chapter.order_index).all()
-    volume_chapters = []
-    if volume_id:
-        # 优先：parent_id 关联（标准结构）
-        volume_chapters = [c for c in all_chapters if not c.is_volume and c.parent_id == volume_id]
-        # 回退：顺序遍历法（兼容卷紧挨子章节之前的旧数据）
-        if not volume_chapters:
-            collecting = False
-            for ch in all_chapters:
-                if ch.id == volume_id:
-                    collecting = True
-                    continue
-                if collecting:
-                    if ch.is_volume:
-                        break
-                    volume_chapters.append(ch)
-    else:
-        volume_chapters = [c for c in all_chapters if not c.is_volume]
+    章节检索逻辑见 _get_volume_chapters_ordered（parent_id 优先，回退顺序遍历）。"""
+    volume_chapters = _get_volume_chapters_ordered(book_id, volume_id)
 
     chapter_text = ''
     max_chars = 12000
@@ -6847,22 +6854,10 @@ def ai_analyze_dynamic_volume(book_id):
     # 收集该卷区间内的已有动态报告（5章一份）
     dyn_reports = DynamicReport.query.filter_by(book_id=book_id).order_by(DynamicReport.chapter_start).all()
     relevant_reports = []
-    # 计算该卷的起止章号（基于 parent_id 关联，与 _collect_volume_chapters 一致）
+    # 计算该卷的起止章号（与 _collect_volume_chapters 一致：parent_id 优先，回退顺序遍历）
     all_chs = Chapter.query.filter_by(book_id=book_id).order_by(Chapter.order_index).all()
     if volume_id:
-        # 优先用 parent_id 关联
-        vol_chs_in_order = [c for c in all_chs if not c.is_volume and c.parent_id == volume_id]
-        # 回退：顺序遍历法
-        if not vol_chs_in_order:
-            collecting = False
-            for ch in all_chs:
-                if ch.id == volume_id:
-                    collecting = True
-                    continue
-                if collecting:
-                    if ch.is_volume:
-                        break
-                    vol_chs_in_order.append(ch)
+        vol_chs_in_order = _get_volume_chapters_ordered(book_id, volume_id)
         # 计算该卷章节在全章节序列中的序号（1-based）
         non_vol_chs = [c for c in all_chs if not c.is_volume]
         vol_ch_idx = [non_vol_chs.index(c) for c in vol_chs_in_order if c in non_vol_chs]
@@ -7573,15 +7568,15 @@ def batch_generate_dynamic_reports(book_id):
     if not config or not config.api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
-    # 收集该卷章节（按order_index）
+    # 收集全作品非卷章节（按 order_index，用于计算全局 1-based 章号）
     all_chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
     if not all_chs:
         return jsonify({'error': '该作品暂无章节，无法批量生成动态报告。'}), 400
 
     # 确定该卷章节的全局1-based起止章号
     if volume_id:
-        # 用 parent_id 关联找到该卷的章节（卷记录 is_volume=True 已被上面的 filter 排除）
-        vol_chs = [c for c in all_chs if c.parent_id == volume_id]
+        # 用共享助手取该卷章节：parent_id 优先，回退顺序遍历（兼容未设置 parent_id 的旧数据）
+        vol_chs = _get_volume_chapters_ordered(book_id, volume_id)
         if not vol_chs:
             return jsonify({'error': f'卷「{volume_title or volume_id}」内暂无章节（请确认章节已归入该卷）'}), 400
         # 计算这些章节在 all_chs 中的全局序号（1-based）
