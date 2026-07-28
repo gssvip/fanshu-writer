@@ -4439,10 +4439,10 @@ def _filter_bible_by_relevance(bb, appearing_chars, max_per_field=None):
                          'timeline': 800, 'concept': 500, 'key_rules': 1200, 'style_guide': 500}
     result = {}
 
-    # key_rules / worldbuilding / concept / plot_design / timeline / style_guide：直接截断
+    # key_rules / worldbuilding / concept / plot_design / timeline / style_guide：语义截断（保证段落完整）
     for field in ['key_rules', 'worldbuilding', 'concept', 'plot_design', 'timeline', 'style_guide']:
         val = getattr(bb, field, '') or ''
-        result[field] = val[:max_per_field.get(field, 1000)] if val else ''
+        result[field] = _smart_truncate(val, max_per_field.get(field, 1000)) if val else ''
 
     # character_profiles：按出场角色筛选
     cp = bb.character_profiles or ''
@@ -4562,10 +4562,43 @@ def _build_smart_instruction(instruction, last_chapter, current_chapter_num):
     return f'请继续写第 {current_chapter_num} 章。{hook_hint}。\n\n{word_count_clause}'
 
 
+def _smart_truncate(text, budget):
+    """语义截断：按段落/换行/句号切，保证每段完整，避免拦腰截断关键规则。
+    优先级：段落(\n\n) > 换行(\n) > 中文句号(。！？) > 逗号(，；) > 硬截断。
+    句号类分隔符截断后末尾补回标点，保证句子完整。"""
+    if len(text) <= budget:
+        return text
+    # 句末标点：截断后需补回
+    end_puncts = {'。', '！', '？', '；', '，'}
+    for sep in ['\n\n', '\n', '。', '！', '？', '；', '，']:
+        chunks = text.split(sep)
+        if len(chunks) <= 1:
+            continue
+        result = []
+        used = 0
+        for i, ch in enumerate(chunks):
+            # 加入此片段后的总长（含分隔符）
+            piece_len = len(ch) + (len(sep) if i > 0 else 0)
+            if used + piece_len > budget:
+                break
+            result.append(ch)
+            used += piece_len
+        if not result:
+            continue
+        out = sep.join(result)
+        # 句末标点类：补回结尾标点，保证句子完整（如"第二条规则"→"第二条规则。"）
+        if sep in end_puncts and out and not out.endswith(sep) and len(out) + len(sep) <= budget + len(sep):
+            out = out + sep
+        if out.strip():
+            return out
+    # 兜底硬截断
+    return text[:budget]
+
+
 def _apply_budget_management(sections_with_labels, total_budget=8000):
     """上下文窗口预算管理：按权重分配总预算给各段，避免单段超长挤掉关键信息。
     sections_with_labels: [(label, content, weight), ...]  weight 越大优先级越高
-    返回拼接后的文本。"""
+    返回拼接后的文本。截断采用语义截断（_smart_truncate），保证每段完整。"""
     if not sections_with_labels:
         return ''
     total_weight = sum(w for _, _, w in sections_with_labels)
@@ -4577,7 +4610,7 @@ def _apply_budget_management(sections_with_labels, total_budget=8000):
             continue
         budget = int(total_budget * (weight / total_weight))
         if len(content) > budget:
-            content = content[:budget]
+            content = _smart_truncate(content, budget)
         parts.append(content if not label else f'{label}\n{content}')
     return '\n\n'.join(parts)
 
