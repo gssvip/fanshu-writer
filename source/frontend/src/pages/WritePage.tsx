@@ -1275,15 +1275,14 @@ function ConceptPanel(props: {
   if (conceptAiMode) {
     return (
       <div className="bible-edit-panel">
-        {bookTitle && (
-          <div className="bible-context-bar">
-            <span className="bible-context-book">📖 {bookTitle}</span>
-            <span className="bible-context-sep">›</span>
-            <span className="bible-context-dim">💡 AI创作 · 构思</span>
-          </div>
-        )}
         <div className="bible-edit-header">
-          <h3>💡 AI协同创作 · 构思</h3>
+          {bookTitle && (
+            <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+              <span className="bible-context-book">📖 {bookTitle}</span>
+              <span className="bible-context-sep">›</span>
+              <span className="bible-context-dim">💡 AI创作 · 构思</span>
+            </div>
+          )}
           <button className="btn-ghost-sm" onClick={onCancelConceptAi} disabled={conceptAiAssisting}>取消</button>
         </div>
         {/* 技能包多选器（可折叠） */}
@@ -2471,16 +2470,15 @@ function CharacterPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      {bookTitle && (
-        <div className="bible-context-bar">
-          <span className="bible-context-book">📖 {bookTitle}</span>
-          <span className="bible-context-sep">›</span>
-          <span className="bible-context-dim">👤 人物及关系</span>
-          {characters.length > 0 && <span className="bible-context-count">{characters.length}人</span>}
-        </div>
-      )}
       <div className="bible-edit-header">
-        <h3>👤 人物及关系</h3>
+        {bookTitle && (
+          <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            <span className="bible-context-book">📖 {bookTitle}</span>
+            <span className="bible-context-sep">›</span>
+            <span className="bible-context-dim">👤 人物及关系</span>
+            {characters.length > 0 && <span className="bible-context-count">{characters.length}人</span>}
+          </div>
+        )}
         <div className="bible-edit-actions" style={{position:'relative'}}>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate}>
             ✨ AI创作
@@ -3278,16 +3276,15 @@ function PlotPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      {bookTitle && (
-        <div className="bible-context-bar">
-          <span className="bible-context-book">📖 {bookTitle}</span>
-          <span className="bible-context-sep">›</span>
-          <span className="bible-context-dim">📖 剧情</span>
-          {displayVolumes.length > 0 && <span className="bible-context-count">{displayVolumes.length}卷</span>}
-        </div>
-      )}
       <div className="bible-edit-header">
-        <h3>📖 剧情（按卷）</h3>
+        {bookTitle && (
+          <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            <span className="bible-context-book">📖 {bookTitle}</span>
+            <span className="bible-context-sep">›</span>
+            <span className="bible-context-dim">📖 剧情</span>
+            {displayVolumes.length > 0 && <span className="bible-context-count">{displayVolumes.length}卷</span>}
+          </div>
+        )}
         <div className="bible-edit-actions">
           {displayVolumes.length > 0 && (
             <button
@@ -3874,16 +3871,15 @@ function InventoryPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      {bookTitle && (
-        <div className="bible-context-bar">
-          <span className="bible-context-book">📖 {bookTitle}</span>
-          <span className="bible-context-sep">›</span>
-          <span className="bible-context-dim">🎒 物资库</span>
-          {displayVolumes.length > 0 && <span className="bible-context-count">{displayVolumes.length}卷</span>}
-        </div>
-      )}
       <div className="bible-edit-header">
-        <h3>🎒 物资库（按卷）</h3>
+        {bookTitle && (
+          <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            <span className="bible-context-book">📖 {bookTitle}</span>
+            <span className="bible-context-sep">›</span>
+            <span className="bible-context-dim">🎒 物资库</span>
+            {displayVolumes.length > 0 && <span className="bible-context-count">{displayVolumes.length}卷</span>}
+          </div>
+        )}
         <div className="bible-edit-actions" style={{position:'relative'}}>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} title="AI 协同创作物资库">
             ✨ AI创作
@@ -4144,17 +4140,15 @@ function BibleEditPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      {/* 上下文面包屑 */}
-      {bookTitle && (
-        <div className="bible-context-bar">
-          <span className="bible-context-book">📖 {bookTitle}</span>
-          <span className="bible-context-sep">›</span>
-          <span className="bible-context-dim">{tab.icon} {tab.label}</span>
-          {wordCount > 0 && <span className="bible-context-count">{wordCount}字</span>}
-        </div>
-      )}
       <div className="bible-edit-header">
-        <h3>{tab.icon} {tab.label}</h3>
+        {bookTitle && (
+          <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            <span className="bible-context-book">📖 {bookTitle}</span>
+            <span className="bible-context-sep">›</span>
+            <span className="bible-context-dim">{tab.icon} {tab.label}</span>
+            {wordCount > 0 && <span className="bible-context-count">{wordCount}字</span>}
+          </div>
+        )}
         <div className="bible-edit-actions">
           {!editing ? (
             <>
@@ -5606,16 +5600,15 @@ function ForeshadowingPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      {bookTitle && (
-        <div className="bible-context-bar">
-          <span className="bible-context-book">📖 {bookTitle}</span>
-          <span className="bible-context-sep">›</span>
-          <span className="bible-context-dim">🔮 伏笔</span>
-        </div>
-      )}
       <div className="bible-edit-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div style={{display:'flex',alignItems:'center',gap:8,position:'relative'}}>
-          <h3 style={{margin:0}}>🔮 伏笔</h3>
+          {bookTitle && (
+            <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+              <span className="bible-context-book">📖 {bookTitle}</span>
+              <span className="bible-context-sep">›</span>
+              <span className="bible-context-dim">🔮 伏笔</span>
+            </div>
+          )}
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} style={{marginLeft:0}}>
             ✨ AI创作
           </button>
@@ -6019,15 +6012,14 @@ function LocationsPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      {bookTitle && (
-        <div className="bible-context-bar">
-          <span className="bible-context-book">📖 {bookTitle}</span>
-          <span className="bible-context-sep">›</span>
-          <span className="bible-context-dim">🗺️ 地图</span>
-        </div>
-      )}
       <div className="bible-edit-header">
-        <h3>🗺️ 地图（按卷）</h3>
+        {bookTitle && (
+          <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            <span className="bible-context-book">📖 {bookTitle}</span>
+            <span className="bible-context-sep">›</span>
+            <span className="bible-context-dim">🗺️ 地图</span>
+          </div>
+        )}
         <div className="bible-edit-actions" style={{position:'relative'}}>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} title="AI 全屏创作地点体系">✨ AI创作</button>
           {hasChapters && (
