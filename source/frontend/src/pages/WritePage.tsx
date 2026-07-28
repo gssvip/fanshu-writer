@@ -4649,6 +4649,50 @@ function DynamicMemoryPanel(props: {
     return result;
   }, [volumeChapters, dynVolumes, chapters]);
 
+  // 【按卷分组报告】将扁平报告列表按卷归类，用于"动态文件按卷分类"展示。
+  // 每个卷计算其下属章节的 order_index 范围（即 chapter_start 语义），
+  // 报告 chapter_start 落在该范围则归入该卷；未归入任何卷的报告放入"未分卷"组。
+  const reportsByVolume = useMemo(() => {
+    type VolGroup = { key: string; title: string; reports: DynamicReport[]; collapsed: boolean };
+    const groups: VolGroup[] = [];
+    const used = new Set<string>();
+    // 按 displayDynVolumes 顺序构建卷分组（与上方卷卡片顺序一致）
+    for (const vol of displayDynVolumes) {
+      const volId = vol.volume_id;
+      const volTitle = vol.volume || `第${groups.length + 1}卷`;
+      const childChapters = chapters.filter(c => c.parent_id === volId);
+      if (!childChapters.length) continue;
+      const minIdx = Math.min(...childChapters.map(c => c.order_index));
+      const maxIdx = Math.max(...childChapters.map(c => c.order_index));
+      // 报告 chapter_start 在 [minIdx, maxIdx] 视为属于该卷（order_index 从1开始与章号一致）
+      const volReports = reports
+        .filter(r => {
+          const s = Number(r.chapter_start);
+          return s >= minIdx && s <= maxIdx;
+        })
+        .sort((a, b) => Number(a.chapter_start) - Number(b.chapter_start));
+      if (volReports.length === 0) continue;
+      volReports.forEach(r => used.add(r.id));
+      groups.push({ key: `vol-${volId}`, title: volTitle, reports: volReports, collapsed: false });
+    }
+    // 未归入任何卷的报告
+    const orphan = reports.filter(r => !used.has(r.id)).sort((a, b) => Number(a.chapter_start) - Number(b.chapter_start));
+    if (orphan.length > 0) {
+      groups.push({ key: 'vol-orphan', title: '未分卷', reports: orphan, collapsed: false });
+    }
+    return groups;
+  }, [reports, displayDynVolumes, chapters]);
+
+  // 按卷分组折叠状态
+  const [collapsedReportVols, setCollapsedReportVols] = useState<Set<string>>(new Set());
+  function toggleReportVol(key: string) {
+    setCollapsedReportVols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
   function toggleVolDyn(idx: number) {
     setCollapsedVolDyn(prev => {
       const next = new Set(prev);
@@ -5077,42 +5121,86 @@ function DynamicMemoryPanel(props: {
                   {batchDeleting ? '⏳ 删除中...' : `🗑️ 删除选中(${checkedIds.size})`}
                 </button>
               </div>
-              {/* 带复选框的报告标签栏 */}
-              <div className="dm-tab-bar dm-tab-bar-batch">
-                {reports.map(r => (
-                  <label
-                    key={r.id}
-                    className={`dm-tab-chip ${checkedIds.has(r.id) ? 'active' : ''} dm-tab-chip-checkable`}
-                    title={r.title}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checkedIds.has(r.id)}
-                      onChange={() => toggleChecked(r.id)}
-                      disabled={batchDeleting}
-                    />
-                    <span className="dm-tab-chip-range">{r.chapter_start}-{r.chapter_end}</span>
-                    {r.auto_generated && <span className="dm-tab-chip-badge">自</span>}
-                  </label>
-                ))}
+              {/* 带复选框的报告标签栏 - 按卷分类 */}
+              <div className="dm-reports-by-volume">
+                {reportsByVolume.map(group => {
+                  const isCollapsed = collapsedReportVols.has(group.key);
+                  return (
+                    <div key={group.key} className="dm-volume-group">
+                      <div
+                        className="dm-volume-group-header"
+                        onClick={() => toggleReportVol(group.key)}
+                        style={{cursor:'pointer',display:'flex',alignItems:'center',gap:6,padding:'6px 4px',borderBottom:'1px solid var(--border)',marginBottom:6,userSelect:'none'}}
+                      >
+                        <span style={{fontSize:10,color:'var(--text-muted)'}}>{isCollapsed ? '▶' : '▼'}</span>
+                        <span style={{fontWeight:600,fontSize:14}}>📖 {group.title}</span>
+                        <span className="text-muted" style={{fontSize:12}}>{group.reports.length}份</span>
+                      </div>
+                      {!isCollapsed && (
+                        <div className="dm-tab-bar dm-tab-bar-batch" style={{marginBottom:8}}>
+                          {group.reports.map(r => (
+                            <label
+                              key={r.id}
+                              className={`dm-tab-chip ${checkedIds.has(r.id) ? 'active' : ''} dm-tab-chip-checkable`}
+                              title={r.title}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checkedIds.has(r.id)}
+                                onChange={() => toggleChecked(r.id)}
+                                disabled={batchDeleting}
+                              />
+                              <span className="dm-tab-chip-range">{r.chapter_start}-{r.chapter_end}</span>
+                              {r.auto_generated && <span className="dm-tab-chip-badge">自</span>}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </>
           ) : (
             <>
-              {/* 报告切换标签栏 - 单击切换编辑 */}
-              <div className="dm-tab-bar">
-                {reports.map(r => (
-                  <button
-                    key={r.id}
-                    className={`dm-tab-chip ${selectedId === r.id ? 'active' : ''}`}
-                    onClick={() => selectReport(r)}
-                    title={r.title}
-                  >
-                    <span className="dm-tab-chip-range">{r.chapter_start}-{r.chapter_end}</span>
-                    {r.auto_generated && <span className="dm-tab-chip-badge">自</span>}
-                  </button>
-                ))}
-              </div>
+              {/* 报告列表 - 按卷分类（每卷下展示该卷的动态报告，可折叠） */}
+              {reportsByVolume.length === 0 ? (
+                <p className="text-muted" style={{fontSize:13,padding:'8px 0'}}>暂无动态报告，点击上方「自动检查」或「➕ 新建报告」生成。</p>
+              ) : (
+                <div className="dm-reports-by-volume">
+                  {reportsByVolume.map(group => {
+                    const isCollapsed = collapsedReportVols.has(group.key);
+                    return (
+                      <div key={group.key} className="dm-volume-group">
+                        <div
+                          className="dm-volume-group-header"
+                          onClick={() => toggleReportVol(group.key)}
+                          style={{cursor:'pointer',display:'flex',alignItems:'center',gap:6,padding:'6px 4px',borderBottom:'1px solid var(--border)',marginBottom:6,userSelect:'none'}}
+                        >
+                          <span style={{fontSize:10,color:'var(--text-muted)'}}>{isCollapsed ? '▶' : '▼'}</span>
+                          <span style={{fontWeight:600,fontSize:14}}>📖 {group.title}</span>
+                          <span className="text-muted" style={{fontSize:12}}>{group.reports.length}份</span>
+                        </div>
+                        {!isCollapsed && (
+                          <div className="dm-tab-bar" style={{marginBottom:8}}>
+                            {group.reports.map(r => (
+                              <button
+                                key={r.id}
+                                className={`dm-tab-chip ${selectedId === r.id ? 'active' : ''}`}
+                                onClick={() => selectReport(r)}
+                                title={r.title}
+                              >
+                                <span className="dm-tab-chip-range">{r.chapter_start}-{r.chapter_end}</span>
+                                {r.auto_generated && <span className="dm-tab-chip-badge">自</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* 折叠编辑器面板 */}
               {selectedReport && (
@@ -5271,6 +5359,7 @@ function ForeshadowingPanel(props: {
   const [afRenameValue, setAfRenameValue] = useState('');
   const [afSectionOpen, setAfSectionOpen] = useState(true); // 防遗忘检查区折叠
   const [afScope, setAfScope] = useState<'reports' | 'dimensions'>('reports'); // 检查范围：动态文件/仅维度
+  const [foreCollapsed, setForeCollapsed] = useState(false); // 伏笔按卷区折叠状态
 
   // 解析全局伏笔
   useEffect(() => {
@@ -5595,7 +5684,10 @@ function ForeshadowingPanel(props: {
       <div className="bible-edit-header">
         <h3>🔮 伏笔（按卷）</h3>
         <div className="bible-edit-actions" style={{position:'relative'}}>
-          <button className="btn-ghost-sm" onClick={onOpenAiCreate}>
+          <button className="btn-ghost-sm" onClick={() => setForeCollapsed(v => !v)} title={foreCollapsed ? '展开伏笔列表' : '折叠伏笔列表'}>
+            {foreCollapsed ? '📥 拉取' : '📂 折叠'}
+          </button>
+          <button className="btn-ghost-sm" onClick={onOpenAiCreate} style={{marginLeft:0}}>
             ✨ AI创作
           </button>
           {hasChapters && (
@@ -5622,7 +5714,7 @@ function ForeshadowingPanel(props: {
       </p>
 
       {/* 按卷伏笔识别 */}
-      {displayVolumes.length > 0 && (
+      {displayVolumes.length > 0 && !foreCollapsed && (
         <div className="plot-volume-list" style={{marginBottom:16}}>
           {displayVolumes.map((vol, idx) => {
             const d = vol.data || {};
@@ -5692,13 +5784,23 @@ function ForeshadowingPanel(props: {
       {/* ===== 防遗忘检查（原全局伏笔档案位置）===== */}
       <div className="bible-edit-section" style={{marginTop:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-          <h4 style={{margin:0}}>🛡️ 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}</h4>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <h4 style={{margin:0}}>🛡️ 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}</h4>
+            <button
+              className="btn-primary-sm"
+              onClick={openAfVolPicker}
+              disabled={afChecking}
+              style={{fontSize:14,padding:'4px 14px'}}
+            >
+              {afChecking ? '⏳ 检查中...' : '🛡️ 开始检查'}
+            </button>
+          </div>
           <span className="text-muted" style={{fontSize:12,cursor:'pointer'}} onClick={() => setAfSectionOpen(v => !v)}>{afSectionOpen ? '▼ 收起' : '▶ 展开'}</span>
         </div>
 
         {afSectionOpen && (
           <>
-            {/* 检查资料范围选择（动态文件 / 仅维度）+ 检查按钮 */}
+            {/* 检查资料范围选择（动态文件 / 仅维度）*/}
             <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:8}}>
               <span style={{fontSize:13,color:'var(--text-muted)'}}>检查资料：</span>
               <button
@@ -5713,14 +5815,6 @@ function ForeshadowingPanel(props: {
                 title="查阅除构思、章节外所有维度"
                 style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='dimensions'?'var(--accent)':'var(--border)'}`,background:afScope==='dimensions'?'var(--accent)':'transparent',color:afScope==='dimensions'?'#fff':'var(--text)',fontWeight:afScope==='dimensions'?600:400}}
               >📐 仅维度</button>
-              <button
-                className="btn-primary-sm"
-                onClick={openAfVolPicker}
-                disabled={afChecking}
-                style={{marginLeft:'auto',fontSize:14,padding:'6px 16px'}}
-              >
-                {afChecking ? '⏳ 检查中...' : '🛡️ 开始检查'}
-              </button>
             </div>
             <p className="text-muted" style={{fontSize:12,marginBottom:10}}>
               {afScope === 'reports'
