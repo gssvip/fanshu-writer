@@ -1752,11 +1752,27 @@ function ChapterPanel(props: {
   // 章节列表（按卷分组）
 
   // 分离卷和章节
-  const volumes = chapters.filter(c => c.is_volume);
-  const volumeIds = new Set(volumes.map(v => v.id));
+  const volumes = useMemo(() => chapters.filter(c => c.is_volume), [chapters]);
+  // 按卷分组的章节（缓存，避免每次渲染都 filter）
+  const chaptersByVolume = useMemo(() => {
+    const map: Record<string, Chapter[]> = {};
+    for (const v of volumes) map[v.id] = [];
+    const orphans: Chapter[] = [];
+    for (const c of chapters) {
+      if (c.is_volume) continue;
+      const pid = c.parent_id;
+      if (pid && map[pid]) {
+        map[pid].push(c);
+      } else {
+        orphans.push(c); // 无 parent_id 或指向已不存在的卷（孤儿章节）
+      }
+    }
+    map['__orphan__'] = orphans;
+    return map;
+  }, [chapters, volumes]);
   // 未分卷 = 无 parent_id，或 parent_id 指向已不存在的卷（删除卷后避免章节变孤儿不可见）
-  const orphanChapters = chapters.filter(c => !c.is_volume && (!c.parent_id || !volumeIds.has(c.parent_id)));
-  const volumeChapters = (volId: string) => chapters.filter(c => !c.is_volume && c.parent_id === volId);
+  const orphanChapters = chaptersByVolume['__orphan__'] || [];
+  const volumeChapters = (volId: string) => chaptersByVolume[volId] || [];
 
   return (
     <div className="chapter-list-panel">
@@ -4835,11 +4851,25 @@ function DynamicMemoryPanel(props: {
           <button className="btn-primary-sm" onClick={() => { setCreateStart(''); setCreateEnd(''); setShowCreateModal(true); }} disabled={generating || batchMode}>
             ＋ 生成报告
           </button>
+          {chapterCount > 0 && displayDynVolumes.length > 0 && (
+            <div style={{position:'relative'}}>
+              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别，识别结果自动归类到对应卷下">
+                {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
+              </button>
+              {volSelectorOpen && (
+                <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
+                  <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
+                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeDynVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
+                  {displayDynVolumes.map((vol, idx) => (
+                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeDynVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
+                  ))}
+                  <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
-      <p className="text-muted dm-desc">
-        每5章自动汇总人物、事件、时间、地点、势力、伏笔、境界、关系等信息（≤500字/份），AI写作时优先读取动态文件替代全文，大幅降低token消耗
-      </p>
 
       {/* 防遗忘检查范围选择（整合防遗忘技能包：一致性/锁定事实/伏笔/叙事债务/角色认知） */}
       <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:10,fontSize:11,color:'var(--text-muted)',flexWrap:'wrap'}}>
@@ -4875,27 +4905,10 @@ function DynamicMemoryPanel(props: {
       {/* 按卷动态文件识别 */}
       {displayDynVolumes.length > 0 && (
         <div className="plot-volume-list" style={{marginBottom:16}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
+          <div style={{marginBottom:8}}>
             <p className="text-muted" style={{fontSize:12, margin:0}}>
-              📚 按卷动态文件：点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下。
+              📚 点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下
             </p>
-            {chapterCount > 0 && (
-              <div style={{position:'relative'}}>
-                <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
-                  {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
-                </button>
-                {volSelectorOpen && (
-                  <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
-                    <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
-                    <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeDynVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
-                    {displayDynVolumes.map((vol, idx) => (
-                      <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeDynVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
-                    ))}
-                    <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
           {displayDynVolumes.map((vol, idx) => {
             const d = vol.data || {};
