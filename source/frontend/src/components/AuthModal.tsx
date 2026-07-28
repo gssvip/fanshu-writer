@@ -62,7 +62,7 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
       <div className="modal-overlay" onClick={onDone}>
         <div className="auth-modal" onClick={e => e.stopPropagation()}>
           <div className="auth-modal-brand">
-            <span className="auth-modal-logo"><img src="logo.jpg" alt="logo" style={{width:40,height:40,borderRadius:10,objectFit:'cover'}} /></span>
+            <span className="auth-modal-logo"><img src="logo.png" alt="logo" style={{width:40,height:40,borderRadius:10,objectFit:'cover'}} /></span>
             <h2>找回密码</h2>
             <p>输入注册邮箱，我们将发送重置链接</p>
           </div>
@@ -121,7 +121,7 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
     <div className="modal-overlay" onClick={onDone}>
       <div className="auth-modal" onClick={e => e.stopPropagation()}>
         <div className="auth-modal-brand">
-          <span className="auth-modal-logo"><img src="logo.jpg" alt="logo" style={{width:40,height:40,borderRadius:10,objectFit:'cover'}} /></span>
+          <span className="auth-modal-logo"><img src="logo.png" alt="logo" style={{width:40,height:40,borderRadius:10,objectFit:'cover'}} /></span>
           <h2>蚂蚁写作</h2>
           <p>登录后使用全部功能</p>
         </div>
