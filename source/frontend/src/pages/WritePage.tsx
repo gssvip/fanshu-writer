@@ -4069,11 +4069,11 @@ function OutlineCombinedPanel(props: {
   async function generateOutlineMaster() {
     if (!bookId) return;
     // 弹出输入框让用户填写预计卷数
-    const input = window.prompt('请输入小说预计需要的卷数（1-30）：', '6');
+    const input = window.prompt('请输入小说预计需要的卷数（1-50）：', '10');
     if (input === null) return; // 用户取消
     const volumeCount = parseInt(input);
-    if (!volumeCount || volumeCount < 1 || volumeCount > 30) {
-      alert('卷数需为 1-30 之间的整数');
+    if (!volumeCount || volumeCount < 1 || volumeCount > 50) {
+      alert('卷数需为 1-50 之间的整数');
       return;
     }
     setOutlineWorkflowLoading('master');
