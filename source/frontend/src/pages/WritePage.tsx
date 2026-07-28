@@ -4215,7 +4215,7 @@ function BibleEditPanel(props: {
                 🔗 维度协同工作流（参考：番茄金番作者 / 长篇小说创作全流程 / 长篇小说防遗忘系统）：<br/>
                 构思→设定→大纲→剧情→人物 相互反哺；大纲⇄剧情双向（提取各卷/反生成总纲）；<br/>
                 各维度AI识别会读取其他维度作"已确认"上下文保持一致；<br/>
-                🛡️ 动态文件面板「防遗忘检查」定期扫描一致性/伏笔/叙事债务，防长篇遗忘。
+                🛡️ 伏笔面板「防遗忘检查」定期扫描一致性/伏笔/叙事债务，防长篇遗忘。
               </p>
             </div>
           )}
@@ -4580,27 +4580,9 @@ function DynamicMemoryPanel(props: {
   // 按卷编辑
   const [editingVolIdx, setEditingVolIdx] = useState<number | null>(null);
   const [editVolJson, setEditVolJson] = useState('');
-  // 防遗忘与一致性检查
-  const [antiForgetChecking, setAntiForgetChecking] = useState(false);
-  const [antiForgetReport, setAntiForgetReport] = useState<any>(null);
-  const [antiForgetScope, setAntiForgetScope] = useState<'reports' | 'dimensions'>('reports');
-  const [showAntiForgetModal, setShowAntiForgetModal] = useState(false);
+  // 防遗忘检查功能已迁移到伏笔面板（ForeshadowingPanel）
 
   const chapterCount = chapters.filter(c => !c.is_volume).length;
-
-  async function handleAntiForgetCheck() {
-    if (!bookId) return;
-    setAntiForgetChecking(true);
-    try {
-      const result = await api.aiAntiForgetCheck(bookId, antiForgetScope, selectedSkillPackIds);
-      setAntiForgetReport(result.report);
-      setShowAntiForgetModal(true);
-    } catch (err: any) {
-      alert('防遗忘检查失败：' + (err.message || '请检查AI配置或网络'));
-    } finally {
-      setAntiForgetChecking(false);
-    }
-  }
 
   function loadReports() {
     if (!bookId) return;
@@ -4952,16 +4934,7 @@ function DynamicMemoryPanel(props: {
       <div className="dm-header">
         <h3>🗂️ 动态文件</h3>
         <div className="dm-header-actions">
-          <button
-            className="btn-primary-sm"
-            onClick={handleAntiForgetCheck}
-            disabled={antiForgetChecking || !bookId}
-            title="整合防遗忘技能包(consistency_check/lock_facts/伏笔/叙事债务)扫描全维度+章节，检查一致性违规、待回收伏笔、叙事债务"
-            style={{background:'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)'}}
-          >
-            {antiForgetChecking ? '⏳ 检查中...' : '🛡️ 防遗忘检查'}
-          </button>
-          <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating || batchMode || antiForgetChecking} title="检查并自动生成缺失的报告">
+          <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating || batchMode} title="检查并自动生成缺失的报告">
             {generating ? '⏳ 处理中...' : '🔄 自动检查'}
           </button>
           {reports.length > 0 && (
@@ -4995,23 +4968,6 @@ function DynamicMemoryPanel(props: {
             </div>
           )}
         </div>
-      </div>
-
-      {/* 防遗忘检查范围选择（整合防遗忘技能包：一致性/锁定事实/伏笔/叙事债务/角色认知） */}
-      <div style={{display:'flex',gap:6,alignItems:'center',marginBottom:10,fontSize:11,color:'var(--text-muted)',flexWrap:'wrap'}}>
-        <span>🛡️ 防遗忘检查范围:</span>
-        {(['reports','dimensions'] as const).map(s => (
-          <button
-            key={s}
-            className={antiForgetScope === s ? 'btn-primary-sm' : 'btn-ghost-sm'}
-            style={{fontSize:11,padding:'2px 8px'}}
-            onClick={() => setAntiForgetScope(s)}
-            disabled={antiForgetChecking}
-          >
-            {s === 'reports' ? '动态文件' : '仅维度'}
-          </button>
-        ))}
-        <span style={{fontSize:10,opacity:0.7}}>（动态文件：检查所有动态报告；仅维度：查阅除构思、章节外所有维度）</span>
       </div>
 
       {/* 章节进度指示：只保留章数和报告数，移除 1-5/6-10 等 chips（下方已有可编辑报告目录） */}
@@ -5270,113 +5226,6 @@ function DynamicMemoryPanel(props: {
           </div>
         </div>
       )}
-
-      {/* 防遗忘与一致性检查报告弹窗 */}
-      {showAntiForgetModal && antiForgetReport && (
-        <div className="modal-overlay" onClick={() => setShowAntiForgetModal(false)}>
-          <div className="modal" style={{maxWidth:620}} onClick={e => e.stopPropagation()}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-              <h2 style={{margin:0}}>🛡️ 防遗忘与一致性检查</h2>
-              <button className="btn-ghost-sm" onClick={() => setShowAntiForgetModal(false)}>✕</button>
-            </div>
-
-            {/* 健康度评分 + 总览 */}
-            {typeof antiForgetReport.health_score === 'number' && (
-              <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:12,padding:'10px 14px',background:'var(--bg-tertiary)',borderRadius:8}}>
-                <div style={{fontSize:28,fontWeight:700,color: antiForgetReport.health_score >= 80 ? 'var(--success)' : antiForgetReport.health_score >= 60 ? 'var(--accent)' : 'var(--danger)'}}>
-                  {antiForgetReport.health_score}
-                </div>
-                <div>
-                  <div style={{fontSize:13,fontWeight:600}}>健康度评分</div>
-                  <div style={{fontSize:11,color:'var(--text-muted)'}}>综合一致性/伏笔/叙事债务评估</div>
-                </div>
-              </div>
-            )}
-            {antiForgetReport.summary && (
-              <p style={{fontSize:13,color:'var(--text-secondary)',marginBottom:14,lineHeight:1.6}}>{antiForgetReport.summary}</p>
-            )}
-
-            {/* 一致性违规清单 */}
-            {Array.isArray(antiForgetReport.violations) && antiForgetReport.violations.length > 0 && (
-              <div style={{marginBottom:14}}>
-                <h3 style={{fontSize:14,color:'var(--danger)',marginBottom:6}}>⚠️ 一致性违规（{antiForgetReport.violations.length}）</h3>
-                {antiForgetReport.violations.map((v:any,i:number) => (
-                  <div key={i} style={{fontSize:12,padding:'8px 10px',marginBottom:6,background:'var(--bg-tertiary)',borderLeft:`3px solid ${v.severity==='严重'?'var(--danger)':v.severity==='警告'?'var(--accent)':'var(--text-muted)'}`,borderRadius:4}}>
-                    <div style={{fontWeight:600,marginBottom:2}}>
-                      <span style={{color:'var(--danger)'}}>[{v.severity||'提示'}]</span> {v.type||''} · {v.location||''}
-                    </div>
-                    <div style={{color:'var(--text-secondary)'}}>{v.desc||''}</div>
-                    {v.fix && <div style={{color:'var(--success)',marginTop:2}}>💡 {v.fix}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 待回收伏笔 */}
-            {Array.isArray(antiForgetReport.pending_foreshadowing) && antiForgetReport.pending_foreshadowing.length > 0 && (
-              <div style={{marginBottom:14}}>
-                <h3 style={{fontSize:14,color:'var(--accent)',marginBottom:6}}>🔮 待回收伏笔（{antiForgetReport.pending_foreshadowing.length}）</h3>
-                {antiForgetReport.pending_foreshadowing.map((f:any,i:number) => (
-                  <div key={i} style={{fontSize:12,padding:'6px 10px',marginBottom:4,background:'var(--bg-tertiary)',borderRadius:4}}>
-                    <div>{f.content||''} <span style={{color: f.urgency==='紧急'?'var(--danger)':'var(--text-muted)',fontSize:11}}>[{f.urgency||''}]</span></div>
-                    {(f.buried_at || f.suggest_chapter) && <div style={{color:'var(--text-muted)',fontSize:11}}>埋设:{f.buried_at||'未知'} · 建议回收:{f.suggest_chapter||'待定'}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 叙事债务 */}
-            {Array.isArray(antiForgetReport.narrative_debt) && antiForgetReport.narrative_debt.length > 0 && (
-              <div style={{marginBottom:14}}>
-                <h3 style={{fontSize:14,color:'var(--accent)',marginBottom:6}}>📊 叙事债务（{antiForgetReport.narrative_debt.length}）</h3>
-                {antiForgetReport.narrative_debt.map((d:any,i:number) => (
-                  <div key={i} style={{fontSize:12,padding:'6px 10px',marginBottom:4,background:'var(--bg-tertiary)',borderRadius:4}}>
-                    <div>{d.promise||''} <span style={{color: d.priority==='高'?'var(--danger)':'var(--text-muted)',fontSize:11}}>[{d.status||''}/{d.priority||''}]</span></div>
-                    {d.note && <div style={{color:'var(--text-muted)',fontSize:11}}>{d.note}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 角色认知问题 */}
-            {Array.isArray(antiForgetReport.character_cognition_issues) && antiForgetReport.character_cognition_issues.length > 0 && (
-              <div style={{marginBottom:14}}>
-                <h3 style={{fontSize:14,color:'var(--accent)',marginBottom:6}}>👥 角色认知边界问题</h3>
-                {antiForgetReport.character_cognition_issues.map((c:string,i:number) => (
-                  <div key={i} style={{fontSize:12,padding:'6px 10px',marginBottom:4,background:'var(--bg-tertiary)',borderRadius:4}}>{c}</div>
-                ))}
-              </div>
-            )}
-
-            {/* 锁定事实清单 */}
-            {Array.isArray(antiForgetReport.locked_facts) && antiForgetReport.locked_facts.length > 0 && (
-              <div style={{marginBottom:14}}>
-                <h3 style={{fontSize:14,color:'var(--success)',marginBottom:6}}>🔒 锁定事实清单（{antiForgetReport.locked_facts.length}）</h3>
-                <div style={{fontSize:12,padding:'8px 10px',background:'var(--bg-tertiary)',borderRadius:4,lineHeight:1.7}}>
-                  {antiForgetReport.locked_facts.map((f:string,i:number) => <div key={i}>· {f}</div>)}
-                </div>
-              </div>
-            )}
-
-            {/* 改进建议 */}
-            {Array.isArray(antiForgetReport.suggestions) && antiForgetReport.suggestions.length > 0 && (
-              <div style={{marginBottom:8}}>
-                <h3 style={{fontSize:14,color:'var(--accent)',marginBottom:6}}>💡 改进建议</h3>
-                {antiForgetReport.suggestions.map((s:string,i:number) => (
-                  <div key={i} style={{fontSize:12,padding:'4px 10px',marginBottom:2,color:'var(--text-secondary)'}}>{i+1}. {s}</div>
-                ))}
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button className="btn-ghost-sm" onClick={() => { setShowAntiForgetModal(false); setAntiForgetScope('reports'); }}>关闭</button>
-              <button className="btn-primary-sm" onClick={() => { setShowAntiForgetModal(false); handleAntiForgetCheck(); }} disabled={antiForgetChecking}>
-                {antiForgetChecking ? '⏳ 重新检查中...' : '🔄 重新检查'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -5411,6 +5260,19 @@ function ForeshadowingPanel(props: {
   const [aiAssisting, setAiAssisting] = useState(false);
   const [aiError, setAiError] = useState('');
   const [skillExpanded, setSkillExpanded] = useState(false);
+
+  // ===== 防遗忘检查（迁移自动态文件面板）=====
+  const [afReports, setAfReports] = useState<any[]>([]);
+  const [afLoading, setAfLoading] = useState(false);
+  const [afChecking, setAfChecking] = useState(false);
+  const [afVolPickerOpen, setAfVolPickerOpen] = useState(false); // 分卷选择弹窗
+  const [afSelectedVolIds, setAfSelectedVolIds] = useState<string[]>([]); // 多选分卷
+  const [afCollapsed, setAfCollapsed] = useState<Set<string>>(new Set()); // 报告折叠状态
+  const [afEditingId, setAfEditingId] = useState<string | null>(null); // 正在编辑内容的报告 id
+  const [afEditValue, setAfEditValue] = useState('');
+  const [afRenamingId, setAfRenamingId] = useState<string | null>(null); // 正在重命名的报告 id
+  const [afRenameValue, setAfRenameValue] = useState('');
+  const [afSectionOpen, setAfSectionOpen] = useState(true); // 防遗忘检查区折叠
 
   // 解析全局伏笔
   useEffect(() => {
@@ -5543,6 +5405,114 @@ function ForeshadowingPanel(props: {
     }
   }
 
+  // ===== 防遗忘检查：加载报告列表 =====
+  function sortAfReports(list: any[]): any[] {
+    return [...list].sort((a, b) => (b.seq || 0) - (a.seq || 0));
+  }
+  function loadAfReports() {
+    if (!bookId) return;
+    setAfLoading(true);
+    api.listAntiForgetReports(bookId).then(data => {
+      setAfReports(sortAfReports(Array.isArray(data.reports) ? data.reports : []));
+    }).catch(() => { setAfReports([]); })
+      .finally(() => setAfLoading(false));
+  }
+
+  useEffect(() => {
+    loadAfReports();
+  }, [bookId]);
+
+  // 点击「防遗忘检查」按钮：弹出分卷选择
+  function openAfVolPicker() {
+    setAfSelectedVolIds([]);
+    setAfVolPickerOpen(true);
+  }
+
+  // 切换分卷多选
+  function toggleAfVol(id: string) {
+    setAfSelectedVolIds(prev => prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id]);
+  }
+
+  // 执行防遗忘检查
+  async function runAfCheck(volumeIds: string[]) {
+    if (!hasChapters) { alert('暂无章节内容，无法检查'); return; }
+    setAfChecking(true);
+    try {
+      const result = await api.aiAntiForgetCheck(bookId, 'reports', selectedSkillPackIds, volumeIds);
+      // 刷新报告列表
+      loadAfReports();
+      // 自动展开新报告
+      if (result.report_record?.id) {
+        setAfCollapsed(prev => { const n = new Set(prev); n.delete(result.report_record.id); return n; });
+        setAfSectionOpen(true);
+      }
+      const score = result.report?.health_score;
+      alert(`✅ 防遗忘检查完成（共${result.ch_count || 0}章${result.source_label ? ' · ' + result.source_label : ''}）${typeof score === 'number' ? `\n健康度评分：${score}` : ''}`);
+    } catch (e: any) {
+      alert('防遗忘检查失败：' + (e.message || '请检查AI配置'));
+    }
+    setAfChecking(false);
+  }
+
+  // 确认分卷选择后执行检查
+  function confirmAfVolPicker() {
+    setAfVolPickerOpen(false);
+    runAfCheck(afSelectedVolIds);
+  }
+
+  function toggleAfReport(id: string) {
+    setAfCollapsed(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+
+  // 编辑报告内容
+  function startAfEdit(r: any) {
+    setAfEditingId(r.id);
+    setAfEditValue(typeof r.report === 'string' ? r.report : JSON.stringify(r.report, null, 2));
+    setAfCollapsed(prev => { const n = new Set(prev); n.delete(r.id); return n; });
+  }
+
+  async function saveAfEdit(r: any) {
+    let parsed: any = afEditValue;
+    try { parsed = JSON.parse(afEditValue); } catch { /* 允许纯文本保存 */ }
+    try {
+      const data = await api.updateAntiForgetReport(bookId, r.id, { report: parsed, summary: parsed?.summary || r.summary, health_score: parsed?.health_score ?? r.health_score });
+      setAfReports(sortAfReports(Array.isArray(data.reports) ? data.reports : []));
+      setAfEditingId(null);
+      setAfEditValue('');
+    } catch (e: any) {
+      alert('保存失败：' + e.message);
+    }
+  }
+
+  function startAfRename(r: any) {
+    setAfRenamingId(r.id);
+    setAfRenameValue(r.title || '');
+  }
+
+  async function saveAfRename(r: any) {
+    const newTitle = afRenameValue.trim();
+    if (!newTitle) { setAfRenamingId(null); return; }
+    try {
+      const data = await api.updateAntiForgetReport(bookId, r.id, { title: newTitle });
+      setAfReports(sortAfReports(Array.isArray(data.reports) ? data.reports : []));
+    } catch (e: any) {
+      alert('重命名失败：' + e.message);
+    }
+    setAfRenamingId(null);
+    setAfRenameValue('');
+  }
+
+  function deleteAfReport(r: any) {
+    showConfirm(`确定删除检查报告「${r.title || r.id}」？此操作不可撤销。`, async () => {
+      try {
+        const data = await api.deleteAntiForgetReport(bookId, r.id);
+        setAfReports(sortAfReports(Array.isArray(data.reports) ? data.reports : []));
+      } catch (e: any) {
+        alert('删除失败：' + e.message);
+      }
+    });
+  }
+
   async function executeAi() {
     if (!aiPrompt.trim()) { alert('请输入创作要求'); return; }
     setAiAssisting(true);
@@ -5631,6 +5601,11 @@ function ForeshadowingPanel(props: {
           <button className="btn-ghost-sm" onClick={onOpenAiCreate}>
             ✨ AI创作
           </button>
+          {hasChapters && (
+            <button className="btn-ghost-sm" onClick={openAfVolPicker} disabled={afChecking} title="选择分卷进行防遗忘与一致性检查">
+              {afChecking ? '⏳ 检查中...' : '🛡️ 防遗忘检查'}
+            </button>
+          )}
           {hasChapters && (
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
@@ -5743,6 +5718,186 @@ function ForeshadowingPanel(props: {
           </div>
         )}
       </div>
+
+      {/* ===== 防遗忘检查报告区（折叠拉取/编辑/重命名/删除）===== */}
+      <div className="bible-edit-section" style={{marginTop:16}}>
+        <div
+          style={{display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}}
+          onClick={() => setAfSectionOpen(v => !v)}
+        >
+          <b>🛡️ 防遗忘检查报告{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}</b>
+          <span className="text-muted" style={{fontSize:12}}>{afSectionOpen ? '▼ 收起' : '▶ 展开'}</span>
+        </div>
+        <p className="text-muted" style={{fontSize:12,marginTop:4}}>
+          点击「🛡️ 防遗忘检查」选择分卷进行检查，报告按"检查01/02..."自动命名存档。每份可折叠查看、编辑、重命名、删除。
+        </p>
+
+        {afSectionOpen && (
+          <div style={{marginTop:8}}>
+            {afLoading ? (
+              <p className="text-muted" style={{fontSize:13}}>加载报告中...</p>
+            ) : afReports.length === 0 ? (
+              <p className="text-muted" style={{fontSize:13}}>暂无检查报告，点击上方「🛡️ 防遗忘检查」开始首次检查。</p>
+            ) : (
+              <div className="plot-volume-list">
+                {afReports.map((r: any) => {
+                  const rep = r.report || {};
+                  const collapsed = afCollapsed.has(r.id);
+                  const isEditing = afEditingId === r.id;
+                  const isRenaming = afRenamingId === r.id;
+                  const score = r.health_score ?? rep.health_score;
+                  const scopeLabel = r.source_label || (r.volume_ids && r.volume_ids.length ? `指定${r.volume_ids.length}卷` : '全部章节');
+                  return (
+                    <div key={r.id} className="plot-volume-card">
+                      <div className="plot-volume-header" style={{cursor:'pointer'}} onClick={() => !isEditing && !isRenaming && toggleAfReport(r.id)}>
+                        <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsed ? '▶' : '▼'}</span>
+                        {isRenaming ? (
+                          <input
+                            type="text"
+                            className="input"
+                            value={afRenameValue}
+                            onChange={e => setAfRenameValue(e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            onKeyDown={e => { if (e.key === 'Enter') saveAfRename(r); if (e.key === 'Escape') setAfRenamingId(null); }}
+                            style={{flex:1,fontSize:13,padding:'2px 6px'}}
+                            autoFocus
+                          />
+                        ) : (
+                          <h4 style={{margin:0}}>{r.title || `检查${String(r.seq || 0).padStart(2,'0')}`}</h4>
+                        )}
+                        {typeof score === 'number' && !isRenaming && (
+                          <span style={{fontSize:12,fontWeight:600,color: score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--accent)' : 'var(--danger)'}}>健康度 {score}</span>
+                        )}
+                        {!isRenaming && !isEditing && <span className="text-muted" style={{fontSize:11}}>{scopeLabel}{r.ch_count ? ` · ${r.ch_count}章` : ''}</span>}
+                        <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+                          {isRenaming ? (
+                            <>
+                              <button className="btn-primary-sm" onClick={() => saveAfRename(r)}>💾</button>
+                              <button className="btn-ghost-sm" onClick={() => setAfRenamingId(null)}>✕</button>
+                            </>
+                          ) : isEditing ? (
+                            <>
+                              <button className="btn-primary-sm" onClick={() => saveAfEdit(r)}>💾 保存</button>
+                              <button className="btn-ghost-sm" onClick={() => { setAfEditingId(null); setAfEditValue(''); }}>取消</button>
+                            </>
+                          ) : (
+                            <>
+                              <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? '📥 拉取' : '📂 折叠'}</button>
+                              <button className="btn-ghost-sm" onClick={() => startAfEdit(r)} title="编辑报告内容">✏️</button>
+                              <button className="btn-ghost-sm" onClick={() => startAfRename(r)} title="重命名">🏷️</button>
+                              <button className="btn-ghost-sm" onClick={() => deleteAfReport(r)} style={{color:'#e74c3c'}} title="删除">🗑️</button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {!collapsed && (
+                        <div className="plot-volume-body">
+                          <div className="text-muted" style={{fontSize:11,marginBottom:6}}>
+                            {r.checked_at ? new Date(r.checked_at).toLocaleString('zh-CN') : ''} · 检查范围：{scopeLabel}
+                          </div>
+                          {isEditing ? (
+                            <div>
+                              <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑报告内容（JSON 格式，保存时自动解析）：</p>
+                              <textarea className="input" value={afEditValue} onChange={e => setAfEditValue(e.target.value)} rows={18} style={{fontFamily:'monospace',fontSize:12}} />
+                            </div>
+                          ) : (
+                            <div className="plot-events">
+                              {(r.summary || rep.summary) && <p style={{marginBottom:8}}><b>总览：</b>{r.summary || rep.summary}</p>}
+                              {Array.isArray(rep.violations) && rep.violations.length > 0 && (
+                                <div style={{marginBottom:8}}><b>⚠️ 一致性违规（{rep.violations.length}）：</b><ul>
+                                  {rep.violations.map((v: any, i: number) => (
+                                    <li key={i}><span style={{color:'var(--danger)',fontWeight:600}}>[{v.severity||'提示'}] {v.type||''}</span>{v.location && <span style={{color:'#888'}}> · {v.location}</span>}{v.desc && <span style={{color:'#666'}}> — {v.desc}</span>}{v.fix && <span style={{color:'var(--success)'}}> 💡{v.fix}</span>}</li>
+                                  ))}
+                                </ul></div>
+                              )}
+                              {Array.isArray(rep.pending_foreshadowing) && rep.pending_foreshadowing.length > 0 && (
+                                <div style={{marginBottom:8}}><b>🔮 待回收伏笔（{rep.pending_foreshadowing.length}）：</b><ul>
+                                  {rep.pending_foreshadowing.map((f: any, i: number) => (
+                                    <li key={i}><span style={{color:'#e87d3e',fontWeight:600}}>{f.content||''}</span>{f.urgency && <span style={{color:'#888'}}> · {f.urgency}</span>}{f.suggest_chapter && <span style={{color:'#666'}}> — 建议回收于 {f.suggest_chapter}</span>}</li>
+                                  ))}
+                                </ul></div>
+                              )}
+                              {Array.isArray(rep.narrative_debt) && rep.narrative_debt.length > 0 && (
+                                <div style={{marginBottom:8}}><b>📊 叙事债务（{rep.narrative_debt.length}）：</b><ul>
+                                  {rep.narrative_debt.map((d: any, i: number) => (
+                                    <li key={i}><span style={{color:'#e87d3e',fontWeight:600}}>{d.promise||''}</span>{d.status && <span style={{color:'#888'}}> · {d.status}</span>}{d.priority && <span style={{color:'#e74c3c'}}> · {d.priority}</span>}</li>
+                                  ))}
+                                </ul></div>
+                              )}
+                              {Array.isArray(rep.character_cognition_issues) && rep.character_cognition_issues.length > 0 && (
+                                <div style={{marginBottom:8}}><b>👥 角色认知边界问题：</b><ul>
+                                  {rep.character_cognition_issues.map((c: string, i: number) => <li key={i}>{c}</li>)}
+                                </ul></div>
+                              )}
+                              {Array.isArray(rep.locked_facts) && rep.locked_facts.length > 0 && (
+                                <div style={{marginBottom:8}}><b>🔒 锁定事实清单：</b><ul>
+                                  {rep.locked_facts.map((f: string, i: number) => <li key={i}>{f}</li>)}
+                                </ul></div>
+                              )}
+                              {Array.isArray(rep.suggestions) && rep.suggestions.length > 0 && (
+                                <div><b>💡 改进建议：</b><ul>
+                                  {rep.suggestions.map((s: string, i: number) => <li key={i}>{s}</li>)}
+                                </ul></div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 防遗忘检查 · 分卷选择弹窗（单选/多选）*/}
+      {afVolPickerOpen && (
+        <div className="modal-overlay" onClick={() => setAfVolPickerOpen(false)}>
+          <div className="modal-content" style={{maxWidth:460}} onClick={e => e.stopPropagation()}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              <h3 style={{margin:0}}>🛡️ 防遗忘检查 · 选择分卷</h3>
+              <button className="btn-ghost-sm" onClick={() => setAfVolPickerOpen(false)}>✕</button>
+            </div>
+            <p className="text-muted" style={{fontSize:12,marginBottom:10}}>
+              勾选要检查的分卷（可多选）；不勾选任何卷则检查全部章节。
+            </p>
+            <div style={{maxHeight:320,overflowY:'auto',border:'1px solid var(--border)',borderRadius:8,padding:6}}>
+              {displayVolumes.length === 0 ? (
+                <p className="text-muted" style={{fontSize:13,padding:8}}>暂无分卷，将检查全部章节。</p>
+              ) : (
+                <>
+                  <label style={{display:'flex',alignItems:'center',gap:8,padding:'6px 8px',cursor:'pointer',borderBottom:'1px dashed var(--border)',marginBottom:4,fontWeight:600,fontSize:13}}>
+                    <input
+                      type="checkbox"
+                      checked={afSelectedVolIds.length === 0}
+                      onChange={e => { if (e.target.checked) setAfSelectedVolIds([]); }}
+                    />
+                    📚 全部章节
+                  </label>
+                  {displayVolumes.map((vol, idx) => {
+                    const id = vol.volume_id || vol.volume || `vol${idx}`;
+                    const checked = afSelectedVolIds.includes(id);
+                    return (
+                      <label key={idx} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 8px',cursor:'pointer',fontSize:13}}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleAfVol(id)} />
+                        📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}
+                      </label>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+            <div className="confirm-actions" style={{marginTop:12}}>
+              <button className="btn-ghost-sm" onClick={() => setAfVolPickerOpen(false)}>取消</button>
+              <button className="btn-primary-sm" onClick={confirmAfVolPicker} disabled={afChecking}>
+                {afChecking ? '⏳ 检查中...' : '🚀 开始检查'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

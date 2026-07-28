@@ -383,10 +383,24 @@ export const api = {
     }),
 
   // AI Anti-Forget Check (长篇小说防遗忘与一致性检查)
-  aiAntiForgetCheck: (bookId: string, scope: 'reports' | 'dimensions' = 'reports', skillPackIds: string[] = []) =>
-    request<{ success: boolean; report: any; scope: string; ch_count: number; source_label: string }>(`/books/${bookId}/ai-anti-forget-check`, {
+  // 【改造】支持分卷选择：volume_ids 为空数组表示不按卷筛选；非空则只检查指定卷
+  aiAntiForgetCheck: (bookId: string, scope: 'reports' | 'dimensions' = 'reports', skillPackIds: string[] = [], volumeIds: string[] = []) =>
+    request<{ success: boolean; report: any; report_record: any; scope: string; ch_count: number; source_label: string }>(`/books/${bookId}/ai-anti-forget-check`, {
       method: 'POST',
-      body: JSON.stringify({ scope, skill_pack_ids: skillPackIds }),
+      body: JSON.stringify({ scope, skill_pack_ids: skillPackIds, volume_ids: volumeIds }),
+    }),
+
+  // 防遗忘检查报告 CRUD
+  listAntiForgetReports: (bookId: string) =>
+    request<{ reports: any[] }>(`/books/${bookId}/anti-forget-reports`),
+  updateAntiForgetReport: (bookId: string, reportId: string, data: { title?: string; report?: any; summary?: string; health_score?: number }) =>
+    request<{ success: boolean; reports: any[] }>(`/books/${bookId}/anti-forget-reports/${reportId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  deleteAntiForgetReport: (bookId: string, reportId: string) =>
+    request<{ success: boolean; reports: any[] }>(`/books/${bookId}/anti-forget-reports/${reportId}`, {
+      method: 'DELETE',
     }),
 
   // AI Analyze Single Dimension (单维度AI识别)

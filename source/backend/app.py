@@ -441,6 +441,8 @@ class BookBible(db.Model):
     foreshadowing_volumes = db.Column(db.Text, default='')
     # 地图按卷：JSON 数组，每卷的地点识别数据
     locations_volumes = db.Column(db.Text, default='')
+    # 防遗忘检查报告历史：JSON 数组，每份报告含 id/title/checked_at/scope/volume_ids/report_json
+    anti_forget_reports = db.Column(db.Text, default='')
     last_synced_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -459,6 +461,7 @@ class BookBible(db.Model):
             'dynamic_volumes': self.dynamic_volumes or '',
             'foreshadowing_volumes': self.foreshadowing_volumes or '',
             'locations_volumes': self.locations_volumes or '',
+            'anti_forget_reports': self.anti_forget_reports or '',
             'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None
         }
 
@@ -2521,18 +2524,21 @@ def ai_anti_forget_check(book_id):
     """长篇小说防遗忘与一致性检查（综合诊断）。
     整合技能包「长篇小说防遗忘系统」的 consistency_check / lock_facts / narrative_debt / foreshadow_register / character_cognition 提示词，
     扫描全部维度+近期章节，输出：锁定事实清单、一致性违规清单、待回收伏笔、叙事债务、改进建议。
-    结果写入 DynamicMemory.health_dashboard，并返回前端展示。"""
+    【改造】支持分卷选择（volume_ids 多选/单选），报告持久化到 bb.anti_forget_reports，自动命名"检查01/02..."。"""
     book = Book.query.get(book_id)
     if not book:
         return jsonify({'error': 'Book not found'}), 404
 
     data = request.get_json() or {}
     skill_pack_ids = data.get('skill_pack_ids', [])
-    # 检查范围：reports(所有动态报告) / dimensions(仅维度，查阅除构思/章节外所有维度)
+    # 检查范围：reports(所有动态报告) / dimensions(仅维度) / volumes(指定分卷)
     scope = data.get('scope', 'reports')
-    # 兼容旧值 recent/all → reports
     if scope in ('recent', 'all'):
         scope = 'reports'
+    # 【新增】分卷选择：volume_ids 为空表示不按卷筛选；非空则只检查指定卷的章节
+    volume_ids = data.get('volume_ids', [])
+    if not isinstance(volume_ids, list):
+        volume_ids = []
 
     config = AIConfig.query.first()
     if not config or not config.api_key:
@@ -2542,33 +2548,79 @@ def ai_anti_forget_check(book_id):
     if not bb:
         return jsonify({'error': '该作品暂无创作维度数据，请先填写设定/大纲/剧情等维度。'}), 400
 
-    # 收集章节内容（按 scope 决定范围）
+    # 收集章节内容（按 scope + volume_ids 决定范围）
     all_chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+
+    # 若指定了 volume_ids，按卷筛选章节
+    if volume_ids:
+        # 通过 parent_id 筛选属于指定卷的章节
+        selected_chs = [ch for ch in all_chs if ch.parent_id and ch.parent_id in volume_ids]
+        if not selected_chs:
+            # 兼容：若按 parent_id 没筛到（可能章节未挂卷），按卷号区间筛选
+            # 从 timeline 解析卷的章节范围
+            vol_ranges = []
+            try:
+                if bb.timeline and bb.timeline.strip().startswith('['):
+                    arr = json.loads(bb.timeline)
+                    for v in arr:
+                        if not isinstance(v, dict):
+                            continue
+                        v_id = str(v.get('volume_id', ''))
+                        if v_id in [str(vid) for vid in volume_ids]:
+                            nodes = v.get('nodes') or []
+                            for n in nodes:
+                                if isinstance(n, dict):
+                                    ch_range = str(n.get('chapters', ''))
+                                    nums = re.findall(r'\d+', ch_range)
+                                    if len(nums) >= 2:
+                                        vol_ranges.append((int(nums[0]), int(nums[-1])))
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+            if vol_ranges:
+                selected_chs = []
+                for ch in all_chs:
+                    for lo, hi in vol_ranges:
+                        if lo <= ch.order_index <= hi:
+                            selected_chs.append(ch)
+                            break
+            else:
+                selected_chs = all_chs  # 无法定位时回退全章
+        all_chs = selected_chs
+
     chapter_text = ''
     ch_count = len(all_chs)
     source_label = '动态文件报告'
     if scope == 'dimensions':
-        # 仅维度模式：不读章节，也不读构思；查阅设定/大纲/剧情/人物/伏笔/地点/物资等
         chapter_text, source_label = _collect_dimension_source(bb, '全部维度（除构思、章节）')
-        # _collect_dimension_source 默认含构思，此处剥离构思
         if chapter_text:
             import re as _re_dim
             chapter_text = _re_dim.sub(r'【构思】\n[^\n]*(\n|$)', '', chapter_text).strip()
     else:
         # 动态文件模式（reports）：读取所有动态报告作为检查依据
         all_reports = DynamicReport.query.filter_by(book_id=book_id).order_by(DynamicReport.chapter_start).all()
+        # 若指定了 volume_ids，按卷的章节范围筛选动态报告
+        if volume_ids and all_reports:
+            vol_chapter_set = {ch.order_index for ch in all_chs}
+            filtered_reports = []
+            for r in all_reports:
+                # 报告的章节范围 [chapter_start, chapter_end] 与选中卷的章节有交集则保留
+                if any(r.chapter_start <= cn <= r.chapter_end for cn in vol_chapter_set):
+                    filtered_reports.append(r)
+            all_reports = filtered_reports if filtered_reports else all_reports
         if all_reports:
             parts = [f'【{r.title}（{r.chapter_start}-{r.chapter_end}章）】\n{(r.content or "")[:800]}' for r in all_reports]
             chapter_text = '\n\n'.join(parts)[:10000]
             source_label = f'动态文件（共{len(all_reports)}份报告）'
+            if volume_ids:
+                source_label += f'·指定{len(volume_ids)}卷'
         elif ch_count > 0:
-            # 无动态报告时回退到近期章节
             recent = all_chs[-10:]
             parts = [f'【{ch.title}】\n{(ch.content or "")[:1000]}' for ch in recent]
             chapter_text = '\n\n'.join(parts)[:8000]
             source_label = '近期章节（暂无动态报告）'
+            if volume_ids:
+                source_label += f'·指定{len(volume_ids)}卷'
         else:
-            # 无章节也无报告：回退到维度数据
             chapter_text, source_label = _collect_dimension_source(bb, '全部维度')
             if not chapter_text:
                 return jsonify({'error': '该作品暂无动态报告、章节，且维度也为空，无法进行检查。请先生成动态报告或填写维度。'}), 400
@@ -2583,14 +2635,12 @@ def ai_anti_forget_check(book_id):
                 try:
                     parsed = json.loads(v)
                     if isinstance(parsed, dict):
-                        # 取摘要性字段
                         summary = parsed.get('summary') or parsed.get('pending') or parsed.get('world_facts') or ''
                         if summary:
                             dyn_ctx += f'【{fk}】\n{str(summary)[:600]}\n\n'
                 except (json.JSONDecodeError, ValueError):
                     dyn_ctx += f'【{fk}】\n{v[:600]}\n\n'
 
-    # 提取防遗忘系统的核心提示词（这些 prompt 此前未被任何端点调用）
     skill_note = _get_skill_prompts(
         skill_pack_ids,
         ['consistency_check', 'lock_facts', 'narrative_debt', 'foreshadow_register', 'character_cognition'],
@@ -2668,7 +2718,7 @@ def ai_anti_forget_check(book_id):
         else:
             report = {'summary': content[:500], 'raw': True}
 
-    # 持久化到 DynamicMemory.health_dashboard（防遗忘仪表盘）
+    # 持久化到 DynamicMemory.health_dashboard（防遗忘仪表盘，保留原逻辑）
     if not dm:
         dm = DynamicMemory(book_id=book_id)
         for key in DynamicMemory.FILE_KEYS:
@@ -2689,15 +2739,133 @@ def ai_anti_forget_check(book_id):
     }
     hd['alerts'] = report.get('violations', [])[:20]
     dm.health_dashboard = json.dumps(hd, ensure_ascii=False, indent=2)
+
+    # ===== 【新增】持久化完整报告到 bb.anti_forget_reports，自动命名"检查01/02..." =====
+    try:
+        existing_reports = json.loads(bb.anti_forget_reports or '[]') if bb.anti_forget_reports else []
+        if not isinstance(existing_reports, list):
+            existing_reports = []
+    except (json.JSONDecodeError, ValueError, TypeError):
+        existing_reports = []
+
+    # 计算下一个序号：基于现有报告数量+1，两位数补零
+    next_seq = len(existing_reports) + 1
+    # 避免重名：若已存在同名，递增序号
+    existing_titles = {r.get('title', '') for r in existing_reports if isinstance(r, dict)}
+    while f'检查{next_seq:02d}' in existing_titles:
+        next_seq += 1
+    report_title = f'检查{next_seq:02d}'
+
+    new_report_record = {
+        'id': str(uuid.uuid4()),
+        'title': report_title,
+        'seq': next_seq,
+        'checked_at': datetime.now(timezone.utc).isoformat(),
+        'scope': scope,
+        'volume_ids': volume_ids,
+        'ch_count': ch_count,
+        'source_label': source_label,
+        'health_score': report.get('health_score'),
+        'summary': report.get('summary', ''),
+        'report': report,  # 完整报告 JSON
+    }
+    existing_reports.append(new_report_record)
+    # 限制最多保留 50 份历史报告，超出则删除最早的
+    if len(existing_reports) > 50:
+        existing_reports = existing_reports[-50:]
+    bb.anti_forget_reports = json.dumps(existing_reports, ensure_ascii=False, indent=2)
+
     db.session.commit()
 
     return jsonify({
         'success': True,
         'report': report,
+        'report_record': new_report_record,
         'scope': scope,
         'ch_count': ch_count,
         'source_label': source_label
     })
+
+
+@app.route('/api/books/<book_id>/anti-forget-reports', methods=['GET'])
+@login_required
+def list_anti_forget_reports(book_id):
+    """列出所有防遗忘检查报告历史。"""
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'reports': []})
+    try:
+        reports = json.loads(bb.anti_forget_reports or '[]') if bb.anti_forget_reports else []
+        if not isinstance(reports, list):
+            reports = []
+    except (json.JSONDecodeError, ValueError, TypeError):
+        reports = []
+    # 按 seq 倒序返回（最新在前）
+    reports.sort(key=lambda r: r.get('seq', 0) if isinstance(r, dict) else 0, reverse=True)
+    return jsonify({'reports': reports})
+
+
+@app.route('/api/books/<book_id>/anti-forget-reports/<report_id>', methods=['PUT'])
+@login_required
+def update_anti_forget_report(book_id, report_id):
+    """编辑/重命名防遗忘检查报告。
+    请求体：{"title": "新标题"} 重命名；{"report": {...}} 替换报告内容；{"summary": "..."} 更新摘要。"""
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': 'Not found'}), 404
+    data = request.get_json() or {}
+    try:
+        reports = json.loads(bb.anti_forget_reports or '[]') if bb.anti_forget_reports else []
+        if not isinstance(reports, list):
+            reports = []
+    except (json.JSONDecodeError, ValueError, TypeError):
+        reports = []
+
+    found = False
+    for r in reports:
+        if isinstance(r, dict) and r.get('id') == report_id:
+            if 'title' in data:
+                new_title = str(data['title']).strip()
+                if not new_title:
+                    return jsonify({'error': '标题不能为空'}), 400
+                r['title'] = new_title
+            if 'report' in data and isinstance(data['report'], dict):
+                r['report'] = data['report']
+            if 'summary' in data:
+                r['summary'] = str(data['summary'])
+                if isinstance(r.get('report'), dict):
+                    r['report']['summary'] = str(data['summary'])
+            if 'health_score' in data:
+                r['health_score'] = data['health_score']
+            r['updated_at'] = datetime.now(timezone.utc).isoformat()
+            found = True
+            break
+    if not found:
+        return jsonify({'error': '报告不存在'}), 404
+    bb.anti_forget_reports = json.dumps(reports, ensure_ascii=False, indent=2)
+    db.session.commit()
+    return jsonify({'success': True, 'reports': reports})
+
+
+@app.route('/api/books/<book_id>/anti-forget-reports/<report_id>', methods=['DELETE'])
+@login_required
+def delete_anti_forget_report(book_id, report_id):
+    """删除防遗忘检查报告。"""
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': 'Not found'}), 404
+    try:
+        reports = json.loads(bb.anti_forget_reports or '[]') if bb.anti_forget_reports else []
+        if not isinstance(reports, list):
+            reports = []
+    except (json.JSONDecodeError, ValueError, TypeError):
+        reports = []
+    new_reports = [r for r in reports if not (isinstance(r, dict) and r.get('id') == report_id)]
+    if len(new_reports) == len(reports):
+        return jsonify({'error': '报告不存在'}), 404
+    bb.anti_forget_reports = json.dumps(new_reports, ensure_ascii=False, indent=2)
+    db.session.commit()
+    return jsonify({'success': True, 'reports': new_reports})
 
 
 @app.route('/api/books/<book_id>/import-chapters', methods=['POST'])
@@ -4082,6 +4250,94 @@ def _get_volume_outline(vol_chapter, volume_index):
     return ''
 
 
+def _get_adjacent_volumes_outline(book_id, volume_index):
+    """获取前一卷+本卷+后一卷共三卷的卷纲摘要（用于正文写作上下文）。
+    【改造】从全量 timeline 注入改为三卷注入，避免上下文膨胀且聚焦当前创作位置。
+    返回拼接好的三卷卷纲文本。"""
+    try:
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+        if not bb or not bb.timeline or not bb.timeline.strip().startswith('['):
+            return ''
+        arr = json.loads(bb.timeline)
+        if not isinstance(arr, list) or not arr:
+            return ''
+
+        # 按 volume_index 排序
+        def _v_idx(v):
+            if not isinstance(v, dict):
+                return 0
+            raw = v.get('volume_index') or _extract_volume_index(v.get('volume', v.get('volume_id', '')))
+            try:
+                return int(raw) if raw else 0
+            except (ValueError, TypeError):
+                return 0
+        arr_sorted = sorted([v for v in arr if isinstance(v, dict)], key=_v_idx)
+
+        # 提取单卷摘要（精简版，控制每卷约500字）
+        def _summarize_vol(v, role_label):
+            if not isinstance(v, dict):
+                return ''
+            v_idx = _v_idx(v)
+            v_name = v.get('volume') or v.get('volume_title') or f'第{v_idx}卷'
+            parts = [f'▼ [{role_label}] 第{v_idx}卷「{v_name}」']
+            if v.get('act'):
+                parts.append(f'  五幕定位：{v["act"]}')
+            main_plot = v.get('main_plot') or v.get('core_goal') or ''
+            if main_plot:
+                parts.append(f'  主线：{main_plot[:200]}')
+            core_conflict = v.get('core_conflict') or ''
+            if core_conflict:
+                parts.append(f'  核心冲突：{core_conflict[:150]}')
+            # nodes 只取前5个，保留 chapters/type/title/summary
+            nodes = v.get('nodes') or []
+            if isinstance(nodes, list) and nodes:
+                nodes_lines = []
+                for n in nodes[:5]:
+                    if not isinstance(n, dict):
+                        continue
+                    line = f'    · [{n.get("type","M")}] {n.get("chapters","")} {n.get("title","")}'
+                    summary = n.get('summary', '')
+                    if summary:
+                        line += f'：{summary[:80]}'
+                    nodes_lines.append(line)
+                if nodes_lines:
+                    parts.append('  情节节点：')
+                    parts.extend(nodes_lines)
+            ending_hook = v.get('ending_hook') or v.get('ending') or v.get('climax') or ''
+            if ending_hook:
+                parts.append(f'  卷尾钩子：{ending_hook[:150]}')
+            return '\n'.join(parts)
+
+        # 定位前一卷、本卷、后一卷
+        prev_v, curr_v, next_v = None, None, None
+        for i, v in enumerate(arr_sorted):
+            if _v_idx(v) == volume_index:
+                curr_v = v
+                if i > 0:
+                    prev_v = arr_sorted[i - 1]
+                if i < len(arr_sorted) - 1:
+                    next_v = arr_sorted[i + 1]
+                break
+
+        # 如果没找到本卷（如卷号超出），回退用第一卷
+        if curr_v is None and arr_sorted:
+            curr_v = arr_sorted[0]
+
+        sections = []
+        if prev_v:
+            sections.append(_summarize_vol(prev_v, '前一卷·回顾'))
+        if curr_v:
+            sections.append(_summarize_vol(curr_v, '本卷·进行中'))
+        if next_v:
+            sections.append(_summarize_vol(next_v, '后一卷·走向'))
+
+        if not sections:
+            return ''
+        return '【卷纲规划·前中后三卷】（前一卷回顾+本卷进行+后一卷走向，确保剧情连贯）\n' + '\n\n'.join(sections)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return ''
+
+
 def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=15):
     """伏笔按"到期紧迫度"排序，提取 Top N 待回收伏笔。
     【P1优化】
@@ -4539,9 +4795,11 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
     # 【大纲】五幕式总纲（权重最高，对齐整体走向）
     if filtered_bible.get('plot_design'):
         bible_sections.append(('【大纲·五幕式总纲】（参考当前进度对齐整体走向）', filtered_bible['plot_design'], 3))
-    # 【剧情·卷纲规划】P0修复：timeline 实际存的是前向卷纲JSON，标注为规划而非已发生
-    if filtered_bible.get('timeline'):
-        bible_sections.append(('【剧情·卷纲规划】（本卷及后续卷的主线规划，注意是未来计划不是已发生剧情）', filtered_bible['timeline'], 2))
+    # 【剧情·卷纲规划】改造：从全量 timeline 注入改为前一卷+本卷+后一卷三卷注入
+    # 避免上下文膨胀且聚焦当前创作位置，前卷回顾+本卷进行+后卷走向确保连贯
+    adjacent_outlines = _get_adjacent_volumes_outline(book_id, vol_index)
+    if adjacent_outlines:
+        bible_sections.append((adjacent_outlines.split('\n')[0], '\n'.join(adjacent_outlines.split('\n')[1:]).strip(), 3))
     # 【人物及关系】合并 character_profiles + relation_graph
     if filtered_bible.get('character_profiles'):
         bible_sections.append(('【人物档案】（保持人设一致）', filtered_bible['character_profiles'], 3))
@@ -4577,12 +4835,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
         body = '\n'.join(s.split('\n')[1:]).strip()
         bible_sections.append((first_line, body, 2))
 
-    # 卷目标对齐（#3）——P0修复后从 bb.timeline 读取
-    vol_outline = _get_volume_outline(vol_chapter, vol_index)
-    if vol_outline:
-        first_line = vol_outline.split('\n')[0]
-        body = '\n'.join(vol_outline.split('\n')[1:]).strip()
-        bible_sections.append((first_line, body, 2))
+    # 卷目标对齐已由上方 _get_adjacent_volumes_outline 三卷注入覆盖（本卷部分更详细），
+    # 此处不再单独注入当前卷卷纲，避免重复
 
     # 预算管理：bible设定总预算5000字（前4章正文独立注入，不挤占此预算）
     bible_context = _apply_budget_management(bible_sections, total_budget=5000) if bible_sections else (bb.generated_summary or '')[:2000]
