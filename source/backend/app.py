@@ -6183,15 +6183,19 @@ def ai_analyze_plot_volume(book_id):
     all_chapters = Chapter.query.filter_by(book_id=book_id).order_by(Chapter.order_index).all()
     volume_chapters = []
     if volume_id:
-        collecting = False
-        for ch in all_chapters:
-            if ch.id == volume_id:
-                collecting = True
-                continue
-            if collecting:
-                if ch.is_volume:
-                    break
-                volume_chapters.append(ch)
+        # 优先：parent_id 关联（标准结构）
+        volume_chapters = [c for c in all_chapters if not c.is_volume and c.parent_id == volume_id]
+        # 回退：顺序遍历法（兼容卷紧挨子章节之前的旧数据）
+        if not volume_chapters:
+            collecting = False
+            for ch in all_chapters:
+                if ch.id == volume_id:
+                    collecting = True
+                    continue
+                if collecting:
+                    if ch.is_volume:
+                        break
+                    volume_chapters.append(ch)
     else:
         volume_chapters = [c for c in all_chapters if not c.is_volume]
 
@@ -6417,19 +6421,25 @@ def ai_analyze_plot_volume(book_id):
 
 
 def _collect_volume_chapters(book_id, volume_id):
-    """收集指定卷的章节内容文本。volume_id 为空则取全部非卷章节。"""
+    """收集指定卷的章节内容文本。volume_id 为空则取全部非卷章节。
+    优先用 parent_id 关联（标准结构）；若该卷无任何 parent_id 指向它的章节，
+    回退到顺序遍历法（兼容旧数据：卷记录紧挨在其子章节之前）。"""
     all_chapters = Chapter.query.filter_by(book_id=book_id).order_by(Chapter.order_index).all()
     volume_chapters = []
     if volume_id:
-        collecting = False
-        for ch in all_chapters:
-            if ch.id == volume_id:
-                collecting = True
-                continue
-            if collecting:
-                if ch.is_volume:
-                    break
-                volume_chapters.append(ch)
+        # 优先：parent_id 关联（标准结构）
+        volume_chapters = [c for c in all_chapters if not c.is_volume and c.parent_id == volume_id]
+        # 回退：顺序遍历法（兼容卷紧挨子章节之前的旧数据）
+        if not volume_chapters:
+            collecting = False
+            for ch in all_chapters:
+                if ch.id == volume_id:
+                    collecting = True
+                    continue
+                if collecting:
+                    if ch.is_volume:
+                        break
+                    volume_chapters.append(ch)
     else:
         volume_chapters = [c for c in all_chapters if not c.is_volume]
 
@@ -6837,21 +6847,27 @@ def ai_analyze_dynamic_volume(book_id):
     # 收集该卷区间内的已有动态报告（5章一份）
     dyn_reports = DynamicReport.query.filter_by(book_id=book_id).order_by(DynamicReport.chapter_start).all()
     relevant_reports = []
-    # 简单按卷章节范围匹配：若该卷有章节，计算其起止章号
+    # 计算该卷的起止章号（基于 parent_id 关联，与 _collect_volume_chapters 一致）
     all_chs = Chapter.query.filter_by(book_id=book_id).order_by(Chapter.order_index).all()
-    vol_ch_idx = []
     if volume_id:
-        collecting = False
-        for i, ch in enumerate(all_chs):
-            if ch.id == volume_id:
-                collecting = True
-                continue
-            if collecting:
-                if ch.is_volume:
-                    break
-                vol_ch_idx.append(i)
+        # 优先用 parent_id 关联
+        vol_chs_in_order = [c for c in all_chs if not c.is_volume and c.parent_id == volume_id]
+        # 回退：顺序遍历法
+        if not vol_chs_in_order:
+            collecting = False
+            for ch in all_chs:
+                if ch.id == volume_id:
+                    collecting = True
+                    continue
+                if collecting:
+                    if ch.is_volume:
+                        break
+                    vol_chs_in_order.append(ch)
+        # 计算该卷章节在全章节序列中的序号（1-based）
+        non_vol_chs = [c for c in all_chs if not c.is_volume]
+        vol_ch_idx = [non_vol_chs.index(c) for c in vol_chs_in_order if c in non_vol_chs]
     else:
-        vol_ch_idx = [i for i, ch in enumerate(all_chs) if not ch.is_volume]
+        vol_ch_idx = list(range(len([c for c in all_chs if not c.is_volume])))
 
     if vol_ch_idx:
         # 章节序号从1开始
@@ -7564,20 +7580,17 @@ def batch_generate_dynamic_reports(book_id):
 
     # 确定该卷章节的全局1-based起止章号
     if volume_id:
-        vol_ch_idx = []
-        collecting = False
-        for i, ch in enumerate(all_chs):
-            if ch.id == volume_id:
-                collecting = True
-                continue
-            if collecting:
-                if ch.is_volume:
-                    break
-                vol_ch_idx.append(i)
+        # 用 parent_id 关联找到该卷的章节（卷记录 is_volume=True 已被上面的 filter 排除）
+        vol_chs = [c for c in all_chs if c.parent_id == volume_id]
+        if not vol_chs:
+            return jsonify({'error': f'卷「{volume_title or volume_id}」内暂无章节（请确认章节已归入该卷）'}), 400
+        # 计算这些章节在 all_chs 中的全局序号（1-based）
+        ch_id_to_idx = {c.id: i for i, c in enumerate(all_chs)}
+        vol_ch_idx = [ch_id_to_idx[c.id] for c in vol_chs if c.id in ch_id_to_idx]
         if not vol_ch_idx:
             return jsonify({'error': f'卷「{volume_title or volume_id}」内暂无章节'}), 400
-        global_start = vol_ch_idx[0] + 1
-        global_end = vol_ch_idx[-1] + 1
+        global_start = min(vol_ch_idx) + 1
+        global_end = max(vol_ch_idx) + 1
     else:
         global_start = 1
         global_end = len(all_chs)
