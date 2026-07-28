@@ -4705,7 +4705,12 @@ def ai_outline_master(book_id):
     skill_pack_ids = data.get('skill_pack_ids', [])
     total_chapters = data.get('total_chapters', 300)
     chapters_per_volume = data.get('chapters_per_volume', 50)
-    volume_count = max(1, total_chapters // chapters_per_volume)
+    # 支持用户直接指定卷数（优先于 total_chapters // chapters_per_volume）
+    volume_count = data.get('volume_count')
+    if not volume_count or volume_count < 1:
+        volume_count = max(1, total_chapters // chapters_per_volume)
+    # 反推总章数供 prompt 使用
+    total_chapters = max(volume_count * chapters_per_volume, total_chapters)
 
     skill_note = _get_skill_prompts(skill_pack_ids, ['master_outline', 'tomato_outline', 'volume_breakdown'])
 

@@ -4068,10 +4068,18 @@ function OutlineCombinedPanel(props: {
   // 生成五幕式总纲（写入 plot_design）
   async function generateOutlineMaster() {
     if (!bookId) return;
+    // 弹出输入框让用户填写预计卷数
+    const input = window.prompt('请输入小说预计需要的卷数（1-30）：', '6');
+    if (input === null) return; // 用户取消
+    const volumeCount = parseInt(input);
+    if (!volumeCount || volumeCount < 1 || volumeCount > 30) {
+      alert('卷数需为 1-30 之间的整数');
+      return;
+    }
     setOutlineWorkflowLoading('master');
-    setOutlineWorkflowProgress('⏳ 生成总纲中...');
+    setOutlineWorkflowProgress(`⏳ 按五幕式生成总纲中（共 ${volumeCount} 卷）...`);
     try {
-      const result = await api.aiOutlineMaster(bookId, selectedSkillPackIds, undefined, CHAPTERS_PER_VOLUME);
+      const result = await api.aiOutlineMaster(bookId, selectedSkillPackIds, undefined, CHAPTERS_PER_VOLUME, volumeCount);
       // 把返回的 master_outline 填入大纲编辑器（设置 plotDesign state）
       const updated = await api.updateBible(bookId, { plot_design: result.master_outline } as any);
       onBibleUpdate(updated);

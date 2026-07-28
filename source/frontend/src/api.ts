@@ -501,10 +501,10 @@ export const api = {
     request<{ success: boolean; bible: BookBible; updated_fields: string[] }>(`/books/${bookId}/sync-analysis`, { method: 'POST', body: JSON.stringify({ analysis, mode }) }),
 
   // ==== 大纲工作流：五幕式总纲 + 卷纲滚动生成 ====
-  aiOutlineMaster: (bookId: string, skillPackIds?: string[], totalChapters?: number, chaptersPerVolume?: number) =>
+  aiOutlineMaster: (bookId: string, skillPackIds?: string[], totalChapters?: number, chaptersPerVolume?: number, volumeCount?: number) =>
     request<{ master_outline: string; volume_count: number }>(`/books/${bookId}/ai-outline-master`, {
       method: 'POST',
-      body: JSON.stringify({ skill_pack_ids: skillPackIds || [], total_chapters: totalChapters || 300, chapters_per_volume: chaptersPerVolume || 50 }),
+      body: JSON.stringify({ skill_pack_ids: skillPackIds || [], total_chapters: totalChapters || 300, chapters_per_volume: chaptersPerVolume || 50, volume_count: volumeCount }),
     }),
 
   aiOutlineVolume: (bookId: string, volumeIndex: number, volumeTitle?: string, skillPackIds?: string[], chaptersPerVolume?: number) =>
