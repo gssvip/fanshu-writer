@@ -5885,22 +5885,58 @@ def ai_analyze_dimension(book_id):
         base = base_url.rstrip('/')
         if not base.endswith('/v1'):
             base += '/v1'
+
+        # 构建请求体（response_format 某些LLM不支持，捕获后重试）
+        req_body = {
+            'model': model,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': f'作品标题：{book.title}\n\n以下是作品内容：\n\n{full_text}'}
+            ],
+            'temperature': 0.3,
+            'max_tokens': 2000,
+            'response_format': {'type': 'json_object'}
+        }
+
+        # 第一次尝试带 response_format；不支持则去掉重试
         resp = requests.post(f'{base}/chat/completions',
             headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-            json={
-                'model': model,
-                'messages': [
-                    {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': f'作品标题：{book.title}\n\n以下是作品内容：\n\n{full_text}'}
-                ],
-                'temperature': 0.3,
-                'max_tokens': 2000,
-                'response_format': {'type': 'json_object'}
-            },
-            timeout=120)
+            json=req_body,
+            timeout=90)
+
+        # 若返回400且与response_format相关，去掉该参数重试
+        if resp.status_code == 400:
+            err_body = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
+            err_msg = str(err_body.get('error', '')).lower()
+            if 'response_format' in err_msg or 'json_object' in err_msg or 'unrecognized' in err_msg:
+                req_body.pop('response_format', None)
+                resp = requests.post(f'{base}/chat/completions',
+                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    json=req_body,
+                    timeout=90)
+
+        if resp.status_code != 200:
+            try:
+                err_detail = resp.json().get('error', {}).get('message', '') or resp.text[:300]
+            except Exception:
+                err_detail = resp.text[:300]
+            return jsonify({'error': f'AI调用失败({resp.status_code}): {err_detail}'}), 500
+
         result = resp.json()
+        if 'choices' not in result or not result['choices']:
+            return jsonify({'error': f'AI返回异常: {str(result)[:300]}'}), 500
         content = result['choices'][0]['message']['content']
-        analysis = json.loads(content)
+
+        # JSON 解析容错：提取第一个 {...} 块
+        try:
+            analysis = json.loads(content)
+        except (json.JSONDecodeError, ValueError):
+            import re as _re_json
+            m = _re_json.search(r'\{[\s\S]*\}', content)
+            if m:
+                analysis = json.loads(m.group(0))
+            else:
+                return jsonify({'error': f'AI返回非JSON格式: {content[:200]}'}), 500
 
         bb = BookBible.query.filter_by(book_id=book_id).first()
         if not bb:
@@ -6212,22 +6248,57 @@ def ai_analyze_plot_volume(book_id):
         base = base_url.rstrip('/')
         if not base.endswith('/v1'):
             base += '/v1'
+
+        # 构建请求体（response_format 某些LLM不支持，捕获后重试）
+        req_body = {
+            'model': model,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_prompt}
+            ],
+            'temperature': 0.3,
+            'max_tokens': 4000,
+            'response_format': {'type': 'json_object'}
+        }
+
         resp = requests.post(f'{base}/chat/completions',
             headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-            json={
-                'model': model,
-                'messages': [
-                    {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': user_prompt}
-                ],
-                'temperature': 0.3,
-                'max_tokens': 4000,
-                'response_format': {'type': 'json_object'}
-            },
-            timeout=120)
+            json=req_body,
+            timeout=90)
+
+        # 若返回400且与response_format相关，去掉该参数重试
+        if resp.status_code == 400:
+            err_body = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
+            err_msg = str(err_body.get('error', '')).lower()
+            if 'response_format' in err_msg or 'json_object' in err_msg or 'unrecognized' in err_msg:
+                req_body.pop('response_format', None)
+                resp = requests.post(f'{base}/chat/completions',
+                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    json=req_body,
+                    timeout=90)
+
+        if resp.status_code != 200:
+            try:
+                err_detail = resp.json().get('error', {}).get('message', '') or resp.text[:300]
+            except Exception:
+                err_detail = resp.text[:300]
+            return jsonify({'error': f'AI调用失败({resp.status_code}): {err_detail}'}), 500
+
         result = resp.json()
+        if 'choices' not in result or not result['choices']:
+            return jsonify({'error': f'AI返回异常: {str(result)[:300]}'}), 500
         content = result['choices'][0]['message']['content']
-        analysis = json.loads(content)
+
+        # JSON 解析容错：提取第一个 {...} 块
+        try:
+            analysis = json.loads(content)
+        except (json.JSONDecodeError, ValueError):
+            import re as _re_json2
+            m = _re_json2.search(r'\{[\s\S]*\}', content)
+            if m:
+                analysis = json.loads(m.group(0))
+            else:
+                return jsonify({'error': f'AI返回非JSON格式: {content[:200]}'}), 500
 
         # 存储到 timeline 字段（深度合并：保留人工编辑字段，更新 AI 识别字段）
         if not bb:
