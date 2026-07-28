@@ -1,4 +1,4 @@
-# 番薯写作后端 - Hugging Face Spaces Docker 镜像
+# 蚂蚁写作后端 - Hugging Face Spaces Docker 镜像
 # 使用 Python 3.11 slim 镜像减小体积
 FROM python:3.11-slim
 

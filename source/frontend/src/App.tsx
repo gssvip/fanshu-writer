@@ -45,7 +45,7 @@ function DesktopSidebar() {
     <aside className="desktop-sidebar">
       <div className="sidebar-brand">
         <span className="sidebar-logo"><img src="logo.jpg" alt="logo" style={{width:28,height:28,borderRadius:6,objectFit:'cover'}} /></span>
-        <span className="sidebar-title">番薯写作</span>
+        <span className="sidebar-title">蚂蚁写作</span>
       </div>
       <nav className="sidebar-nav">
         {TABS.map(tab => (

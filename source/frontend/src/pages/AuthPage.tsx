@@ -35,8 +35,8 @@ export default function AuthPage({ onAuth }: { onAuth: () => void }) {
         width: '100%', maxWidth: 400, boxShadow: 'var(--shadow-md)'
       }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <img src="logo.jpg" alt="番薯写作" style={{ width: 72, height: 72, borderRadius: 16, marginBottom: 8, objectFit: 'cover' }} />
-          <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>番薯写作</h1>
+          <img src="logo.jpg" alt="蚂蚁写作" style={{ width: 72, height: 72, borderRadius: 16, marginBottom: 8, objectFit: 'cover' }} />
+          <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4 }}>蚂蚁写作</h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>AI 驱动的小说创作平台</p>
         </div>
 

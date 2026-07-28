@@ -279,7 +279,7 @@ function AiPanel({bookId,book,stageKey,stageContent}:{bookId:string;book:Book|nu
     else await api.updateAISession(session.id,{messages:nm});
     setLoading(true);
     try{
-      const sm:AIMessage={role:'system',content:`你是番薯写作助手。\n作品：《${book?.title||''}》\n阶段：${stageKey}\n\n${stageContent.slice(0,1500)}`};
+      const sm:AIMessage={role:'system',content:`你是蚂蚁写作助手。\n作品：《${book?.title||''}》\n阶段：${stageKey}\n\n${stageContent.slice(0,1500)}`};
       const res=await api.aiChatStream([sm,...nm]);
       const r=res.body?.getReader(); if(!r)throw new Error('X');
       let ac='';setMsgs(p=>[...p,{role:'assistant',content:''}]);

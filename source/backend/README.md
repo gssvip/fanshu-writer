@@ -8,7 +8,7 @@ app_port: 7860
 pinned: false
 ---
 
-# 番薯写作后端
+# 蚂蚁写作后端
 
 Flask 后端服务，提供 AI 写作平台的 API。
 

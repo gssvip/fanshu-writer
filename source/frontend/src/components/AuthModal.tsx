@@ -122,7 +122,7 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
       <div className="auth-modal" onClick={e => e.stopPropagation()}>
         <div className="auth-modal-brand">
           <span className="auth-modal-logo"><img src="logo.jpg" alt="logo" style={{width:40,height:40,borderRadius:10,objectFit:'cover'}} /></span>
-          <h2>番薯写作</h2>
+          <h2>蚂蚁写作</h2>
           <p>登录后使用全部功能</p>
         </div>
 

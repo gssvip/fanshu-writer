@@ -954,7 +954,7 @@ export default function MinePage() {
 
         {activeSection === 'about' && (
           <div className="tool-panel">
-            <h3>关于番薯写作</h3>
+            <h3>关于蚂蚁写作</h3>
             <p>AI原生创作工作台，灵感来自 DeepSeekWrite 和 SoloEnt（灵蟹创作），专为中文网文作者打造。</p>
             <div className="about-features">
               <div className="about-feature"><b>项目宪法</b> - 世界观、人设、伏笔结构化管理，确保超长篇一致性</div>

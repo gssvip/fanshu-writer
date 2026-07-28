@@ -644,7 +644,7 @@ textarea{resize:vertical;line-height:1.8}
   .review-score-header{flex-direction:column;text-align:center}
 }
 
-/* ===== 番薯写作 · 移动端增强 ===== */
+/* ===== 蚂蚁写作 · 移动端增强 ===== */
 
 /* 两行 Tab 移动端优化：确保横向占满 */
 @media (max-width: 767px){

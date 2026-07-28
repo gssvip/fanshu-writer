@@ -279,7 +279,7 @@ export default function WorkbenchPage() {
   return (
     <div className="page home-page">
       <header className="page-header">
-        <h1>番薯写作</h1>
+        <h1>蚂蚁写作</h1>
       </header>
 
       {/* 今日写作统计卡片 */}
@@ -356,7 +356,7 @@ export default function WorkbenchPage() {
               <div className="cover-placeholder">📖</div>
             </div>
             <div className="recent-book-info">
-              <h3>番薯写作 · 快速上手指南</h3>
+              <h3>蚂蚁写作 · 快速上手指南</h3>
               <div className="recent-book-meta">
                 <span className="tag-sm">新手必读</span>
                 <span className="tag-sm">5分钟入门</span>
@@ -566,7 +566,7 @@ export default function WorkbenchPage() {
         <div className="modal-overlay" onClick={() => setShowManual(false)}>
           <div className="modal manual-modal" onClick={e => e.stopPropagation()}>
             <div className="manual-header">
-              <h2>📖 番薯写作 · 使用说明书</h2>
+              <h2>📖 蚂蚁写作 · 使用说明书</h2>
               <button className="btn-icon" onClick={() => setShowManual(false)}>✕</button>
             </div>
             <div className="manual-content">
