@@ -169,6 +169,8 @@ export const api = {
   deleteChapter: (bookId: string, chId: string) => request<{ success: boolean }>(`/books/${bookId}/chapters/${chId}`, { method: 'DELETE' }),
   reorderChapters: (bookId: string, order: { id: string; order_index: number }[]) =>
     request<{ success: boolean }>(`/books/${bookId}/chapters/reorder`, { method: 'POST', body: JSON.stringify({ order }) }),
+  rebinVolumes: (bookId: string) =>
+    request<{ success: boolean; chapters: number; volumes: number }>(`/books/${bookId}/chapters/rebin-volumes`, { method: 'POST' }),
 
   // Characters
   listCharacters: (bookId: string) => request<Character[]>(`/books/${bookId}/characters`),

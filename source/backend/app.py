@@ -796,6 +796,13 @@ def resort_chapters_by_title(book_id, rebin_volumes=False):
         vols = Chapter.query.filter_by(book_id=book_id, is_volume=True).order_by(Chapter.order_index).all()
         total_chs = len(keyed)
         needed_vols = max(1, (total_chs + 49) // 50) if total_chs > 0 else 0
+        # 多余的空卷删除（避免导入后残留空卷导致卷列表错乱）
+        if len(vols) > needed_vols:
+            for extra_vol in vols[needed_vols:]:
+                # 清空其下章节的 parent_id（若有），再删除
+                Chapter.query.filter_by(book_id=book_id, parent_id=extra_vol.id, is_volume=False).update({'parent_id': ''})
+                db.session.delete(extra_vol)
+            vols = vols[:needed_vols]
         # 不足的卷自动补建（保留已有卷名）
         while len(vols) < needed_vols:
             vidx = len(vols)
@@ -810,6 +817,9 @@ def resort_chapters_by_title(book_id, rebin_volumes=False):
             db.session.add(vol)
             db.session.flush()
             vols.append(vol)
+        # 重置所有卷的 order_index 为 total_chs + vol_idx（保证卷顺序稳定，排在所有章节之后）
+        for vidx, vol in enumerate(vols):
+            vol.order_index = total_chs + vidx
         # 重新分配 parent_id
         for i, item in enumerate(keyed):
             vol_idx = i // 50
@@ -1167,6 +1177,15 @@ def list_chapters(book_id):
     if not book:
         return jsonify({'error': 'Book not found'}), 404
     chapters = Chapter.query.filter_by(book_id=book_id).order_by(Chapter.order_index).all()
+    # 自动修复孤儿数据：清空指向不存在卷的 parent_id（历史删除卷未清空子章节导致）
+    vol_ids = {c.id for c in chapters if c.is_volume}
+    repaired = False
+    for c in chapters:
+        if not c.is_volume and c.parent_id and c.parent_id not in vol_ids:
+            c.parent_id = ''
+            repaired = True
+    if repaired:
+        db.session.commit()
     return jsonify([c.to_dict(include_content=False) for c in chapters])
 
 @app.route('/api/books/<book_id>/chapters/<chapter_id>', methods=['GET'])
@@ -1279,6 +1298,33 @@ def reorder_chapters(book_id):
         Chapter.query.filter_by(id=item['id'], book_id=book_id).update({'order_index': item['order_index']})
     db.session.commit()
     return jsonify({'success': True})
+
+
+@app.route('/api/books/<book_id>/chapters/rebin-volumes', methods=['POST'])
+@login_required
+def rebin_volumes(book_id):
+    """手动触发按 50 章/卷重新归入卷：先清空所有章节 parent_id，删除现有卷，再按章节号排序重新分卷。"""
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Book not found'}), 404
+    if book.user_id != request.current_user_id:
+        return jsonify({'error': '无权操作该作品'}), 403
+    try:
+        # 清空所有非卷章节的 parent_id
+        Chapter.query.filter_by(book_id=book_id, is_volume=False).update({'parent_id': ''})
+        # 删除所有现有卷
+        old_vols = Chapter.query.filter_by(book_id=book_id, is_volume=True).all()
+        for v in old_vols:
+            db.session.delete(v)
+        db.session.flush()
+        # 重新排序 + 分卷
+        count = resort_chapters_by_title(book_id, rebin_volumes=True)
+        update_book_stats(book_id)
+        vols = Chapter.query.filter_by(book_id=book_id, is_volume=True).count()
+        return jsonify({'success': True, 'chapters': count, 'volumes': vols})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
 
 # ==== Chapter Versions ====

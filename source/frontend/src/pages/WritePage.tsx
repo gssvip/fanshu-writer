@@ -489,11 +489,13 @@ export default function WritePage() {
     if (!bookId) return null;
     const volCount = chapters.filter(c => c.is_volume).length;
     const title = name || `第${volCount + 1}卷`;
+    // 安全的 order_index：取所有章节+卷的最大 order_index + 1，避免与现有项冲突导致排序错乱
+    const maxOrder = chapters.reduce((m, c) => Math.max(m, c.order_index ?? 0), -1);
     try {
       const vol = await api.createChapter(bookId, {
         title,
         content: '',
-        order_index: chapters.length,
+        order_index: maxOrder + 1,
         is_volume: true,
         parent_id: '',
       });
@@ -1491,6 +1493,25 @@ function ChapterPanel(props: {
     }
   }
 
+  // 重新分卷：按50章/卷自动重新归入（清空现有卷结构后重建）
+  const [rebinning, setRebinning] = useState(false);
+  async function handleRebinVolumes() {
+    if (!bookId) return;
+    const ok = confirm('将按 50 章/卷自动重新分卷：\n\n1. 清空所有章节的卷归属\n2. 删除现有卷\n3. 按章节号排序后每 50 章归入一卷\n\n此操作不可撤销，是否继续？');
+    if (!ok) return;
+    setRebinning(true);
+    try {
+      const result = await api.rebinVolumes(bookId);
+      alert(`重新分卷完成：共 ${result.chapters} 章，分为 ${result.volumes} 卷`);
+      // 刷新页面以重新加载章节列表
+      window.location.reload();
+    } catch (err: any) {
+      alert('重新分卷失败：' + (err.message || '未知错误'));
+    } finally {
+      setRebinning(false);
+    }
+  }
+
   // Enter快捷发送（Shift+Enter换行）
   const handlePromptKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -1743,6 +1764,9 @@ function ChapterPanel(props: {
         <h3>📚 章节 <span className="chapter-count">{chapters.filter(c => !c.is_volume).length}章</span></h3>
         <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}>
           <button className="btn-ghost-sm" onClick={() => onCreateVolume()} title="新建卷">📂 新卷</button>
+          <button className="btn-ghost-sm" onClick={handleRebinVolumes} disabled={rebinning || !bookId || chapters.filter(c => !c.is_volume).length === 0} title="按50章/卷自动重新分卷（清空现有卷结构后重建）">
+            {rebinning ? '⏳ 分卷中...' : '🔄 重新分卷'}
+          </button>
           <button className="btn-secondary-sm" onClick={() => importChaptersRef.current?.click()} disabled={importingChapters || !bookId} title="从 txt/md/docx/zip 文件追加章节，不影响已有章节">
             {importingChapters ? '⏳ 导入中...' : '📥 导入章节'}
           </button>
