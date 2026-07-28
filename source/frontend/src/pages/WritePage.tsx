@@ -5246,9 +5246,6 @@ function ForeshadowingPanel(props: {
 }) {
   const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks, onOpenAiCreate } = props;
   const [foreshadowing, setForeshadowing] = useState('');
-  const [editing, setEditing] = useState(false);
-  const [editValue, setEditValue] = useState('');
-  const [saving, setSaving] = useState(false);
   const [foreVolumes, setForeVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
@@ -5273,6 +5270,7 @@ function ForeshadowingPanel(props: {
   const [afRenamingId, setAfRenamingId] = useState<string | null>(null); // 正在重命名的报告 id
   const [afRenameValue, setAfRenameValue] = useState('');
   const [afSectionOpen, setAfSectionOpen] = useState(true); // 防遗忘检查区折叠
+  const [afScope, setAfScope] = useState<'reports' | 'dimensions'>('reports'); // 检查范围：动态文件/仅维度
 
   // 解析全局伏笔
   useEffect(() => {
@@ -5323,7 +5321,6 @@ function ForeshadowingPanel(props: {
   }
 
   async function saveForeshadowing(val: string) {
-    setSaving(true);
     try {
       const updated = await api.updateBible(bookId, { foreshadowing: val } as any);
       onBibleUpdate(updated);
@@ -5331,7 +5328,6 @@ function ForeshadowingPanel(props: {
     } catch (e: any) {
       alert('保存失败: ' + e.message);
     }
-    setSaving(false);
   }
 
   async function handleAnalyzeVolume(volId: string, volTitle: string) {
@@ -5435,10 +5431,10 @@ function ForeshadowingPanel(props: {
 
   // 执行防遗忘检查
   async function runAfCheck(volumeIds: string[]) {
-    if (!hasChapters) { alert('暂无章节内容，无法检查'); return; }
+    if (!hasChapters && afScope === 'reports') { alert('暂无章节内容，无法检查'); return; }
     setAfChecking(true);
     try {
-      const result = await api.aiAntiForgetCheck(bookId, 'reports', selectedSkillPackIds, volumeIds);
+      const result = await api.aiAntiForgetCheck(bookId, afScope, selectedSkillPackIds, volumeIds);
       // 刷新报告列表
       loadAfReports();
       // 自动展开新报告
@@ -5447,7 +5443,8 @@ function ForeshadowingPanel(props: {
         setAfSectionOpen(true);
       }
       const score = result.report?.health_score;
-      alert(`✅ 防遗忘检查完成（共${result.ch_count || 0}章${result.source_label ? ' · ' + result.source_label : ''}）${typeof score === 'number' ? `\n健康度评分：${score}` : ''}`);
+      const scopeName = afScope === 'dimensions' ? '仅维度' : '动态文件';
+      alert(`✅ 防遗忘检查完成（${scopeName}${result.source_label ? ' · ' + result.source_label : ''}）${typeof score === 'number' ? `\n健康度评分：${score}` : ''}`);
     } catch (e: any) {
       alert('防遗忘检查失败：' + (e.message || '请检查AI配置'));
     }
@@ -5602,11 +5599,6 @@ function ForeshadowingPanel(props: {
             ✨ AI创作
           </button>
           {hasChapters && (
-            <button className="btn-ghost-sm" onClick={openAfVolPicker} disabled={afChecking} title="选择分卷进行防遗忘与一致性检查">
-              {afChecking ? '⏳ 检查中...' : '🛡️ 防遗忘检查'}
-            </button>
-          )}
-          {hasChapters && (
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
                 {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
@@ -5697,47 +5689,51 @@ function ForeshadowingPanel(props: {
         </div>
       )}
 
-      {/* 全局伏笔编辑 */}
-      <div className="bible-edit-section">
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-          <b>📝 全局伏笔档案</b>
-          {!editing ? (
-            <button className="btn-ghost-sm" onClick={() => { setEditing(true); setEditValue(foreshadowing); }}>✏️ 编辑</button>
-          ) : (
-            <div style={{display:'flex',gap:6}}>
-              <button className="btn-primary-sm" onClick={() => { saveForeshadowing(editValue); setEditing(false); }} disabled={saving}>{saving ? '保存中...' : '💾 保存'}</button>
-              <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
-            </div>
-          )}
-        </div>
-        {editing ? (
-          <textarea className="input" rows={12} value={editValue} onChange={e => setEditValue(e.target.value)} placeholder="记录伏笔内容、埋设时机、回收方式..." />
-        ) : (
-          <div className="bible-content-view" style={{whiteSpace:'pre-wrap',minHeight:80,padding:12,background:'var(--bg-tertiary)',borderRadius:8}}>
-            {foreshadowing || <span className="text-muted">暂无全局伏笔档案，点击「编辑」手动添加或用AI创作</span>}
-          </div>
-        )}
-      </div>
-
-      {/* ===== 防遗忘检查报告区（折叠拉取/编辑/重命名/删除）===== */}
+      {/* ===== 防遗忘检查（原全局伏笔档案位置）===== */}
       <div className="bible-edit-section" style={{marginTop:16}}>
-        <div
-          style={{display:'flex',justifyContent:'space-between',alignItems:'center',cursor:'pointer'}}
-          onClick={() => setAfSectionOpen(v => !v)}
-        >
-          <b>🛡️ 防遗忘检查报告{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}</b>
-          <span className="text-muted" style={{fontSize:12}}>{afSectionOpen ? '▼ 收起' : '▶ 展开'}</span>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+          <h4 style={{margin:0}}>🛡️ 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}</h4>
+          <span className="text-muted" style={{fontSize:12,cursor:'pointer'}} onClick={() => setAfSectionOpen(v => !v)}>{afSectionOpen ? '▼ 收起' : '▶ 展开'}</span>
         </div>
-        <p className="text-muted" style={{fontSize:12,marginTop:4}}>
-          点击「🛡️ 防遗忘检查」选择分卷进行检查，报告按"检查01/02..."自动命名存档。每份可折叠查看、编辑、重命名、删除。
-        </p>
 
         {afSectionOpen && (
-          <div style={{marginTop:8}}>
+          <>
+            {/* 检查资料范围选择（动态文件 / 仅维度）+ 检查按钮 */}
+            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:8}}>
+              <span style={{fontSize:13,color:'var(--text-muted)'}}>检查资料：</span>
+              <button
+                onClick={() => setAfScope('reports')}
+                disabled={afChecking}
+                title="检查所有动态报告"
+                style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='reports'?'var(--accent)':'var(--border)'}`,background:afScope==='reports'?'var(--accent)':'transparent',color:afScope==='reports'?'#fff':'var(--text)',fontWeight:afScope==='reports'?600:400}}
+              >📄 动态文件</button>
+              <button
+                onClick={() => setAfScope('dimensions')}
+                disabled={afChecking}
+                title="查阅除构思、章节外所有维度"
+                style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='dimensions'?'var(--accent)':'var(--border)'}`,background:afScope==='dimensions'?'var(--accent)':'transparent',color:afScope==='dimensions'?'#fff':'var(--text)',fontWeight:afScope==='dimensions'?600:400}}
+              >📐 仅维度</button>
+              <button
+                className="btn-primary-sm"
+                onClick={openAfVolPicker}
+                disabled={afChecking}
+                style={{marginLeft:'auto',fontSize:14,padding:'6px 16px'}}
+              >
+                {afChecking ? '⏳ 检查中...' : '🛡️ 开始检查'}
+              </button>
+            </div>
+            <p className="text-muted" style={{fontSize:12,marginBottom:10}}>
+              {afScope === 'reports'
+                ? '当前：动态文件模式——检查所有动态报告，扫描一致性/伏笔/叙事债务。'
+                : '当前：仅维度模式——查阅除构思、章节外所有维度。'}
+              点击「开始检查」按卷选择检查范围，报告按"检查01/02..."自动命名存档，可折叠查看、编辑、重命名、删除。
+            </p>
+
+            {/* 报告列表 */}
             {afLoading ? (
               <p className="text-muted" style={{fontSize:13}}>加载报告中...</p>
             ) : afReports.length === 0 ? (
-              <p className="text-muted" style={{fontSize:13}}>暂无检查报告，点击上方「🛡️ 防遗忘检查」开始首次检查。</p>
+              <p className="text-muted" style={{fontSize:13}}>暂无检查报告，点击「🛡️ 开始检查」开始首次检查。</p>
             ) : (
               <div className="plot-volume-list">
                 {afReports.map((r: any) => {
@@ -5848,7 +5844,7 @@ function ForeshadowingPanel(props: {
                 })}
               </div>
             )}
-          </div>
+          </>
         )}
       </div>
 
@@ -5860,6 +5856,9 @@ function ForeshadowingPanel(props: {
               <h3 style={{margin:0}}>🛡️ 防遗忘检查 · 选择分卷</h3>
               <button className="btn-ghost-sm" onClick={() => setAfVolPickerOpen(false)}>✕</button>
             </div>
+            <p className="text-muted" style={{fontSize:12,marginBottom:6}}>
+              当前检查资料：<b>{afScope === 'dimensions' ? '📐 仅维度（除构思、章节外所有维度）' : '📄 动态文件（所有动态报告）'}</b>
+            </p>
             <p className="text-muted" style={{fontSize:12,marginBottom:10}}>
               勾选要检查的分卷（可多选）；不勾选任何卷则检查全部章节。
             </p>
