@@ -1646,6 +1646,27 @@ function ChapterPanel(props: {
 
   // 重新分卷：按50章/卷自动重新归入（清空现有卷结构后重建）
   const [rebinning, setRebinning] = useState(false);
+
+  // 分离卷和章节（useMemo 必须在所有 early return 之前调用，否则违反 Rules of Hooks）
+  const volumes = useMemo(() => chapters.filter(c => c.is_volume), [chapters]);
+  // 按卷分组的章节（缓存，避免每次渲染都 filter）
+  const chaptersByVolume = useMemo(() => {
+    const map: Record<string, Chapter[]> = {};
+    for (const v of volumes) map[v.id] = [];
+    const orphans: Chapter[] = [];
+    for (const c of chapters) {
+      if (c.is_volume) continue;
+      const pid = c.parent_id;
+      if (pid && map[pid]) {
+        map[pid].push(c);
+      } else {
+        orphans.push(c); // 无 parent_id 或指向已不存在的卷（孤儿章节）
+      }
+    }
+    map['__orphan__'] = orphans;
+    return map;
+  }, [chapters, volumes]);
+
   async function handleRebinVolumes() {
     if (!bookId) return;
     const ok = confirm('将按 50 章/卷自动重新分卷：\n\n1. 清空所有章节的卷归属\n2. 删除现有卷\n3. 按章节号排序后每 50 章归入一卷\n\n此操作不可撤销，是否继续？');
@@ -1902,25 +1923,6 @@ function ChapterPanel(props: {
 
   // 章节列表（按卷分组）
 
-  // 分离卷和章节
-  const volumes = useMemo(() => chapters.filter(c => c.is_volume), [chapters]);
-  // 按卷分组的章节（缓存，避免每次渲染都 filter）
-  const chaptersByVolume = useMemo(() => {
-    const map: Record<string, Chapter[]> = {};
-    for (const v of volumes) map[v.id] = [];
-    const orphans: Chapter[] = [];
-    for (const c of chapters) {
-      if (c.is_volume) continue;
-      const pid = c.parent_id;
-      if (pid && map[pid]) {
-        map[pid].push(c);
-      } else {
-        orphans.push(c); // 无 parent_id 或指向已不存在的卷（孤儿章节）
-      }
-    }
-    map['__orphan__'] = orphans;
-    return map;
-  }, [chapters, volumes]);
   // 未分卷 = 无 parent_id，或 parent_id 指向已不存在的卷（删除卷后避免章节变孤儿不可见）
   const orphanChapters = chaptersByVolume['__orphan__'] || [];
   const volumeChapters = (volId: string) => chaptersByVolume[volId] || [];

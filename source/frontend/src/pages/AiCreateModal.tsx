@@ -94,12 +94,19 @@ export default function AiCreateModal({
   const [error, setError] = useState('');
   const [applying, setApplying] = useState(false);
   const [editedOutputs, setEditedOutputs] = useState<Record<string, string>>({}); // 用户手动编辑后的结果
+  const [skillExpanded, setSkillExpanded] = useState(false); // 协同技能包折叠
+  const [localSkillPackIds, setLocalSkillPackIds] = useState<string[]>(selectedSkillPackIds); // 本地技能包选择（默认继承主页面勾选）
   const outputRef = useRef<HTMLDivElement>(null);
   // 记录最近一次生成参数（用于重新生成时带上修改意见）
   const lastGenRef = useRef<{ instruction: string; modification: string }>({ instruction: '', modification: '' });
 
-  const selectedPacks = skillPacks.filter(p => selectedSkillPackIds.includes(p.id));
+  const selectedPacks = skillPacks.filter(p => localSkillPackIds.includes(p.id));
   const isGlobal = mode === 'global';
+
+  // 切换技能包勾选
+  const togglePack = useCallback((id: string) => {
+    setLocalSkillPackIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }, []);
 
   // 组装单维度的 messages
   const buildMessages = useCallback((dim: string, userInstruction: string, modificationNote: string, prevOutput?: string) => {
@@ -278,11 +285,53 @@ export default function AiCreateModal({
                 rows={6}
                 autoFocus
               />
-              {selectedSkillPackIds.length > 0 && (
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>
-                  🎒 已加载技能包：{selectedPacks.map(p => p.name).join('、')}
+
+              {/* 协同技能包（可折叠多选） */}
+              {skillPacks.length > 0 && (
+                <div className="skill-pack-collapsible" style={{ marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="skill-pack-toggle"
+                    onClick={() => setSkillExpanded(v => !v)}
+                  >
+                    <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
+                    <span>📦 协同技能包</span>
+                    {selectedPacks.length > 0 && <span className="skill-pack-toggle-badge">{selectedPacks.length}</span>}
+                    <span className="skill-pack-toggle-hint">{skillExpanded ? '收起' : '展开'}</span>
+                  </button>
+                  {skillExpanded && (
+                    <>
+                      <div className="skill-pack-checkbox-list">
+                        {skillPacks.map(p => (
+                          <label key={p.id} className={`skill-pack-checkbox-item ${localSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={localSkillPackIds.includes(p.id)}
+                              onChange={() => togglePack(p.id)}
+                            />
+                            <span className="skill-pack-checkbox-icon">{p.icon}</span>
+                            <span className="skill-pack-checkbox-name">{p.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                      {selectedPacks.length > 0 && (
+                        <div className="skill-pack-info-list">
+                          {selectedPacks.map(pack => (
+                            <div key={pack.id} className="skill-pack-info">
+                              <span className="skill-pack-info-icon">{pack.icon}</span>
+                              <div>
+                                <div className="skill-pack-info-name">{pack.name}</div>
+                                <div className="skill-pack-info-desc">{pack.description}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
+
               <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
                 <button className="btn-ghost-sm" onClick={onClose}>取消</button>
                 <button
