@@ -654,11 +654,11 @@ export default function WritePage() {
     setAiStreamError('');
     // 预填默认提问
     if (mode === 'write') {
-      setAiUserPrompt(`请为「${chapterEditTitle}」创作完整章节内容，要求开篇吸引、对话自然、节奏紧凑、章末留悬念。`);
+      setAiUserPrompt(`请为「${chapterEditTitle}」创作完整章节内容，要求上下文剧情连贯、对话自然、节奏紧凑、章末留悬念，字数2400±100字。`);
     } else if (mode === 'continue') {
-      setAiUserPrompt('请继续往下写，保持风格一致，自然衔接已有内容。');
+      setAiUserPrompt('请继续往下写，保持风格一致，自然衔接已有内容，字数2400±100字。');
     } else {
-      setAiUserPrompt('请润色优化以下内容，提升文采和节奏感，保持原意不变。');
+      setAiUserPrompt('请润色优化以下内容，提升文采和节奏感，保持原意不变，字数2400±100字。');
     }
   }
 
