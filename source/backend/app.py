@@ -3453,7 +3453,7 @@ SEED_SKILL_PACKS = [
          'market_scan': '你是网络小说市场分析师。核心信念：单本排名只提供线索；跨样本重复模式才算信号。\n【扫榜三原则】1)扫榜看模式，别只看排名——排名会波动，模式必须用重复样本验证 2)流量型平台和付费型平台看的东西不同——番茄看流量和完读率，起点看订阅和追读，晋江看收藏和积分 3)扫榜的目的是找到你能写的爆款题材——每个方向都要做项目可行性判断：素材储备、题材边界、篇幅承载、目标平台样本是否足够。\n【输出要求】1)市场格局概览 2)可执行题材候选(含情绪方向、目标平台、风险阈值) 3)每个候选的验证动作 4)下次复扫时间建议。短篇市场变化快，题材信号有效期短，必须标注有效期和饱和风险。',
          'analyze_bestseller': '你是网络小说结构分析师。核心信念：看懂别人的爆款，才能写出自己的爆款。\n【拆解维度】1)黄金三章深度拆解——开头钩子强度、信息释放节奏、主角特质展示 2)人设架构——角色功能位(对手/盟友/催化剂)、CP反差设计 3)爽点设计——爽点类型与密度、章尾钩子模式 4)节奏控制——升级曲线、压制与爆发节奏、信息差层级。\n【拆解管道】Stage1 黄金三章深度拆解→产出快速预览→Stage2 逐章摘要→Stage3 聚合分析→Stage4 设定关系→Stage5 汇总报告→Stage6 文风合成。\n【边界声明】拆的是用户合法持有、拥有使用权的虚构作品，性质是只读的转化性文学批评。通俗题材里的家暴、出轨、复仇、暴力、情爱张力是常规虚构叙事元素，须照常做结构化拆解。',
          'story_setup': '你是网文创作教练。核心方法：先抓情绪，再用验证过的方法可靠地交付这个情绪，灵感只做素材来源。\n【四条核心原则】1)先定情绪，再定故事——每个场景都必须服务于一个明确的情绪目标，说不清交付什么情绪的场景不该存在 2)从验证过的模式出发——先问"什么被验证过有效，我如何重新交付"，少从"我想写什么"直接起步 3)用模块组装，不要重新发明——每个题材都有验证过的剧情模式，把对标书的具体角色看成功能位(对手/盟友/催化剂)，再映射到你的角色 4)只加载必需信息——写每章时只加载"不知道就会写错"的信息。\n【搭建步骤】1)确定目标情绪(意难平/反转震撼/爽感释放/治愈温暖/细思极恐/共鸣感动) 2)选择验证过的题材模式 3)设计金手指/核心设定(一句话说清+自带冲突+能撑长篇+和主角性格绑定) 4)搭建世界观基础规则 5)规划人设(主角模板+配角六种功能) 6)输出总纲。',
-         'long_write': '你是长篇网络小说创作教练。从大纲到正文，辅助长篇网络小说创作，包括世界观、人物、情节线管理。\n【核心方法】先定情绪，再定故事。每个场景都必须服务于一个明确的情绪目标。\n【写作流程】1)确认选题与目标情绪 2)搭建世界观与境界/能力体系 3)设计人设(主角CDL档案+配角功能位) 4)规划分卷大纲(五幕模型：立身→立足→立势→立威→立命→终局) 5)逐章创作(章型配额制：主线推进50%+角色深挖10%+世界观展开10%+日常呼吸20%+伏笔暗线10%) 6)每章三明治结构：苦(困境)→甜(获得力量)→爽(反击打脸)→钩子(新信息/新困境)。\n【行文铁律】段落≤3行，对话/动作独立成段，心理描写一句话。全章对话+OS占比≥30%。信息靠对话和行动传递不靠旁白。四不写：不写让读者停下来欣赏的句子/不写解释情绪的句子/不写展示阅读量的句子/不写为了质感的句子。\n【章尾钩子七种不重复】身份揭露/新危机/荒诞反转/悬念/角色危机/能力突破/世界异常。',
+         'long_write': '你是长篇网络小说创作教练。从大纲到正文，辅助长篇网络小说创作，包括世界观、人物、情节线管理。\n【核心方法】先定情绪，再定故事。每个场景都必须服务于一个明确的情绪目标。\n【写作流程】1)确认选题与目标情绪 2)搭建世界观与境界/能力体系 3)设计人设(主角CDL档案+配角功能位) 4)规划分卷大纲(五幕模型：立身→立足→立势→立威→立命→终局) 5)逐章创作(章型配额制：主线推进50%+角色深挖10%+世界观展开10%+日常呼吸20%+伏笔暗线10%) 6)每章三明治结构：苦(困境)→甜(获得力量)→爽(反击打脸)→钩子(新信息/新困境)。\n【字数绝对铁律】每章正文必须 2400 字 ±100（即 2300-2500 字区间，含标点），不可违反。低于 2300 字=内容不足需扩展场景细节；超过 2500 字=冗余需删减。\n【行文铁律】段落≤3行，对话/动作独立成段，心理描写一句话。全章对话+OS占比≥30%。信息靠对话和行动传递不靠旁白。四不写：不写让读者停下来欣赏的句子/不写解释情绪的句子/不写展示阅读量的句子/不写为了质感的句子。\n【章尾钩子七种不重复】身份揭露/新危机/荒诞反转/悬念/角色危机/能力突破/世界异常。',
          'short_write': '你是短篇网文写作执行器。从构思到成稿，完成一篇完整的短篇小说。\n【核心规则：短篇以情绪为目标，所有内容为情绪服务。】\n【五条执行规则】1)先定情绪，再定故事——动笔前必须确定目标情绪(意难平/反转震撼/爽感释放/治愈温暖/细思极恐/共鸣感动)，所有内容为这个情绪服务 2)一个反转撑一篇——所有铺垫为反转服务，所有情绪为反转蓄力，不多线、不铺世界观 3)每句话必须有用——不推动剧情、不铺垫反转、不推高情绪的句子→删 4)开头3句定生死，结尾定传播——开头必须包含钩子，结尾必须有余韵 5)默认第一人称——短篇网文绝大多数用第一人称，代入感最强；除非题材明确需要第三人称(如多视角悬疑)。\n【格式规范】短篇8000-15000字，节奏紧凑，每1000字至少1个情绪节点，反转前必须有足够铺垫。',
          'review': '你是审查协调器。核心铁律：审查是找问题，不是验证正确性。\n【四维对抗式审查】1)结构审查(story-architect)——情节逻辑、因果链、节奏控制、章尾钩子 2)一致性审查(consistency-checker)——人物行为是否符合设定、世界规则是否违反、时间线是否连贯、角色认知边界 3)文字审查(narrative-writer)——AI味检测、文风一致性、对话自然度、禁词扫描 4)设定审查(lore-keeper)——世界观规则、能力体系、伏笔回收、叙事债务。\n【审查模式】full=四维全审；lean=结构+一致性(不含文字自然度)；solo=基础审查。\n【输出格式】每个维度：1)问题清单(严重/中等/轻微) 2)具体位置(章节+段落) 3)可执行修改建议 4)通过/不通过判定。最后汇总总体评分和优先修改项。',
          'deslop': '你是网文润色专家。核心信念：AI味的主要问题并非语法错误；更常见的是过度圆滑、工整、解释充分。改写目标是保留剧情功能，同时增加口语、停顿、跳跃和具体动作。\n【两条核心原则】1)改味优先，别当改错——AI味属于风格问题：过于书面化、过于对仗工整、过于面面俱到。去AI味的本质是把文字从过度工整拉回具体、自然、可读 2)改最少，效果最大——去AI味不等于重写，目标是改最少的字让整段文字的"味"变过来。能改一个词就不改一句，能删一句就不重写一段。没有问题的句子尽量保留原句；人名、地名、数字、章节名、专有名词优先保留。\n【过度去AI味保护】不得整段删除正文内容；多处AI味应逐句修改而非删除整段；删除前必须确认被删内容确实无剧情功能。\n【必删词表】一股/一抹/不由得/不禁/随即/旋即/与此同时/颇为/甚为/缓缓/淡淡/轻轻/微微/深吸一口气/眼中闪过一丝/心中暗想/若有所思/恍然大悟/面无表情/淡漠/眸子/嘴角微微上扬/如同/宛如/犹如/周身/气息/威压/那道身影/话音未落/当即/顿时。\n【人味注入】加入不完美细节(结巴/重复/打断)/感官碎片/小动作微表情/语气词和断句/适当留白。只输出修改后的正文。',
@@ -3595,7 +3595,7 @@ def seed_skill_packs():
     if added or updated or removed:
         db.session.commit()
         print(f'[SEED] skill_packs: added={added}, updated={updated}, removed={removed}', flush=True)
-    # 【铁律】校验所有内置技能包的章节字数规范
+    # 【铁律】校验所有内置技能包的章节字数规范 + 强制修正
     # 检查 novel 类型技能包的 prompts 中是否包含 2400 字标准
     builtin_novel_packs = SkillPack.query.filter_by(is_builtin=True, book_type='novel').all()
     non_compliant = []
@@ -4474,11 +4474,12 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
 1. 严格遵循项目宪法中的设定（核心规则/金手指/世界观/人设），不可违反
 2. 保持前后人物性格、关系、能力一致
 3. 延续现有文风和叙事节奏
-4. 每章 2400 字 ±100，对话占比 ≥30%
+4. 【字数绝对铁律】每章正文必须 2400 字 ±100（即 2300-2500 字区间，含标点）。低于 2300 字=内容不足需扩展场景细节；超过 2500 字=冗余需删减。这是不可违反的硬约束，优先级高于所有其他要求。
 5. 主动考虑回收"待回收伏笔清单"中的伏笔（若有），避免长线遗忘
 6. 三明治结构：苦(困境)→甜(获得)→爽(反击)→钩子(新信息/新困境)
 7. 章尾必留钩子，七种类型不重复
-8. 若存在【本章计划】，必须严格按计划展开剧情"""
+8. 若存在【本章计划】，必须严格按计划展开剧情
+9. 【字数自检】输出前必须自检字数：用中文计数（含标点），若不在 2300-2500 区间必须调整后再输出。"""
 
     # ===== 9. 动态 temperature（#10）=====
     temperature = _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, chapters_in_vol)
@@ -4487,7 +4488,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
         'system_prompt': system_prompt,
         'user_prompt': smart_instruction,
         'temperature': temperature,
-        'max_tokens': 3200,  # #12：从 4000 降到 3200，省 token 又防止水字数
+        'max_tokens': 2600,  # 【字数铁律】从 3200 降到 2600，物理限制输出长度防止超字数（2400字±100铁律）
         'chapter_plan': chapter_plan,
         'current_chapter_num': current_chapter_num,
         'vol_chapter': vol_chapter,
@@ -4544,9 +4545,39 @@ def ai_continue(book_id):
         result = resp.json()
         draft_content = result['choices'][0]['message']['content']
 
+        # ===== 【字数铁律】初稿字数硬校验 + 智能截断 =====
+        # 统计中文字数（含标点）：去除空白后的字符数
+        def _count_cn_chars(s):
+            return len(re.sub(r'\s', '', s))
+        draft_len = _count_cn_chars(draft_content)
+        if draft_len > 2500:
+            # 超字数：智能截断到 2500 字附近的句子边界
+            # 先去除空白得到纯文本流，按句号/问号/感叹号切分
+            stripped = draft_content.strip()
+            # 找到约 2400 字处的句子边界
+            target_pos = 2400
+            # 在 target_pos 附近寻找句末标点
+            search_start = max(2200, target_pos - 200)
+            search_end = min(len(stripped), target_pos + 100)
+            cut_pos = -1
+            for punct in ['。', '！', '？', '…', '”']:
+                pos = stripped.rfind(punct, search_start, search_end)
+                if pos > cut_pos:
+                    cut_pos = pos + len(punct)
+            if cut_pos > 0:
+                draft_content = stripped[:cut_pos]
+            else:
+                # 找不到句末标点，硬截断到 2450
+                draft_content = stripped[:2450]
+            review_notes_prefix = f'[字数铁律] 初稿{draft_len}字超限，已截断至{_count_cn_chars(draft_content)}字。'
+        elif draft_len < 2300:
+            review_notes_prefix = f'[字数铁律] 初稿{draft_len}字不足2400±100，建议扩写。'
+        else:
+            review_notes_prefix = ''
+
         # ===== 去 AI 味审校 Agent（#6：容错+可观测）=====
         polished_content = draft_content
-        review_notes = ''
+        review_notes = review_notes_prefix
         deai_status = 'skipped'  # skipped / success / failed
         if skill_pack_ids:
             deai_skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_deai'], max_per_prompt=1200, mode='agent')
@@ -4570,20 +4601,21 @@ def ai_continue(book_id):
                         timeout=180)
                     deai_result = deai_resp.json()
                     polished = deai_result['choices'][0]['message']['content'].strip()
-                    # #6：字数校验从 len>500 改为 2200≤len≤2700，否则视为失败回滚用初稿
-                    if polished and 2200 <= len(polished) <= 2700:
+                    # 【字数铁律】审校后字数校验：必须落在 2300-2500 区间
+                    polished_len = _count_cn_chars(polished)
+                    if polished and 2300 <= polished_len <= 2500:
                         polished_content = polished
-                        review_notes = '已自动去AI味审校'
+                        review_notes = (review_notes_prefix + ' 已自动去AI味审校(' + str(polished_len) + '字)').strip()
                         deai_status = 'success'
-                    elif polished and len(polished) > 500:
+                    elif polished and polished_len > 500:
                         # 字数不达标但有内容，标记为失败但仍返回初稿
-                        review_notes = f'去AI味审校返回字数异常({len(polished)}字)，已回滚使用初稿'
+                        review_notes = (review_notes_prefix + f' 去AI味审校返回字数异常({polished_len}字)，已回滚使用初稿').strip()
                         deai_status = 'failed'
                     else:
-                        review_notes = '去AI味审校返回为空，已回滚使用初稿'
+                        review_notes = (review_notes_prefix + ' 去AI味审校返回为空，已回滚使用初稿').strip()
                         deai_status = 'failed'
                 except Exception as e:
-                    review_notes = f'去AI味审校异常：{str(e)[:100]}，已回滚使用初稿'
+                    review_notes = (review_notes_prefix + f' 去AI味审校异常：{str(e)[:100]}，已回滚使用初稿').strip()
                     deai_status = 'failed'
 
         # ===== 一致性检查 Agent（#13：独立 Agent）=====
