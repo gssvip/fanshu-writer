@@ -278,15 +278,15 @@ export default function WorkbenchPage() {
 
   return (
     <div className="page home-page">
-      {/* 手机端顶部：左文字 + 右 wangbiao logo */}
+      {/* 手机端顶部：左 wangbiao logo + 右文字 */}
       <div className="home-topbar-mobile">
-        <div className="home-topbar-text">
-          <span className="home-topbar-title">蚂蚁写作</span>
-          <span className="home-topbar-sub">mayi.chat · 专业AI小说创作平台</span>
-        </div>
         <picture className="home-topbar-logo">
           <img src="wangbiao.webp" alt="蚂蚁写作" />
         </picture>
+        <div className="home-topbar-text">
+          <span className="home-topbar-title">蚂　蚁　写　作</span>
+          <span className="home-topbar-sub">mayi.chat · 专业AI小说创作平台</span>
+        </div>
       </div>
 
       {/* 今日写作统计卡片 */}

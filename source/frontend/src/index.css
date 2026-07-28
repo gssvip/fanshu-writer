@@ -152,11 +152,11 @@ textarea{resize:vertical;line-height:1.8}
 .header-actions-row{display:flex;align-items:center;gap:8px}
 .skills-header-actions{display:flex;gap:8px;flex-shrink:0}
 
-/* 手机端顶部：左文字 + 右 wangbiao logo（仅移动端显示） */
-.home-topbar-mobile{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px 6px;margin:0 0 4px}
-.home-topbar-text{display:flex;flex-direction:column;gap:2px;min-width:0}
-.home-topbar-title{font-size:20px;font-weight:700;color:#4a7a5a;letter-spacing:2px;line-height:1.2}
-.home-topbar-sub{font-size:11px;color:#7a9a8a;letter-spacing:0.5px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 手机端顶部：左 wangbiao logo + 右文字（仅移动端显示） */
+.home-topbar-mobile{display:flex;align-items:center;justify-content:flex-start;gap:12px;padding:12px 16px 6px;margin:0 0 4px}
+.home-topbar-text{display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:0;flex:1}
+.home-topbar-title{font-size:19px;font-weight:700;color:#4a7a5a;letter-spacing:6px;line-height:1.2;text-align:right;white-space:nowrap}
+.home-topbar-sub{font-size:11px;color:#7a9a8a;letter-spacing:0.3px;line-height:1.2;white-space:nowrap;text-align:right}
 .home-topbar-logo{flex:0 0 auto;display:flex;align-items:center}
 .home-topbar-logo img{width:auto;height:64px;max-width:120px;object-fit:contain}
 
