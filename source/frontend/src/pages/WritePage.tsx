@@ -1277,7 +1277,7 @@ function ConceptPanel(props: {
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
           {bookTitle && (
-            <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
               <span className="bible-context-book">📖 {bookTitle}</span>
               <span className="bible-context-sep">›</span>
               <span className="bible-context-dim">💡 AI创作 · 构思</span>
@@ -2472,14 +2472,14 @@ function CharacterPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
         {bookTitle && (
-          <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
             <span className="bible-context-book">📖 {bookTitle}</span>
             <span className="bible-context-sep">›</span>
             <span className="bible-context-dim">👤 人物及关系</span>
             {characters.length > 0 && <span className="bible-context-count">{characters.length}人</span>}
           </div>
         )}
-        <div className="bible-edit-actions" style={{position:'relative'}}>
+        <div className="bible-edit-actions" style={{position:'relative',flexShrink:0}}>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate}>
             ✨ AI创作
           </button>
@@ -3278,14 +3278,14 @@ function PlotPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
         {bookTitle && (
-          <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
             <span className="bible-context-book">📖 {bookTitle}</span>
             <span className="bible-context-sep">›</span>
             <span className="bible-context-dim">📖 剧情</span>
             {displayVolumes.length > 0 && <span className="bible-context-count">{displayVolumes.length}卷</span>}
           </div>
         )}
-        <div className="bible-edit-actions">
+        <div className="bible-edit-actions" style={{flexShrink:0}}>
           {displayVolumes.length > 0 && (
             <button
               className="btn-ghost-sm"
@@ -3873,14 +3873,14 @@ function InventoryPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
         {bookTitle && (
-          <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
             <span className="bible-context-book">📖 {bookTitle}</span>
             <span className="bible-context-sep">›</span>
             <span className="bible-context-dim">🎒 物资库</span>
             {displayVolumes.length > 0 && <span className="bible-context-count">{displayVolumes.length}卷</span>}
           </div>
         )}
-        <div className="bible-edit-actions" style={{position:'relative'}}>
+        <div className="bible-edit-actions" style={{position:'relative',flexShrink:0}}>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} title="AI 协同创作物资库">
             ✨ AI创作
           </button>
@@ -4142,14 +4142,14 @@ function BibleEditPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
         {bookTitle && (
-          <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
             <span className="bible-context-book">📖 {bookTitle}</span>
             <span className="bible-context-sep">›</span>
             <span className="bible-context-dim">{tab.icon} {tab.label}</span>
             {wordCount > 0 && <span className="bible-context-count">{wordCount}字</span>}
           </div>
         )}
-        <div className="bible-edit-actions">
+        <div className="bible-edit-actions" style={{flexShrink:0}}>
           {!editing ? (
             <>
               <button className="btn-ghost-sm" onClick={() => onOpenAiCreate(tab.field)} disabled={aiAssisting}>
@@ -4455,7 +4455,7 @@ function OutlineCombinedPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
         <h3>📋 大纲</h3>
-        <div className="bible-edit-actions">
+        <div className="bible-edit-actions" style={{flexShrink:0}}>
           {!editing ? (
             <>
               <button className="btn-ghost-sm" onClick={() => onOpenAiCreate(subTab === 'worldview' ? 'worldbuilding' : 'plot_design')} disabled={aiAssisting}>
@@ -5603,7 +5603,7 @@ function ForeshadowingPanel(props: {
       <div className="bible-edit-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div style={{display:'flex',alignItems:'center',gap:8,position:'relative'}}>
           {bookTitle && (
-            <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+            <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
               <span className="bible-context-book">📖 {bookTitle}</span>
               <span className="bible-context-sep">›</span>
               <span className="bible-context-dim">🔮 伏笔</span>
@@ -6014,13 +6014,13 @@ function LocationsPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
         {bookTitle && (
-          <div className="bible-context-bar" style={{marginBottom:0,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
             <span className="bible-context-book">📖 {bookTitle}</span>
             <span className="bible-context-sep">›</span>
             <span className="bible-context-dim">🗺️ 地图</span>
           </div>
         )}
-        <div className="bible-edit-actions" style={{position:'relative'}}>
+        <div className="bible-edit-actions" style={{position:'relative',flexShrink:0}}>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} title="AI 全屏创作地点体系">✨ AI创作</button>
           {hasChapters && (
             <>
