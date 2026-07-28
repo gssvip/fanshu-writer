@@ -3992,19 +3992,65 @@ def _inject_volume_dimensions(bb, vol_chapter, volume_index, sections):
 
 
 def _get_volume_outline(vol_chapter, volume_index):
-    """获取当前卷的卷纲（从 Outline 表 level=0 或匹配标题的条目）。
+    """获取当前卷的卷纲。
+    【P0修复】AI 生成卷纲的路由写入 bb.timeline（JSON数组），而非 Outline 表。
+    因此优先从 bb.timeline 读取当前卷的 vol_obj，回退到 Outline 表（手动创建的旧数据）。
     返回卷纲文本，用于让 AI 知道本卷目标。"""
     if not vol_chapter:
         return ''
+    vol_id = str(vol_chapter.id)
+    vol_label = vol_chapter.title or f'第{volume_index}卷'
+
+    # ===== 优先路径：从 bb.timeline 读取 AI 生成的卷纲（JSON数组）=====
     try:
-        # 优先查 parent_id 关联的 level=0 outline
+        bb = BookBible.query.filter_by(book_id=vol_chapter.book_id).first()
+        if bb and bb.timeline:
+            timeline_raw = bb.timeline.strip()
+            # 兼容 JSON 数组格式（AI卷纲）和纯文本格式（旧数据）
+            if timeline_raw.startswith('['):
+                arr = json.loads(timeline_raw)
+                if isinstance(arr, list):
+                    for v in arr:
+                        if not isinstance(v, dict):
+                            continue
+                        # 匹配当前卷：volume_id / volume / volume_index
+                        if (str(v.get('volume_id', '')) == vol_id or
+                            v.get('volume', '') == vol_label or
+                            int(v.get('volume_index', 0) or 0) == volume_index):
+                            # 提取卷纲核心字段
+                            parts = []
+                            if v.get('volume'):
+                                parts.append(f'卷名：{v["volume"]}')
+                            if v.get('main_plot'):
+                                parts.append(f'主线：{v["main_plot"]}')
+                            if v.get('core_conflict'):
+                                parts.append(f'核心冲突：{v["core_conflict"]}')
+                            if v.get('nodes'):
+                                nodes = v['nodes']
+                                if isinstance(nodes, list):
+                                    nodes_text = '; '.join([n.get('title', str(n)) if isinstance(n, dict) else str(n) for n in nodes[:8]])
+                                    parts.append(f'关键节点：{nodes_text}')
+                            if v.get('volume_goal') or v.get('goal'):
+                                parts.append(f'卷目标：{v.get("volume_goal") or v.get("goal")}')
+                            if v.get('ending_hook') or v.get('climax'):
+                                parts.append(f'卷尾钩子：{v.get("ending_hook") or v.get("climax")}')
+                            if parts:
+                                content = '\n'.join(parts)
+                                return f'【本卷目标/卷纲】（第{volume_index}卷「{vol_label}」）\n{content[:1500]}'
+            else:
+                # 纯文本格式（旧数据或手动填写），直接返回
+                if timeline_raw:
+                    return f'【本卷目标/卷纲】（第{volume_index}卷「{vol_label}」）\n{timeline_raw[:1500]}'
+    except Exception:
+        pass
+
+    # ===== 回退路径：从 Outline 表读取（手动创建的卷纲）=====
+    try:
         outlines = Outline.query.filter_by(book_id=vol_chapter.book_id).order_by(Outline.order_index).all()
-        # 优先匹配标题
         for o in outlines:
             if o.title and vol_chapter.title and (o.title in vol_chapter.title or vol_chapter.title in o.title):
                 if o.content and o.content.strip():
                     return f'【本卷目标/卷纲】（第{volume_index}卷「{vol_chapter.title}」）\n{o.content[:1200]}'
-        # 退化：取 level=0 的第 volume_index 个
         acts = [o for o in outlines if o.level == 0]
         if 0 <= volume_index - 1 < len(acts):
             o = acts[volume_index - 1]
@@ -4015,9 +4061,13 @@ def _get_volume_outline(vol_chapter, volume_index):
     return ''
 
 
-def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=5):
+def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=15):
     """伏笔按"到期紧迫度"排序，提取 Top N 待回收伏笔。
-    紧迫度 = |计划回收章号 - 当前章号|，越小越紧迫；无章号信息的排到最后。
+    【P1优化】
+    - 有计划回收章号：紧迫度 = |计划回收章号 - 当前章号|，越小越紧迫
+    - 无计划回收章号：按"已沉淀时长"排序，沉淀越久（埋设章号距当前越远）越应优先回收，
+      避免长线遗忘。沉淀时长 = 当前章号 - 埋设章号，越大越紧迫。
+    - 扩展 Top N 从 5 到 15，覆盖更多伏笔。
     优先从 foreshadowing_volumes 取结构化数据，否则从全局 foreshadowing 文本启发式提取。"""
     pending = []
 
@@ -4047,7 +4097,14 @@ def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=
                         target_n = int(target) if target else 0
                     except (ValueError, TypeError):
                         target_n = 0
-                    urgency = abs(target_n - current_chapter_num) if target_n else 9999
+                    # 紧迫度计算：有目标章号用距离；无目标章号用沉淀时长（取负数使其优先级低于即将到期的）
+                    if target_n:
+                        urgency = abs(target_n - current_chapter_num)
+                    elif planted_n:
+                        # 无目标章号：沉淀越久越紧迫，用 (当前-埋设) 作为紧迫度，但加 1000 偏移使其排在有目标且即将到期的之后
+                        urgency = 1000 + max(0, current_chapter_num - planted_n)
+                    else:
+                        urgency = 9999
                     pending.append((urgency, planted_n, target_n, desc))
         except (json.JSONDecodeError, ValueError, TypeError):
             pass
@@ -4063,9 +4120,15 @@ def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=
             # 启发式：从文本中提取章号
             import re as _re_fs
             nums = _re_fs.findall(r'第?(\d+)\s*章', line)
-            target_n = int(nums[-1]) if nums else 0
-            urgency = abs(target_n - current_chapter_num) if target_n else 9999
-            pending.append((urgency, 0, target_n, line))
+            if nums:
+                target_n = int(nums[-1])
+                planted_n = int(nums[0]) if len(nums) > 1 else 0
+                urgency = abs(target_n - current_chapter_num)
+            else:
+                target_n = 0
+                planted_n = 0
+                urgency = 9999
+            pending.append((urgency, planted_n, target_n, line))
 
     # 按紧迫度升序排序，取 Top N
     pending.sort(key=lambda x: x[0])
@@ -4287,17 +4350,28 @@ def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_in
 
 
 def _consistency_check(book_id, bb, draft_content, current_chapter_num,
-                       api_key, base_url, model, max_tokens=800):
-    """一致性检查 Agent：检查正文是否违反 key_rules/人设，返回 (passed, issues_text)。
-    失败时返回 (True, '')（不阻塞）。"""
+                       api_key, base_url, model, max_tokens=800, chapter_plan=''):
+    """一致性检查 Agent：检查正文是否违反 key_rules/人设，并比对 chapter_plan 是否被执行。
+    【P1扩展】新增 chapter_plan 比对，检测剧情偏离。
+    返回 (passed, issues_text)。失败时返回 (True, '')（不阻塞）。"""
     if not draft_content or len(draft_content) < 100:
         return True, ''
     key_rules = (bb.key_rules or '')[:800]
     chars = (bb.character_profiles or '')[:800]
-    if not key_rules and not chars:
+    if not key_rules and not chars and not chapter_plan:
         return True, ''
 
-    check_system = f"""你是小说一致性审查员。检查以下章节正文是否违反"项目宪法"。
+    # 构建 chapter_plan 比对段（若有）
+    plan_check_section = ''
+    if chapter_plan and chapter_plan.strip():
+        plan_check_section = f"""
+
+【本章计划】（正文必须严格遵循此计划）
+{chapter_plan[:600]}
+
+【计划执行检查】除一致性外，额外检查正文是否实现了本章计划的核心冲突、关键场景、章尾钩子。若正文明显偏离计划（如跳过关键场景、改写核心冲突、丢失章尾钩子），记为问题。"""
+
+    check_system = f"""你是小说一致性审查员。检查以下章节正文是否违反"项目宪法"，并比对本章计划是否被执行。
 只检查，不修改。返回 JSON：{{"passed": true/false, "issues": ["问题1", "问题2"]}}
 
 【项目宪法】
@@ -4306,6 +4380,7 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
 
 人物档案（节选）：
 {chars}
+{plan_check_section}
 
 【待检查正文】
 {draft_content[:3000]}"""
@@ -4314,7 +4389,7 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
         resp = requests.post(f'{base_url}/chat/completions',
             headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
             json={'model': model, 'messages': [{'role': 'system', 'content': check_system},
-                                                {'role': 'user', 'content': '请检查一致性，返回JSON'}],
+                                                {'role': 'user', 'content': '请检查一致性与计划执行度，返回JSON'}],
                   'temperature': 0.2, 'max_tokens': max_tokens},
             timeout=60)
         result = resp.json()
@@ -4368,75 +4443,87 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
         ).count()
 
     # ===== 2. 分层 bible 上下文（#5：相关性筛选 + #14：预算管理）=====
-    # 提取最近3章出场角色，用于 character_profiles 相关性筛选
-    recent_for_chars = all_chapters[-3:] if all_chapters else []
+    # 提取最近4章出场角色，用于 character_profiles 相关性筛选
+    recent_for_chars = all_chapters[-4:] if all_chapters else []
     appearing_chars = _extract_appearing_characters(recent_for_chars)
     filtered_bible = _filter_bible_by_relevance(bb, appearing_chars)
 
     bible_sections = []
-    if filtered_bible.get('key_rules'):
-        bible_sections.append(('【核心规则/金手指】（绝不可违反）', filtered_bible['key_rules'], 3))
+    # 【大纲】五幕式总纲（权重最高，对齐整体走向）
+    if filtered_bible.get('plot_design'):
+        bible_sections.append(('【大纲·五幕式总纲】（参考当前进度对齐整体走向）', filtered_bible['plot_design'], 3))
+    # 【剧情·卷纲规划】P0修复：timeline 实际存的是前向卷纲JSON，标注为规划而非已发生
+    if filtered_bible.get('timeline'):
+        bible_sections.append(('【剧情·卷纲规划】（本卷及后续卷的主线规划，注意是未来计划不是已发生剧情）', filtered_bible['timeline'], 2))
+    # 【人物及关系】合并 character_profiles + relation_graph
     if filtered_bible.get('character_profiles'):
         bible_sections.append(('【人物档案】（保持人设一致）', filtered_bible['character_profiles'], 3))
+    if bb.relation_graph and bb.relation_graph.strip():
+        rg_text = bb.relation_graph[:1000]
+        bible_sections.append(('【人物关系图谱】（保持关系一致性）', rg_text, 2))
+    # 【物资库】角色持有物品/境界约束
+    if bb.inventory and bb.inventory.strip():
+        inv_text = bb.inventory[:1000]
+        bible_sections.append(('【物资库·境界库】（角色持有物品约束，不可凭空获得）', inv_text, 2))
+    # 【地图】地点信息
+    if bb.locations and bb.locations.strip():
+        loc_text = bb.locations[:1000]
+        bible_sections.append(('【地图·地点信息·全局】（若与本卷地点冲突，以本卷为准）', loc_text, 1))
+    # 核心规则/金手指（绝不可违反）
+    if filtered_bible.get('key_rules'):
+        bible_sections.append(('【核心规则/金手指】（绝不可违反）', filtered_bible['key_rules'], 3))
+    # 世界观设定
     if filtered_bible.get('worldbuilding'):
         bible_sections.append(('【世界观设定】', filtered_bible['worldbuilding'], 2))
-    if filtered_bible.get('plot_design'):
-        bible_sections.append(('【五幕式总纲】（参考当前进度对齐走向）', filtered_bible['plot_design'], 2))
-    if filtered_bible.get('timeline'):
-        bible_sections.append(('【已有剧情】', filtered_bible['timeline'], 2))
+    # 核心构思
     if filtered_bible.get('concept'):
         bible_sections.append(('【核心构思】', filtered_bible['concept'], 1))
+    # 文风指南
     if filtered_bible.get('style_guide'):
         bible_sections.append(('【文风指南】', filtered_bible['style_guide'], 1))
 
-    # P1-8: 全局 locations/inventory 接入写章节（之前是数据孤岛）
-    # locations 全局字段（若按卷 locations_volumes 已注入则作为补充）
-    if bb.locations and bb.locations.strip():
-        loc_text = bb.locations[:800]
-        bible_sections.append(('【地点信息·全局】（若与本卷地点冲突，以本卷为准）', loc_text, 1))
-    # inventory 全局字段（角色持有物品/境界约束，生成阶段需感知）
-    if bb.inventory and bb.inventory.strip():
-        inv_text = bb.inventory[:800]
-        bible_sections.append(('【物资/境界库】（角色持有物品约束，不可凭空获得）', inv_text, 2))
-    # P2-14: relation_graph 接入写章节（人物关系一致性参考）
-    if bb.relation_graph and bb.relation_graph.strip():
-        rg_text = bb.relation_graph[:800]
-        bible_sections.append(('【人物关系图谱】（保持关系一致性）', rg_text, 1))
-
-    # 按卷注入维度数据（#1）——P1-8: 按卷优先，全局兜底
+    # 按卷注入维度数据（#1）——本卷人物/伏笔/地点/动态
     vol_dim_sections = []
     _inject_volume_dimensions(bb, vol_chapter, vol_index, vol_dim_sections)
     for s in vol_dim_sections:
-        # vol_dim_sections 是已格式化的字符串，拆出 label
         first_line = s.split('\n')[0]
         body = '\n'.join(s.split('\n')[1:]).strip()
         bible_sections.append((first_line, body, 2))
 
-    # 卷目标对齐（#3）
+    # 卷目标对齐（#3）——P0修复后从 bb.timeline 读取
     vol_outline = _get_volume_outline(vol_chapter, vol_index)
     if vol_outline:
         first_line = vol_outline.split('\n')[0]
         body = '\n'.join(vol_outline.split('\n')[1:]).strip()
         bible_sections.append((first_line, body, 2))
 
-    bible_context = _apply_budget_management(bible_sections, total_budget=4000) if bible_sections else (bb.generated_summary or '')[:2000]
+    # 预算管理：bible设定总预算5000字（前4章正文独立注入，不挤占此预算）
+    bible_context = _apply_budget_management(bible_sections, total_budget=5000) if bible_sections else (bb.generated_summary or '')[:2000]
 
-    # ===== 3. 分层滚动记忆（#7：相关性+时效性）=====
-    relevant_reports = _collect_relevant_reports(book_id, current_chapter_num, window=10, max_reports=3, per_report_limit=800)
+    # ===== 3. 分层滚动记忆（P1重构：前4章完整正文 + 最近10份动态报告）=====
+    # 最近10份动态报告（每份≤800字），覆盖更长剧情跨度
+    relevant_reports = _collect_relevant_reports(book_id, current_chapter_num, window=100, max_reports=10, per_report_limit=800)
+    # 前4章完整正文（不截断，保证剧情连贯性）
+    recent_chapters_full = all_chapters[-4:] if all_chapters else []
+
     if relevant_reports:
         report_context = '\n\n'.join([f'【{r["title"]}（{r["chapter_start"]}-{r["chapter_end"]}章）】\n{r["content"]}' for r in relevant_reports])
-        recent_text = (last_chapter.content or '')[-1200:] if last_chapter else ''
-        memory_section = f"""前文动态记忆（防遗忘摘要，按当前章号±10窗口筛选）：
+    else:
+        report_context = '（暂无动态报告）'
+
+    if recent_chapters_full:
+        chapters_text = '\n\n'.join([f'【第{c.order_index}章 {c.title or ""}】\n{c.content or ""}' for c in recent_chapters_full])
+    else:
+        chapters_text = '（开篇第一章，无前文）'
+
+    memory_section = f"""【前文动态报告】（最近10份动态文件摘要，防长线遗忘）：
 {report_context}
 
-最近章节衔接（即时层）：
-{recent_text or '（开篇第一章）'}"""
-    else:
-        recent_text = '\n\n'.join([f'【第{c.order_index}章 {c.title or ""}】\n{(c.content or "")[:800]}' for c in all_chapters[-3:]]) if all_chapters else ''
-        memory_section = f'最近内容（防遗忘）：\n{recent_text[:3000]}'
+【最近4章完整正文】（即时层，剧情衔接依据，必须严格保持连贯）：
+{chapters_text}"""
 
-    # ===== 4. 伏笔防遗忘（#2：按到期紧迫度排序）=====
-    pending_fs = _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=5)
+    # ===== 4. 伏笔防遗忘（#2：按到期紧迫度排序，扩展到Top 15）=====
+    pending_fs = _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=15)
     foreshadowing_section = ''
     if pending_fs:
         fs_lines = []
@@ -4462,10 +4549,12 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
     smart_instruction = _build_smart_instruction(instruction, last_chapter, current_chapter_num)
 
     # ===== 8. 组装 system_prompt =====
+    # 【P1重构】bible设定（5000字预算）+ 前4章完整正文+动态报告（独立段，不挤占设定预算）
+    # 注意：memory_section 含前4章完整正文（约9600字）+ 10份动态报告（约8000字），总量较大但独立注入
     system_prompt = f"""你是番茄小说金番作者级别的写手，正在协作写一本小说，当前准备写第 {current_chapter_num} 章。
 
-【项目宪法 - 已确认设定】（必须严格遵守，不可矛盾）
-{bible_context[:4000]}
+【项目宪法 - 已确认设定】（必须严格遵守，不可矛盾。包含：大纲/剧情卷纲/人物及关系/物资库/地图/核心规则/世界观/伏笔等）
+{bible_context[:5000]}
 
 {memory_section}
 
@@ -4476,15 +4565,16 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
 {skill_note}
 
 【写作要求】
-1. 严格遵循项目宪法中的设定（核心规则/金手指/世界观/人设），不可违反
-2. 保持前后人物性格、关系、能力一致
+1. 严格遵循项目宪法中的设定（核心规则/金手指/世界观/人设/物资库/地图），不可违反
+2. 保持前后人物性格、关系、能力一致；严格衔接【最近4章完整正文】的剧情走向，不得跳跃或矛盾
 3. 延续现有文风和叙事节奏
 4. 【字数绝对铁律】每章正文必须 2400 字 ±100（即 2300-2500 字区间，含标点）。低于 2300 字=内容不足需扩展场景细节；超过 2500 字=冗余需删减。这是不可违反的硬约束，优先级高于所有其他要求。
 5. 主动考虑回收"待回收伏笔清单"中的伏笔（若有），避免长线遗忘
 6. 三明治结构：苦(困境)→甜(获得)→爽(反击)→钩子(新信息/新困境)
 7. 章尾必留钩子，七种类型不重复
 8. 若存在【本章计划】，必须严格按计划展开剧情
-9. 【字数自检】输出前必须自检字数：用中文计数（含标点），若不在 2300-2500 区间必须调整后再输出。"""
+9. 【剧情连贯铁律】必须严格承接【最近4章完整正文】的结尾场景与悬念，不得凭空开启新场景；人物位置、状态、对话内容必须与前文一致。
+10. 【字数自检】输出前必须自检字数：用中文计数（含标点），若不在 2300-2500 区间必须调整后再输出。"""
 
     # ===== 9. 动态 temperature（#10）=====
     temperature = _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, chapters_in_vol)
@@ -4637,13 +4727,14 @@ def ai_continue(book_id):
                     review_notes = (review_notes_prefix + f' 去AI味审校异常：{str(e)[:100]}，已回滚使用初稿').strip()
                     deai_status = 'failed'
 
-        # ===== 一致性检查 Agent（#13：独立 Agent）=====
+        # ===== 一致性检查 Agent（#13：独立 Agent，P1扩展：含 chapter_plan 比对）=====
         consistency_passed = True
         consistency_issues = ''
         if enable_consistency_check:
             consistency_passed, consistency_issues = _consistency_check(
                 book_id, bb, polished_content, ctx['current_chapter_num'],
-                api_key, base_url, model, max_tokens=800
+                api_key, base_url, model, max_tokens=800,
+                chapter_plan=ctx.get('chapter_plan', '')
             )
 
         return jsonify({
