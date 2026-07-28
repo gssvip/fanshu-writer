@@ -5336,10 +5336,7 @@ function ForeshadowingPanel(props: {
   const [foreshadowing, setForeshadowing] = useState('');
   const [foreVolumes, setForeVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
-  const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
-  const [editingVolIdx, setEditingVolIdx] = useState<number | null>(null);
-  const [editVolJson, setEditVolJson] = useState('');
   const [aiMode, setAiMode] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiAssisting, setAiAssisting] = useState(false);
@@ -5401,14 +5398,6 @@ function ForeshadowingPanel(props: {
     return result;
   }, [volumeChapters, foreVolumes, chapters]);
 
-  function toggleVol(idx: number) {
-    setCollapsedVols(prev => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx); else next.add(idx);
-      return next;
-    });
-  }
-
   async function saveForeshadowing(val: string) {
     try {
       const updated = await api.updateBible(bookId, { foreshadowing: val } as any);
@@ -5431,63 +5420,6 @@ function ForeshadowingPanel(props: {
       }
       setAnalyzingVol('');
     });
-  }
-
-  async function deleteVolumeFore(idx: number) {
-    const vol = displayVolumes[idx];
-    if (!vol) return;
-    showConfirm(`确定删除「${vol.volume || '该卷'}」的伏笔识别数据？`, async () => {
-      const newList = foreVolumes.filter((v: any) => {
-        const vId = v.volume_id || '';
-        const vName = v.volume || '';
-        if (vol.volume_id && vId === vol.volume_id) return false;
-        if (vol.volume && vName === vol.volume) return false;
-        return true;
-      });
-      try {
-        const updated = await api.updateBible(bookId, { foreshadowing_volumes: JSON.stringify(newList, null, 2) } as any);
-        onBibleUpdate(updated);
-      } catch (e: any) {
-        alert('删除失败: ' + e.message);
-      }
-    });
-  }
-
-  // 开始按卷编辑：将该卷的 data 序列化为 JSON 供编辑
-  function startEditVolFore(idx: number) {
-    const vol = displayVolumes[idx];
-    if (!vol) return;
-    const editTarget = vol.data || { summary: '', planted: [], resolved: [], pending: [] };
-    setEditingVolIdx(idx);
-    setEditVolJson(JSON.stringify(editTarget, null, 2));
-    setCollapsedVols(prev => { const n = new Set(prev); n.delete(idx); return n; });
-  }
-
-  // 保存按卷编辑：解析编辑后的 JSON，写回 foreshadowing_volumes
-  async function saveEditVolFore(idx: number) {
-    try {
-      const parsed = JSON.parse(editVolJson);
-      const vol = displayVolumes[idx];
-      const matchKey = vol.volume_id || vol.volume;
-      const newList = [...foreVolumes];
-      const existIdx = newList.findIndex((v: any) => (v.volume_id || v.volume) === matchKey);
-      const entry = {
-        volume_id: vol.volume_id || '',
-        volume: vol.volume || '',
-        data: parsed,
-      };
-      if (existIdx >= 0) {
-        newList[existIdx] = { ...newList[existIdx], ...entry };
-      } else {
-        newList.push(entry);
-      }
-      const updated = await api.updateBible(bookId, { foreshadowing_volumes: JSON.stringify(newList, null, 2) } as any);
-      onBibleUpdate(updated);
-      setEditingVolIdx(null);
-      setEditVolJson('');
-    } catch (e: any) {
-      alert('保存失败：JSON 格式错误 - ' + e.message);
-    }
   }
 
   // ===== 防遗忘检查：加载报告列表 =====
@@ -5681,12 +5613,9 @@ function ForeshadowingPanel(props: {
           <span className="bible-context-dim">🔮 伏笔</span>
         </div>
       )}
-      <div className="bible-edit-header">
-        <h3>🔮 伏笔（按卷）</h3>
-        <div className="bible-edit-actions" style={{position:'relative'}}>
-          <button className="btn-ghost-sm" onClick={() => setForeCollapsed(v => !v)} title={foreCollapsed ? '展开伏笔列表' : '折叠伏笔列表'}>
-            {foreCollapsed ? '📥 拉取' : '📂 折叠'}
-          </button>
+      <div className="bible-edit-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,position:'relative'}}>
+          <h3 style={{margin:0}}>🔮 伏笔</h3>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} style={{marginLeft:0}}>
             ✨ AI创作
           </button>
@@ -5696,7 +5625,7 @@ function ForeshadowingPanel(props: {
                 {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
               {volSelectorOpen && (
-                <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
+                <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',left:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
                   <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
                   <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
                   {displayVolumes.map((vol, idx) => (
@@ -5708,80 +5637,17 @@ function ForeshadowingPanel(props: {
             </>
           )}
         </div>
+        <span className="text-muted" style={{fontSize:12,cursor:'pointer'}} onClick={() => setForeCollapsed(v => !v)}>
+          {foreCollapsed ? '▶ 展开' : '▼ 收起'}
+        </span>
       </div>
-      <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
-        记录伏笔的埋设时机、回收方式、关联角色。点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下。
-      </p>
+      {!foreCollapsed && (
+        <>
+          <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
+            记录伏笔的埋设时机、回收方式、关联角色。点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下。
+          </p>
 
-      {/* 按卷伏笔识别 */}
-      {displayVolumes.length > 0 && !foreCollapsed && (
-        <div className="plot-volume-list" style={{marginBottom:16}}>
-          {displayVolumes.map((vol, idx) => {
-            const d = vol.data || {};
-            const hasData = vol.data && (d.summary || (d.planted && d.planted.length) || (d.resolved && d.resolved.length));
-            return (
-              <div key={idx} className="plot-volume-card">
-                <div className="plot-volume-header" onClick={() => toggleVol(idx)} style={{cursor:'pointer'}}>
-                  <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVols.has(idx) ? '▶' : '▼'}</span>
-                  <h4>{vol.volume || `第${idx + 1}卷`}</h4>
-                  {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
-                  {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
-                  <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                  {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
-                  <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolFore(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷伏笔数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
-                  {hasData && (
-                    <button className="btn-ghost-sm" onClick={() => deleteVolumeFore(idx)} style={{color:'#e74c3c'}} title="删除此卷伏笔数据">🗑️</button>
-                  )}
-                </div>
-              </div>
-              {!collapsedVols.has(idx) && (
-                <div className="plot-volume-body">
-                  {editingVolIdx === idx ? (
-                    <div style={{marginTop:8}}>
-                      <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑本卷伏笔数据（JSON 格式）：summary（综述）、planted（埋设）、resolved（回收）、pending（未回收）。</p>
-                      <textarea className="input" value={editVolJson} onChange={e => setEditVolJson(e.target.value)} rows={16} style={{fontFamily:'monospace',fontSize:12}} />
-                      <div style={{display:'flex',gap:6,marginTop:8}}>
-                        <button className="btn-primary-sm" onClick={() => saveEditVolFore(idx)}>💾 保存</button>
-                        <button className="btn-ghost-sm" onClick={() => { setEditingVolIdx(null); setEditVolJson(''); }}>取消</button>
-                      </div>
-                    </div>
-                  ) : !hasData ? (
-                      <p className="text-muted" style={{fontSize:13}}>暂无伏笔识别数据，点击「🔍 AI识别」选择此卷进行识别</p>
-                    ) : (
-                      <div className="plot-events">
-                        {d.summary && <p><b>综述：</b>{d.summary}</p>}
-                        {d.planted && d.planted.length > 0 && (
-                          <div><b>本卷埋设伏笔（{d.planted.length}）：</b><ul>
-                            {d.planted.map((p: any, i: number) => (
-                              <li key={i}><span style={{color:'#e87d3e',fontWeight:600}}>{p.content}</span>{p.chapter && <span style={{color:'#888'}}> · {p.chapter}</span>}{p.purpose && <span style={{color:'#666'}}> — {p.purpose}</span>}{p.status && <span style={{color:'#e74c3c'}}> · {p.status}</span>}</li>
-                            ))}
-                          </ul></div>
-                        )}
-                        {d.resolved && d.resolved.length > 0 && (
-                          <div><b>本卷回收伏笔（{d.resolved.length}）：</b><ul>
-                            {d.resolved.map((p: any, i: number) => (
-                              <li key={i}><span style={{color:'#27ae60',fontWeight:600}}>{p.content}</span>{p.planted_at && <span style={{color:'#888'}}> · 埋于{p.planted_at}</span>}{p.resolved_at && <span style={{color:'#27ae60'}}> · 回收于{p.resolved_at}</span>}{p.effect && <span style={{color:'#666'}}> — {p.effect}</span>}</li>
-                            ))}
-                          </ul></div>
-                        )}
-                        {d.pending && d.pending.length > 0 && (
-                          <div><b>未回收悬念（{d.pending.length}）：</b><ul>
-                            {d.pending.map((p: any, i: number) => (
-                              <li key={i}><span style={{color:'#e74c3c',fontWeight:600}}>{p.content}</span>{p.planted_at && <span style={{color:'#888'}}> · 埋于{p.planted_at}</span>}{p.importance && <span style={{color:'#e74c3c'}}> · {p.importance}</span>}</li>
-                            ))}
-                          </ul></div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ===== 防遗忘检查（原全局伏笔档案位置）===== */}
+          {/* ===== 防遗忘检查（原全局伏笔档案位置）===== */}
       <div className="bible-edit-section" style={{marginTop:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
           <div style={{display:'flex',alignItems:'center',gap:8}}>
@@ -5941,6 +5807,8 @@ function ForeshadowingPanel(props: {
           </>
         )}
       </div>
+        </>
+      )}
 
       {/* 防遗忘检查 · 分卷选择弹窗（单选/多选）*/}
       {afVolPickerOpen && (
