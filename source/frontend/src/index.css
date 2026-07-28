@@ -152,6 +152,12 @@ textarea{resize:vertical;line-height:1.8}
 .header-actions-row{display:flex;align-items:center;gap:8px}
 .skills-header-actions{display:flex;gap:8px;flex-shrink:0}
 
+/* 顶部 Logo + 标语 */
+.home-topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px 6px;margin:0 0 4px}
+.home-topbar-logo{flex:1 1 auto;min-width:0;display:flex;align-items:center}
+.home-topbar-logo img{width:100%;max-width:220px;height:auto;max-height:56px;object-fit:contain}
+.home-topbar-slogan{flex:0 0 auto;font-size:12px;color:#5a8a6a;letter-spacing:1px;font-weight:500;white-space:nowrap}
+
 /* Import File Zone */
 .import-file-zone{border:2px dashed var(--border-color);border-radius:var(--radius-md);padding:16px;margin-bottom:12px;background:var(--bg-tertiary)}
 .import-zone-buttons{display:flex;gap:12px;justify-content:center}
