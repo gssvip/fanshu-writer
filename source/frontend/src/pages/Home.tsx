@@ -35,7 +35,7 @@ export default function Home() {
     <div className="home-root">
       <header className="home-header">
         <div className="home-brand">
-          <img src="logo.png" alt="蚂蚁写作" style={{width:42,height:42,borderRadius:10,objectFit:'cover',boxShadow:'var(--shadow-sm)'}} />
+          <img src="dian.png" alt="蚂蚁写作" style={{height:40,objectFit:'contain',boxShadow:'var(--shadow-sm)',borderRadius:6}} />
           <div><h1>蚂蚁写作</h1><p className="home-subtitle">AI小说创作平台</p></div>
         </div>
         <div className="home-actions">
