@@ -58,12 +58,13 @@ let warmingUp = false;
  * 预热后端：发起一个轻量 GET 请求触发 Render 实例唤醒。
  * 静默执行，不抛错，不阻塞 UI。
  * 适用于页面加载时或长时间空闲后。
+ * 使用 /api/health 超轻量端点，不查数据库。
  */
 export function warmUpBackend(): void {
   if (warmingUp) return;
   warmingUp = true;
   // 用 fetch 而非 request()，避免被重试逻辑影响
-  fetch(`${getApiBaseUrl()}/templates`, { method: 'GET' })
+  fetch(`${getApiBaseUrl()}/health`, { method: 'GET' })
     .catch(() => { /* 静默失败 */ })
     .finally(() => { warmingUp = false; });
 }

@@ -134,11 +134,12 @@ export default function App() {
 
   // 后端预热：应对 Render 免费版冷启动（15 分钟无访问会休眠）
   // 1. 应用启动时立即预热（触发唤醒）
-  // 2. 每 10 分钟自动 ping 一次（保持唤醒，避免休眠）
+  // 2. 每 5 分钟自动 ping 一次 /api/health（保持唤醒，避免休眠）
+  // 3. 页面从隐藏恢复可见时也预热（用户切回标签页）
+  // 注意：前端保活仅在用户打开页面时有效；用户关闭浏览器后需依赖外部 cron ping（见部署文档）
   useEffect(() => {
     warmUpBackend();
-    const intervalId = setInterval(warmUpBackend, 10 * 60 * 1000); // 10 分钟
-    // 页面从隐藏恢复可见时也预热（用户切回标签页）
+    const intervalId = setInterval(warmUpBackend, 5 * 60 * 1000); // 5 分钟
     const onVisible = () => {
       if (document.visibilityState === 'visible') warmUpBackend();
     };

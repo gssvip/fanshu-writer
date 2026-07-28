@@ -1571,6 +1571,11 @@ def seed_builtin_templates():
         db.session.add(template)
     db.session.commit()
 
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """超轻量健康检查端点，不查数据库，用于保活 ping"""
+    return jsonify({'status': 'ok', 'time': datetime.now().isoformat()}), 200
+
 @app.route('/api/templates', methods=['GET'])
 def list_templates():
     templates = Template.query.order_by(Template.is_builtin.desc(), Template.created_at.desc()).all()
