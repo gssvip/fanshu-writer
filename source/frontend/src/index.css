@@ -96,7 +96,7 @@ textarea{resize:vertical;line-height:1.8}
 .desktop-sidebar{width:210px;min-width:210px;background:var(--bg-secondary);border-right:1px solid var(--border-color);display:none;flex-direction:column;overflow-y:auto}
 .main-content{flex:1;overflow-y:auto;padding-bottom:70px}
 
-.sidebar-brand{display:flex;align-items:center;justify-content:center;padding:24px 16px 20px;border-bottom:1px solid var(--border-color)}
+.sidebar-brand{display:flex;align-items:center;justify-content:center;padding:18px 16px 18px;border-bottom:1px solid var(--border-color)}
 .sidebar-logo{display:flex;align-items:center;justify-content:center}
 .sidebar-nav{flex:1;padding:8px}
 .sidebar-item{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;font-size:14px;border-radius:8px;margin:2px 0;transition:all .15s}
