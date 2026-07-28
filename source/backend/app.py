@@ -4488,7 +4488,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
         'system_prompt': system_prompt,
         'user_prompt': smart_instruction,
         'temperature': temperature,
-        'max_tokens': 2600,  # 【字数铁律】从 3200 降到 2600，物理限制输出长度防止超字数（2400字±100铁律）
+        'max_tokens': 4000,  # 【字数铁律】给足输出空间不物理截断；字数约束由提示词铁律+AI重写修正实现，确保章节完整
         'chapter_plan': chapter_plan,
         'current_chapter_num': current_chapter_num,
         'vol_chapter': vol_chapter,
@@ -4545,35 +4545,49 @@ def ai_continue(book_id):
         result = resp.json()
         draft_content = result['choices'][0]['message']['content']
 
-        # ===== 【字数铁律】初稿字数硬校验 + 智能截断 =====
+        # ===== 【字数铁律】初稿字数校验 + AI 重写修正（非物理截断，保证章节完整）=====
         # 统计中文字数（含标点）：去除空白后的字符数
         def _count_cn_chars(s):
             return len(re.sub(r'\s', '', s))
         draft_len = _count_cn_chars(draft_content)
-        if draft_len > 2500:
-            # 超字数：智能截断到 2500 字附近的句子边界
-            # 先去除空白得到纯文本流，按句号/问号/感叹号切分
-            stripped = draft_content.strip()
-            # 找到约 2400 字处的句子边界
-            target_pos = 2400
-            # 在 target_pos 附近寻找句末标点
-            search_start = max(2200, target_pos - 200)
-            search_end = min(len(stripped), target_pos + 100)
-            cut_pos = -1
-            for punct in ['。', '！', '？', '…', '”']:
-                pos = stripped.rfind(punct, search_start, search_end)
-                if pos > cut_pos:
-                    cut_pos = pos + len(punct)
-            if cut_pos > 0:
-                draft_content = stripped[:cut_pos]
-            else:
-                # 找不到句末标点，硬截断到 2450
-                draft_content = stripped[:2450]
-            review_notes_prefix = f'[字数铁律] 初稿{draft_len}字超限，已截断至{_count_cn_chars(draft_content)}字。'
-        elif draft_len < 2300:
-            review_notes_prefix = f'[字数铁律] 初稿{draft_len}字不足2400±100，建议扩写。'
-        else:
-            review_notes_prefix = ''
+        review_notes_prefix = ''
+        if draft_len > 2500 or draft_len < 2300:
+            # 字数不达标：调用 AI 重写至 2400±100，保留剧情完整性（不物理截断）
+            direction = '精简删减冗余' if draft_len > 2500 else '扩写补充场景细节'
+            method = ('精简方法：删冗余形容词/重复心理描写/过度环境渲染/总结性句子，保留对话动作与剧情走向。'
+                      if draft_len > 2500 else
+                      '扩写方法：增加感官细节/动作描写/对话节拍/场景纵深，不增加新剧情不改变走向。')
+            rewrite_system = f"""你是字数修正编辑。当前章节初稿{draft_len}字，需{direction}至 2400字±100（2300-2500字区间，含标点）。
+
+【字数绝对铁律】最终输出必须落在 2300-2500 字区间，这是不可违反的硬约束，优先级高于一切。
+【保留要求】保留原章节的剧情走向、人物对话、章尾钩子、关键信息，不改变故事内容，只调整篇幅。
+{method}
+只输出修正后的完整正文，不输出任何说明或前缀。"""
+            try:
+                rewrite_resp = requests.post(f'{base_url}/chat/completions',
+                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    json={'model': model,
+                          'messages': [{'role':'system','content':rewrite_system},
+                                       {'role':'user','content':f'请修正以下章节正文字数：\n\n{draft_content}'}],
+                          'temperature': 0.5, 'max_tokens': 4000},
+                    timeout=180)
+                rewrite_result = rewrite_resp.json()
+                rewritten = rewrite_result['choices'][0]['message']['content'].strip()
+                rewritten_len = _count_cn_chars(rewritten)
+                if rewritten and 2300 <= rewritten_len <= 2500:
+                    review_notes_prefix = f'[字数铁律] 初稿{draft_len}字，AI修正至{rewritten_len}字。'
+                    draft_content = rewritten
+                elif rewritten and rewritten_len > 500:
+                    # AI 修正后仍不达标，但比初稿更接近目标则采纳更优者，保留章节完整性
+                    if abs(rewritten_len - 2400) < abs(draft_len - 2400):
+                        draft_content = rewritten
+                        review_notes_prefix = f'[字数铁律] 初稿{draft_len}字，AI修正后{rewritten_len}字仍偏离，已采纳更接近目标版本。'
+                    else:
+                        review_notes_prefix = f'[字数铁律] 初稿{draft_len}字，AI修正后{rewritten_len}字仍偏离，保留初稿。'
+                else:
+                    review_notes_prefix = f'[字数铁律] 初稿{draft_len}字，AI修正返回异常，保留初稿。'
+            except Exception as e:
+                review_notes_prefix = f'[字数铁律] 初稿{draft_len}字，AI修正异常：{str(e)[:80]}，保留初稿。'
 
         # ===== 去 AI 味审校 Agent（#6：容错+可观测）=====
         polished_content = draft_content
