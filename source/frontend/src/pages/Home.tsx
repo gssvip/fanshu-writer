@@ -35,7 +35,9 @@ export default function Home() {
     <div className="home-root">
       <header className="home-header">
         <div className="home-brand" style={{width:'100%',justifyContent:'center'}}>
-          <img src="shouye.png" alt="蚂蚁写作" style={{height:40,objectFit:'contain',boxShadow:'var(--shadow-sm)',borderRadius:6}} />
+          <picture>
+            <img src="shouye.webp" alt="蚂蚁写作" style={{height:40,objectFit:'contain',boxShadow:'var(--shadow-sm)',borderRadius:6}} />
+          </picture>
           <p className="home-subtitle">AI小说创作平台</p>
         </div>
         <div className="home-actions">
