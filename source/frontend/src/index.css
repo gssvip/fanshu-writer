@@ -1099,6 +1099,27 @@ textarea{resize:vertical;line-height:1.8}
 .ai-prompt-bottom-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .ai-prompt-bottom-row .ai-prompt-submit{height:36px;padding:8px 16px;font-size:13px}
 
+/* ===== 聊天式 AI 创作面板 ===== */
+.ai-chat-panel{padding:12px 16px;display:flex;flex-direction:column;gap:8px;height:calc(100vh - 200px)}
+.ai-chat-target{font-size:12px;color:var(--text-secondary);background:var(--bg-tertiary);padding:2px 8px;border-radius:10px;border:1px solid var(--border-color)}
+.ai-chat-history{flex:1;overflow-y:auto;min-height:120px;display:flex;flex-direction:column;gap:14px;padding:10px 4px}
+.ai-chat-msg{display:flex;gap:10px;align-items:flex-start;max-width:100%}
+.ai-chat-msg-user{flex-direction:row-reverse}
+.ai-chat-msg-avatar{flex-shrink:0;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;background:var(--bg-tertiary);border:1px solid var(--border-color)}
+.ai-chat-msg-user .ai-chat-msg-avatar{background:linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)}
+.ai-chat-msg-assistant .ai-chat-msg-avatar{background:linear-gradient(135deg,#9b8cb8 0%,#7b6ca8 100%)}
+.ai-chat-msg-body{min-width:0;max-width:calc(100% - 42px);display:flex;flex-direction:column;gap:4px}
+.ai-chat-msg-user .ai-chat-msg-body{align-items:flex-end}
+.ai-chat-msg-chapter{font-size:11px;color:var(--text-muted);padding:1px 6px;background:var(--bg-tertiary);border-radius:8px;align-self:flex-start}
+.ai-chat-msg-user .ai-chat-msg-chapter{align-self:flex-end}
+.ai-chat-msg-content{font-size:14px;line-height:1.8;padding:10px 12px;border-radius:10px;background:var(--bg-secondary);border:1px solid var(--border-color);word-break:break-word;white-space:pre-wrap}
+.ai-chat-msg-user .ai-chat-msg-content{background:linear-gradient(135deg,rgba(124,184,158,0.18) 0%,rgba(91,163,168,0.12) 100%);border-color:rgba(91,163,168,0.4);color:var(--text-primary)}
+.ai-chat-msg-content p{margin:0 0 6px 0}
+.ai-chat-msg-content p:last-child{margin-bottom:0}
+.ai-chat-msg-streaming .ai-chat-msg-content{border-color:var(--accent)}
+.ai-streaming-cursor{display:inline-flex;align-items:center;gap:4px;margin-left:2px;vertical-align:middle}
+.ai-chat-panel .ai-create-empty{flex:0 0 auto}
+
 /* ===== 构思面板 ===== */
 .concept-panel{padding:12px 16px;display:flex;flex-direction:column;min-height:0}
 .concept-input-section{margin-bottom:16px;display:flex;flex-direction:column;flex:1;min-height:0}
