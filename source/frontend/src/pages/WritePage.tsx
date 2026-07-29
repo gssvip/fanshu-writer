@@ -888,7 +888,7 @@ export default function WritePage() {
       let userContent = '';
 
       if (aiCreateMode === 'write') {
-        systemContent = `你是番茄小说金番级网文作家，擅长${book?.genre || '通用'}题材。请根据用户的创作要求和故事设定，创作章节正文。要求：对话自然口语化，避免说教和AI味，节奏紧凑，场景感强，章末必留悬念。输出2000-2800字。${suspenseGuide}${skillNote}`;
+        systemContent = `你是番茄小说金番级网文作家，擅长${book?.genre || '通用'}题材。请根据用户的创作要求和故事设定，创作章节正文。要求：对话自然口语化，避免说教和AI味，节奏紧凑，场景感强，章末必留悬念。【字数铁律】正文字数严格控制在2400±100字（2300-2500字），不得超出此范围。${suspenseGuide}${skillNote}`;
         userContent = `作品：${book?.title}
 构思：${contextConcept}
 世界观：${bible?.worldbuilding?.slice(0, 500) || '无'}
@@ -912,7 +912,7 @@ ${memorySection}
 
 用户创作要求：${currentPrompt}`;
       } else if (aiCreateMode === 'continue') {
-        systemContent = `你是专业网文作家，擅长${book?.genre || '通用'}题材。请根据用户的续写要求和已有内容继续创作，保持风格一致，自然衔接。要求：对话自然，避免说教，节奏紧凑。输出800-1500字。${suspenseGuide}${skillNote}`;
+        systemContent = `你是专业网文作家，擅长${book?.genre || '通用'}题材。请根据用户的续写要求和已有内容继续创作，保持风格一致，自然衔接。要求：对话自然，避免说教，节奏紧凑。【字数铁律】续写后本章总字数严格控制在2400±100字（2300-2500字），不得超出此范围，请按已有字数酌情增补。${suspenseGuide}${skillNote}`;
         userContent = `作品：${book?.title}
 构思：${contextConcept}
 

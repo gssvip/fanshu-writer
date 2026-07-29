@@ -5357,6 +5357,70 @@ def ai_outline_master(book_id):
     return jsonify({'master_outline': content, 'volume_count': volume_count})
 
 
+def _sync_foreshadowings_to_volumes(bb):
+    """【P0修复】把各卷 timeline 中的 foreshadow_new/foreshadowing/foreshadow_recycle
+    汇总到 bb.foreshadowing_volumes（按卷结构化），打通前期伏笔到写作阶段的防遗忘链路。
+    在 ai_outline_volume / ai_extract_volumes_from_outline / ai_import_plot_outline 写入 timeline 后调用。"""
+    if not bb or not bb.timeline:
+        return
+    try:
+        arr = json.loads(bb.timeline)
+        if not isinstance(arr, list):
+            return
+        vol_foreshadows = []
+        for v in arr:
+            if not isinstance(v, dict):
+                continue
+            v_idx = v.get('volume_index') or _extract_volume_index(v.get('volume', v.get('volume_id', ''))) or 0
+            new_fs = v.get('foreshadow_new') or v.get('foreshadowing') or []
+            recycle_fs = v.get('foreshadow_recycle') or []
+            if not new_fs and not recycle_fs:
+                continue
+            # 统一为字符串列表
+            def _norm(items):
+                out = []
+                if isinstance(items, list):
+                    for it in items:
+                        if isinstance(it, str):
+                            out.append(it.strip())
+                        elif isinstance(it, dict):
+                            out.append((it.get('name') or it.get('title') or '') + '：' + (it.get('content') or it.get('desc') or ''))
+                        elif it is not None:
+                            out.append(str(it).strip())
+                elif isinstance(items, str) and items.strip():
+                    out.append(items.strip())
+                return [x for x in out if x]
+            new_list = _norm(new_fs)
+            recycle_list = _norm(recycle_fs)
+            if new_list or recycle_list:
+                vol_foreshadows.append({
+                    'volume_index': int(v_idx) if v_idx else 0,
+                    'volume': v.get('volume', v.get('volume_title', '')),
+                    'foreshadow_new': new_list,
+                    'foreshadow_recycle': recycle_list,
+                })
+        bb.foreshadowing_volumes = json.dumps(vol_foreshadows, ensure_ascii=False, indent=2) if vol_foreshadows else (bb.foreshadowing_volumes or '')
+    except (json.JSONDecodeError, ValueError, TypeError):
+        pass
+
+
+def _calc_start_chapter_fallback(volume_index, chapters_per_volume, existing_volumes):
+    """【P1修复】start_chapter 解析失败的健壮回退：
+    按 volume_index * chapters_per_volume + 1 估算，避免静默回退为1导致章号断裂。"""
+    try:
+        cpc = int(chapters_per_volume) if chapters_per_volume else 50
+    except (ValueError, TypeError):
+        cpc = 50
+    vi = int(volume_index) if volume_index else 1
+    # 若已有卷数据，取已完成卷数（卷号 < 当前卷）* 每卷章数 + 1
+    if existing_volumes and isinstance(existing_volumes, list):
+        prev_count = sum(1 for v in existing_volumes
+                         if isinstance(v, dict) and
+                         (int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0) < vi))
+        return prev_count * cpc + 1
+    return (vi - 1) * cpc + 1
+
+
 def _extract_volume_index(text):
     """从卷名/卷ID中提取卷号数字，如'第3卷'/'卷三'/'卷二十三'/'Volume 2' → 3/3/23/2
     支持阿拉伯数字与复合中文数字（十一/二十三/一百零五/壹貳叁等）。"""
@@ -5474,7 +5538,35 @@ def ai_outline_volume(book_id):
             prev_end_chapters = chapters[-3:]
         prev_volume_end_summary = '\n'.join([f'第{c.order_index}章 {c.title or ""}：{(c.content or "")[-300:]}' for c in prev_end_chapters])
 
-    existing_timeline = (bb.timeline or '')[:2000]
+    # 【P1修复】existing_timeline 改为分级注入：上一卷完整 + 其余卷仅钩子摘要，
+    # 突破2000字截断导致的早期卷细节丢失问题
+    existing_timeline = ''
+    if existing_volumes_for_ctx:
+        tl_parts = []
+        for v in existing_volumes_for_ctx:
+            if not isinstance(v, dict):
+                continue
+            v_idx = v.get('volume_index') or _extract_volume_index(v.get('volume', v.get('volume_id', ''))) or 0
+            try:
+                v_idx_int = int(v_idx)
+            except (ValueError, TypeError):
+                v_idx_int = 0
+            # 上一卷（volume_index-1）注入完整信息
+            if v_idx_int == volume_index - 1:
+                tl_parts.append(f'▼ [上一卷·完整] 第{v_idx}卷「{v.get("volume", v.get("volume_title", ""))}」\n'
+                                + f'  主线：{(v.get("main_plot") or v.get("core_goal") or "")[:400]}\n'
+                                + f'  核心冲突：{str(v.get("core_conflict", ""))[:200]}\n'
+                                + f'  关键转折：{", ".join(v.get("key_events", []) or v.get("turning_points", []))[:200]}\n'
+                                + f'  卷尾钩子：{str(v.get("ending") or v.get("ending_hook") or v.get("climax") or "")[:200]}\n'
+                                + f'  情节节点：' + ' | '.join([f'{n.get("chapters","")} {n.get("title","")}' for n in (v.get("nodes") or [])[:6]]))
+            else:
+                # 其余卷仅注入钩子摘要，控制token
+                hook = v.get('ending') or v.get('ending_hook') or v.get('climax') or ''
+                main = (v.get('main_plot') or v.get('core_goal') or '')[:80]
+                tl_parts.append(f'· 第{v_idx}卷「{v.get("volume", v.get("volume_title", ""))}」主线：{main}；卷尾钩子：{str(hook)[:100]}')
+        existing_timeline = '\n'.join(tl_parts)[:4000]
+    else:
+        existing_timeline = (bb.timeline or '')[:2000]
     master_outline = (bb.plot_design or '')[:3000]
     # agent 协同：补充世界观+人物档案，让卷内情节节点能落地到具体世界观规则和角色互动
     worldbuilding_ctx = (bb.worldbuilding or '')[:1500]
@@ -5500,7 +5592,16 @@ def ai_outline_volume(book_id):
     }
 
     # ===== 【P1弊端9修复】本卷起始章号 = 上一卷结束章号 + 1 =====
-    start_chapter = prev_volume_end_chapter + 1 if prev_volume_end_chapter > 0 else 1
+    # 【P1强化】解析失败（prev_volume_end_chapter==0 但 volume_index>1）时健壮回退，
+    # 避免静默回退为1导致章号断裂
+    if prev_volume_end_chapter > 0:
+        start_chapter = prev_volume_end_chapter + 1
+    elif volume_index > 1:
+        start_chapter = _calc_start_chapter_fallback(volume_index, chapters_per_volume, existing_volumes_for_ctx)
+        # 记录告警供调试（写入日志，不打断流程）
+        app.logger.warning(f'ai_outline_volume: 卷{volume_index} start_chapter 解析失败，回退为 {start_chapter}')
+    else:
+        start_chapter = 1
 
     # ===== 【P0弊端1修复】卷间衔接约束提示词 =====
     cohesion_constraint = ''
@@ -5641,6 +5742,7 @@ BOSS：{volume_data.get('boss', '')}
     # 按 volume_index 排序
     volumes_list.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
     bb.timeline = json.dumps(volumes_list, ensure_ascii=False, indent=2)
+    _sync_foreshadowings_to_volumes(bb)  # 【P0修复】自动同步本卷伏笔到 foreshadowing_volumes
     db.session.commit()
 
     return jsonify({'volume_data': volume_data, 'timeline': bb.timeline, 'bible': bb.to_dict()})
@@ -5825,6 +5927,7 @@ def ai_extract_volumes_from_outline(book_id):
     merged_volumes.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
 
     bb.timeline = json.dumps(merged_volumes, ensure_ascii=False, indent=2)
+    _sync_foreshadowings_to_volumes(bb)  # 【P0修复】自动同步各卷伏笔到 foreshadowing_volumes
     db.session.commit()
     return jsonify({'success': True, 'volumes': merged_volumes, 'bible': bb.to_dict()})
 
@@ -6005,6 +6108,44 @@ def ai_import_plot_outline(book_id):
                 'raw_text': vol_content,
             })
 
+    # 【P0修复】正则路径补全：为每卷生成 nodes（章号全书连续）+ ending_hook，
+    # 避免后续滚动生成时 start_chapter 解析失败导致章号断裂
+    if matches and volumes:
+        # 取每卷章数：优先用户大纲隐含的，否则默认50；特殊卷（序章等）1章
+        cpc = data.get('chapters_per_volume', 50) or 50
+        ch_cursor = 1
+        for vi, v in enumerate(volumes):
+            special = v.get('volume_index', 0) in (0, 999)  # 序章/终章
+            vol_chs = 1 if special else cpc
+            start = ch_cursor
+            end = ch_cursor + vol_chs - 1
+            # 把卷内容按 key_events 等分为最多5个节点
+            ke = v.get('key_events') or []
+            if not ke:
+                ke = ['开局', '发展', '转折', '高潮', '收束'][:5]
+            n_nodes = min(5, max(1, len(ke)))
+            step = vol_chs / n_nodes
+            nodes = []
+            for ni in range(n_nodes):
+                ns = start + int(step * ni)
+                ne = start + int(step * (ni + 1)) - 1 if ni < n_nodes - 1 else end
+                if ne < ns:
+                    ne = ns
+                ntype = ['M', 'D', 'T', 'C', 'F'][ni] if ni < 5 else 'M'  # 开局/发展/转折/高潮/收束
+                nodes.append({
+                    'chapters': f'{ns}-{ne}',
+                    'type': ntype,
+                    'title': ke[ni] if ni < len(ke) else f'节点{ni+1}',
+                    'summary': (ke[ni] if ni < len(ke) else '')[:80],
+                })
+            v['nodes'] = nodes
+            # ending_hook：取关键事件最后一条或 main_plot 末句
+            last_ke = ke[-1] if ke else ''
+            v['ending'] = (last_ke or v.get('main_plot', '')[-100:])[:150]
+            if not v.get('core_conflict'):
+                v['core_conflict'] = (ke[0] if ke else '')[:100]
+            ch_cursor = end + 1
+
     # 如果正则匹配到第一个 match 之前还有内容，作为"开篇/引言"归入第一卷或单独成卷
     if matches and matches[0].start() > 0:
         head_content = outline_text[:matches[0].start()].strip()
@@ -6184,6 +6325,7 @@ def ai_import_plot_outline(book_id):
     existing_volumes.sort(key=lambda v: _vol_int_idx(v, 9999))
 
     bb.timeline = json.dumps(existing_volumes, ensure_ascii=False, indent=2)
+    _sync_foreshadowings_to_volumes(bb)  # 【P0修复】导入剧情后同步各卷伏笔到 foreshadowing_volumes
     db.session.commit()
 
     return jsonify({'success': True, 'volumes': existing_volumes, 'imported_count': len(volumes), 'bible': bb.to_dict()})
