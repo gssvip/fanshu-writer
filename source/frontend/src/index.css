@@ -1087,6 +1087,18 @@ textarea{resize:vertical;line-height:1.8}
 .ai-create-control-bar{flex-shrink:0;border-top:1px solid var(--border-color);padding-top:8px;display:flex;flex-direction:column;gap:6px}
 .ai-create-control-bar .skill-pack-collapsible{margin-bottom:0}
 .ai-create-control-bar .skill-pack-toggle{padding:6px 10px;font-size:12px}
+/* 多Agent协同管线开关：与协同技能包紧靠，统一紧凑行样式 */
+.agent-pipeline-toggle{background:var(--bg-tertiary);border-radius:var(--radius-sm);padding:6px 10px;font-size:12px}
+.agent-pipeline-toggle label{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.agent-pipeline-toggle input[type="checkbox"]{width:14px;height:14px;cursor:pointer;margin:0}
+.agent-pipeline-toggle .text-muted{font-size:11px}
+
+/* 聊天消息折叠/展开 */
+.ai-chat-msg-collapsed{max-height:none}
+.ai-chat-msg-ellipsis{color:var(--text-muted);font-style:italic;text-align:center;margin-top:4px}
+.ai-chat-msg-toggle{align-self:flex-start;background:transparent;color:var(--accent);font-size:12px;padding:3px 8px;border-radius:10px;border:1px solid var(--accent);margin-top:2px}
+.ai-chat-msg-toggle:active{opacity:0.7}
+.ai-chat-msg-user .ai-chat-msg-toggle{align-self:flex-end}
 
 /* AI创作面板 - 用户提问区 */
 .ai-prompt-section{display:flex;gap:8px;padding:10px;background:var(--bg-tertiary);border-radius:var(--radius-sm);align-items:flex-end}

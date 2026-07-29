@@ -194,7 +194,8 @@ export default function WritePage() {
   const [aiStreamError, setAiStreamError] = useState('');
   const [aiUserPrompt, setAiUserPrompt] = useState('');
   // 章节AI聊天历史（持久保留，类似聊天窗口）
-  const [aiChatHistory, setAiChatHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string; chapterTitle?: string }>>([]);
+  // type: 'content'=章节正文（可折叠）, 'status'=状态提示（如已保存），用户提问无type
+  const [aiChatHistory, setAiChatHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string; chapterTitle?: string; type?: 'content' | 'status'; collapsed?: boolean }>>([]);
   // 当前AI创作锚定的目标章节（自动识别）
   const [aiTargetChapterId, setAiTargetChapterId] = useState<string | null>(null);
   // P0-1: 多Agent协同开关（开启时调用 ai-continue 后端管线，走章节计划+正文+去AI味+一致性检查）
@@ -649,50 +650,56 @@ export default function WritePage() {
   // 进入AI创作面板（不自动生成，等用户提问）
   function startAiCreate(mode: 'write' | 'continue' | 'polish') {
     if (!bookId) return;
-    // 自动识别当前写到哪一章：按 order_index 排序，找最后一个有内容的章节（进度锚点）
+    // 自动识别当前写到哪一章：按 order_index 排序，找最后一个有效正文（≥100字）的章节作为进度锚点
+    // 用字数阈值避免空标题章/极短占位章被误判为"已写"
+    const EFFECTIVE_WORDS = 100;
     const realChapters = chapters
       .filter(c => !c.is_volume)
       .slice()
       .sort((a, b) => a.order_index - b.order_index);
     let anchorChapter: Chapter | null = null;
     for (let i = realChapters.length - 1; i >= 0; i--) {
-      if ((realChapters[i].content || '').trim().length > 0) {
+      if ((realChapters[i].content || '').trim().length >= EFFECTIVE_WORDS) {
         anchorChapter = realChapters[i];
         break;
       }
     }
-    // 确定保存目标 = 锚点之后的下一个空章节；没有则新建（aiTargetChapterId = null）
+    // 确定待写章节 = 锚点之后的下一个需要写的章（正文不足100字）；没有则新建
     let saveTarget: Chapter | null = null;
     if (anchorChapter) {
       const anchorIdx = realChapters.findIndex(c => c.id === anchorChapter!.id);
-      saveTarget = realChapters.slice(anchorIdx + 1).find(c => !((c.content || '').trim())) || null;
-    } else if (realChapters.length > 0) {
-      // 所有章节都空：从第一章开始
-      saveTarget = realChapters[0];
+      saveTarget = realChapters.slice(anchorIdx + 1).find(c => (c.content || '').trim().length < EFFECTIVE_WORDS) || null;
+    } else {
+      // 无锚点：第一个未写满的章节即为待写章
+      saveTarget = realChapters.find(c => (c.content || '').trim().length < EFFECTIVE_WORDS) || null;
     }
-    if (mode === 'polish' && anchorChapter && !(anchorChapter.content || '').trim()) {
+    if (mode === 'polish' && anchorChapter && (anchorChapter.content || '').trim().length < EFFECTIVE_WORDS) {
       alert('当前章节没有内容可润色');
       return;
     }
+    // 计算待写章号（全书连续编号，供提示词使用）
+    let targetNum: number;
+    if (saveTarget) {
+      targetNum = realChapters.findIndex(c => c.id === saveTarget!.id) + 1;
+    } else {
+      targetNum = realChapters.length + 1;
+    }
     // 设置保存目标与编辑态
     if (saveTarget) {
-      // 复用已存在的空章节作为保存目标
       setAiTargetChapterId(saveTarget.id);
       setActiveChapter(saveTarget);
       setChapterEditTitle(saveTarget.title);
       setChapterEditContent(saveTarget.content || '');
     } else {
-      // 需要新建章节：构造一个占位 activeChapter，order_index = 锚点+1，
-      // 这样 executeAiCreate 的 prevChapters 过滤能包含锚点内容作为前文衔接
+      // 新建章节占位
       setAiTargetChapterId(null);
-      const nextNum = realChapters.length + 1;
-      setChapterEditTitle(`第${nextNum}章`);
+      setChapterEditTitle(`第${targetNum}章`);
       setChapterEditContent('');
       const baseOrder = anchorChapter
         ? anchorChapter.order_index + 1
         : (realChapters[realChapters.length - 1]?.order_index || 0) + 1;
       setActiveChapter({
-        id: '__ai_new__', book_id: bookId, title: `第${nextNum}章`,
+        id: '__ai_new__', book_id: bookId, title: `第${targetNum}章`,
         content: '', order_index: baseOrder, word_count: 0,
         status: 'draft', is_volume: false, parent_id: '',
         created_at: '', updated_at: '', notes: '',
@@ -701,19 +708,14 @@ export default function WritePage() {
     // 不进入编辑态，AI创作面板独立显示
     setChapterEditing(false);
     setAiCreateMode(mode);
-    setAiGeneratedContent('');
     setAiCreating(false);
     setAiStreamError('');
-    // 预填默认提问（锚点 = 当前进度，AI 创作下一章）
-    const anchorTitle = anchorChapter ? anchorChapter.title : null;
+    // 不清空 aiGeneratedContent：保留上次输出正文，关掉再打开仍在（问题2）
+    // 预填提问：准确定位到待写章号
     if (mode === 'write') {
-      if (anchorTitle) {
-        setAiUserPrompt(`已写到「${anchorTitle}」，请继续创作下一章正文，要求上下文剧情连贯、对话自然、节奏紧凑、章末留悬念，字数2400±100字。`);
-      } else {
-        setAiUserPrompt('请开篇创作第一章正文，要求主角登场、设定铺垫、埋下伏笔，字数2400±100字。');
-      }
+      setAiUserPrompt(`请创作第${targetNum}章正文，要求前后文剧情连贯、剧情符合各维度设定、语句自然无ai味儿，字数2400±100字。`);
     } else if (mode === 'continue') {
-      setAiUserPrompt('请继续往下写，保持风格一致，自然衔接已有内容，字数2400±100字。');
+      setAiUserPrompt(`请创作第${targetNum}章正文，要求前后文剧情连贯、剧情符合各维度设定、语句自然无ai味儿，字数2400±100字。`);
     } else {
       setAiUserPrompt('请润色优化以下内容，提升文采和节奏感，保持原意不变，字数2400±100字。');
     }
@@ -745,7 +747,7 @@ export default function WritePage() {
         const result = await api.aiContinue(bookId, currentPrompt, selectedSkillPackIds, true, signal);
         if (signal.aborted || aiStoppedRef.current) return;
         setAiGeneratedContent(result.content);
-        setAiChatHistory(prev => [...prev, { role: 'assistant', content: result.content, chapterTitle: chapterEditTitle }]);
+        setAiChatHistory(prev => [...prev, { role: 'assistant', content: result.content, chapterTitle: chapterEditTitle, type: 'content' }]);
         setAgentMeta({
           chapter_plan: result.chapter_plan,
           temperature: result.temperature,
@@ -992,7 +994,7 @@ ${chapterEditContent}`;
       }
       // 流式结束后将AI回复加入聊天历史
       if (fullContent.trim()) {
-        setAiChatHistory(prev => [...prev, { role: 'assistant', content: fullContent, chapterTitle: chapterEditTitle }]);
+        setAiChatHistory(prev => [...prev, { role: 'assistant', content: fullContent, chapterTitle: chapterEditTitle, type: 'content' }]);
       }
     } catch (e: any) {
       if (signal.aborted || aiStoppedRef.current) return;
@@ -1046,13 +1048,19 @@ ${chapterEditContent}`;
         savedChapter = ch;
       }
       // 记录保存结果到聊天历史（不关闭面板，便于连续创作）
-      setAiChatHistory(prev => [...prev, {
-        role: 'assistant',
-        content: `✅ 已保存到「${savedTitle}」（${savedWordCount}字）。可继续输入要求创作下一章。`,
-        chapterTitle: savedTitle,
-      }]);
+      // 同时将已确认章节的正文消息自动折叠，为下一章输出留出空间（方便手机阅读）
+      setAiChatHistory(prev => [
+        ...prev.map(m => m.type === 'content' ? { ...m, collapsed: true } : m),
+        {
+          role: 'assistant' as const,
+          content: `✅ 已保存到「${savedTitle}」（${savedWordCount}字）。可继续输入要求创作下一章。`,
+          chapterTitle: savedTitle,
+          type: 'status' as const,
+        },
+      ]);
 
-      // 自动推进到下一章：以刚保存的章节作为新锚点，找下一个空章节或新建
+      // 自动推进到下一章：以刚保存的章节作为新锚点，找下一个需要写的章
+      const EFFECTIVE_WORDS = 100;
       const realChapters = chapters
         .filter(c => !c.is_volume)
         .slice()
@@ -1060,17 +1068,19 @@ ${chapterEditContent}`;
       const savedIdx = savedChapter ? realChapters.findIndex(c => c.id === savedChapter!.id) : -1;
       let nextTarget: Chapter | null = null;
       if (savedIdx >= 0) {
-        nextTarget = realChapters.slice(savedIdx + 1).find(c => !((c.content || '').trim())) || null;
+        nextTarget = realChapters.slice(savedIdx + 1).find(c => (c.content || '').trim().length < EFFECTIVE_WORDS) || null;
       }
+      let nextNum: number;
       if (nextTarget) {
         setAiTargetChapterId(nextTarget.id);
         setActiveChapter(nextTarget);
         setChapterEditTitle(nextTarget.title);
         setChapterEditContent(nextTarget.content || '');
+        nextNum = realChapters.findIndex(c => c.id === nextTarget!.id) + 1;
       } else {
         // 新建下一章占位
         setAiTargetChapterId(null);
-        const nextNum = realChapters.length + 1;
+        nextNum = realChapters.length + 1;
         setChapterEditTitle(`第${nextNum}章`);
         setChapterEditContent('');
         const baseOrder = (savedChapter?.order_index || realChapters[realChapters.length - 1]?.order_index || 0) + 1;
@@ -1084,18 +1094,18 @@ ${chapterEditContent}`;
       // 清空本次生成内容，但保留 aiCreateMode 与聊天历史
       setAiGeneratedContent('');
       setAiStreamError('');
-      setAiUserPrompt(`已写到「${savedTitle}」，请继续创作下一章正文，要求上下文剧情连贯、对话自然、节奏紧凑、章末留悬念，字数2400±100字。`);
+      setAiUserPrompt(`请创作第${nextNum}章正文，要求前后文剧情连贯、剧情符合各维度设定、语句自然无ai味儿，字数2400±100字。`);
     } catch (e: any) {
       alert('保存章节失败: ' + e.message);
     }
   }
 
-  // 取消AI创作（保留聊天历史）
+  // 取消AI创作（保留聊天历史 + 保留上次输出正文，下次打开仍在）
   function cancelAiCreate() {
     aiAbortRef.current?.abort();
     aiAbortRef.current = null;
     setAiCreateMode(null);
-    setAiGeneratedContent('');
+    // 不清空 aiGeneratedContent：保留上次正文，关掉再打开仍在
     setAiCreating(false);
     setAiStreamError('');
     setAiUserPrompt('');
@@ -1104,6 +1114,11 @@ ${chapterEditContent}`;
   // 清空AI聊天历史
   function clearAiChatHistory() {
     setAiChatHistory([]);
+  }
+
+  // 折叠/展开某条聊天消息（用于章节正文长内容）
+  function toggleChatMsgCollapse(index: number) {
+    setAiChatHistory(prev => prev.map((m, i) => i === index ? { ...m, collapsed: !m.collapsed } : m));
   }
 
   // 组件卸载时中止进行中的请求
@@ -1341,6 +1356,7 @@ ${chapterEditContent}`;
             agentMeta={agentMeta}
             aiChatHistory={aiChatHistory}
             onClearAiChatHistory={clearAiChatHistory}
+            onToggleChatMsgCollapse={toggleChatMsgCollapse}
             aiTargetChapterId={aiTargetChapterId}
           />
         ) : isDynamicMemoryTab ? (
@@ -1782,8 +1798,9 @@ function ChapterPanel(props: {
   onToggleAgentPipeline?: (v: boolean) => void;
   agentMeta?: any;
   // 聊天式AI创作：历史记录与目标章节
-  aiChatHistory: Array<{ role: 'user' | 'assistant'; content: string; chapterTitle?: string }>;
+  aiChatHistory: Array<{ role: 'user' | 'assistant'; content: string; chapterTitle?: string; type?: 'content' | 'status'; collapsed?: boolean }>;
   onClearAiChatHistory: () => void;
+  onToggleChatMsgCollapse: (index: number) => void;
   aiTargetChapterId: string | null;
 }) {
   const { chapters, activeChapter, chapterEditing, chapterEditTitle, chapterEditContent, chapterSaving,
@@ -1793,7 +1810,7 @@ function ChapterPanel(props: {
     onEditTitle, onEditContent, onBackToList, onStartAiCreate, onExecuteAiCreate, onConfirmAiContent, onCancelAiCreate, onStopAiCreate, onEditAiPrompt,
     onRenameVolume, onDeleteVolume, bookId,
     useAgentPipeline: useAgent, onToggleAgentPipeline, agentMeta,
-    aiChatHistory, onClearAiChatHistory, aiTargetChapterId,
+    aiChatHistory, onClearAiChatHistory, onToggleChatMsgCollapse, aiTargetChapterId,
   } = props;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
@@ -1970,19 +1987,37 @@ function ChapterPanel(props: {
             </div>
           )}
 
-          {aiChatHistory.map((msg, i) => (
+          {aiChatHistory.map((msg, i) => {
+            // 章节正文消息：支持折叠/展开（已确认章节自动折叠，为下一章留空间）
+            const isContent = msg.type === 'content';
+            const paras = msg.content.split(/\n+/).filter(p => p.trim());
+            const isLong = paras.length > 3 || msg.content.length > 200;
+            const collapsed = isContent && isLong && msg.collapsed !== false;
+            const showToggle = isContent && isLong;
+            return (
             <div key={i} className={`ai-chat-msg ai-chat-msg-${msg.role}`}>
               <div className="ai-chat-msg-avatar">{msg.role === 'user' ? '👤' : '🤖'}</div>
               <div className="ai-chat-msg-body">
                 {msg.chapterTitle && <div className="ai-chat-msg-chapter">📍 {msg.chapterTitle}</div>}
-                <div className="ai-chat-msg-content">
-                  {msg.content.split(/\n+/).filter(p => p.trim()).map((para, pi) => (
+                <div className={`ai-chat-msg-content${collapsed ? ' ai-chat-msg-collapsed' : ''}`}>
+                  {(collapsed ? paras.slice(0, 2) : paras).map((para, pi) => (
                     <p key={pi}>{para.trim()}</p>
                   ))}
+                  {collapsed && <p className="ai-chat-msg-ellipsis">……</p>}
                 </div>
+                {showToggle && (
+                  <button
+                    className="ai-chat-msg-toggle"
+                    onClick={() => onToggleChatMsgCollapse(i)}
+                    title={collapsed ? '展开全文' : '收起正文'}
+                  >
+                    {collapsed ? `展开全文（${msg.content.length}字）` : '收起'}
+                  </button>
+                )}
               </div>
             </div>
-          ))}
+            );
+          })}
 
           {/* 流式生成中的助手消息 */}
           {streaming && (
@@ -2009,37 +2044,38 @@ function ChapterPanel(props: {
 
           {aiStreamError && <div className="error-msg" style={{ marginTop: 8 }}>{aiStreamError}</div>}
 
-          {/* P0-1: 多Agent协同管线开关与元信息展示 */}
-          {onToggleAgentPipeline && aiCreateMode === 'write' && (
+          {/* P0-1: 多Agent协同管线元信息展示（生成结果） */}
+          {onToggleAgentPipeline && aiCreateMode === 'write' && agentMeta && (
             <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none' }}>
-                <input type="checkbox" checked={!!useAgent} onChange={e => onToggleAgentPipeline(e.target.checked)} disabled={aiCreating} />
-                <span>🤖 多Agent协同管线</span>
-                <span className="text-muted" style={{ fontSize: 11 }}>（章节计划→正文→去AI味→一致性检查，更慢但质量更高）</span>
-              </label>
-              {agentMeta && (
-                <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-                  {agentMeta.chapter_plan && (
-                    <div style={{ marginBottom: 4, padding: '6px 8px', background: 'var(--bg-secondary)', borderRadius: 4, borderLeft: '3px solid var(--accent)' }}>
-                      <b>📋 章节计划：</b>{agentMeta.chapter_plan.slice(0, 200)}{agentMeta.chapter_plan.length > 200 ? '...' : ''}
-                    </div>
-                  )}
-                  <div>
-                    📍 第{agentMeta.current_chapter_num}章 · {agentMeta.vol_title || `第${agentMeta.vol_index}卷`} · 温度{agentMeta.temperature}
-                    {agentMeta.deai_status === 'success' && <span style={{ color: '#27ae60' }}> · ✅去AI味成功</span>}
-                    {agentMeta.deai_status === 'failed' && <span style={{ color: '#e67e22' }} title={agentMeta.review_notes}> · ⚠️去AI味失败(用初稿)</span>}
-                    {agentMeta.deai_status === 'skipped' && <span className="text-muted"> · 未启用去AI味</span>}
-                    {agentMeta.consistency_passed === false && <span style={{ color: '#e74c3c' }} title={agentMeta.consistency_issues}> · ❌一致性异常</span>}
-                    {agentMeta.consistency_passed === true && <span style={{ color: '#27ae60' }}> · ✅一致性通过</span>}
-                  </div>
+              {agentMeta.chapter_plan && (
+                <div style={{ marginBottom: 4, padding: '6px 8px', background: 'var(--bg-secondary)', borderRadius: 4, borderLeft: '3px solid var(--accent)' }}>
+                  <b>📋 章节计划：</b>{agentMeta.chapter_plan.slice(0, 200)}{agentMeta.chapter_plan.length > 200 ? '...' : ''}
                 </div>
               )}
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                📍 第{agentMeta.current_chapter_num}章 · {agentMeta.vol_title || `第${agentMeta.vol_index}卷`} · 温度{agentMeta.temperature}
+                {agentMeta.deai_status === 'success' && <span style={{ color: '#27ae60' }}> · ✅去AI味成功</span>}
+                {agentMeta.deai_status === 'failed' && <span style={{ color: '#e67e22' }} title={agentMeta.review_notes}> · ⚠️去AI味失败(用初稿)</span>}
+                {agentMeta.deai_status === 'skipped' && <span className="text-muted"> · 未启用去AI味</span>}
+                {agentMeta.consistency_passed === false && <span style={{ color: '#e74c3c' }} title={agentMeta.consistency_issues}> · ❌一致性异常</span>}
+                {agentMeta.consistency_passed === true && <span style={{ color: '#27ae60' }}> · ✅一致性通过</span>}
+              </div>
             </div>
           )}
         </div>
 
-        {/* 底部：控制区（技能包+输入框，固定在底部） */}
+        {/* 底部：控制区（多Agent开关+技能包+输入框，固定在底部） */}
         <div className="ai-create-control-bar">
+          {/* P0-1: 多Agent协同管线开关（紧邻协同技能包，两行相邻） */}
+          {onToggleAgentPipeline && aiCreateMode === 'write' && (
+            <div className="agent-pipeline-toggle">
+              <label>
+                <input type="checkbox" checked={!!useAgent} onChange={e => onToggleAgentPipeline(e.target.checked)} disabled={aiCreating} />
+                <span>🤖 多Agent协同管线</span>
+                <span className="text-muted">（计划→正文→去AI味→一致性）</span>
+              </label>
+            </div>
+          )}
           {/* 技能包多选器（可折叠，紧凑模式） */}
           {skillPacks.length > 0 && (
             <div className="skill-pack-collapsible skill-pack-compact">
