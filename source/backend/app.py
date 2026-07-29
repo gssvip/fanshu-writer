@@ -1951,10 +1951,19 @@ def list_ai_sessions():
 @app.route('/api/ai/sessions', methods=['POST'])
 def create_ai_session():
     data = request.json
+    book_id = data.get('book_id', '')
+    scope = data.get('scope', 'general')
+    scope_id = data.get('scope_id', '')
+    # upsert：同 book+scope+scope_id 的会话复用，避免维度Modal重复创建孤儿会话
+    existing = AISession.query.filter_by(
+        book_id=book_id, scope=scope, scope_id=scope_id
+    ).order_by(AISession.updated_at.desc()).first() if (book_id and scope and scope_id) else None
+    if existing:
+        return jsonify(existing.to_dict()), 200
     session = AISession(
-        book_id=data.get('book_id', ''),
-        scope=data.get('scope', 'general'),
-        scope_id=data.get('scope_id', ''),
+        book_id=book_id,
+        scope=scope,
+        scope_id=scope_id,
         title=data.get('title', '新对话')
     )
     db.session.add(session)
@@ -1983,6 +1992,59 @@ def delete_ai_session(session_id):
     db.session.delete(session)
     db.session.commit()
     return jsonify({'success': True})
+
+
+# ==== 实体注册表 API（P2：跨维度重命名/合并） ====
+
+@app.route('/api/books/<book_id>/entities', methods=['GET'])
+@login_required
+def list_entities(book_id):
+    """抽取作品全部实体（角色/势力/地点/物品）。"""
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'characters': [], 'factions': [], 'locations': [], 'items': []})
+    from entity_registry import extract_entities
+    return jsonify(extract_entities(bb))
+
+
+@app.route('/api/books/<book_id>/entities/rename', methods=['POST'])
+@login_required
+def rename_entity_api(book_id):
+    """跨维度重命名实体。body: {old_name, new_name, entity_type}"""
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': 'BookBible not found'}), 404
+    data = request.json or {}
+    old_name = (data.get('old_name') or '').strip()
+    new_name = (data.get('new_name') or '').strip()
+    entity_type = data.get('entity_type', 'character')
+    if not old_name or not new_name:
+        return jsonify({'error': 'old_name 和 new_name 不能为空'}), 400
+    from entity_registry import rename_entity
+    chapters_q = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+    result = rename_entity(bb, chapters_q, old_name, new_name, entity_type)
+    db.session.commit()
+    return jsonify(result)
+
+
+@app.route('/api/books/<book_id>/entities/merge', methods=['POST'])
+@login_required
+def merge_entities_api(book_id):
+    """合并实体。body: {main_name, alias_names:[...], entity_type}"""
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': 'BookBible not found'}), 404
+    data = request.json or {}
+    main_name = (data.get('main_name') or '').strip()
+    alias_names = data.get('alias_names', []) or []
+    entity_type = data.get('entity_type', 'character')
+    if not main_name or not alias_names:
+        return jsonify({'error': 'main_name 和 alias_names 不能为空'}), 400
+    from entity_registry import merge_entities
+    chapters_q = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+    result = merge_entities(bb, chapters_q, main_name, alias_names, entity_type)
+    db.session.commit()
+    return jsonify(result)
 
 
 # ==== Export API ====

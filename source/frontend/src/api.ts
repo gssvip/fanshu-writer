@@ -373,6 +373,20 @@ export const api = {
       body: JSON.stringify({ content, post_validate: postValidate, mode }),
     }, signal),
 
+  // P2-Entity：实体注册表 - 抽取/重命名/合并
+  listEntities: (bookId: string) =>
+    request<{ characters: any[]; factions: any[]; locations: any[]; items: any[] }>(`/books/${bookId}/entities`),
+  renameEntity: (bookId: string, oldName: string, newName: string, entityType: string = 'character') =>
+    request<{ success: boolean; fields_updated: string[]; chapters_affected: number; total_replacements: number; error?: string }>(
+      `/books/${bookId}/entities/rename`,
+      { method: 'POST', body: JSON.stringify({ old_name: oldName, new_name: newName, entity_type: entityType }) }
+    ),
+  mergeEntities: (bookId: string, mainName: string, aliasNames: string[], entityType: string = 'character') =>
+    request<{ success: boolean; merged: any[]; total_replacements: number; chapters_affected: number }>(
+      `/books/${bookId}/entities/merge`,
+      { method: 'POST', body: JSON.stringify({ main_name: mainName, alias_names: aliasNames, entity_type: entityType }) }
+    ),
+
   // AI Continue 流式版（#8：SSE 推送初稿）。返回原始 Response，前端用 ReadableStream 解析
   aiContinueStream: (bookId: string, instruction: string, skillPackIds?: string[]) => {
     const token = getToken();

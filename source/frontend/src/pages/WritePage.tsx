@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import type { Book, BookBible, BrainstormResult, BrainstormSuggestion, Chapter, SkillPack, DynamicReport } from '../types';
 import AiCreateModal from './AiCreateModal';
+import EntityRegistryModal from './EntityRegistryModal';
 
 // 两行 Tab 布局：上下各 5 个维度
 const TAB_ROW_1 = [
@@ -159,6 +160,7 @@ export default function WritePage() {
 
   // 全屏 AI 创作弹窗（统一入口：总览全局创作 + 各维度单独创作）
   const [aiCreateModalState, setAiCreateModalState] = useState<{ mode: 'global' | 'single'; dimension?: string } | null>(null);
+  const [showEntityRegistry, setShowEntityRegistry] = useState(false);
 
   // 单维度填入：保存到对应 BookBible 字段
   const handleAiCreateApply = useCallback(async (field: string, content: string) => {
@@ -195,7 +197,7 @@ export default function WritePage() {
   const [aiUserPrompt, setAiUserPrompt] = useState('');
   // 章节AI聊天历史（持久保留，类似聊天窗口）
   // type: 'content'=章节正文（可折叠）, 'status'=状态提示（如已保存），用户提问无type
-  // 按 bookId 持久化到 localStorage，刷新/重新打开仍在（除非手动清空）
+  // 主存走后端 AISession（scope='chapter'），localStorage 降级为离线缓存
   const aiChatHistoryKey = bookId ? `fanshu-ai-chat-${bookId}` : '';
   const [aiChatHistory, setAiChatHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string; chapterTitle?: string; type?: 'content' | 'status'; collapsed?: boolean }>>(() => {
     try {
@@ -206,6 +208,8 @@ export default function WritePage() {
     } catch { /* ignore */ }
     return [];
   });
+  // 当前章节AI会话 ID（首次发送时创建/复用，后端 upsert）
+  const aiSessionRef = useRef<string | null>(null);
   // 当前AI创作锚定的目标章节（自动识别）
   const [aiTargetChapterId, setAiTargetChapterId] = useState<string | null>(null);
   // P0-1: 多Agent协同开关（开启时调用 ai-continue 后端管线，走章节计划+正文+去AI味+一致性检查）
@@ -1232,9 +1236,14 @@ ${chapterEditContent}`;
     setAiUserPrompt('');
   }
 
-  // 清空AI聊天历史
+  // 清空AI聊天历史（同步删除后端会话，下次发送重建）
   function clearAiChatHistory() {
     setAiChatHistory([]);
+    if (aiSessionRef.current) {
+      api.deleteAISession(aiSessionRef.current).catch(() => {});
+      aiSessionRef.current = null;
+    }
+    try { localStorage.removeItem(aiChatHistoryKey); } catch {}
   }
 
   // 折叠/展开某条聊天消息（用于章节正文长内容）
@@ -1250,26 +1259,74 @@ ${chapterEditContent}`;
   }, []);
 
   // 持久化聊天历史到 localStorage（按 bookId），刷新/重新打开仍在
-  // 切换书籍时清空当前历史，加载新书籍的历史
+  // 切换书籍时清空当前历史，优先从后端 AISession 加载，回退 localStorage
   useEffect(() => {
-    if (!aiChatHistoryKey) return;
-    try {
-      const raw = localStorage.getItem(aiChatHistoryKey);
-      const stored = raw ? JSON.parse(raw) : [];
-      // 仅在当前历史为空且存储有数据时加载（避免覆盖本次会话）
-      if (aiChatHistory.length === 0 && Array.isArray(stored) && stored.length > 0) {
-        setAiChatHistory(stored);
+    if (!aiChatHistoryKey || !bookId) return;
+    aiSessionRef.current = null;
+    // 后端拉取章节会话（scope='chapter'，scope_id=bookId）
+    api.listAISessions(bookId, 'chapter').then(sessions => {
+      if (sessions && sessions.length > 0) {
+        const s = sessions[0];
+        aiSessionRef.current = s.id;
+        // 过滤 system 消息，并转型为章节聊天历史格式
+        const msgs = (s.messages || [])
+          .filter((m: any) => m && m.content && (m.role === 'user' || m.role === 'assistant'))
+          .map((m: any) => ({
+            role: m.role as 'user' | 'assistant',
+            content: m.content as string,
+            chapterTitle: m.chapterTitle,
+            type: m.type,
+            collapsed: m.collapsed,
+          }));
+        if (msgs.length > 0) {
+          setAiChatHistory(msgs);
+          // 同步到 localStorage 作为离线缓存
+          try { localStorage.setItem(aiChatHistoryKey, JSON.stringify(msgs)); } catch {}
+          return;
+        }
       }
-    } catch { /* ignore */ }
+      // 后端无会话，回退 localStorage
+      loadFromLocalStorage();
+    }).catch(() => loadFromLocalStorage());
+
+    function loadFromLocalStorage() {
+      try {
+        const raw = localStorage.getItem(aiChatHistoryKey);
+        const stored = raw ? JSON.parse(raw) : [];
+        if (aiChatHistory.length === 0 && Array.isArray(stored) && stored.length > 0) {
+          setAiChatHistory(stored);
+        }
+      } catch { /* ignore */ }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiChatHistoryKey]);
 
-  // 聊天历史变化时写入 localStorage
+  // 聊天历史变化时：写 localStorage + 异步写后端 AISession
   useEffect(() => {
     if (!aiChatHistoryKey) return;
     try {
       localStorage.setItem(aiChatHistoryKey, JSON.stringify(aiChatHistory));
     } catch { /* ignore quota */ }
+    // 写后端（确保有 session id，没有则 upsert 创建）
+    if (bookId && aiChatHistory.length > 0) {
+      persistChapterSession().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiChatHistoryKey, aiChatHistory]);
+
+  // 持久化章节会话到后端
+  async function persistChapterSession() {
+    if (!bookId) return;
+    if (!aiSessionRef.current) {
+      try {
+        const s = await api.createAISession({ book_id: bookId, scope: 'chapter', scope_id: bookId, title: '章节AI创作' });
+        aiSessionRef.current = s.id;
+      } catch { return; }
+    }
+    try {
+      await api.updateAISession(aiSessionRef.current!, { messages: aiChatHistory as any[] });
+    } catch { /* ignore */ }
+  }
 
   async function deleteChapter(chId: string) {
     if (!bookId) return;
@@ -1352,6 +1409,14 @@ ${chapterEditContent}`;
             style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)', color: '#fff' }}
           >
             <span aria-hidden>✨</span><span className="btn-label">AI总创作</span>
+          </button>
+          <button
+            className="btn-ghost-sm"
+            onClick={() => setShowEntityRegistry(true)}
+            disabled={!bookId}
+            title="跨维度统一管理角色/势力/地点/物品，重命名/合并会同步到全部设定与正文"
+          >
+            <span aria-hidden>🏗️</span><span className="btn-label">实体管理</span>
           </button>
           <button className="btn-ghost-sm" onClick={handleAnalyzeContent} disabled={analyzing || dimAnalyzing || chapters.length === 0} title={chapters.length === 0 ? '需要先创建章节才能AI识别' : 'AI分析章节内容，一键识别全部维度'}>
             <span aria-hidden>{analyzing ? '🤖' : '🔍'}</span><span className="btn-label">{analyzing ? '识别中' : '全部识别'}</span>
@@ -1658,6 +1723,21 @@ ${chapterEditContent}`;
           onApply={handleAiCreateApply}
           onApplyMany={handleAiCreateApplyMany}
           onClose={() => setAiCreateModalState(null)}
+        />
+      )}
+
+      {/* 实体注册表弹窗（跨维度重命名/合并） */}
+      {showEntityRegistry && bookId && (
+        <EntityRegistryModal
+          bookId={bookId}
+          onClose={() => setShowEntityRegistry(false)}
+          onRenamed={async () => {
+            // 重命名后重新拉取 bible 与章节列表
+            try {
+              const bb = await api.getBible(bookId);
+              if (bb) setBible(bb);
+            } catch {}
+          }}
         />
       )}
     </div>
