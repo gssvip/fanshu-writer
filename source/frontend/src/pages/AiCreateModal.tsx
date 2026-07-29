@@ -143,7 +143,10 @@ export default function AiCreateModal({
     const prompt = FIELD_AI_PROMPTS[dim] || `请为「${DIM_LABEL[dim] || dim}」维度生成内容。`;
     const skillKeys = DIMENSION_SKILL_KEYS[dim] || [];
     const skillPrompt = extractSkillPrompt(selectedPacks, skillKeys);
-    const skillNote = selectedPacks.length > 0 ? `\n\n【已加载技能包：${selectedPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
+    // 【P1修复】格式整合铁律：技能包是创作方法论，必须整合到平台维度的格式骨架里，不能替换顶层结构
+    // 这样即使技能包自带"CDL档案/金手指四法则"等独立格式要求，模型也会按"## 角色：<姓名>"+ 字段列表输出
+    const formatIntegrationRule = selectedPacks.length > 0 ? `\n\n【格式整合铁律·必读】下方「技能包内容」是创作方法论（指导原则），不是输出格式模板。**必须**严格按上方任务的「输出格式」骨架输出，技能包的要求**整合映射**到对应字段。例如：技能包要求"CDL角色档案"中的"外貌特征/战斗风格"应并入"## 角色：<姓名>"下方的"身份"或新增子项；技能包要求"五不妥协原则"应整合到"## 力量体系"等小节内。不要把技能包字段原样搬出来，要按平台格式重新组织。` : '';
+    const skillNote = selectedPacks.length > 0 ? `\n\n【已加载技能包：${selectedPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}${formatIntegrationRule}` : '';
     const concept = bible?.concept || book?.synopsis || '暂无构思';
     const existing = (bible as any)?.[dim] || '';
 
