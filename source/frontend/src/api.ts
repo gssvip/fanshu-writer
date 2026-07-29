@@ -327,6 +327,21 @@ export const api = {
       temperature: number;
       consistency_passed: boolean;
       consistency_issues: string;
+      // P0-1 + P1-6/7 新增字段
+      post_validate?: {
+        passed: boolean;
+        score: number;
+        issue_count: number;
+        critical_count: number;
+        warning_count: number;
+        issues: Array<{ severity: string; category: string; pattern: string; count: number; position: string; suggestion: string }>;
+        stats: Record<string, any>;
+      } | null;
+      changes_applied?: {
+        applied: boolean;
+        fields_updated: string[];
+        errors: string[];
+      } | null;
     }>(`/books/${bookId}/ai-continue`, {
       method: 'POST',
       body: JSON.stringify({

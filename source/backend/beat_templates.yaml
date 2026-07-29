@@ -1,0 +1,124 @@
+# 节拍模板配置（P1-5）
+# 按戏剧位置（起/承/转/合/过渡）定义章内微结构节拍序列
+# 参考来源：Openwrite beat_templates.yaml
+# 章节生成时按 dramatic_position 选择模板，注入 prompt 约束 LLM 章内结构
+
+# 字数与节拍数映射
+word_count_beats:
+  2000: 2  # 2000字以下→2拍
+  3000: 3  # 3000字→3拍
+  5000: 5  # 5000字以上→5拍
+  default: 4  # 默认4拍
+
+# 5 个戏剧位置的节拍序列
+templates:
+  起:
+    name: 开篇起势
+    description: 引入场景，建立张力，埋设伏笔
+    beats:
+      - name: 场景切入
+        budget: 500
+        guide: 以动作或对话切入，避免环境描写堆砌；点明时间地点人物状态
+      - name: 现状展示
+        budget: 800
+        guide: 展示主角当前处境，与上章衔接；埋设本章伏笔（若有）
+      - name: 触发事件
+        budget: 700
+        guide: 引入打破平衡的事件或信息，制造悬念
+      - name: 钩子收尾
+        budget: 300
+        guide: 章尾抛出新疑问或危机，驱动读者继续
+
+  承:
+    name: 承接发展
+    description: 推进剧情，深化冲突，角色互动
+    beats:
+      - name: 衔接上拍
+        budget: 400
+        guide: 承接触发事件，主角做出反应或决策
+      - name: 冲突深化
+        budget: 900
+        guide: 困难升级，展示对手或环境压力；角色关系互动
+      - name: 信息推进
+        budget: 700
+        guide: 揭示部分信息，推进主线；可埋设新伏笔
+      - name: 阶段钩子
+        budget: 300
+        guide: 阶段性进展后抛出新问题
+
+  转:
+    name: 转折高潮
+    description: 反转冲突，伏笔回收，情绪爆发
+    beats:
+      - name: 转折铺垫
+        budget: 500
+        guide: 为反转积蓄情绪，可呼应前文伏笔
+      - name: 冲突升级
+        budget: 800
+        guide: 冲突达到顶点，主角陷入最大困境
+      - name: 反转点
+        budget: 600
+        guide: 关键反转！回收伏笔（若有）；情绪爆发点
+      - name: 余震
+        budget: 400
+        guide: 反转后的即时反应，角色情绪消化
+      - name: 钩子收尾
+        budget: 200
+        guide: 新的悬念或格局变化
+
+  合:
+    name: 收束落幕
+    description: 解决冲突，收束支线，阶段总结
+    beats:
+      - name: 冲突解决
+        budget: 800
+        guide: 主冲突收束，主角获得阶段性结果
+      - name: 余波展示
+        budget: 600
+        guide: 展示冲突解决后的世界/人物变化
+      - name: 支线收束
+        budget: 500
+        guide: 收束本节支线，为下节腾出空间
+      - name: 新篇钩子
+        budget: 300
+        guide: 为下一卷/篇埋设新悬念
+
+  过渡:
+    name: 过渡衔接
+    description: 场景转换，日常缓冲，暗埋伏笔
+    beats:
+      - name: 场景转换
+        budget: 500
+        guide: 时间/地点转换，避免突兀
+      - name: 日常缓冲
+        budget: 800
+        guide: 降低张力的日常段，但必须服务主线（埋伏笔/立人设/铺信息）
+      - name: 暗线推进
+        budget: 600
+        guide: 推进暗线，可埋设新伏笔
+      - name: 蓄势钩子
+        budget: 300
+        guide: 为下一高潮蓄势的钩子
+
+# 4 种场景叠加层（与节拍组合使用）
+scene_layers:
+  combat:
+    name: 战斗场景
+    guide: 节奏紧凑，多用短句；动作描写具体化；战力对比清晰；避免"瞬间/突然"滥用
+  dialogue:
+    name: 对话场景
+    guide: 不同角色语言风格区分；对话推进信息而非水字数；动作标签克制使用
+  exploration:
+    name: 探索场景
+    guide: 环境描写服务剧情；信息逐步揭示；制造未知感
+  revelation:
+    name: 揭示场景
+    guide: 信息释放节奏可控；呼应前文伏笔；角色反应真实
+
+# 伏笔融入规则（按戏剧位置）
+foreshadowing_rules:
+  起: 本位置适合埋设伏笔，注意埋设自然不生硬
+  承: 可继续埋设或推进已有伏笔
+  转: 本位置适合回收伏笔，回收时需呼应埋设内容
+  合: 收束已回收伏笔的余波，不宜开新伏笔
+  过渡: 适合暗埋长线伏笔，不影响日常节奏

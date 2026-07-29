@@ -824,6 +824,9 @@ export default function WritePage() {
           consistency_passed: result.consistency_passed,
           consistency_issues: result.consistency_issues,
           has_draft: !!result.draft,
+          // P0-1 + P1-6/7 新增：后写校验报告 + 章级变更回写摘要
+          post_validate: result.post_validate,
+          changes_applied: result.changes_applied,
         });
       } catch (e: any) {
         if (signal.aborted || aiStoppedRef.current) return;
@@ -2213,7 +2216,33 @@ function ChapterPanel(props: {
                 {agentMeta.deai_status === 'skipped' && <span className="text-muted"> · 未启用去AI味</span>}
                 {agentMeta.consistency_passed === false && <span style={{ color: '#e74c3c' }} title={agentMeta.consistency_issues}> · ❌一致性异常</span>}
                 {agentMeta.consistency_passed === true && <span style={{ color: '#27ae60' }}> · ✅一致性通过</span>}
+                {agentMeta.post_validate && agentMeta.post_validate.critical_count > 0 && (
+                  <span style={{ color: '#e74c3c' }} title={`AI痕迹检测：${agentMeta.post_validate.critical_count}个严重问题`}>
+                    {' · ⚠️AI痕迹'}({agentMeta.post_validate.critical_count})
+                  </span>
+                )}
+                {agentMeta.post_validate && agentMeta.post_validate.critical_count === 0 && agentMeta.post_validate.warning_count > 0 && (
+                  <span style={{ color: '#f39c12' }} title={`检测到${agentMeta.post_validate.warning_count}个轻微问题`}>
+                    {' · 🔍痕迹检测'}({agentMeta.post_validate.warning_count})
+                  </span>
+                )}
+                {agentMeta.changes_applied && agentMeta.changes_applied.applied && (
+                  <span style={{ color: '#27ae60' }} title={`状态回写：${(agentMeta.changes_applied.fields_updated||[]).join('、')}`}>
+                    {' · 📝状态已回写'}
+                  </span>
+                )}
               </div>
+              {/* P0-1：后写校验报告详情（可折叠） */}
+              {agentMeta.post_validate && (agentMeta.post_validate.critical_count > 0 || agentMeta.post_validate.warning_count > 0) && (
+                <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 4, padding: '4px 8px', background: 'var(--bg-secondary)', borderRadius: 4 }}>
+                  {agentMeta.post_validate.issues.slice(0, 5).map((iss: any, i: number) => (
+                    <div key={i} style={{ color: iss.severity === 'critical' ? '#e74c3c' : '#f39c12' }}>
+                      {iss.severity === 'critical' ? '🔴' : '🟡'} [{iss.category}] {iss.pattern} — {iss.suggestion}
+                    </div>
+                  ))}
+                  {agentMeta.post_validate.issues.length > 5 && <div>...还有 {agentMeta.post_validate.issues.length - 5} 条</div>}
+                </div>
+              )}
             </div>
           )}
         </div>

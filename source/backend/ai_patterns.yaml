@@ -1,0 +1,94 @@
+# AI 痕迹模式词库（确定性后写校验用）
+# 来源：参考 Openwrite craft/ai_patterns.yaml + 网文创作经验整理
+# 严重性等级：critical（必须改）/ warning（建议改）
+
+# ===== 禁止句式（critical）=====
+forbidden_patterns:
+  # 公式化转折
+  - pattern: '不是.{0,20}?而是'
+    reason: '「不是…而是…」是典型 AI 公式化转折，改为直接陈述或动作描写'
+  - pattern: '并非.{0,20}?而是'
+    reason: '「并非…而是…」公式化转折，重新组织表达'
+  - pattern: '与其说.{0,20}?不如说'
+    reason: '「与其说…不如说…」公式化对比，改为具体描写'
+  # 破折号滥用
+  - pattern: '——'
+    reason: '破折号「——」是 AI 高频标点，改为逗号或句号'
+  # 元叙事
+  - pattern: '到这里算是'
+    reason: '元叙事表达，作者不该跳出故事说话'
+  - pattern: '读者可能'
+    reason: '元叙事，不要提及读者'
+  - pattern: '作者想说'
+    reason: '元叙事，不要以作者身份说话'
+  - pattern: '接下来将'
+    reason: '预告式元叙事，让事件自然发生'
+  - pattern: '故事到此'
+    reason: '元叙事总结，删除'
+  # 报告术语
+  - pattern: '核心动机'
+    reason: '分析报告术语，不应出现在正文'
+  - pattern: '信息边界'
+    reason: '分析报告术语，不应出现在正文'
+  - pattern: '叙事支撑'
+    reason: '分析报告术语，不应出现在正文'
+  - pattern: '弧线转折'
+    reason: '分析报告术语，不应出现在正文'
+  - pattern: '角色弧光'
+    reason: '分析报告术语，不应出现在正文'
+  # 说教词
+  - pattern: '毋庸置疑'
+    reason: '说教词，用事实说话'
+  - pattern: '不言而喻'
+    reason: '说教词，用事实说话'
+  - pattern: '显而易见'
+    reason: '说教词，用事实说话'
+
+# ===== 高疲劳词（warning，按密度判定）=====
+fatigue_words:
+  # 转折标记词（每 3000 字 ≤ 1 次）
+  - 突然
+  - 忽然
+  - 猛地
+  - 骤然
+  - 旋即
+  - 瞬间
+  - 顿时
+  - 倏地
+  # AI 常用比喻
+  - 仿佛
+  - 宛如
+  - 犹如
+  - 恍若
+  - 不禁
+  - 竟然
+  - 居然
+  # 集体反应
+  - 全场震惊
+  - 众人齐齐
+  - 所有人都
+  - 众人哗然
+  - 倒吸一口凉气
+  - 瞳孔骤缩
+  - 脸色大变
+  # 网文套路
+  - 蝼蚁
+  - 找死
+  - 不自量力
+  - 区区
+  - 也配
+
+# ===== 网文疲劳词密度阈值 =====
+# 单词每章出现次数上限
+fatigue_word_max_per_chapter: 2
+# 转折类词每 3000 字上限
+transition_word_max_per_3000: 1
+
+# ===== 段落结构检查 =====
+# 段落过长字数阈值
+paragraph_max_chars: 300
+# 短段占比上限（AI 常用短段堆砌）
+short_paragraph_max_ratio: 0.6
+short_paragraph_threshold: 30  # 30 字以下算短段
+# 连续「了」字上限
+continuous_le_max: 5

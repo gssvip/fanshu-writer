@@ -17,6 +17,45 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
+# P0-1：确定性后写校验器（零 LLM 成本，章节生成后检测 AI 痕迹）
+try:
+    from post_write_validator import validate_chapter, get_repair_hints
+except ImportError:
+    # 静默降级：模块缺失时不阻断主流程
+    validate_chapter = None
+    get_repair_hints = None
+
+# P0-2：伏笔 DAG 管理器
+try:
+    from foreshadowing_manager import parse_text_to_dag, ForeshadowingGraph, get_hooks_for_chapter
+except ImportError:
+    parse_text_to_dag = None
+    ForeshadowingGraph = None
+    get_hooks_for_chapter = None
+
+# P1-4：四级大纲层级构建器
+try:
+    from outline_hierarchy_builder import build_outline_hierarchy, build_dramatic_position_prompt, get_dramatic_context
+except ImportError:
+    build_outline_hierarchy = None
+    build_dramatic_position_prompt = None
+    get_dramatic_context = None
+
+# P1-5：节拍模板加载器
+try:
+    from beat_template_loader import build_beat_prompt
+except ImportError:
+    build_beat_prompt = None
+
+# P1-6 + P1-7：章级变更处理器（12类CHANGES解析 + delta回写）
+try:
+    from chapter_changes_processor import extract_changes, apply_chapter_changes, remove_chapter_changes, build_changes_prompt_template
+except ImportError:
+    extract_changes = None
+    apply_chapter_changes = None
+    remove_chapter_changes = None
+    build_changes_prompt_template = None
+
 app = Flask(__name__, static_folder=None)
 app.config['SECRET_KEY'] = 'fanshu-writer-secret-key'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
@@ -454,6 +493,13 @@ class BookBible(db.Model):
     locations_volumes = db.Column(db.Text, default='')
     # 防遗忘检查报告历史：JSON 数组，每份报告含 id/title/checked_at/scope/volume_ids/report_json
     anti_forget_reports = db.Column(db.Text, default='')
+    # P0-2：伏笔 DAG（JSON，结构化伏笔图，与 foreshadowing 文本字段并存）
+    # 文本字段供前端展示，DAG 供后端状态追踪/prompt注入/逾期检测用
+    foreshadowing_graph = db.Column(db.Text, default='')
+    # P1-4：四级大纲层级（JSON，master→arc→section→chapter，由 timeline 自动构建）
+    outline_hierarchy = db.Column(db.Text, default='')
+    # P1-6：章级变更日志（JSON 数组，每章的 12 类 CHANGES delta，支持重写回滚）
+    chapter_changes_log = db.Column(db.Text, default='')
     last_synced_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -473,6 +519,10 @@ class BookBible(db.Model):
             'foreshadowing_volumes': self.foreshadowing_volumes or '',
             'locations_volumes': self.locations_volumes or '',
             'anti_forget_reports': self.anti_forget_reports or '',
+            # P0-2/P1-4/P1-6 新增字段
+            'foreshadowing_graph': self.foreshadowing_graph or '',
+            'outline_hierarchy': self.outline_hierarchy or '',
+            'chapter_changes_log': self.chapter_changes_log or '',
             'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None
         }
 
@@ -4928,6 +4978,34 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
         foreshadowing_section = f"""【待回收伏笔清单】（按到期紧迫度排序，本章节应考虑回收其中1-2条，避免遗忘；若无合适时机可暂缓，但不可永久遗忘）
 {pending_text}"""
 
+    # P0-2 增强：从伏笔 DAG 注入本章专属伏笔任务（应埋/应收），覆盖更精准
+    if get_hooks_for_chapter and bb.foreshadowing_graph:
+        try:
+            graph = ForeshadowingGraph.from_dict(json.loads(bb.foreshadowing_graph))
+            from foreshadowing_manager import build_hooks_prompt_section
+            dag_hooks = build_hooks_prompt_section(graph, current_chapter_num)
+            if dag_hooks:
+                foreshadowing_section = (foreshadowing_section + '\n\n' + dag_hooks).strip()
+        except Exception:
+            pass  # DAG 解析失败退回原文本伏笔清单
+
+    # P1-4 + P1-5：从四级大纲取本章戏剧位置，注入节拍模板
+    beat_section = ''
+    if build_dramatic_position_prompt and build_beat_prompt and bb.outline_hierarchy:
+        try:
+            hierarchy = json.loads(bb.outline_hierarchy)
+            # 戏剧位置上下文
+            dp_prompt = build_dramatic_position_prompt(hierarchy, current_chapter_num)
+            # 节拍模板
+            from outline_hierarchy_builder import get_dramatic_context
+            ctx_dp = get_dramatic_context(hierarchy, current_chapter_num)
+            position = ctx_dp.get('dramatic_position', '') if ctx_dp else ''
+            beats_prompt = build_beat_prompt(position, word_count=2500) if position else ''
+            if dp_prompt or beats_prompt:
+                beat_section = (dp_prompt + '\n\n' + beats_prompt).strip()
+        except Exception:
+            pass  # 大纲/节拍加载失败退回无节拍模式
+
     # ===== 5. 章节计划前置（#4：chapter_plan Agent）=====
     # 章节计划属"读数据→提炼→注入"的识别类任务，用识别模型（便宜快），正文生成本身仍用主模型
     chapter_plan = _generate_chapter_plan(
@@ -4948,12 +5026,23 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
     # 注意：memory_section 含前4章完整正文（约9600字）+ 10份动态报告（约8000字），总量较大但独立注入
     system_prompt = f"""你是番茄小说金番作者级别的写手，正在协作写一本小说，当前准备写第 {current_chapter_num} 章。
 
+【设定权威分级·冲突仲裁规则】（P0-3）
+当下方各层设定发生冲突时，按权威层级从高到低取信：
+- direction 层（最高）：核心构思 concept —— 作者意图，不可被下层推翻
+- foundation 层：大纲 plot_design、世界观 worldbuilding —— 全书骨架
+- rules 层：核心规则 key_rules、伏笔 foreshadowing —— 不可违反的铁律
+- runtime 层：动态文件 dynamic_volumes —— 当前卷的运行时状态
+- memory 层（最低）：前4章正文 —— 即时剧情衔接依据
+若卷纲与本卷动态文件冲突，以卷纲为准；若动态文件与前4章正文冲突，以动态文件为准。
+
 【项目宪法 - 已确认设定】（必须严格遵守，不可矛盾。包含：大纲/剧情卷纲/人物及关系/物资库/地图/核心规则/世界观/伏笔等）
 {bible_context[:5000]}
 
 {memory_section}
 
 {foreshadowing_section}
+
+{beat_section}
 
 {plan_section}
 
@@ -4970,6 +5059,10 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
 8. 若存在【本章计划】，必须严格按计划展开剧情
 9. 【剧情连贯铁律】必须严格承接【最近4章完整正文】的结尾场景与悬念，不得凭空开启新场景；人物位置、状态、对话内容必须与前文一致。
 10. 【字数自检】输出前必须自检字数：用中文计数（含标点），若不在 2300-2500 区间必须调整后再输出。"""
+
+    # P1-6：在 system_prompt 末尾追加 CHANGES 输出模板（要求 LLM 输出结构化状态变更）
+    if build_changes_prompt_template:
+        system_prompt += build_changes_prompt_template()
 
     # ===== 9. 动态 temperature（#10）=====
     temperature = _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, chapters_in_vol)
@@ -5134,6 +5227,40 @@ def ai_continue(book_id):
                 chapter_plan=ctx.get('chapter_plan', '')
             )
 
+        # ===== P1-6 + P1-7：CHANGES 解析 + delta 回写（非流式版）=====
+        changes_applied = None
+        if extract_changes and apply_chapter_changes:
+            try:
+                body, changes = extract_changes(polished_content)
+                if changes:
+                    # 剥离 CHANGES 标签后的正文（落库用纯正文）
+                    if body and len(body) > 200:
+                        polished_content = body
+                    ch_obj = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index.desc()).first()
+                    ch_id = ch_obj.id if ch_obj else ''
+                    changes_applied = apply_chapter_changes(
+                        bb, ch_id, ctx['current_chapter_num'],
+                        ctx.get('vol_index', 0), changes,
+                    )
+                    if changes_applied.get('applied'):
+                        try:
+                            db.session.commit()
+                        except Exception:
+                            db.session.rollback()
+            except Exception:
+                pass  # 回写失败不阻断
+
+        # ===== P0-1：确定性后写校验（非流式版，零 LLM 成本）=====
+        post_validate = None
+        if validate_chapter:
+            try:
+                body_for_check = _extract_chapter_body(polished_content)
+                validation = validate_chapter(body_for_check)
+                if validation.issues:
+                    post_validate = validation.to_dict()
+            except Exception:
+                pass
+
         return jsonify({
             'content': polished_content,
             'draft': draft_content if deai_status == 'success' else None,
@@ -5146,6 +5273,9 @@ def ai_continue(book_id):
             'temperature': temperature,  # #10：返回实际使用的 temperature
             'consistency_passed': consistency_passed,  # #13：一致性检查结果
             'consistency_issues': consistency_issues,
+            # P0-1 + P1-6/7 新增字段
+            'post_validate': post_validate,  # 后写校验报告（AI痕迹检测）
+            'changes_applied': changes_applied,  # 章级变更回写摘要
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -5188,7 +5318,8 @@ def ai_continue_stream(book_id):
             }
             yield f'data: {json.dumps(meta, ensure_ascii=False)}\n\n'
 
-            # 流式生成正文初稿
+            # 流式生成正文初稿，同时收集完整内容用于后写校验（P0-1）
+            full_content_parts = []
             resp = requests.post(f'{base_url}/chat/completions',
                 headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
                 json={'model': model,
@@ -5206,11 +5337,71 @@ def ai_continue_stream(book_id):
                         if chunk == '[DONE]':
                             yield 'data: [DONE]\n\n'
                             break
+                        # 收集内容用于后写校验
+                        try:
+                            chunk_data = json.loads(chunk)
+                            delta = chunk_data.get('choices', [{}])[0].get('delta', {}).get('content', '')
+                            if delta:
+                                full_content_parts.append(delta)
+                        except Exception:
+                            pass
                         yield f'data: {chunk}\n\n'
+
+            # ===== P1-6 + P1-7：CHANGES 解析 + delta 回写（流结束后）=====
+            # 解析 LLM 输出的 12 类变更声明，delta patch 到 dynamic_volumes/foreshadowing_graph
+            if extract_changes and apply_chapter_changes and full_content_parts:
+                try:
+                    full_content_for_changes = ''.join(full_content_parts)
+                    body, changes = extract_changes(full_content_for_changes)
+                    if changes:
+                        bb_obj = BookBible.query.filter_by(book_id=book_id).first()
+                        if bb_obj:
+                            ch_obj = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index.desc()).first()
+                            ch_id = ch_obj.id if ch_obj else ''
+                            apply_summary = apply_chapter_changes(
+                                bb_obj, ch_id, ctx['current_chapter_num'],
+                                ctx.get('vol_index', 0), changes,
+                            )
+                            if apply_summary.get('applied'):
+                                try:
+                                    db.session.commit()
+                                except Exception:
+                                    db.session.rollback()
+                                # 推送回写摘要给前端
+                                yield f'data: {json.dumps({"changes_applied": apply_summary}, ensure_ascii=False)}\n\n'
+                except Exception as ce:
+                    # 回写失败不阻断章节生成
+                    pass
+
+            # ===== P0-1：确定性后写校验（流结束后，零 LLM 成本）=====
+            # 推送校验报告给前端，critical 级问题提示作者可一键修订
+            if validate_chapter and full_content_parts:
+                try:
+                    full_content = ''.join(full_content_parts)
+                    # 剥离可能的 PRE_WRITE_CHECK 和 CHANGES 标签（P1-6 产物），只校验正文
+                    body_for_check = _extract_chapter_body(full_content)
+                    validation = validate_chapter(body_for_check)
+                    if validation.issues:
+                        yield f'data: {json.dumps({"post_validate": validation.to_dict()}, ensure_ascii=False)}\n\n'
+                except Exception as ve:
+                    # 校验失败不阻断章节生成
+                    pass
         except Exception as e:
             yield f'data: {{"error": "{str(e)[:200]}"}}\n\n'
 
     return app.response_class(generate(), mimetype='text/event-stream')
+
+
+def _extract_chapter_body(full_content: str) -> str:
+    """从 LLM 完整输出中剥离 PRE_WRITE_CHECK 和 chapter_changes 标签，只保留正文。
+    P1-6 启用后 LLM 会输出结构化标签，校验器只检查正文部分。"""
+    import re as _re
+    body = full_content
+    # 剥离 <pre_write_check>...</pre_write_check>
+    body = _re.sub(r'<pre_write_check>[\s\S]*?</pre_write_check>', '', body, flags=_re.IGNORECASE)
+    # 剥离 <chapter_changes>...</chapter_changes>
+    body = _re.sub(r'<chapter_changes>[\s\S]*?</chapter_changes>', '', body, flags=_re.IGNORECASE)
+    return body.strip()
 
 
 # ==== LLM 调用辅助函数 ====
@@ -6521,6 +6712,23 @@ def ai_master_create(book_id):
             ctx[dim] = content
             # P1-9: 直接落库，避免前端未回流导致协同结果丢失
             setattr(bb, info['field'], content)
+            # P0-2：伏笔维度生成后自动构建 DAG（与文本字段并存）
+            if dim == 'foreshadowing' and parse_text_to_dag:
+                try:
+                    graph = parse_text_to_dag(content)
+                    errors = graph.validate()
+                    if not errors:
+                        bb.foreshadowing_graph = json.dumps(graph.to_dict(), ensure_ascii=False)
+                except Exception:
+                    pass  # DAG 构建失败不影响文本落库
+            # P1-4：timeline 维度生成后自动构建四级大纲层级
+            if dim == 'timeline' and build_outline_hierarchy:
+                try:
+                    hierarchy = build_outline_hierarchy(content, bb.plot_design or '')
+                    if hierarchy.get('chapters'):
+                        bb.outline_hierarchy = json.dumps(hierarchy, ensure_ascii=False)
+                except Exception:
+                    pass
 
     # P1-9: 串行生成完成后统一提交事务
     try:
@@ -6732,6 +6940,23 @@ def ai_master_create_stream(book_id):
                 # 直接落库
                 try:
                     setattr(bb, info['field'], full_content)
+                    # P0-2：伏笔维度生成后自动构建 DAG（与文本字段并存）
+                    if dim == 'foreshadowing' and parse_text_to_dag:
+                        try:
+                            graph = parse_text_to_dag(full_content)
+                            errors = graph.validate()
+                            if not errors:
+                                bb.foreshadowing_graph = json.dumps(graph.to_dict(), ensure_ascii=False)
+                        except Exception:
+                            pass  # DAG 构建失败不影响文本落库
+                    # P1-4：timeline 维度生成后自动构建四级大纲层级
+                    if dim == 'timeline' and build_outline_hierarchy:
+                        try:
+                            hierarchy = build_outline_hierarchy(full_content, bb.plot_design or '')
+                            if hierarchy.get('chapters'):
+                                bb.outline_hierarchy = json.dumps(hierarchy, ensure_ascii=False)
+                        except Exception:
+                            pass  # 层级构建失败不影响文本落库
                     db.session.commit()
                 except:
                     db.session.rollback()
@@ -9306,6 +9531,12 @@ def init_db():
         _add_column('skill_packs', 'github_synced_at TIMESTAMP')
         # Migration: 防遗忘检查报告历史
         _add_column('book_bible', 'anti_forget_reports TEXT')
+        # Migration P0-2: 伏笔 DAG
+        _add_column('book_bible', 'foreshadowing_graph TEXT')
+        # Migration P1-4: 四级大纲层级
+        _add_column('book_bible', 'outline_hierarchy TEXT')
+        # Migration P1-6: 章级变更日志
+        _add_column('book_bible', 'chapter_changes_log TEXT')
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
