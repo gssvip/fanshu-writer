@@ -6210,23 +6210,30 @@ def ai_master_create(book_id):
     instruction = data.get('instruction', '')
 
     # 维度→技能包prompt_key映射 + 生成提示（按番茄金番工作流顺序）
+    # 【P1修复】每个维度的 prompt 都强化「输出格式铁律」与平台 bible 字段格式对齐
     DIM_MAP = {
         'concept': {'field': 'concept', 'label': '构思', 'keys': ['tomato_plan', 'one_line_concept', 'master_outline'],
-                    'prompt': '生成核心构思：一句话概念、核心卖点、主线冲突、独特亮点、目标读者。'},
+                    'prompt': '生成核心构思。\n【输出格式】纯文本分项（空行分隔）：1) 一句话核心概念；2) 核心卖点（3-5条）；3) 目标读者画像；4) 主线冲突；5) 独特亮点。'},
         'key_rules': {'field': 'key_rules', 'label': '设定/规则', 'keys': ['tomato_setting', 'lock_facts'],
-                      'prompt': '生成核心设定：金手指四法则、代价反噬、世界观框架、五不妥协原则。'},
+                      'prompt': '生成核心设定规则。\n【输出格式】编号列表，每条以"① ② ③..."开头，规则间空行分隔。包括：世界必须遵循的铁律、人物能力边界、代价/反噬机制、禁忌事项。'},
         'worldbuilding': {'field': 'worldbuilding', 'label': '世界观', 'keys': ['tomato_setting', 'lock_facts'],
-                          'prompt': '生成世界观：修炼体系/势力格局/地理环境/核心规则。'},
+                          'prompt': '生成详细世界观。\n【输出格式】分小节二级标题"## 力量体系/## 社会结构/## 地理概况/## 历史脉络"，每小节下用编号列表。不要写成段落散文。'},
         'character_profiles': {'field': 'character_profiles', 'label': '人物', 'keys': ['tomato_character', 'character_cognition'],
-                               'prompt': '生成主要人物：主角模板+CDL档案+配角六功能，含性格/动机/成长弧线。'},
+                               'prompt': '生成主要人物。\n【输出格式】每个角色一个"## 角色：<姓名>"二级标题，下方依次：身份/性格（3-5个关键词）/背景故事（100-200字）/核心动机/与其他角色关系（"→ 角色名：关系"）。主角 + 3-5个配角。'},
         'plot_design': {'field': 'plot_design', 'label': '大纲', 'keys': ['master_outline', 'tomato_outline', 'volume_breakdown'],
-                        'prompt': '生成五幕式总纲：每卷核心目标/主要冲突/关键转折/卷尾悬念。'},
+                        'prompt': '生成五幕式总纲。\n【输出格式】每幕"## 第N幕：<幕名>"二级标题，下方：幕核心目标/主要冲突/卷入角色/关键转折点/幕尾悬念/对应分卷范围（"第X-Y卷"）。共5幕，对应全书所有分卷。'},
         'timeline': {'field': 'timeline', 'label': '剧情', 'keys': ['volume_breakdown', 'chapter_plan', 'tomato_outline'],
-                     'prompt': '生成分卷详细剧情（JSON数组）：每卷含main_plot/core_conflict/nodes等，5-8个情节节点+章型配额+小故事闭环。'},
+                     'prompt': '生成分卷详细剧情。\n【分卷铁律·必读】**每卷固定 50 章**，全书卷数 = 总章数÷50（向上取整），卷序号从1开始连续。卷名格式"第N卷 副标题"。\n【输出格式·必读】严格 JSON 数组，不要任何解释文字、不要 markdown 代码块。结构：[{"volume_index":1,"volume":"第1卷 副标题","main_plot":"本卷主线剧情100-200字","core_conflict":"本卷核心冲突","ending_hook":"卷尾钩子","nodes":[{"title":"节点1","chapters":"1-10","type":"M","summary":"概要","cool_type":"实力碾压"}]}]. 每卷 5-8 个 nodes；chapters 字段"起始-结束"，全书 chapter 编号连续不重叠。'},
+        'foreshadowing': {'field': 'foreshadowing', 'label': '伏笔', 'keys': ['foreshadow_register', 'narrative_debt'],
+                          'prompt': '埋设伏笔线索。\n【输出格式】编号列表，每条"## 伏笔N：<标题>\\n- 埋设内容：xxx\\n- 埋设时机：第X卷Y章附近\\n- 预期回收：第X卷Y章附近\\n- 回收方式：xxx\\n- 对剧情的影响：xxx"。设计 3-5 条。'},
+        'locations': {'field': 'locations', 'label': '地点', 'keys': ['lock_facts', 'tomato_setting', 'geography'],
+                      'prompt': '设计地点体系。\n【输出格式】严格 JSON 数组三级结构：[一级大区域{"name","description","secondaries":[{"name","description","scenes":[{"name","description","key_events"}]}]}]. 设计 2-3 个一级大区域。'},
+        'inventory': {'field': 'inventory', 'label': '物资库', 'keys': ['lock_facts', 'level_system', 'power_system', 'ability_tree'],
+                      'prompt': '生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[{"name","type","source","effect","owner","first_appearance"}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。'},
     }
 
     # agent 协同：串行执行，本轮产出回流到下一轮上下文
-    DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline']
+    DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory']
     ordered_dims = [d for d in DIM_ORDER if d in dimensions]
 
     # 上下文字典：初始值来自 bible 已有内容，运行中动态追加本轮产出
@@ -6264,6 +6271,7 @@ def ai_master_create(book_id):
             position_note += f'（下游将基于你的产出继续：{"→".join(downstream_names)}）'
 
         # ===== 【P0弊端4修复】timeline 维度输出 JSON 数组格式，与 _get_volume_outline 兼容 =====
+        # 【P1修复】硬性铁律：每卷固定 50 章，卷序号连续，chapters 编号全书连续
         is_timeline_dim = (dim == 'timeline')
         if is_timeline_dim:
             system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
@@ -6280,13 +6288,15 @@ def ai_master_create(book_id):
 【五幕模型对齐】各卷对应五幕：立身→立足→立势→立威→立命
 【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 nodes.chapters 全书连续编号。
 
+【分卷铁律·必读】**每卷固定 50 章**。全书卷数 = 总章数÷50（向上取整），卷序号从 1 开始连续递增。卷名格式"第N卷 副标题"。
+
 {skill_note}
 
 【输出格式铁律】严格输出 JSON 数组（不要包裹在 markdown 代码块中），每卷结构如下：
 [
   {{
     "volume_id": "1",
-    "volume": "第1卷 卷名",
+    "volume": "第1卷 副标题",
     "volume_index": 1,
     "act": "立身",
     "main_plot": "本卷主线剧情（100-200字）",
@@ -6297,8 +6307,10 @@ def ai_master_create(book_id):
     ]
   }}
 ]
+
+【分卷章节分配示例】全书 300 章 → 6 卷（每卷 50 章）：第1卷 1-50、第2卷 51-100、... 第6卷 251-300；每卷 nodes 章节连续不重叠。
 直接输出 JSON 数组，不要任何解释性文字。"""
-            user_prompt = instruction or f'请为这本小说生成分卷剧情JSON数组，与已确认的上游维度保持一致，各卷符合五幕模型且卷间严格衔接。'
+            user_prompt = instruction or f'请为这本小说生成分卷剧情JSON数组，**每卷固定 50 章**，与已确认的上游维度保持一致，各卷符合五幕模型且卷间严格衔接。'
         else:
             system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
 {position_note}
@@ -6313,8 +6325,8 @@ def ai_master_create(book_id):
 
 {skill_note}
 
-直接输出{info['label']}内容（纯文本，不要JSON包裹）。确保与上游维度衔接一致。"""
-            user_prompt = instruction or f'请为这本小说生成{info["label"]}，与已确认的上游维度保持一致。'
+直接输出{info['label']}内容（严格按任务要求的格式铁律输出）。确保与上游维度衔接一致。"""
+            user_prompt = instruction or f'请为这本小说生成{info["label"]}，与已确认的上游维度保持一致，并严格按输出格式铁律输出。'
 
         max_tokens = 8000 if is_timeline_dim else 2500
         content, err = _call_llm(

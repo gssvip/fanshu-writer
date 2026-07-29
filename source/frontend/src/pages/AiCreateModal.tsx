@@ -3,16 +3,37 @@ import { api } from '../api';
 import type { Book, BookBible, SkillPack } from '../types';
 
 // 维度 field → AI 创作 prompt（与 WritePage 内 FIELD_AI_PROMPTS 保持一致）
+// 【P1修复】补充明确的「输出格式铁律」与平台 bible 字段格式对齐，避免模型自由发挥导致前后不搭
 const FIELD_AI_PROMPTS: Record<string, string> = {
-  concept: '将以下一句话构思扩展为完整的创意方案，包含核心卖点、目标读者、主线冲突、独特亮点。',
-  key_rules: '根据以下构思，生成核心设定规则。包括：世界观必须遵循的规则、人物能力限制、禁忌事项。每条规则单独列出。',
-  plot_design: '根据以下构思，生成故事大纲。包括：核心主线、分卷规划（每卷目标）、关键转折点、高潮设计、结局走向。',
-  worldbuilding: '根据以下构思，生成详细的世界观设定。包括：世界背景、力量体系/科技水平、社会结构、地理概况、历史脉络。',
-  character_profiles: '根据以下构思，生成主要人物档案。包括：主角和3-5个重要配角的姓名、身份、性格特征、背景故事、核心动机、人物关系。',
-  timeline: '根据以下构思，生成剧情时间线。按时间顺序列出关键事件，每个事件标注涉及的人物和地点。',
-  foreshadowing: '根据以下构思，设计3-5条伏笔线索。每条包括：伏笔内容、埋设时机（大概章节）、预期回收方式、对剧情的影响。',
-  locations: '根据以下构思，设计三级地点体系。第一级为大区域（如：东大陆、西荒漠），第二级为城市/门派，第三级为具体场景。',
-  inventory: '根据以下构思，生成主要物品/功法/法宝清单。包括：名称、类型、来源、效果、归属角色。',
+  concept: '将以下一句话构思扩展为完整的创意方案。\n【输出格式】纯文本，包含以下分项（用空行分隔）：1) 一句话核心概念；2) 核心卖点（3-5条）；3) 目标读者画像；4) 主线冲突；5) 独特亮点。',
+  key_rules: '根据已确定的构思与世界背景，生成核心设定规则。\n【输出格式】编号列表，每条规则独占一行并以"① ② ③..."开头，规则之间用空行分隔。包括：世界必须遵循的铁律、人物能力边界、代价/反噬机制、禁忌事项。',
+  worldbuilding: '根据已确定的构思与核心规则，生成详细的世界观设定。\n【输出格式】分小节（用二级标题"## 力量体系/## 社会结构/## 地理概况/## 历史脉络"），每小节下用编号列表。不要写成段落散文。',
+  character_profiles: '根据已确定的世界观与构思，生成主要人物档案。\n【输出格式】每个角色一个"## 角色：<姓名>"二级标题，下方依次为：身份/性格（3-5个关键词）/背景故事（100-200字）/核心动机/与其他角色关系（用"→ 角色名：关系"格式）。主角 + 3-5个配角。',
+  plot_design: '根据已确定的人物与世界，生成五幕式总纲。\n【输出格式】每幕一个"## 第N幕：<幕名>"二级标题，下方为：幕核心目标/主要冲突/卷入角色/关键转折点/幕尾悬念/对应分卷范围（"第X-Y卷"）。共5幕，对应全书所有分卷。',
+  timeline: '根据已确定的大纲，生成各分卷详细剧情。\n【分卷铁律】**每卷固定 50 章**，全书卷数 = 总章数÷50（向上取整），卷序号从1开始连续。卷名格式"第N卷 副标题"。\n【输出格式】严格 JSON 数组，不要任何解释文字。结构：[{volume_index, volume, main_plot, core_conflict, ending_hook, nodes:[{title, chapters, type, summary, cool_type}]}]. 每卷 5-8 个 nodes 情节节点；chapters 字段格式"起始章-结束章"，全书 chapter 编号连续不重叠。',
+  foreshadowing: '根据已确定的人物、剧情与世界，埋设伏笔线索。\n【输出格式】编号列表，每条格式"## 伏笔N：<伏笔标题>\\n- 埋设内容：xxx\\n- 埋设时机：第X卷Y章附近\\n- 预期回收：第X卷Y章附近\\n- 回收方式：xxx\\n- 对剧情的影响：xxx"。设计 3-5 条。',
+  locations: '根据已确定的世界观，设计地点体系。\n【输出格式】严格 JSON 数组，三级结构：[一级大区域 {name, description, secondaries:[二级城市/门派 {name, description, scenes:[三级具体场景 {name, description, key_events}]}]}]. 设计 2-3 个一级大区域。',
+  inventory: '根据已确定的人物与世界，生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[物品 {name, type, source, effect, owner, first_appearance}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。',
+};
+
+// 维度协同顺序：上游先做，下游基于上游产出
+// 选定维度会按这个顺序串行执行；下游维度的 prompt 注入上游已生成内容作为上下文
+const DIM_COLLAB_ORDER = [
+  'concept', 'key_rules', 'worldbuilding', 'character_profiles',
+  'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory',
+];
+
+// 维度 field → 协同标签（用于上游上下文展示）
+const DIM_COLLAB_LABELS: Record<string, string> = {
+  concept: '构思',
+  key_rules: '核心设定',
+  worldbuilding: '世界观',
+  character_profiles: '人物',
+  plot_design: '总纲',
+  timeline: '分卷剧情',
+  foreshadowing: '伏笔',
+  locations: '地点',
+  inventory: '物资',
 };
 
 // 维度 field → 技能包 prompt_key 映射
@@ -111,7 +132,14 @@ export default function AiCreateModal({
   }, []);
 
   // 组装单维度的 messages
-  const buildMessages = useCallback((dim: string, userInstruction: string, modificationNote: string, prevOutput?: string) => {
+  // upstream：本轮已生成的上游维度内容（按 DIM_COLLAB_ORDER 顺序回流），用于保持各维度前后一致
+  const buildMessages = useCallback((
+    dim: string,
+    userInstruction: string,
+    modificationNote: string,
+    prevOutput: string | undefined,
+    upstream: Record<string, string>,
+  ) => {
     const prompt = FIELD_AI_PROMPTS[dim] || `请为「${DIM_LABEL[dim] || dim}」维度生成内容。`;
     const skillKeys = DIMENSION_SKILL_KEYS[dim] || [];
     const skillPrompt = extractSkillPrompt(selectedPacks, skillKeys);
@@ -119,9 +147,24 @@ export default function AiCreateModal({
     const concept = bible?.concept || book?.synopsis || '暂无构思';
     const existing = (bible as any)?.[dim] || '';
 
-    const system = `你是专业网文创作助手。用户正在创作一部${book?.book_type || '小说'}，题材为${book?.genre || '通用'}。请根据用户要求生成「${DIM_LABEL[dim] || dim}」维度内容。${bible?.worldbuilding ? `\n已有世界观：${bible.worldbuilding.slice(0, 500)}` : ''}${skillNote}`;
+    // 拼接上游已生成维度（按协同顺序，每维度最多 800 字，避免 prompt 过长）
+    const upstreamParts: string[] = [];
+    for (const up of DIM_COLLAB_ORDER) {
+      if (up === dim) break; // 跳过当前维度
+      const v = upstream[up];
+      if (v && v.trim()) {
+        upstreamParts.push(`【${DIM_COLLAB_LABELS[up] || up}（本轮已确认的上游产物，请保持一致）】\n${v.slice(0, 800)}`);
+      }
+    }
+    const upstreamCtx = upstreamParts.length > 0
+      ? '\n\n【上游已确认维度产物（必须与本维度保持一致，不可矛盾；缺失维度视为未规划）】\n' + upstreamParts.join('\n\n')
+      : '\n\n【上游维度】暂无已确认的上游产物，本维度为起点。';
 
-    let user = `${prompt}\n\n【构思】${concept}\n\n【已有${DIM_LABEL[dim] || dim}内容】${(existing || '').slice(0, 1000) || '无'}\n\n【用户要求】${userInstruction || '请自由发挥'}`;
+    const system = `你是专业网文创作助手，正在参与多维度协同创作。用户正在创作一部${book?.book_type || '小说'}，题材为${book?.genre || '通用'}。
+【你的当前任务】生成「${DIM_LABEL[dim] || dim}」维度内容。
+【核心约束】必须与上游已确认维度保持一致；不可与上游矛盾；缺失的上游维度可在产物中预留对接点但不要凭空生成。${upstreamCtx}${skillNote}`;
+
+    let user = `${prompt}\n\n【用户原始构思】${concept}\n\n【已有${DIM_LABEL[dim] || dim}内容（仅参考，请勿复制）】${(existing || '').slice(0, 600) || '无'}\n\n【用户要求】${userInstruction || '请基于上游产物自由发挥'}`;
     if (modificationNote) {
       user += `\n\n【上一轮生成结果】\n${(prevOutput || '').slice(0, 2000)}\n\n【用户修改意见】${modificationNote}\n请根据修改意见调整优化。`;
     }
@@ -132,6 +175,8 @@ export default function AiCreateModal({
   }, [bible, book, selectedPacks]);
 
   // 流式生成（支持多维度串行）
+  // 【P1修复】按 DIM_COLLAB_ORDER 协同顺序串行执行；维护 generatedSoFar，每个下游维度
+  //   都能看到所有上游已生成的内容，从根本上解决"各维度前后不搭、剧情混乱"
   const streamGenerate = useCallback(async (dims: string[], userInstruction: string, modificationNote: string) => {
     if (dims.length === 0) {
       setError('请至少选择一个维度');
@@ -146,12 +191,18 @@ export default function AiCreateModal({
     setOutputs({});
     setEditedOutputs({});
 
-    for (const dim of dims) {
+    // 按协同顺序排序用户选择的维度（确保上游先做）
+    const orderedDims = DIM_COLLAB_ORDER.filter(d => dims.includes(d));
+
+    // 本轮已生成的维度内容（实时回流给下游）
+    const generatedSoFar: Record<string, string> = {};
+
+    for (const dim of orderedDims) {
       if (abortRef.current?.signal.aborted) break;
       setCurrentDim(dim);
       newOutputs[dim] = '';
       const prev = modificationNote ? (outputs[dim] || '') : undefined;
-      const messages = buildMessages(dim, userInstruction, modificationNote, prev);
+      const messages = buildMessages(dim, userInstruction, modificationNote, prev, generatedSoFar);
       try {
         const response = await api.aiChatStream(messages, abortRef.current?.signal);
         if (abortRef.current?.signal.aborted) break;
@@ -186,6 +237,8 @@ export default function AiCreateModal({
             }
           }
         }
+        // 关键：本维度生成完毕，立即回流到 generatedSoFar，供下游维度使用
+        generatedSoFar[dim] = newOutputs[dim] || '';
       } catch (e: any) {
         if (stoppedRef.current || abortRef.current?.signal.aborted) break;
         setError(`「${DIM_LABEL[dim] || dim}」生成失败：${e.message || '网络错误'}`);
