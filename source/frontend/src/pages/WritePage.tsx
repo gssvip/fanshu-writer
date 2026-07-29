@@ -652,6 +652,28 @@ export default function WritePage() {
     if (!bookId) return;
     // 自动识别当前写到哪一章：按 order_index 排序，找最后一个有效正文（≥100字）的章节作为进度锚点
     // 用字数阈值避免空标题章/极短占位章被误判为"已写"
+    const progress = computeChapterProgress();
+    if (mode === 'polish' && progress.anchorChapter && (progress.anchorChapter.content || '').trim().length < 100) {
+      alert('当前章节没有内容可润色');
+      return;
+    }
+    applyChapterProgress(progress, mode);
+    // 不进入编辑态，AI创作面板独立显示
+    setChapterEditing(false);
+    setAiCreateMode(mode);
+    setAiCreating(false);
+    setAiStreamError('');
+    // 不清空 aiGeneratedContent：保留上次输出正文，关掉再打开仍在（问题2）
+  }
+
+  // 计算章节进度（识别当前写到哪一章，待写章是哪个）
+  // 抽离为独立函数，供 startAiCreate 与手动刷新共用
+  function computeChapterProgress(): {
+    anchorChapter: Chapter | null;
+    saveTarget: Chapter | null;
+    targetNum: number;
+    realChapters: Chapter[];
+  } {
     const EFFECTIVE_WORDS = 100;
     const realChapters = chapters
       .filter(c => !c.is_volume)
@@ -673,10 +695,6 @@ export default function WritePage() {
       // 无锚点：第一个未写满的章节即为待写章
       saveTarget = realChapters.find(c => (c.content || '').trim().length < EFFECTIVE_WORDS) || null;
     }
-    if (mode === 'polish' && anchorChapter && (anchorChapter.content || '').trim().length < EFFECTIVE_WORDS) {
-      alert('当前章节没有内容可润色');
-      return;
-    }
     // 计算待写章号（全书连续编号，供提示词使用）
     let targetNum: number;
     if (saveTarget) {
@@ -684,7 +702,13 @@ export default function WritePage() {
     } else {
       targetNum = realChapters.length + 1;
     }
-    // 设置保存目标与编辑态
+    return { anchorChapter, saveTarget, targetNum, realChapters };
+  }
+
+  // 应用章节进度到状态（设置保存目标、编辑态、提示词）
+  function applyChapterProgress(progress: ReturnType<typeof computeChapterProgress>, mode?: 'write' | 'continue' | 'polish') {
+    const { anchorChapter, saveTarget, targetNum, realChapters } = progress;
+    const m = mode || aiCreateMode || 'write';
     if (saveTarget) {
       setAiTargetChapterId(saveTarget.id);
       setActiveChapter(saveTarget);
@@ -699,40 +723,70 @@ export default function WritePage() {
         ? anchorChapter.order_index + 1
         : (realChapters[realChapters.length - 1]?.order_index || 0) + 1;
       setActiveChapter({
-        id: '__ai_new__', book_id: bookId, title: `第${targetNum}章`,
+        id: '__ai_new__', book_id: bookId || '', title: `第${targetNum}章`,
         content: '', order_index: baseOrder, word_count: 0,
         status: 'draft', is_volume: false, parent_id: '',
         created_at: '', updated_at: '', notes: '',
       });
     }
-    // 不进入编辑态，AI创作面板独立显示
-    setChapterEditing(false);
-    setAiCreateMode(mode);
-    setAiCreating(false);
-    setAiStreamError('');
-    // 不清空 aiGeneratedContent：保留上次输出正文，关掉再打开仍在（问题2）
     // 预填提问：准确定位到待写章号
-    if (mode === 'write') {
+    if (m === 'write' || m === 'continue') {
       setAiUserPrompt(`请创作第${targetNum}章正文，要求前后文剧情连贯、剧情符合各维度设定、语句自然无ai味儿，字数2400±100字。`);
-    } else if (mode === 'continue') {
-      setAiUserPrompt(`请创作第${targetNum}章正文，要求前后文剧情连贯、剧情符合各维度设定、语句自然无ai味儿，字数2400±100字。`);
-    } else {
-      setAiUserPrompt('请润色优化以下内容，提升文采和节奏感，保持原意不变，字数2400±100字。');
     }
   }
 
+  // 手动刷新章节定位（顶部刷新按钮）：重新识别进度并同步提示词
+  function refreshChapterAnchor() {
+    if (!bookId) return;
+    const progress = computeChapterProgress();
+    applyChapterProgress(progress);
+    setAiGeneratedContent('');
+    setAgentMeta(null);
+    setAiStreamError('');
+  }
+
+  // 重新生成：取最后一条用户提问，重新执行（覆盖当前结果）
+  function regenerateAiContent() {
+    if (aiCreating) return;
+    // 找最后一条用户消息
+    const lastUserMsg = [...aiChatHistory].reverse().find(m => m.role === 'user');
+    if (!lastUserMsg || !lastUserMsg.content.trim()) {
+      alert('没有可重新生成的提问记录');
+      return;
+    }
+    // 清空当前结果与上一条助手正文（重新生成会覆盖，避免历史里重复正文）
+    setAiGeneratedContent('');
+    setAgentMeta(null);
+    setAiStreamError('');
+    setAiChatHistory(prev => {
+      const arr = [...prev];
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (arr[i].role === 'assistant' && arr[i].type === 'content') {
+          arr.splice(i, 1);
+          break;
+        }
+      }
+      return arr;
+    });
+    executeAiCreate(lastUserMsg.content);
+  }
+
   // 执行AI创作（用户提问后触发）
-  async function executeAiCreate() {
+  // overridePrompt：重新生成时直接传入上一次提问，跳过清空输入框等操作
+  async function executeAiCreate(overridePrompt?: string) {
     if (!bookId || !activeChapter || !aiCreateMode) return;
-    if (!aiUserPrompt.trim()) {
+    const promptText = (overridePrompt ?? aiUserPrompt).trim();
+    if (!promptText) {
       alert('请输入你的创作要求');
       return;
     }
+    // 捕获上一版生成内容（修改意见场景注入上下文；重新生成场景已由调用方清空，此处为空）
+    const prevGenerated = aiGeneratedContent;
     // 将用户提问加入聊天历史
-    const userMsg = { role: 'user' as const, content: aiUserPrompt, chapterTitle: chapterEditTitle };
+    const userMsg = { role: 'user' as const, content: promptText, chapterTitle: chapterEditTitle };
     setAiChatHistory(prev => [...prev, userMsg]);
-    const currentPrompt = aiUserPrompt;
-    setAiUserPrompt(''); // 清空输入框
+    const currentPrompt = promptText;
+    if (!overridePrompt) setAiUserPrompt(''); // 清空输入框（重新生成场景由调用方处理）
     setAiCreating(true);
     setAiStreamError('');
     setAiGeneratedContent('');
@@ -912,7 +966,7 @@ ${memorySection}
 当前章节：${chapterEditTitle}
 已有内容：${chapterEditContent.slice(-400) || '（空白）'}
 
-用户创作要求：${currentPrompt}`;
+用户创作要求：${currentPrompt}${prevGenerated ? `\n\n【上一版生成内容（请基于此修改调整，不要推翻重写）】\n${prevGenerated}` : ''}`;
       } else if (aiCreateMode === 'continue') {
         systemContent = `你是专业网文作家，擅长${book?.genre || '通用'}题材。请根据用户的续写要求和已有内容继续创作，保持风格一致，自然衔接。要求：对话自然，避免说教，节奏紧凑。【字数铁律】续写后本章总字数严格控制在2400±100字（2300-2500字），不得超出此范围，请按已有字数酌情增补。${suspenseGuide}${skillNote}`;
         userContent = `作品：${book?.title}
@@ -929,7 +983,7 @@ ${memorySection}
 当前章节：${chapterEditTitle}
 已有内容：${chapterEditContent.slice(-800) || '（空白，请开篇）'}
 
-用户续写要求：${currentPrompt}`;
+用户续写要求：${currentPrompt}${prevGenerated ? `\n\n【上一版生成内容（请基于此修改调整，不要推翻重写）】\n${prevGenerated}` : ''}`;
       } else {
         systemContent = `你是专业网文编辑。请根据用户的润色要求对内容进行优化，保持原意不变，提升文采和节奏感，增强场景感与信息差悬念。直接输出润色后的全文。${skillNote}`;
         userContent = `章节：${chapterEditTitle}
@@ -1357,6 +1411,8 @@ ${chapterEditContent}`;
             aiChatHistory={aiChatHistory}
             onClearAiChatHistory={clearAiChatHistory}
             onToggleChatMsgCollapse={toggleChatMsgCollapse}
+            onRefreshChapterAnchor={refreshChapterAnchor}
+            onRegenerateAiContent={regenerateAiContent}
             aiTargetChapterId={aiTargetChapterId}
           />
         ) : isDynamicMemoryTab ? (
@@ -1801,6 +1857,8 @@ function ChapterPanel(props: {
   aiChatHistory: Array<{ role: 'user' | 'assistant'; content: string; chapterTitle?: string; type?: 'content' | 'status'; collapsed?: boolean }>;
   onClearAiChatHistory: () => void;
   onToggleChatMsgCollapse: (index: number) => void;
+  onRefreshChapterAnchor: () => void;
+  onRegenerateAiContent: () => void;
   aiTargetChapterId: string | null;
 }) {
   const { chapters, activeChapter, chapterEditing, chapterEditTitle, chapterEditContent, chapterSaving,
@@ -1810,7 +1868,7 @@ function ChapterPanel(props: {
     onEditTitle, onEditContent, onBackToList, onStartAiCreate, onExecuteAiCreate, onConfirmAiContent, onCancelAiCreate, onStopAiCreate, onEditAiPrompt,
     onRenameVolume, onDeleteVolume, bookId,
     useAgentPipeline: useAgent, onToggleAgentPipeline, agentMeta,
-    aiChatHistory, onClearAiChatHistory, onToggleChatMsgCollapse, aiTargetChapterId,
+    aiChatHistory, onClearAiChatHistory, onToggleChatMsgCollapse, onRefreshChapterAnchor, onRegenerateAiContent, aiTargetChapterId,
   } = props;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
@@ -1958,9 +2016,15 @@ function ChapterPanel(props: {
           <div className="ai-create-header-left">
             <button className="btn-ghost-sm" onClick={onCancelAiCreate} disabled={aiCreating}>← 返回</button>
             <span className="ai-create-title">✨ 章节AI创作</span>
-            {aiTargetChapterId && (
-              <span className="ai-chat-target" title="AI当前锚定的章节（自动识别进度）">📍 {chapterEditTitle}</span>
-            )}
+            <span className="ai-chat-target" title="AI当前锚定的章节（点击刷新重新识别进度）">
+              📍 {chapterEditTitle}
+              <button
+                className="ai-anchor-refresh"
+                onClick={onRefreshChapterAnchor}
+                disabled={aiCreating}
+                title="重新识别当前章节数，刷新定位到待写章"
+              >🔄</button>
+            </span>
             {aiCreating && <span className="ai-create-status">生成中...</span>}
           </div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -1970,9 +2034,14 @@ function ChapterPanel(props: {
               </button>
             )}
             {hasResult && !aiCreating && (
-              <button className="btn-primary-sm" onClick={onConfirmAiContent} title="将本次生成内容保存到目标章节">
-                ✓ 保存到章节
-              </button>
+              <>
+                <button className="btn-secondary-sm" onClick={onRegenerateAiContent} title="基于上一次要求重新生成（覆盖当前结果）">
+                  🔄 重新生成
+                </button>
+                <button className="btn-primary-sm" onClick={onConfirmAiContent} title="将本次生成内容保存到目标章节">
+                  ✓ 保存到章节
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -1999,12 +2068,14 @@ function ChapterPanel(props: {
               <div className="ai-chat-msg-avatar">{msg.role === 'user' ? '👤' : '🤖'}</div>
               <div className="ai-chat-msg-body">
                 {msg.chapterTitle && <div className="ai-chat-msg-chapter">📍 {msg.chapterTitle}</div>}
-                <div className={`ai-chat-msg-content${collapsed ? ' ai-chat-msg-collapsed' : ''}`}>
-                  {(collapsed ? paras.slice(0, 2) : paras).map((para, pi) => (
-                    <p key={pi}>{para.trim()}</p>
-                  ))}
-                  {collapsed && <p className="ai-chat-msg-ellipsis">……</p>}
-                </div>
+                {/* 折叠时隐藏正文，只保留章名+展开按钮；展开时显示全文 */}
+                {!collapsed && (
+                  <div className="ai-chat-msg-content">
+                    {paras.map((para, pi) => (
+                      <p key={pi}>{para.trim()}</p>
+                    ))}
+                  </div>
+                )}
                 {showToggle && (
                   <button
                     className="ai-chat-msg-toggle"
@@ -2130,10 +2201,12 @@ function ChapterPanel(props: {
               value={aiUserPrompt}
               onChange={e => onEditAiPrompt(e.target.value)}
               onKeyDown={handlePromptKeyDown}
-              placeholder={aiTargetChapterId
-                ? `例如：请为「${chapterEditTitle}」继续创作下一章正文，剧情连贯、章末留悬念，约2400字...`
-                : '例如：请开篇创作第一章，主角登场，埋下伏笔，约2400字...'}
-              rows={3}
+              placeholder={hasResult
+                ? '可输入修改意见（如：节奏太快请放慢、开头改紧张些），AI将基于本次结果调整；或直接点"重新生成"'
+                : (aiTargetChapterId
+                  ? `例如：请为「${chapterEditTitle}」继续创作下一章正文，剧情连贯、章末留悬念，约2400字...`
+                  : '例如：请开篇创作第一章，主角登场，埋下伏笔，约2400字...')}
+              rows={5}
               disabled={aiCreating}
             />
             <div className="ai-prompt-bottom-row">
