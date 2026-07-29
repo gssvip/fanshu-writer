@@ -250,6 +250,14 @@ export default function WritePage() {
     }
   }, [bible]);
 
+  // 从首页 AI总创作 入口跳转过来时，URL 带 ai=global，自动打开 AI总创作 Modal
+  useEffect(() => {
+    if (bookId && searchParams.get('ai') === 'global' && bible) {
+      setAiCreateModalState({ mode: 'global' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId, bible]);
+
   const currentTab = ALL_TABS.find(t => t.key === activeTab) || ALL_TABS[0];
   const currentContent = bible ? (bible as any)[currentTab.field] || '' : '';
 
@@ -1494,7 +1502,7 @@ ${chapterEditContent}`;
             selectedSkillPackIds={selectedSkillPackIds}
             onToggleSkillPack={toggleSkillPack}
             selectedSkillPacks={selectedSkillPacks}
-            onOpenAiCreate={() => setAiCreateModalState({ mode: 'single', dimension: 'concept' })}
+            onOpenAiCreate={() => setAiCreateModalState({ mode: 'global' })}
           />
         ) : isMapTab ? (
           <LocationsPanel
@@ -1775,7 +1783,7 @@ function ConceptPanel(props: {
   selectedSkillPacks: SkillPack[];
   onOpenAiCreate: () => void;
 }) {
-  const { concept, setConcept, bible, brainstorming, brainstormResult, brainstormError, adoptedSuggestions, onBrainstorm, onAdopt, bookId, onBibleUpdate,
+  const { concept, setConcept, bible, brainstorming, brainstormResult, brainstormError, adoptedSuggestions, onAdopt, bookId, onBibleUpdate,
     hasChapters, conceptAiMode, conceptAiPrompt, conceptAiAssisting, conceptAiError,
     onExecuteConceptAi, onCancelConceptAi, onEditConceptAiPrompt,
     onAnalyzeDimension, dimAnalyzing,
@@ -1884,11 +1892,14 @@ function ConceptPanel(props: {
           onChange={e => setConcept(e.target.value)}
         />
         <div className="concept-actions">
-          <button className="btn-primary" onClick={onBrainstorm} disabled={!concept.trim() || brainstorming}>
-            {brainstorming ? '🤖 AI构思中...' : '✨ AI 头脑风暴'}
-          </button>
-          <button className="btn-ghost-sm" onClick={onOpenAiCreate} disabled={brainstorming} title="全屏 AI 创作：输入要求，流式生成，可提修改意见，确定后自动填入">
-            🤖 AI协同创作
+          <button
+            className="btn-primary"
+            onClick={onOpenAiCreate}
+            disabled={brainstorming}
+            title="AI 总创作：全维度协同生成，可对构思/设定/大纲/人物等批量创作"
+            style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)' }}
+          >
+            ✨ AI总创作
           </button>
           {concept !== (bible?.concept || '') && (
             <button className="btn-ghost-sm" onClick={async () => {
@@ -2706,7 +2717,7 @@ function CharacterPanel(props: {
   selectedSkillPacks: SkillPack[];
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks } = props;
   const [characters, setCharacters] = useState<CharacterData[]>([]);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [addingNew, setAddingNew] = useState(false);
@@ -3209,9 +3220,6 @@ function CharacterPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
         <div className="bible-edit-actions" style={{position:'relative',flexShrink:0}}>
-          <button className="btn-ghost-sm" onClick={onOpenAiCreate}>
-            ✨ AI创作
-          </button>
           {(
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
@@ -3481,7 +3489,7 @@ function PlotPanel(props: {
   onRefreshChapters: () => void;
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept, onRefreshChapters, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept, onRefreshChapters } = props;
   const [volumes, setVolumes] = useState<any[]>([]);
   const [editingVol, setEditingVol] = useState<string | null>(null);
   const [editForm, setEditForm] = useState('');
@@ -4125,13 +4133,6 @@ function PlotPanel(props: {
               📥 导入剧情大纲
             </button>
             <button
-              className="btn-ghost-sm"
-              onClick={onOpenAiCreate}
-              title="AI 协同创作各卷剧情"
-            >
-              ✨ AI创作
-            </button>
-            <button
               className="btn-primary-sm"
               onClick={addVolumeOutline}
               title="手动添加一卷空大纲"
@@ -4411,7 +4412,7 @@ function InventoryPanel(props: {
   selectedSkillPacks: SkillPack[];
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks } = props;
   const [inventory, setInventory] = useState<any[]>([]);
   const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
   const [analyzingVol, setAnalyzingVol] = useState('');
@@ -4646,9 +4647,6 @@ function InventoryPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
         <div className="bible-edit-actions" style={{position:'relative',flexShrink:0}}>
-          <button className="btn-ghost-sm" onClick={onOpenAiCreate} title="AI 协同创作物资库">
-            ✨ AI创作
-          </button>
           {(
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
@@ -4676,9 +4674,8 @@ function InventoryPanel(props: {
         <div className="bible-empty">
           <span className="bible-empty-icon">🎒</span>
           <p>暂无物资信息</p>
-          <p className="text-muted">先在剧情维度创建分卷，或用 AI 创作生成物资库</p>
+          <p className="text-muted">先在剧情维度创建分卷，或用顶部 AI总创作 生成物资库</p>
           <div className="bible-empty-actions">
-            <button className="btn-primary-sm" onClick={onOpenAiCreate}>✨ AI创作</button>
           </div>
         </div>
       ) : (
@@ -4896,9 +4893,6 @@ function BibleEditPanel(props: {
         <div className="bible-edit-actions" style={{flexShrink:0}}>
           {!editing ? (
             <>
-              <button className="btn-ghost-sm" onClick={() => onOpenAiCreate(tab.field)} disabled={aiAssisting}>
-                {aiAssisting ? '🤖 生成中...' : '✨ AI创作'}
-              </button>
               <button className="btn-ghost-sm" onClick={onAnalyzeDimension} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别此维度内容' : '需要先创建章节才能AI识别'}>
                 {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
@@ -4991,7 +4985,7 @@ function OutlineCombinedPanel(props: {
   showConfirm: (message: string, onConfirm: () => void) => void;
   onOpenAiCreate: (field: string) => void;
 }) {
-  const { bookId, bible, onBibleUpdate, concept, hasChapters, dimAnalyzing, onAnalyzeDimension, showConfirm, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, concept, hasChapters, dimAnalyzing, onAnalyzeDimension, showConfirm } = props;
   const [subTab, setSubTab] = useState<'outline' | 'worldview'>('outline');
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -5197,9 +5191,6 @@ function OutlineCombinedPanel(props: {
         <div className="bible-edit-actions" style={{flexShrink:0}}>
           {!editing ? (
             <>
-              <button className="btn-ghost-sm" onClick={() => onOpenAiCreate(subTab === 'worldview' ? 'worldbuilding' : 'plot_design')} disabled={aiAssisting}>
-                {aiAssisting ? '🤖 生成中...' : '✨ AI创作'}
-              </button>
               <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(subTab === 'outline' ? 'outline' : 'worldview')} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别' : '需要先创建章节才能AI识别'}>
                 {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
@@ -6069,7 +6060,7 @@ function ForeshadowingPanel(props: {
   selectedSkillPacks: SkillPack[];
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks } = props;
   const [foreshadowing, setForeshadowing] = useState('');
   const [foreVolumes, setForeVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
@@ -6345,9 +6336,6 @@ function ForeshadowingPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div style={{display:'flex',alignItems:'center',gap:8,position:'relative'}}>
-          <button className="btn-ghost-sm" onClick={onOpenAiCreate} style={{marginLeft:0}}>
-            ✨ AI创作
-          </button>
           {(
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
@@ -6605,7 +6593,7 @@ function LocationsPanel(props: {
   onMapUpdate: (val: string) => Promise<void>;
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, selectedSkillPackIds, onMapUpdate, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, selectedSkillPackIds, onMapUpdate } = props;
   const [locations, setLocations] = useState('');
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -6750,7 +6738,6 @@ function LocationsPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
         <div className="bible-edit-actions" style={{position:'relative',flexShrink:0}}>
-          <button className="btn-ghost-sm" onClick={onOpenAiCreate} title="AI 全屏创作地点体系">✨ AI创作</button>
           {(
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>

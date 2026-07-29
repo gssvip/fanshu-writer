@@ -14,6 +14,7 @@ export default function Home() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [nf, setNf] = useState({ title:'',author:'',genre:'other',book_type:'short_story',synopsis:'',template_id:'',target_words:0 });
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showAiPicker, setShowAiPicker] = useState(false);
 
   useEffect(() => { api.listTemplates().then(setTemplates).catch(()=>{}); }, []);
 
@@ -41,6 +42,15 @@ export default function Home() {
           <p className="home-subtitle">AI小说创作平台</p>
         </div>
         <div className="home-actions">
+          <button
+            className="btn-primary"
+            onClick={() => setShowAiPicker(true)}
+            disabled={books.length === 0}
+            title={books.length === 0 ? '请先创建作品' : '选择作品进入 AI 总创作（全维度协同生成）'}
+            style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)' }}
+          >
+            ✨ AI总创作
+          </button>
           <button className="btn-ghost mob-hide" onClick={() => setTheme(theme==='light'?'dark':'light')}>
             {theme==='light'?'🌙':'☀️'}
           </button>
@@ -102,6 +112,47 @@ export default function Home() {
             <div className="form-group"><label>简介</label><textarea rows={2} value={nf.synopsis} onChange={e=>setNf({...nf,synopsis:e.target.value})} placeholder="简单描述..."/></div>
             <div className="form-group"><label>模板</label><select value={nf.template_id} onChange={e=>setNf({...nf,template_id:e.target.value})}><option value="">不用模板</option>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
             <div className="form-actions"><button className="btn-secondary" onClick={()=>setShowNew(false)}>取消</button><button className="btn-primary" onClick={create}>创建</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* AI总创作 - 作品选择 */}
+      {showAiPicker && (
+        <div className="modal-overlay" onClick={()=>setShowAiPicker(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:480}}>
+            <h2 style={{marginBottom:4}}>✨ AI总创作</h2>
+            <p className="text-muted" style={{fontSize:13,marginBottom:16}}>选择要创作的作品，进入后可对构思/设定/大纲/人物等维度协同生成</p>
+            {books.length === 0 ? (
+              <div className="empty-state" style={{padding:24}}>
+                <p>还没有作品，请先新建</p>
+                <button className="btn-primary" style={{marginTop:12}} onClick={()=>{setShowAiPicker(false);setShowNew(true);}}>+ 新建作品</button>
+              </div>
+            ) : (
+              <div className="ai-picker-list" style={{display:'flex',flexDirection:'column',gap:8,maxHeight:360,overflowY:'auto'}}>
+                {books.map((b:any)=>(
+                  <button
+                    key={b.id}
+                    className="ai-picker-item"
+                    onClick={()=>{ setShowAiPicker(false); navigate(`/write?book=${b.id}&ai=global`); }}
+                    style={{
+                      display:'flex',alignItems:'center',gap:12,padding:'10px 12px',
+                      background:'var(--bg-secondary)',border:'1px solid var(--border-color)',
+                      borderRadius:8,cursor:'pointer',textAlign:'left',
+                    }}
+                  >
+                    <span style={{fontSize:24}}>{b.cover_path ? '📖' : '📚'}</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:14,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.title}</div>
+                      <div style={{fontSize:11,color:'var(--text-muted)'}}>{b.author&&b.author+' · '}{GENRES[b.genre]||b.genre} · {b.word_count.toLocaleString()}字 · {b.chapter_count}章</div>
+                    </div>
+                    <span style={{color:'var(--accent)'}}>→</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="form-actions" style={{marginTop:16}}>
+              <button className="btn-secondary" onClick={()=>setShowAiPicker(false)}>取消</button>
+            </div>
           </div>
         </div>
       )}
