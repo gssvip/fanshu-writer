@@ -93,7 +93,7 @@ textarea{resize:vertical;line-height:1.8}
 
 /* Layout */
 .app-layout{display:flex;height:100vh;overflow:hidden}
-.desktop-sidebar{width:210px;min-width:210px;background:var(--bg-secondary);border-right:1px solid var(--border-color);display:none;flex-direction:column;overflow-y:auto}
+.desktop-sidebar{width:210px;min-width:210px;background:var(--bg-secondary);display:none;flex-direction:column;overflow-y:auto}
 .main-content{flex:1;overflow-y:auto;padding-bottom:70px}
 
 .sidebar-brand{display:flex;align-items:center;justify-content:center;padding:18px 16px 18px;border-bottom:1px solid var(--border-color)}
@@ -762,6 +762,10 @@ textarea{resize:vertical;line-height:1.8}
   .page-header-right .btn-ghost-sm{padding:6px 8px;gap:0}
   /* 隐藏 book-meta 进一步腾出空间 */
   .page-header-left .book-meta{display:none}
+  /* 章节维度头部两排按钮：移动端紧凑化，确保每排不换行 */
+  .chapter-header-row1,.chapter-header-row2{justify-content:space-between !important;gap:4px !important}
+  .chapter-header-row1 .btn-ghost-sm,.chapter-header-row1 .btn-secondary-sm,.chapter-header-row1 .btn-primary-sm,
+  .chapter-header-row2 .btn-ghost-sm,.chapter-header-row2 .btn-primary-sm{min-height:32px;padding:5px 8px;font-size:11px;flex:1 1 0;min-width:0;white-space:nowrap;justify-content:center;display:flex;align-items:center}
   .tool-card,.book-card,.skill-card,.stage-card,.mine-nav-item{min-height:48px}
   .modal{width:92vw;max-width:none;padding:18px}
   .form-row{flex-direction:column}
@@ -964,7 +968,7 @@ textarea{resize:vertical;line-height:1.8}
 .chapter-volume-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chapter-volume-count{font-size:11px;color:var(--text-muted);font-weight:400;background:var(--bg-secondary);padding:2px 8px;border-radius:10px}
 .chapter-volume-add{font-size:16px;padding:2px 8px;line-height:1}
-.chapter-volume-children{padding:6px 0 6px 20px;display:flex;flex-direction:column;gap:6px;border-left:2px solid var(--border-color);margin-left:12px}
+.chapter-volume-children{padding:6px 0 6px 20px;display:flex;flex-direction:column;gap:6px;margin-left:12px}
 .chapter-volume-empty{font-size:12px;color:var(--text-muted);padding:8px 12px;font-style:italic}
 
 /* 自动分卷计算 */

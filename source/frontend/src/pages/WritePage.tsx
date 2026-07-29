@@ -493,12 +493,10 @@ export default function WritePage() {
   async function createNewChapter(parentId?: string) {
     if (!bookId) return;
     try {
-      // 计算在当前卷下的章节序号
-      const siblings = parentId
-        ? chapters.filter(c => c.parent_id === parentId && !c.is_volume)
-        : chapters.filter(c => !c.is_volume && !c.parent_id);
+      // 章节序号按全书连续编号（跨卷累加），避免新卷下重置为“第1章”
+      const globalCount = chapters.filter(c => !c.is_volume).length;
       const ch = await api.createChapter(bookId, {
-        title: `第${siblings.length + 1}章`,
+        title: `第${globalCount + 1}章`,
         content: '',
         order_index: chapters.length,
         is_volume: false,
