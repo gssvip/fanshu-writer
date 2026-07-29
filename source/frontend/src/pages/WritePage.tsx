@@ -2106,7 +2106,6 @@ function CharacterPanel(props: {
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [addingNew, setAddingNew] = useState(false);
   const [editForm, setEditForm] = useState<CharacterData>({ name: '', role: '', identity: '', personality: '', motivation: '', background: '', relationships: '', abilities: '', items: '' });
-  const [analyzing, setAnalyzing] = useState(false);
   const [analyzingName, setAnalyzingName] = useState('');
   const [aiMode, setAiMode] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -2114,6 +2113,10 @@ function CharacterPanel(props: {
   const [aiError, setAiError] = useState('');
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [collapsedChars, setCollapsedChars] = useState<Set<number>>(new Set());
+  // 全局人物批量管理
+  const [charBatchMode, setCharBatchMode] = useState(false);
+  const [charCheckedIds, setCharCheckedIds] = useState<Set<number>>(new Set());
+  const [globalCharCollapsed, setGlobalCharCollapsed] = useState(false);
   // 按卷人物识别
   const [charVolumes, setCharVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
@@ -2362,18 +2365,22 @@ function CharacterPanel(props: {
     });
   }
 
-  // AI识别全部角色
-  async function handleAnalyzeAll() {
-    showConfirm('将用 AI 分析已有章节内容，自动识别所有角色。是否继续？', async () => {
-      setAnalyzing(true);
-      try {
-        const result = await api.analyzeCharacter(bookId, '');
-        if (result.bible) onBibleUpdate(result.bible);
-        alert(`AI识别完成！已识别 ${result.characters.length} 个角色`);
-      } catch (e: any) {
-        alert('AI识别失败：' + (e.message || '请检查AI配置'));
-      }
-      setAnalyzing(false);
+  // 批量删除选中角色
+  async function deleteCheckedChars() {
+    if (charCheckedIds.size === 0) return;
+    showConfirm(`确定删除选中的 ${charCheckedIds.size} 个角色？`, async () => {
+      const newChars = characters.filter((_, i) => !charCheckedIds.has(i));
+      await saveCharacters(newChars);
+      setCharCheckedIds(new Set());
+      setCharBatchMode(false);
+    });
+  }
+
+  function toggleCharCheck(idx: number) {
+    setCharCheckedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
     });
   }
 
@@ -2644,51 +2651,71 @@ function CharacterPanel(props: {
         </div>
       )}
 
-      {/* 角色卡片列表 */}
+      {/* 全局人物档案 */}
       {characters.length === 0 ? (
         <div className="bible-empty">
           <span className="bible-empty-icon">👤</span>
           <p>暂无角色信息</p>
-          <p className="text-muted">点击「添加角色」手动添加，或用AI识别自动提取</p>
-          <div className="bible-empty-actions">
-            <button className="btn-primary-sm" onClick={startAddNew}>＋ 添加角色</button>
-            <button className="btn-ghost-sm" onClick={handleAnalyzeAll} disabled={analyzing || !hasChapters} title={hasChapters ? 'AI识别角色信息' : '需要先创建章节才能AI识别'}>
-              {analyzing ? '⏳ 识别中...' : '🔍 AI识别'}
-            </button>
-          </div>
+          <p className="text-muted">点击顶部「＋ 添加角色」或「✨ AI创作」生成人物档案</p>
         </div>
       ) : (
-        <div className="character-cards-grid">
-          {characters.map((char, idx) => (
-            <div key={idx} className="character-card">
-              <div className="character-card-header" onClick={() => toggleChar(idx)} style={{cursor:'pointer'}}>
-                <span className="map-toggle" style={{fontSize:10,marginRight:4}}>{collapsedChars.has(idx) ? '▶' : '▼'}</span>
-                <span className="character-card-name">{char.name}</span>
-                {char.role && <span className="character-card-role">{char.role}</span>}
-                {char.abilities && <span className="text-muted" style={{fontSize:10,marginLeft:4}}>{(char.abilities || '').slice(0, 12)}</span>}
+        <div className="plot-volume-list">
+          <div className="plot-volume-card">
+            <div className="plot-volume-header" onClick={() => setGlobalCharCollapsed(v => !v)} style={{cursor:'pointer'}}>
+              <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{globalCharCollapsed ? '▶' : '▼'}</span>
+              <h4>🌍 全局人物档案</h4>
+              <span className="text-muted" style={{fontSize:12}}>{characters.length}人</span>
+              <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+                {charBatchMode ? (
+                  <>
+                    <button className="btn-ghost-sm" onClick={() => { setCharCheckedIds(new Set()); setCharBatchMode(false); }}>✕ 取消</button>
+                    <button className="btn-ghost-sm" onClick={deleteCheckedChars} disabled={charCheckedIds.size === 0} style={{color:'#e74c3c'}} title="删除选中角色">🗑️ 删除选中({charCheckedIds.size})</button>
+                  </>
+                ) : (
+                  <button className="btn-ghost-sm" onClick={() => setCharBatchMode(true)} title="批量选择并删除角色">☑ 批量管理</button>
+                )}
               </div>
-              {!collapsedChars.has(idx) && (
-                <div className="character-card-body">
-                  {char.identity && <p><b>身份：</b>{char.identity}</p>}
-                  {char.personality && <p><b>性格：</b>{char.personality}</p>}
-                  {char.motivation && <p><b>动机：</b>{char.motivation}</p>}
-                  {char.background && <p><b>背景：</b>{char.background}</p>}
-                  {char.relationships && <p><b>关系：</b>{char.relationships}</p>}
-                  {char.abilities && <p><b>能力：</b>{char.abilities}</p>}
-                  {char.items && <p><b>物品：</b>{char.items}</p>}
-                </div>
-              )}
-              {!collapsedChars.has(idx) && (
-              <div className="character-card-actions">
-                <button className="btn-ghost-sm" onClick={() => handleAnalyzeOne(char.name)} disabled={analyzingName === char.name || !hasChapters} title={hasChapters ? 'AI识别此角色信息' : '需要先创建章节才能AI识别'}>
-                  {analyzingName === char.name ? '🤖 识别中...' : '🔍 识别'}
-                </button>
-                <button className="btn-ghost-sm" onClick={() => startEdit(idx)}>✏️ 编辑</button>
-                <button className="btn-ghost-sm" onClick={() => deleteChar(idx)} style={{color:'#e74c3c'}}>🗑️</button>
-              </div>
-              )}
             </div>
-          ))}
+            {!globalCharCollapsed && (
+              <div className="plot-volume-body">
+                <div className="character-cards-grid">
+                  {characters.map((char, idx) => (
+                    <div key={idx} className="character-card" style={charBatchMode && charCheckedIds.has(idx) ? {border:'2px solid var(--accent)'} : {}}>
+                      <div className="character-card-header" onClick={() => charBatchMode ? toggleCharCheck(idx) : toggleChar(idx)} style={{cursor:'pointer'}}>
+                        {charBatchMode && (
+                          <input type="checkbox" checked={charCheckedIds.has(idx)} onChange={() => toggleCharCheck(idx)} style={{marginRight:6}} onClick={e => e.stopPropagation()} />
+                        )}
+                        {!charBatchMode && <span className="map-toggle" style={{fontSize:10,marginRight:4}}>{collapsedChars.has(idx) ? '▶' : '▼'}</span>}
+                        <span className="character-card-name">{char.name}</span>
+                        {char.role && <span className="character-card-role">{char.role}</span>}
+                        {char.abilities && <span className="text-muted" style={{fontSize:10,marginLeft:4}}>{(char.abilities || '').slice(0, 12)}</span>}
+                      </div>
+                      {!charBatchMode && !collapsedChars.has(idx) && (
+                        <div className="character-card-body">
+                          {char.identity && <p><b>身份：</b>{char.identity}</p>}
+                          {char.personality && <p><b>性格：</b>{char.personality}</p>}
+                          {char.motivation && <p><b>动机：</b>{char.motivation}</p>}
+                          {char.background && <p><b>背景：</b>{char.background}</p>}
+                          {char.relationships && <p><b>关系：</b>{char.relationships}</p>}
+                          {char.abilities && <p><b>能力：</b>{char.abilities}</p>}
+                          {char.items && <p><b>物品：</b>{char.items}</p>}
+                        </div>
+                      )}
+                      {!charBatchMode && !collapsedChars.has(idx) && (
+                      <div className="character-card-actions">
+                        <button className="btn-ghost-sm" onClick={() => handleAnalyzeOne(char.name)} disabled={analyzingName === char.name || !hasChapters} title={hasChapters ? 'AI识别此角色信息' : '需要先创建章节才能AI识别'}>
+                          {analyzingName === char.name ? '🤖 识别中...' : '🔍 识别'}
+                        </button>
+                        <button className="btn-ghost-sm" onClick={() => startEdit(idx)}>✏️ 编辑</button>
+                        <button className="btn-ghost-sm" onClick={() => deleteChar(idx)} style={{color:'#e74c3c'}}>🗑️</button>
+                      </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
