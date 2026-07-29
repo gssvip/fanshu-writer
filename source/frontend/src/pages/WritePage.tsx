@@ -2481,7 +2481,7 @@ function ChapterPanel(props: {
           <button className="btn-secondary-sm" onClick={() => importChaptersRef.current?.click()} disabled={importingChapters || !bookId} title="从 txt/md/docx/zip 文件追加章节，不影响已有章节">
             {importingChapters ? '⏳ 导入中...' : '📥 导入章节'}
           </button>
-          <button className="btn-primary-sm" onClick={() => onCreateChapter()}>+ 新章节</button>
+          <button className="btn-secondary-sm" onClick={() => onCreateChapter()}>+ 新章节</button>
         </div>
         <div className="chapter-header-row2">
           <button
@@ -2489,7 +2489,7 @@ function ChapterPanel(props: {
             onClick={handleAiImportRecognize}
             disabled={aiImportRecognizing || !bookId || chapters.filter(c => !c.is_volume).length === 0}
             title="根据导入作品的文件名/章节标题+内容样本，AI自动识别填入空的创作维度（不覆盖已有内容）"
-            style={{background:'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)'}}
+            style={{background:'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)',color:'#fff',fontWeight:600}}
           >
             {aiImportRecognizing ? '⏳ 识别中...' : '🤖 AI识别填维度'}
           </button>
