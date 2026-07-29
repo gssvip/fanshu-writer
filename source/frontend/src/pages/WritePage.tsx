@@ -1851,8 +1851,8 @@ const VolumeGroup = memo(function VolumeGroup({
 }: VolumeGroupProps) {
   return (
     <div className="chapter-volume-group">
-      <div className="chapter-volume-header">
-        <span className="chapter-volume-arrow" onClick={() => onToggle(volId)}>
+      <div className="chapter-volume-header" onClick={() => !renaming && onToggle(volId)}>
+        <span className="chapter-volume-arrow">
           {expanded ? '▼' : '▶'}
         </span>
         {renaming ? (
