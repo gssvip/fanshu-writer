@@ -69,6 +69,17 @@ else:
     print(f'[DB] ⚠️ 本地开发模式使用 SQLite：{DATA_DIR}/fanshu.db（生产环境会拒绝启动）', flush=True)
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# 连接池配置：防止 Neon/PG 空闲断连导致 500
+# - pool_pre_ping: 每次取连接前 ping 一下，剔除死连接
+# - pool_recycle: 每 1 小时回收连接，避免服务端已断开的僵尸连接
+# - pool_size / max_overflow: 控制总连接数，适配免费层限制
+if DATABASE_URL:
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': 1800,  # 30分钟回收，小于 Neon/Render 空闲超时
+        'pool_size': 5,
+        'max_overflow': 5,
+    }
 
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 db = SQLAlchemy(app)
@@ -3167,16 +3178,23 @@ def get_book_bible(book_id):
 
 @app.route('/api/books/<book_id>/bible', methods=['PUT'])
 def update_book_bible(book_id):
-    bb = BookBible.query.filter_by(book_id=book_id).first()
-    if not bb:
-        bb = BookBible(book_id=book_id)
-        db.session.add(bb)
-    data = request.json
-    for field in ['worldbuilding', 'character_profiles', 'timeline', 'foreshadowing', 'style_guide', 'key_rules', 'locations', 'concept', 'plot_design', 'relation_graph', 'inventory', 'character_volumes', 'dynamic_volumes', 'foreshadowing_volumes', 'locations_volumes']:
-        if field in data:
-            setattr(bb, field, data[field])
-    db.session.commit()
-    return jsonify(bb.to_dict())
+    try:
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+        if not bb:
+            bb = BookBible(book_id=book_id)
+            db.session.add(bb)
+        data = request.json
+        for field in ['worldbuilding', 'character_profiles', 'timeline', 'foreshadowing', 'style_guide', 'key_rules', 'locations', 'concept', 'plot_design', 'relation_graph', 'inventory', 'character_volumes', 'dynamic_volumes', 'foreshadowing_volumes', 'locations_volumes']:
+            if field in data:
+                setattr(bb, field, data[field])
+        db.session.commit()
+        return jsonify(bb.to_dict())
+    except Exception as e:
+        db.session.rollback()
+        import traceback
+        err = traceback.format_exc()
+        print(f'[update_book_bible ERROR] {err}', flush=True)
+        return jsonify({'error': str(e), 'detail': err[-500:]}), 500
 
 @app.route('/api/books/<book_id>/bible/sync', methods=['POST'])
 def sync_book_bible(book_id):
