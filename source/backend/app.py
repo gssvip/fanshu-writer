@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from pathlib import Path
 
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory, stream_with_context
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -7159,7 +7159,7 @@ def ai_master_create_stream(book_id):
 
     # stream_with_context 保持请求/应用上下文，避免生成器在 yield 后恢复时
     # 触发 "Working outside of application context"（DB 落库需要上下文）
-    return app.response_class(app.stream_with_context(generate()), mimetype='text/event-stream')
+    return app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
 
 
 # ==== AI 共创 / 头脑风暴 ====
