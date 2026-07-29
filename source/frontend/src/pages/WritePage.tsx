@@ -1081,6 +1081,7 @@ ${chapterEditContent}`;
   }
 
   // 确认AI生成内容，保存到目标章节；保存后面板保持开启并自动推进到下一章
+  // 章节自动归卷：按 50 章/卷规则，新建章节时根据章号计算应归入的卷（无需手动新建章节/卷）
   async function confirmAiContent() {
     if (!aiCreateMode || !aiGeneratedContent.trim() || !bookId) return;
     let content = aiGeneratedContent;
@@ -1091,23 +1092,71 @@ ${chapterEditContent}`;
     }
     const savedTitle = chapterEditTitle;
     const savedWordCount = content.length;
+
+    // 计算本章节在全书（不含卷）的连续序号，用于归卷和章号
+    const realChaptersBefore = chapters
+      .filter(c => !c.is_volume)
+      .slice()
+      .sort((a, b) => a.order_index - b.order_index);
+    // 当前待保存章的序号（1-based）：已有目标章用其位置，否则为新增章
+    let chapterSeq: number;
+    if (aiTargetChapterId) {
+      chapterSeq = realChaptersBefore.findIndex(c => c.id === aiTargetChapterId) + 1;
+    } else {
+      chapterSeq = realChaptersBefore.length + 1;
+    }
+
+    // 按 50 章/卷归卷：章号 1-50 → 第1卷，51-100 → 第2卷...
+    const CHAPTERS_PER_VOLUME = 50;
+    const volumeIndex = Math.floor((chapterSeq - 1) / CHAPTERS_PER_VOLUME) + 1;
+    // 查找或创建对应卷
+    const volumes = chapters.filter(c => c.is_volume).sort((a, b) => a.order_index - b.order_index);
+    let targetVolume = volumes.find(v => {
+      const m = (v.title || '').match(/第(\d+)卷/);
+      return m && parseInt(m[1]) === volumeIndex;
+    });
+    let targetVolumeId = '';
+    if (!targetVolume) {
+      // 卷不存在则新建
+      try {
+        const volOrder = volumes.length > 0 ? (volumes[volumes.length - 1].order_index + 100) : 0;
+        targetVolume = await api.createChapter(bookId, {
+          title: `第${volumeIndex}卷`,
+          content: '',
+          order_index: volOrder,
+          is_volume: true,
+          parent_id: '',
+        });
+        setChapters(prev => [...prev, targetVolume!]);
+        targetVolumeId = targetVolume.id;
+      } catch (e: any) {
+        // 卷创建失败则归为未分卷
+        targetVolumeId = '';
+      }
+    } else {
+      targetVolumeId = targetVolume.id;
+    }
+
     // 保存到目标章节
     try {
       let savedChapter: Chapter | null = null;
       if (aiTargetChapterId) {
-        // 更新已有章节
-        await api.updateChapter(bookId, aiTargetChapterId, { title: chapterEditTitle, content });
-        setChapters(prev => prev.map(c => c.id === aiTargetChapterId ? { ...c, title: chapterEditTitle, content, word_count: content.length } : c));
+        // 更新已有章节（同步归卷）
+        await api.updateChapter(bookId, aiTargetChapterId, { title: chapterEditTitle, content, parent_id: targetVolumeId });
+        setChapters(prev => prev.map(c => c.id === aiTargetChapterId ? { ...c, title: chapterEditTitle, content, word_count: content.length, parent_id: targetVolumeId } : c));
         savedChapter = chapters.find(c => c.id === aiTargetChapterId) || null;
-        if (savedChapter) savedChapter = { ...savedChapter, title: chapterEditTitle, content, word_count: content.length };
+        if (savedChapter) savedChapter = { ...savedChapter, title: chapterEditTitle, content, word_count: content.length, parent_id: targetVolumeId };
       } else {
-        // 新建章节
+        // 新建章节（自动归入对应卷）
+        const realMaxOrder = realChaptersBefore.length > 0
+          ? Math.max(...realChaptersBefore.map(c => c.order_index))
+          : -1;
         const ch = await api.createChapter(bookId, {
           title: chapterEditTitle,
           content,
-          order_index: chapters.length,
+          order_index: realMaxOrder + 1,
           is_volume: false,
-          parent_id: '',
+          parent_id: targetVolumeId,
         });
         setChapters(prev => [...prev, ch]);
         savedChapter = ch;
