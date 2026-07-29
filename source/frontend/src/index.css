@@ -762,10 +762,12 @@ textarea{resize:vertical;line-height:1.8}
   .page-header-right .btn-ghost-sm{padding:6px 8px;gap:0}
   /* 隐藏 book-meta 进一步腾出空间 */
   .page-header-left .book-meta{display:none}
-  /* 章节维度头部两排按钮：移动端紧凑化，确保每排不换行 */
+  /* 章节维度头部两排按钮：移动端紧凑化，row1 四个等分、row2 两个等分，均不换行 */
   .chapter-header-row1,.chapter-header-row2{justify-content:space-between !important;flex-wrap:nowrap !important;gap:4px !important}
+  .chapter-header-row1 .btn-ghost-sm,.chapter-header-row1 .btn-secondary-sm,.chapter-header-row1 .btn-primary-sm{flex:1 1 0 !important}
+  .chapter-header-row2 .btn-ghost-sm,.chapter-header-row2 .btn-primary-sm{flex:1 1 0 !important}
   .chapter-header-row1 .btn-ghost-sm,.chapter-header-row1 .btn-secondary-sm,.chapter-header-row1 .btn-primary-sm,
-  .chapter-header-row2 .btn-ghost-sm,.chapter-header-row2 .btn-primary-sm{min-height:32px;padding:5px 8px;font-size:11px;flex:1 1 0;min-width:0;white-space:nowrap;justify-content:center;display:flex;align-items:center}
+  .chapter-header-row2 .btn-ghost-sm,.chapter-header-row2 .btn-primary-sm{min-height:32px;padding:5px 8px;font-size:11px;min-width:0;white-space:nowrap;justify-content:center;display:flex;align-items:center}
   .tool-card,.book-card,.skill-card,.stage-card,.mine-nav-item{min-height:48px}
   .modal{width:92vw;max-width:none;padding:18px}
   .form-row{flex-direction:column}
@@ -949,6 +951,8 @@ textarea{resize:vertical;line-height:1.8}
 .chapter-list-panel{padding:12px 16px}
 .chapter-list-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
 .chapter-list-header h3{font-size:16px;font-weight:700}
+.chapter-header-row1,.chapter-header-row2{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.chapter-header-row2{margin-top:6px}
 .chapter-count{font-size:12px;color:var(--text-muted);font-weight:400;margin-left:4px}
 .chapter-list{display:flex;flex-direction:column;gap:8px}
 .chapter-list-item{display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-sm);cursor:pointer;transition:all .15s}
@@ -1112,6 +1116,7 @@ textarea{resize:vertical;line-height:1.8}
 /* 垂直布局的提问区（textarea在上，按钮在下） */
 .ai-prompt-vertical{flex-direction:column;align-items:stretch;gap:6px}
 .ai-prompt-vertical .ai-prompt-input{min-height:110px;max-height:240px}
+.ai-prompt-tip{font-size:12px;color:var(--accent);background:var(--accent-light);padding:6px 10px;border-radius:6px;line-height:1.5;margin-bottom:2px}
 .ai-prompt-bottom-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .ai-prompt-bottom-row .ai-prompt-submit{height:36px;padding:8px 16px;font-size:13px}
 
@@ -1134,6 +1139,7 @@ textarea{resize:vertical;line-height:1.8}
 .ai-chat-msg-chapter{font-size:11px;color:var(--text-muted);padding:1px 6px;background:var(--bg-tertiary);border-radius:8px;align-self:flex-start}
 .ai-chat-msg-user .ai-chat-msg-chapter{align-self:flex-end}
 .ai-chat-msg-content{font-size:14px;line-height:1.8;padding:10px 12px;border-radius:10px;background:var(--bg-secondary);border:1px solid var(--border-color);word-break:break-word;white-space:pre-wrap}
+.ai-chat-msg-content.ai-chat-msg-expanded{max-height:50vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .ai-chat-msg-user .ai-chat-msg-content{background:linear-gradient(135deg,rgba(124,184,158,0.18) 0%,rgba(91,163,168,0.12) 100%);border-color:rgba(91,163,168,0.4);color:var(--text-primary)}
 .ai-chat-msg-content p{margin:0 0 6px 0}
 .ai-chat-msg-content p:last-child{margin-bottom:0}

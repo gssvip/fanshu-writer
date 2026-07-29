@@ -2101,9 +2101,9 @@ function ChapterPanel(props: {
               <div className="ai-chat-msg-avatar">{msg.role === 'user' ? '👤' : '🤖'}</div>
               <div className="ai-chat-msg-body">
                 {msg.chapterTitle && <div className="ai-chat-msg-chapter">📍 {msg.chapterTitle}</div>}
-                {/* 折叠时隐藏正文，只保留章名+展开按钮；展开时显示全文 */}
+                {/* 折叠时隐藏正文，只保留章名+展开按钮；展开时显示全文（长内容限高可滚动阅览） */}
                 {!collapsed && (
-                  <div className="ai-chat-msg-content">
+                  <div className={`ai-chat-msg-content${showToggle ? ' ai-chat-msg-expanded' : ''}`}>
                     {paras.map((para, pi) => (
                       <p key={pi}>{para.trim()}</p>
                     ))}
@@ -2229,13 +2229,18 @@ function ChapterPanel(props: {
 
           {/* 用户提问输入区 */}
           <div className="ai-prompt-section ai-prompt-vertical">
+            {hasResult && !aiCreating && (
+              <div className="ai-prompt-tip">
+                💡 已生成正文，可输入修改意见（如"节奏太快请放慢""开头改紧张些"）后点发送，AI将基于本次结果调整；或点上方"🔄 重新生成"重跑
+              </div>
+            )}
             <textarea
               className="input ai-prompt-input"
               value={aiUserPrompt}
               onChange={e => onEditAiPrompt(e.target.value)}
               onKeyDown={handlePromptKeyDown}
               placeholder={hasResult
-                ? '可输入修改意见（如：节奏太快请放慢、开头改紧张些），AI将基于本次结果调整；或直接点"重新生成"'
+                ? '在此输入修改意见...'
                 : (aiTargetChapterId
                   ? `例如：请为「${chapterEditTitle}」继续创作下一章正文，剧情连贯、章末留悬念，约2400字...`
                   : '例如：请开篇创作第一章，主角登场，埋下伏笔，约2400字...')}
@@ -2325,7 +2330,7 @@ function ChapterPanel(props: {
   return (
     <div className="chapter-list-panel">
       <div className="chapter-list-header">
-        <div className="chapter-header-row1" style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}>
+        <div className="chapter-header-row1">
           <button className="btn-ghost-sm" onClick={() => onCreateVolume()} title="新建卷">📂 新卷</button>
           <button className="btn-ghost-sm" onClick={handleRebinVolumes} disabled={rebinning || !bookId || chapters.filter(c => !c.is_volume).length === 0} title="按50章/卷自动重新分卷（清空现有卷结构后重建）">
             {rebinning ? '⏳ 分卷中...' : '🔄 重新分卷'}
@@ -2335,7 +2340,7 @@ function ChapterPanel(props: {
           </button>
           <button className="btn-primary-sm" onClick={() => onCreateChapter()}>+ 新章节</button>
         </div>
-        <div className="chapter-header-row2" style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end',marginTop:6}}>
+        <div className="chapter-header-row2">
           <button
             className="btn-ghost-sm"
             onClick={handleAiImportRecognize}
