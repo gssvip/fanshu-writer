@@ -126,8 +126,10 @@ textarea{resize:vertical;line-height:1.8}
 .page-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);position:sticky;top:0;z-index:10}
 .page-header.compact{padding:10px 12px}
 .page-header h1{font-size:18px;font-weight:700}
-.page-header-left{display:flex;align-items:center;gap:10px;min-width:0}
+.page-header-left{display:flex;align-items:center;gap:10px;min-width:0;flex:1;overflow:hidden}
+.page-header-left>div{min-width:0;flex:1;overflow:hidden}
 .page-header-left h1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.page-header-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
 .page-header-actions{display:flex;align-items:center;gap:8px}
 .book-title-sm{font-size:15px;font-weight:600}
 .book-meta{font-size:12px;color:var(--text-muted);display:flex;gap:12px;margin-top:2px}
@@ -755,6 +757,11 @@ textarea{resize:vertical;line-height:1.8}
   .btn-ghost-sm{min-height:34px;padding:6px 10px}
   .btn-primary-sm{min-height:34px}
   .tab-item{min-height:50px}
+  /* 手机端 page-header 右侧按钮只显示图标，文字用 title 显示（长按可看） */
+  .page-header-right .btn-label{display:none}
+  .page-header-right .btn-ghost-sm{padding:6px 8px;gap:0}
+  /* 隐藏 book-meta 进一步腾出空间 */
+  .page-header-left .book-meta{display:none}
   .tool-card,.book-card,.skill-card,.stage-card,.mine-nav-item{min-height:48px}
   .modal{width:92vw;max-width:none;padding:18px}
   .form-row{flex-direction:column}

@@ -979,11 +979,11 @@ export default function WritePage() {
             title="AI 全屏创作：选择维度，输入要求，流式生成，可提修改意见重新生成，确定后自动填入"
             style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)', color: '#fff' }}
           >
-            ✨ AI总创作
+            <span aria-hidden>✨</span><span className="btn-label">AI总创作</span>
           </button>
           {chapters.length > 0 && (
             <button className="btn-ghost-sm" onClick={handleAnalyzeContent} disabled={analyzing || dimAnalyzing} title="AI分析章节内容，一键识别全部维度">
-              {analyzing ? '🤖 识别中...' : '🔍 全部识别'}
+              <span aria-hidden>{analyzing ? '🤖' : '🔍'}</span><span className="btn-label">{analyzing ? '识别中' : '全部识别'}</span>
             </button>
           )}
           <button className="btn-ghost-sm header-collapse-btn" onClick={() => setHeaderCollapsed(!headerCollapsed)} title={headerCollapsed ? '展开头部' : '收起头部'}>
