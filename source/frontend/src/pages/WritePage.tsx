@@ -195,7 +195,17 @@ export default function WritePage() {
   const [aiUserPrompt, setAiUserPrompt] = useState('');
   // 章节AI聊天历史（持久保留，类似聊天窗口）
   // type: 'content'=章节正文（可折叠）, 'status'=状态提示（如已保存），用户提问无type
-  const [aiChatHistory, setAiChatHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string; chapterTitle?: string; type?: 'content' | 'status'; collapsed?: boolean }>>([]);
+  // 按 bookId 持久化到 localStorage，刷新/重新打开仍在（除非手动清空）
+  const aiChatHistoryKey = bookId ? `fanshu-ai-chat-${bookId}` : '';
+  const [aiChatHistory, setAiChatHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string; chapterTitle?: string; type?: 'content' | 'status'; collapsed?: boolean }>>(() => {
+    try {
+      if (aiChatHistoryKey) {
+        const raw = localStorage.getItem(aiChatHistoryKey);
+        if (raw) return JSON.parse(raw);
+      }
+    } catch { /* ignore */ }
+    return [];
+  });
   // 当前AI创作锚定的目标章节（自动识别）
   const [aiTargetChapterId, setAiTargetChapterId] = useState<string | null>(null);
   // P0-1: 多Agent协同开关（开启时调用 ai-continue 后端管线，走章节计划+正文+去AI味+一致性检查）
@@ -653,7 +663,7 @@ export default function WritePage() {
     // 自动识别当前写到哪一章：按 order_index 排序，找最后一个有效正文（≥100字）的章节作为进度锚点
     // 用字数阈值避免空标题章/极短占位章被误判为"已写"
     const progress = computeChapterProgress();
-    if (mode === 'polish' && progress.anchorChapter && (progress.anchorChapter.content || '').trim().length < 100) {
+    if (mode === 'polish' && progress.anchorChapter && (progress.anchorChapter.word_count || 0) < 100) {
       alert('当前章节没有内容可润色');
       return;
     }
@@ -668,6 +678,7 @@ export default function WritePage() {
 
   // 计算章节进度（识别当前写到哪一章，待写章是哪个）
   // 抽离为独立函数，供 startAiCreate 与手动刷新共用
+  // 注意：列表接口不返回 content（节省流量），用 word_count 判断章节是否已写
   function computeChapterProgress(): {
     anchorChapter: Chapter | null;
     saveTarget: Chapter | null;
@@ -681,19 +692,19 @@ export default function WritePage() {
       .sort((a, b) => a.order_index - b.order_index);
     let anchorChapter: Chapter | null = null;
     for (let i = realChapters.length - 1; i >= 0; i--) {
-      if ((realChapters[i].content || '').trim().length >= EFFECTIVE_WORDS) {
+      if ((realChapters[i].word_count || 0) >= EFFECTIVE_WORDS) {
         anchorChapter = realChapters[i];
         break;
       }
     }
-    // 确定待写章节 = 锚点之后的下一个需要写的章（正文不足100字）；没有则新建
+    // 确定待写章节 = 锚点之后的下一个需要写的章（字数不足100）；没有则新建
     let saveTarget: Chapter | null = null;
     if (anchorChapter) {
       const anchorIdx = realChapters.findIndex(c => c.id === anchorChapter!.id);
-      saveTarget = realChapters.slice(anchorIdx + 1).find(c => (c.content || '').trim().length < EFFECTIVE_WORDS) || null;
+      saveTarget = realChapters.slice(anchorIdx + 1).find(c => (c.word_count || 0) < EFFECTIVE_WORDS) || null;
     } else {
       // 无锚点：第一个未写满的章节即为待写章
-      saveTarget = realChapters.find(c => (c.content || '').trim().length < EFFECTIVE_WORDS) || null;
+      saveTarget = realChapters.find(c => (c.word_count || 0) < EFFECTIVE_WORDS) || null;
     }
     // 计算待写章号（全书连续编号，供提示词使用）
     let targetNum: number;
@@ -1122,7 +1133,7 @@ ${chapterEditContent}`;
       const savedIdx = savedChapter ? realChapters.findIndex(c => c.id === savedChapter!.id) : -1;
       let nextTarget: Chapter | null = null;
       if (savedIdx >= 0) {
-        nextTarget = realChapters.slice(savedIdx + 1).find(c => (c.content || '').trim().length < EFFECTIVE_WORDS) || null;
+        nextTarget = realChapters.slice(savedIdx + 1).find(c => (c.word_count || 0) < EFFECTIVE_WORDS) || null;
       }
       let nextNum: number;
       if (nextTarget) {
@@ -1181,6 +1192,28 @@ ${chapterEditContent}`;
       aiAbortRef.current?.abort();
     };
   }, []);
+
+  // 持久化聊天历史到 localStorage（按 bookId），刷新/重新打开仍在
+  // 切换书籍时清空当前历史，加载新书籍的历史
+  useEffect(() => {
+    if (!aiChatHistoryKey) return;
+    try {
+      const raw = localStorage.getItem(aiChatHistoryKey);
+      const stored = raw ? JSON.parse(raw) : [];
+      // 仅在当前历史为空且存储有数据时加载（避免覆盖本次会话）
+      if (aiChatHistory.length === 0 && Array.isArray(stored) && stored.length > 0) {
+        setAiChatHistory(stored);
+      }
+    } catch { /* ignore */ }
+  }, [aiChatHistoryKey]);
+
+  // 聊天历史变化时写入 localStorage
+  useEffect(() => {
+    if (!aiChatHistoryKey) return;
+    try {
+      localStorage.setItem(aiChatHistoryKey, JSON.stringify(aiChatHistory));
+    } catch { /* ignore quota */ }
+  }, [aiChatHistoryKey, aiChatHistory]);
 
   async function deleteChapter(chId: string) {
     if (!bookId) return;
@@ -2221,7 +2254,7 @@ function ChapterPanel(props: {
                   ⏹ 停止
                 </button>
               )}
-              <button className="btn-primary ai-prompt-submit" onClick={onExecuteAiCreate} disabled={aiCreating || !aiUserPrompt.trim()}>
+              <button className="btn-primary ai-prompt-submit" onClick={() => onExecuteAiCreate()} disabled={aiCreating || !aiUserPrompt.trim()}>
                 {aiCreating ? '⏳ 创作中...' : '🚀 发送'}
               </button>
             </div>
