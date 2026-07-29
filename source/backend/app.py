@@ -8926,6 +8926,8 @@ def init_db():
         # Migration: skill_packs 添加 github_source 和 github_synced_at 字段
         _add_column('skill_packs', "github_source VARCHAR(500) DEFAULT ''")
         _add_column('skill_packs', 'github_synced_at TIMESTAMP')
+        # Migration: 防遗忘检查报告历史
+        _add_column('book_bible', 'anti_forget_reports TEXT')
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
