@@ -7157,7 +7157,9 @@ def ai_master_create_stream(book_id):
         except Exception as e:
             yield f'data: {json.dumps({"error": str(e)[:300]}, ensure_ascii=False)}\n\n'
 
-    return app.response_class(generate(), mimetype='text/event-stream')
+    # stream_with_context 保持请求/应用上下文，避免生成器在 yield 后恢复时
+    # 触发 "Working outside of application context"（DB 落库需要上下文）
+    return app.response_class(app.stream_with_context(generate()), mimetype='text/event-stream')
 
 
 # ==== AI 共创 / 头脑风暴 ====
