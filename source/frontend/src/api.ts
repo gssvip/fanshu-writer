@@ -342,6 +342,13 @@ export const api = {
         fields_updated: string[];
         errors: string[];
       } | null;
+      // P2-10 新增
+      gate_result?: {
+        passed: boolean;
+        critical_count: number;
+        warning_count: number;
+        issues: Array<{ gate: string; severity: string; message: string }>;
+      } | null;
     }>(`/books/${bookId}/ai-continue`, {
       method: 'POST',
       body: JSON.stringify({
@@ -349,6 +356,21 @@ export const api = {
         skill_pack_ids: skillPackIds || [],
         enable_consistency_check: enableConsistencyCheck !== false,
       }),
+    }, signal),
+
+  // P2-9：Spot-Fix 修订（按校验问题路由：local 类只修补问题段落，省 token）
+  aiSpotFix: (bookId: string, content: string, postValidate: any, mode: string = 'auto', signal?: AbortSignal) =>
+    request<{
+      strategy: 'none' | 'spot_fix' | 'rewrite';
+      content: string;
+      message?: string;
+      patches_count?: number;
+      token_saving?: { full_rewrite_tokens: number; spot_fix_tokens: number; saved_tokens: number; saving_ratio: number };
+      post_validate?: any;
+      structural_issues?: any[];
+    }>(`/books/${bookId}/ai-spot-fix`, {
+      method: 'POST',
+      body: JSON.stringify({ content, post_validate: postValidate, mode }),
     }, signal),
 
   // AI Continue 流式版（#8：SSE 推送初稿）。返回原始 Response，前端用 ReadableStream 解析

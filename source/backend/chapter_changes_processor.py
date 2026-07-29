@@ -144,6 +144,33 @@ def apply_chapter_changes(
     except Exception as e:
         summary['errors'].append(f'dynamic_volumes: {str(e)[:100]}')
 
+    # 2.5 P3 补全：locations 主字段同步回写（LocationStateChanges → locations 三级 JSON）
+    loc_changes = changes.get('LocationStateChanges', [])
+    if loc_changes:
+        try:
+            _apply_location_changes(bb, loc_changes, chapter_num)
+            summary['fields_updated'].append('locations')
+        except Exception as e:
+            summary['errors'].append(f'locations: {str(e)[:100]}')
+
+    # 2.6 P3 补全：inventory 主字段同步回写（ItemTransfers → inventory JSON）
+    item_changes = changes.get('ItemTransfers', [])
+    if item_changes:
+        try:
+            _apply_item_changes(bb, item_changes, chapter_num)
+            summary['fields_updated'].append('inventory')
+        except Exception as e:
+            summary['errors'].append(f'inventory: {str(e)[:100]}')
+
+    # 2.7 P3 补全：character_profiles 主字段同步回写（境界/能力变化追加到角色备注）
+    char_changes = changes.get('CharacterStateChanges', [])
+    if char_changes:
+        try:
+            _apply_character_changes(bb, char_changes, chapter_num)
+            summary['fields_updated'].append('character_profiles')
+        except Exception as e:
+            summary['errors'].append(f'character_profiles: {str(e)[:100]}')
+
     # 3. 章级变更日志追加
     try:
         log_list = json.loads(bb.chapter_changes_log) if bb.chapter_changes_log else []
@@ -277,3 +304,144 @@ JSON 必须包含以下 12 个字段（无变更则填 []）：
 def _now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+# ===== P3 补全：主字段同步回写函数 =====
+
+def _apply_location_changes(bb, loc_changes: List, chapter_num: int):
+    """LocationStateChanges → locations 主字段同步。
+    locations 格式：[{name, description, secondaries:[{name, description, scenes:[{name, description, key_events}]}]}]
+    策略：按 LocationId 匹配三级节点，找到则追加 key_events，找不到则跳过（不凭空创建）。"""
+    if not bb.locations:
+        return
+    try:
+        loc_list = json.loads(bb.locations)
+    except Exception:
+        return
+    if not isinstance(loc_list, list):
+        return
+
+    updated = False
+    for change in loc_changes:
+        loc_id = change.get('LocationId', '')
+        new_status = change.get('NewStatus', '')
+        event = change.get('Event', '')
+        if not loc_id or not event:
+            continue
+        event_text = f'第{chapter_num}章：{event}'
+        if new_status:
+            event_text += f'（状态→{new_status}）'
+        # 在三级结构中查找匹配名称的节点
+        for region in loc_list:
+            if _match_and_append_event(region, loc_id, event_text):
+                updated = True
+                break
+            for city in region.get('secondaries', []):
+                if _match_and_append_event(city, loc_id, event_text):
+                    updated = True
+                    break
+                for scene in city.get('scenes', []):
+                    if _match_and_append_event(scene, loc_id, event_text):
+                        updated = True
+                        break
+    if updated:
+        bb.locations = json.dumps(loc_list, ensure_ascii=False)
+
+
+def _match_and_append_event(node: Dict, target_name: str, event_text: str) -> bool:
+    """若 node.name 匹配 target_name，则追加 event_text 到 key_events，返回 True。"""
+    if not isinstance(node, dict):
+        return False
+    node_name = node.get('name', '')
+    if node_name and (target_name in node_name or node_name in target_name):
+        existing = node.get('key_events', '')
+        node['key_events'] = (existing + '；' + event_text) if existing else event_text
+        return True
+    return False
+
+
+def _apply_item_changes(bb, item_changes: List, chapter_num: int):
+    """ItemTransfers → inventory 主字段同步。
+    inventory 格式：[{name, type, source, effect, owner, first_appearance}]
+    策略：按 ItemName/ItemId 匹配，找到则更新 owner 和追加流转记录，找不到则新增条目。"""
+    try:
+        inv_list = json.loads(bb.inventory) if bb.inventory else []
+    except Exception:
+        inv_list = []
+    if not isinstance(inv_list, list):
+        inv_list = []
+
+    for change in item_changes:
+        item_name = change.get('ItemName', '') or change.get('ItemId', '')
+        if not item_name:
+            continue
+        to_holder = change.get('ToHolder', '')
+        from_holder = change.get('FromHolder', '')
+        event = change.get('Event', '')
+
+        # 在现有清单中查找
+        found = False
+        for item in inv_list:
+            if item.get('name', '') and (item_name in item['name'] or item['name'] in item_name):
+                if to_holder:
+                    # 记录原持有者到 source（保留历史）
+                    old_owner = item.get('owner', '')
+                    if old_owner and old_owner != to_holder:
+                        item['source'] = (item.get('source', '') + f'；{old_owner}→' + to_holder).strip('；')
+                    item['owner'] = to_holder
+                # 追加流转事件到 effect
+                if event:
+                    transfer_note = f'第{chapter_num}章：{event}'
+                    item['effect'] = (item.get('effect', '') + '；' + transfer_note).strip('；')
+                found = True
+                break
+
+        # 找不到则新增（仅在有足够信息时）
+        if not found and to_holder:
+            inv_list.append({
+                'name': item_name,
+                'type': '其他',
+                'source': from_holder or '未知',
+                'effect': f'第{chapter_num}章：{event or "流转"}',
+                'owner': to_holder,
+                'first_appearance': f'第{chapter_num}章',
+            })
+
+    bb.inventory = json.dumps(inv_list, ensure_ascii=False)
+
+
+def _apply_character_changes(bb, char_changes: List, chapter_num: int):
+    """CharacterStateChanges → character_profiles 主字段同步。
+    character_profiles 是文本格式（## 角色：<姓名>），策略：在匹配角色块中追加境界/能力变化备注。"""
+    if not bb.character_profiles:
+        return
+    text = bb.character_profiles
+    for change in char_changes:
+        char_id = change.get('CharacterId', '')
+        new_level = change.get('NewLevel', '')
+        new_abilities = change.get('NewAbilities', [])
+        key_event = change.get('KeyEvent', '')
+        if not char_id:
+            continue
+
+        # 在文本中查找 ## 角色：<姓名> 块
+        import re
+        pattern = r'(##\s*角色[：:]\s*' + re.escape(char_id) + r'[^\n]*[\s\S]*?)(?=##\s*角色|$)'
+        m = re.search(pattern, text)
+        if m:
+            block = m.group(1)
+            notes = []
+            if new_level:
+                notes.append(f'第{chapter_num}章境界→{new_level}')
+            if new_abilities:
+                notes.append(f'第{chapter_num}章获得：{"、".join(new_abilities)}')
+            if key_event:
+                notes.append(f'第{chapter_num}章关键事件：{key_event}')
+            if notes:
+                note_line = f'\n- 状态变化：{"；".join(notes)}'
+                # 追加到角色块末尾（下一个 ## 之前）
+                new_block = block.rstrip() + note_line + '\n'
+                text = text[:m.start()] + new_block + text[m.end():]
+
+    bb.character_profiles = text
+

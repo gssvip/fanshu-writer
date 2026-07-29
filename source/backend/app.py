@@ -56,6 +56,29 @@ except ImportError:
     remove_chapter_changes = None
     build_changes_prompt_template = None
 
+# P2-9：Spot-Fix 修订路由器
+try:
+    from revise import route_revision, build_spot_fix_prompt, apply_spot_fix_patches, estimate_token_saving
+except ImportError:
+    route_revision = None
+    build_spot_fix_prompt = None
+    apply_spot_fix_patches = None
+    estimate_token_saving = None
+
+# P2-8：审计-修订闭环
+try:
+    from chapter_review_cycle import run_review_cycle, PASS_SCORE
+except ImportError:
+    run_review_cycle = None
+    PASS_SCORE = 85
+
+# P2-10 + P2-11：落地门禁 + PRE_WRITE_CHECK
+try:
+    from generation_gate import run_all_gates, build_pre_write_check_prompt
+except ImportError:
+    run_all_gates = None
+    build_pre_write_check_prompt = None
+
 app = Flask(__name__, static_folder=None)
 app.config['SECRET_KEY'] = 'fanshu-writer-secret-key'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
@@ -5060,6 +5083,10 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
 9. 【剧情连贯铁律】必须严格承接【最近4章完整正文】的结尾场景与悬念，不得凭空开启新场景；人物位置、状态、对话内容必须与前文一致。
 10. 【字数自检】输出前必须自检字数：用中文计数（含标点），若不在 2300-2500 区间必须调整后再输出。"""
 
+    # P2-11：在 system_prompt 末尾追加 PRE_WRITE_CHECK 模板（要求 LLM 写正文前先输出意图表）
+    if build_pre_write_check_prompt:
+        system_prompt += build_pre_write_check_prompt(ctx['current_chapter_num'], bb)
+
     # P1-6：在 system_prompt 末尾追加 CHANGES 输出模板（要求 LLM 输出结构化状态变更）
     if build_changes_prompt_template:
         system_prompt += build_changes_prompt_template()
@@ -5261,6 +5288,17 @@ def ai_continue(book_id):
             except Exception:
                 pass
 
+        # ===== P2-10：落地门禁（3道，章节落库前拦截）=====
+        gate_result = None
+        if run_all_gates:
+            try:
+                gate_result = run_all_gates(polished_content, bb, ctx['current_chapter_num'])
+                if not gate_result.get('passed'):
+                    # 门禁未通过只做 warning，不阻断返回（避免误杀）
+                    pass
+            except Exception:
+                pass
+
         return jsonify({
             'content': polished_content,
             'draft': draft_content if deai_status == 'success' else None,
@@ -5276,9 +5314,99 @@ def ai_continue(book_id):
             # P0-1 + P1-6/7 新增字段
             'post_validate': post_validate,  # 后写校验报告（AI痕迹检测）
             'changes_applied': changes_applied,  # 章级变更回写摘要
+            # P2-10 新增
+            'gate_result': gate_result,  # 落地门禁结果
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/books/<book_id>/ai-spot-fix', methods=['POST'])
+@login_required
+def ai_spot_fix(book_id):
+    """Spot-Fix 修订端点（P2-9）。
+    按校验问题路由：local 类只修补问题段落（省 token），structural 类建议整章重写。
+    前端"一键修订"按钮调用。"""
+    if not route_revision:
+        return jsonify({'error': '修订模块未加载'}), 500
+    data = request.get_json() or {}
+    content = data.get('content', '')
+    validation = data.get('post_validate', {})
+    mode = data.get('mode', 'auto')  # auto / spot_fix / rewrite
+    if not content:
+        return jsonify({'error': '缺少正文内容'}), 400
+
+    # 路由修订策略
+    routing = route_revision(content, validation, mode=mode)
+
+    if routing['strategy'] == 'none':
+        return jsonify({
+            'strategy': 'none',
+            'message': '未检测到需要修订的问题',
+            'content': content,
+        })
+
+    if routing['strategy'] == 'rewrite':
+        # structural 问题，建议整章重写（前端可调用 ai-continue）
+        return jsonify({
+            'strategy': 'rewrite',
+            'message': '检测到结构性问题，建议整章重写',
+            'structural_issues': routing['structural_issues'],
+            'content': content,
+        })
+
+    # spot_fix 策略：只送问题段落给 LLM
+    patches = routing['patches']
+    if not patches:
+        return jsonify({'strategy': 'none', 'message': '无法定位问题段落', 'content': content})
+
+    # 构建 Spot-Fix prompt
+    sys_prompt, user_prompt = build_spot_fix_prompt(content, patches)
+    token_saving = estimate_token_saving(content, patches)
+
+    # 调用 LLM 修订
+    config = AIConfig.query.first()
+    api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
+    base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
+    model = config.get_model_for_task('creation') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    try:
+        resp = requests.post(f'{base_url}/chat/completions',
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            json={'model': model,
+                  'messages': [{'role': 'system', 'content': sys_prompt},
+                               {'role': 'user', 'content': user_prompt}],
+                  'temperature': 0.3,
+                  'max_tokens': 2000},
+            timeout=60)
+        result = resp.json()
+        llm_output = result['choices'][0]['message']['content'].strip()
+
+        # patch 回原文
+        revised_content = apply_spot_fix_patches(content, patches, llm_output)
+
+        # 对修订后的内容再跑一次后写校验
+        post_validate = None
+        if validate_chapter:
+            try:
+                body_for_check = _extract_chapter_body(revised_content)
+                validation2 = validate_chapter(body_for_check)
+                if validation2.issues:
+                    post_validate = validation2.to_dict()
+            except Exception:
+                pass
+
+        return jsonify({
+            'strategy': 'spot_fix',
+            'content': revised_content,
+            'patches_count': len(patches),
+            'token_saving': token_saving,
+            'post_validate': post_validate,  # 修订后的校验报告
+        })
+    except Exception as e:
+        return jsonify({'error': f'修订失败：{str(e)[:200]}'}), 500
 
 
 @app.route('/api/books/<book_id>/ai-continue/stream', methods=['POST'])

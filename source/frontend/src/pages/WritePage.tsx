@@ -211,6 +211,8 @@ export default function WritePage() {
   // P0-1: 多Agent协同开关（开启时调用 ai-continue 后端管线，走章节计划+正文+去AI味+一致性检查）
   const [useAgentPipeline, setUseAgentPipeline] = useState(false);
   const [agentMeta, setAgentMeta] = useState<any>(null); // 存放 aiContinue 返回的 chapter_plan/温度/卷信息等
+  const [spotFixing, setSpotFixing] = useState(false); // P2-9：Spot-Fix 修订中
+  const [spotFixMsg, setSpotFixMsg] = useState(''); // P2-9：修订结果提示
   // 中止 AI 创作：流式通过 AbortController 取消 fetch/reader；非流式分支立即退出等待态
   const aiAbortRef = useRef<AbortController | null>(null);
   const aiStoppedRef = useRef(false);
@@ -827,6 +829,8 @@ export default function WritePage() {
           // P0-1 + P1-6/7 新增：后写校验报告 + 章级变更回写摘要
           post_validate: result.post_validate,
           changes_applied: result.changes_applied,
+          // P2-10 新增：落地门禁结果
+          gate_result: result.gate_result,
         });
       } catch (e: any) {
         if (signal.aborted || aiStoppedRef.current) return;
@@ -1493,6 +1497,37 @@ ${chapterEditContent}`;
             useAgentPipeline={useAgentPipeline}
             onToggleAgentPipeline={setUseAgentPipeline}
             agentMeta={agentMeta}
+            spotFixing={spotFixing}
+            spotFixMsg={spotFixMsg}
+            onSpotFix={async (content, postValidate) => {
+              if (!bookId || !content) return;
+              setSpotFixing(true);
+              try {
+                const res = await api.aiSpotFix(bookId, content, postValidate, 'auto');
+                if (res.strategy === 'spot_fix' && res.content) {
+                  setAiGeneratedContent(res.content);
+                  setAiChatHistory((prev: typeof aiChatHistory) => {
+                    const next = [...prev];
+                    const last = next[next.length - 1];
+                    if (last && last.type === 'content') {
+                      next[next.length - 1] = { ...last, content: res.content };
+                    }
+                    return next;
+                  });
+                  setAgentMeta((prev: any) => ({ ...prev, post_validate: res.post_validate || prev.post_validate }));
+                  setSpotFixMsg(`✅ 已修订 ${res.patches_count || 0} 处，节省 ${res.token_saving?.saving_ratio ? Math.round(res.token_saving.saving_ratio * 100) : 0}% token`);
+                } else if (res.strategy === 'rewrite') {
+                  setSpotFixMsg('⚠️ 检测到结构性问题，建议整章重写');
+                } else {
+                  setSpotFixMsg(res.message || '无需修订');
+                }
+              } catch (e: any) {
+                setSpotFixMsg(`❌ 修订失败：${e.message}`);
+              } finally {
+                setSpotFixing(false);
+                setTimeout(() => setSpotFixMsg(''), 5000);
+              }
+            }}
             aiChatHistory={aiChatHistory}
             onClearAiChatHistory={clearAiChatHistory}
             onToggleChatMsgCollapse={toggleChatMsgCollapse}
@@ -1939,6 +1974,10 @@ function ChapterPanel(props: {
   useAgentPipeline?: boolean;
   onToggleAgentPipeline?: (v: boolean) => void;
   agentMeta?: any;
+  // P2-9：Spot-Fix 修订
+  spotFixing?: boolean;
+  spotFixMsg?: string;
+  onSpotFix?: (content: string, postValidate: any) => Promise<void>;
   // 聊天式AI创作：历史记录与目标章节
   aiChatHistory: Array<{ role: 'user' | 'assistant'; content: string; chapterTitle?: string; type?: 'content' | 'status'; collapsed?: boolean }>;
   onClearAiChatHistory: () => void;
@@ -1954,6 +1993,7 @@ function ChapterPanel(props: {
     onEditTitle, onEditContent, onBackToList, onStartAiCreate, onExecuteAiCreate, onConfirmAiContent, onCancelAiCreate, onStopAiCreate, onEditAiPrompt,
     onRenameVolume, onDeleteVolume, bookId,
     useAgentPipeline: useAgent, onToggleAgentPipeline, agentMeta,
+    spotFixing, spotFixMsg, onSpotFix,
     aiChatHistory, onClearAiChatHistory, onToggleChatMsgCollapse, onRefreshChapterAnchor, onRegenerateAiContent, aiTargetChapterId,
   } = props;
 
@@ -2241,6 +2281,30 @@ function ChapterPanel(props: {
                     </div>
                   ))}
                   {agentMeta.post_validate.issues.length > 5 && <div>...还有 {agentMeta.post_validate.issues.length - 5} 条</div>}
+                </div>
+              )}
+              {/* P2-9：一键 Spot-Fix 修订按钮 */}
+              {agentMeta?.post_validate && (agentMeta.post_validate.critical_count > 0 || agentMeta.post_validate.warning_count > 0) && onSpotFix && (
+                <div style={{ marginTop: 6 }}>
+                  <button
+                    className="btn-primary-sm"
+                    disabled={!!spotFixing}
+                    onClick={() => onSpotFix(aiGeneratedContent, agentMeta.post_validate)}
+                  >
+                    {spotFixing ? '⏳ 修订中...' : '🔧 一键Spot-Fix修订'}
+                  </button>
+                  {spotFixMsg && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-secondary)' }}>{spotFixMsg}</span>}
+                </div>
+              )}
+              {/* P2-10：落地门禁结果展示 */}
+              {agentMeta?.gate_result && !agentMeta.gate_result.passed && (
+                <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 4, padding: '4px 8px', background: 'var(--bg-secondary)', borderRadius: 4 }}>
+                  <div style={{ fontWeight: 600, color: '#e74c3c' }}>🚪 落地门禁告警（{agentMeta.gate_result.critical_count} critical / {agentMeta.gate_result.warning_count} warning）</div>
+                  {agentMeta.gate_result.issues.map((iss: any, i: number) => (
+                    <div key={i} style={{ color: iss.severity === 'critical' ? '#e74c3c' : '#f39c12' }}>
+                      {iss.severity === 'critical' ? '🔴' : '🟡'} [{iss.gate}] {iss.message}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
