@@ -1287,7 +1287,7 @@ function ConceptPanel(props: {
   selectedSkillPacks: SkillPack[];
   onOpenAiCreate: () => void;
 }) {
-  const { concept, setConcept, bible, bookTitle, brainstorming, brainstormResult, brainstormError, adoptedSuggestions, onBrainstorm, onAdopt, bookId, onBibleUpdate,
+  const { concept, setConcept, bible, brainstorming, brainstormResult, brainstormError, adoptedSuggestions, onBrainstorm, onAdopt, bookId, onBibleUpdate,
     hasChapters, conceptAiMode, conceptAiPrompt, conceptAiAssisting, conceptAiError,
     onExecuteConceptAi, onCancelConceptAi, onEditConceptAiPrompt,
     onAnalyzeDimension, dimAnalyzing,
@@ -1310,13 +1310,6 @@ function ConceptPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          {bookTitle && (
-            <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-              <span className="bible-context-book">📖 {bookTitle}</span>
-              <span className="bible-context-sep">›</span>
-              <span className="bible-context-dim">💡 AI创作 · 构思</span>
-            </div>
-          )}
           <button className="btn-ghost-sm" onClick={onCancelConceptAi} disabled={conceptAiAssisting}>取消</button>
         </div>
         {/* 技能包多选器（可折叠） */}
@@ -1388,13 +1381,6 @@ function ConceptPanel(props: {
 
   return (
     <div className="concept-panel">
-      {bookTitle && (
-        <div className="bible-context-bar">
-          <span className="bible-context-book">📖 {bookTitle}</span>
-          <span className="bible-context-sep">›</span>
-          <span className="bible-context-dim">💡 构思</span>
-        </div>
-      )}
       <div className="concept-input-section">
         <div className="concept-label-row">
           <label className="concept-label">一句话构思</label>
@@ -2116,7 +2102,7 @@ function CharacterPanel(props: {
   selectedSkillPacks: SkillPack[];
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, onOpenAiCreate } = props;
   const [characters, setCharacters] = useState<CharacterData[]>([]);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [addingNew, setAddingNew] = useState(false);
@@ -2514,14 +2500,6 @@ function CharacterPanel(props: {
   return (
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
-        {bookTitle && (
-          <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            <span className="bible-context-book">📖 {bookTitle}</span>
-            <span className="bible-context-sep">›</span>
-            <span className="bible-context-dim">👤 人物及关系</span>
-            {characters.length > 0 && <span className="bible-context-count">{characters.length}人</span>}
-          </div>
-        )}
         <div className="bible-edit-actions" style={{position:'relative',flexShrink:0}}>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate}>
             ✨ AI创作
@@ -2735,7 +2713,7 @@ function PlotPanel(props: {
   onRefreshChapters: () => void;
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept, onRefreshChapters, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept, onRefreshChapters, onOpenAiCreate } = props;
   const [volumes, setVolumes] = useState<any[]>([]);
   const [editingVol, setEditingVol] = useState<string | null>(null);
   const [editForm, setEditForm] = useState('');
@@ -3316,14 +3294,6 @@ function PlotPanel(props: {
   return (
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
-        {bookTitle && (
-          <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            <span className="bible-context-book">📖 {bookTitle}</span>
-            <span className="bible-context-sep">›</span>
-            <span className="bible-context-dim">📖 剧情</span>
-            {displayVolumes.length > 0 && <span className="bible-context-count">{displayVolumes.length}卷</span>}
-          </div>
-        )}
         <div className="bible-edit-actions" style={{flexShrink:0}}>
           {displayVolumes.length > 0 && (
             <button
@@ -3673,7 +3643,7 @@ function InventoryPanel(props: {
   selectedSkillPacks: SkillPack[];
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, onOpenAiCreate } = props;
   const [inventory, setInventory] = useState<any[]>([]);
   const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
   const [analyzingVol, setAnalyzingVol] = useState('');
@@ -3907,14 +3877,6 @@ function InventoryPanel(props: {
   return (
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
-        {bookTitle && (
-          <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            <span className="bible-context-book">📖 {bookTitle}</span>
-            <span className="bible-context-sep">›</span>
-            <span className="bible-context-dim">🎒 物资库</span>
-            {displayVolumes.length > 0 && <span className="bible-context-count">{displayVolumes.length}卷</span>}
-          </div>
-        )}
         <div className="bible-edit-actions" style={{position:'relative',flexShrink:0}}>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} title="AI 协同创作物资库">
             ✨ AI创作
@@ -4055,7 +4017,7 @@ function BibleEditPanel(props: {
   onDelete: () => void;
   onOpenAiCreate: (field: string) => void;
 }) {
-  const { tab, bookTitle, content, editing, editValue, saving, aiAssisting, aiError, bibleAiMode, bibleAiPrompt,
+  const { tab, content, editing, editValue, saving, aiAssisting, aiError, bibleAiMode, bibleAiPrompt,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
     hasChapters, dimAnalyzing, onAnalyzeDimension,
     onStartEdit, onSaveEdit, onCancelEdit, onEditChange, onExecuteAi, onCancelAi, onEditAiPrompt, onDelete, onOpenAiCreate } = props;
@@ -4063,12 +4025,6 @@ function BibleEditPanel(props: {
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [showTips, setShowTips] = useState(false);
   const selectedCount = selectedSkillPackIds.length;
-  const wordCount = useMemo(() => {
-    if (!content) return 0;
-    const cn = (content.match(/[\u4e00-\u9fa5]/g) || []).length;
-    const en = (content.match(/[a-zA-Z]+/g) || []).length;
-    return cn + en;
-  }, [content]);
 
   // 技能包多选器（可折叠）
   const skillSelector = skillPacks.length > 0 && (
@@ -4131,13 +4087,6 @@ function BibleEditPanel(props: {
   if (bibleAiMode) {
     return (
       <div className="bible-edit-panel">
-        {bookTitle && (
-          <div className="bible-context-bar">
-            <span className="bible-context-book">📖 {bookTitle}</span>
-            <span className="bible-context-sep">›</span>
-            <span className="bible-context-dim">{tab.icon} AI创作 · {tab.label}</span>
-          </div>
-        )}
         <div className="bible-edit-header">
           <h3>{tab.icon} AI协同创作 · {tab.label}</h3>
           <button className="btn-ghost-sm" onClick={onCancelAi} disabled={aiAssisting}>取消</button>
@@ -4176,14 +4125,6 @@ function BibleEditPanel(props: {
   return (
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
-        {bookTitle && (
-          <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            <span className="bible-context-book">📖 {bookTitle}</span>
-            <span className="bible-context-sep">›</span>
-            <span className="bible-context-dim">{tab.icon} {tab.label}</span>
-            {wordCount > 0 && <span className="bible-context-count">{wordCount}字</span>}
-          </div>
-        )}
         <div className="bible-edit-actions" style={{flexShrink:0}}>
           {!editing ? (
             <>
@@ -4565,6 +4506,9 @@ function OutlineCombinedPanel(props: {
 }
 
 /* ===== 动态文件面板（防遗忘摘要系统） ===== */
+// 动态文件报告缓存（按 bookId），避免切换 tab 重新挂载时重复请求导致打开慢
+const _dmReportsCache: Record<string, DynamicReport[]> = {};
+
 function DynamicMemoryPanel(props: {
   bookId: string;
   concept: string;
@@ -4578,8 +4522,8 @@ function DynamicMemoryPanel(props: {
   selectedSkillPacks: SkillPack[];
 }) {
   const { bookId, chapters, showConfirm, selectedSkillPackIds } = props;
-  const [reports, setReports] = useState<DynamicReport[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [reports, setReports] = useState<DynamicReport[]>(_dmReportsCache[bookId] || []);
+  const [loading, setLoading] = useState(_dmReportsCache[bookId] ? false : true);
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -4607,11 +4551,12 @@ function DynamicMemoryPanel(props: {
 
   const chapterCount = chapters.filter(c => !c.is_volume).length;
 
-  function loadReports() {
+  function loadReports(silent = false) {
     if (!bookId) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     api.listDynamicReports(bookId).then(data => {
       setReports(data);
+      _dmReportsCache[bookId] = data;
       setLoading(false);
     }).catch(e => {
       setError(e.message || '加载失败');
@@ -4620,7 +4565,8 @@ function DynamicMemoryPanel(props: {
   }
 
   useEffect(() => {
-    loadReports();
+    // 有缓存则静默刷新，无缓存显示加载态
+    loadReports(!!_dmReportsCache[bookId]);
   }, [bookId]);
 
   // 自动选中第一份报告
@@ -5004,22 +4950,20 @@ function DynamicMemoryPanel(props: {
           <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating || batchMode} title="检查并自动生成缺失的报告">
             {generating ? '⏳ 处理中...' : '🔄 自动检查'}
           </button>
-          {reports.length > 0 && (
-            <button
-              className={batchMode ? 'btn-primary-sm' : 'btn-ghost-sm'}
-              onClick={() => batchMode ? exitBatchMode() : setBatchMode(true)}
-              disabled={batchDeleting}
-              title="批量选择并删除报告"
-            >
-              {batchMode ? '✕ 退出批量' : '☑ 批量管理'}
-            </button>
-          )}
+          <button
+            className={batchMode ? 'btn-primary-sm' : 'btn-ghost-sm'}
+            onClick={() => batchMode ? exitBatchMode() : setBatchMode(true)}
+            disabled={batchDeleting || reports.length === 0}
+            title="批量选择并删除报告"
+          >
+            {batchMode ? '✕ 退出批量' : '☑ 批量管理'}
+          </button>
           <button className="btn-primary-sm" onClick={() => { setCreateStart(''); setCreateEnd(''); setShowCreateModal(true); }} disabled={generating || batchMode}>
             ＋ 生成报告
           </button>
-          {chapterCount > 0 && displayDynVolumes.length > 0 && (
+          {(
             <div style={{position:'relative'}}>
-              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别，识别结果自动归类到对应卷下">
+              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || chapterCount === 0 || displayDynVolumes.length === 0} title={chapterCount === 0 ? '需要先创建章节才能AI识别' : '选择卷进行AI识别，识别结果自动归类到对应卷下'}>
                 {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
               {volSelectorOpen && (
@@ -5355,7 +5299,7 @@ function ForeshadowingPanel(props: {
   selectedSkillPacks: SkillPack[];
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks, onOpenAiCreate } = props;
   const [foreshadowing, setForeshadowing] = useState('');
   const [foreVolumes, setForeVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
@@ -5631,13 +5575,6 @@ function ForeshadowingPanel(props: {
     <div className="bible-edit-panel">
       <div className="bible-edit-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div style={{display:'flex',alignItems:'center',gap:8,position:'relative'}}>
-          {bookTitle && (
-            <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-              <span className="bible-context-book">📖 {bookTitle}</span>
-              <span className="bible-context-sep">›</span>
-              <span className="bible-context-dim">🔮 伏笔</span>
-            </div>
-          )}
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} style={{marginLeft:0}}>
             ✨ AI创作
           </button>
@@ -5898,7 +5835,7 @@ function LocationsPanel(props: {
   onMapUpdate: (val: string) => Promise<void>;
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, bookTitle, chapters, hasChapters, showConfirm, selectedSkillPackIds, onMapUpdate, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, selectedSkillPackIds, onMapUpdate, onOpenAiCreate } = props;
   const [locations, setLocations] = useState('');
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -6042,13 +5979,6 @@ function LocationsPanel(props: {
   return (
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
-        {bookTitle && (
-          <div className="bible-context-bar" style={{marginBottom:0,flex:1,flexShrink:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-            <span className="bible-context-book">📖 {bookTitle}</span>
-            <span className="bible-context-sep">›</span>
-            <span className="bible-context-dim">🗺️ 地图</span>
-          </div>
-        )}
         <div className="bible-edit-actions" style={{position:'relative',flexShrink:0}}>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} title="AI 全屏创作地点体系">✨ AI创作</button>
           {(
