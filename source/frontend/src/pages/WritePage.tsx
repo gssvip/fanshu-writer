@@ -981,11 +981,9 @@ export default function WritePage() {
           >
             <span aria-hidden>✨</span><span className="btn-label">AI总创作</span>
           </button>
-          {chapters.length > 0 && (
-            <button className="btn-ghost-sm" onClick={handleAnalyzeContent} disabled={analyzing || dimAnalyzing} title="AI分析章节内容，一键识别全部维度">
-              <span aria-hidden>{analyzing ? '🤖' : '🔍'}</span><span className="btn-label">{analyzing ? '识别中' : '全部识别'}</span>
-            </button>
-          )}
+          <button className="btn-ghost-sm" onClick={handleAnalyzeContent} disabled={analyzing || dimAnalyzing || chapters.length === 0} title={chapters.length === 0 ? '需要先创建章节才能AI识别' : 'AI分析章节内容，一键识别全部维度'}>
+            <span aria-hidden>{analyzing ? '🤖' : '🔍'}</span><span className="btn-label">{analyzing ? '识别中' : '全部识别'}</span>
+          </button>
           <button className="btn-ghost-sm header-collapse-btn" onClick={() => setHeaderCollapsed(!headerCollapsed)} title={headerCollapsed ? '展开头部' : '收起头部'}>
             {headerCollapsed ? '▾' : '▴'}
           </button>
@@ -1400,11 +1398,9 @@ function ConceptPanel(props: {
       <div className="concept-input-section">
         <div className="concept-label-row">
           <label className="concept-label">一句话构思</label>
-          {hasChapters && (
-            <button className="btn-ghost-sm concept-dim-analyze-btn" onClick={onAnalyzeDimension} disabled={dimAnalyzing} title="AI分析已有章节，自动识别构思">
-              {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
-            </button>
-          )}
+          <button className="btn-ghost-sm concept-dim-analyze-btn" onClick={onAnalyzeDimension} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别构思' : '需要先创建章节才能AI识别'}>
+            {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
+          </button>
         </div>
         <textarea
           className="input concept-textarea"
@@ -2530,9 +2526,9 @@ function CharacterPanel(props: {
           <button className="btn-ghost-sm" onClick={onOpenAiCreate}>
             ✨ AI创作
           </button>
-          {hasChapters && (
+          {(
             <>
-              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
+              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
                 {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
               {volSelectorOpen && (
@@ -2679,11 +2675,9 @@ function CharacterPanel(props: {
           <p className="text-muted">点击「添加角色」手动添加，或用AI识别自动提取</p>
           <div className="bible-empty-actions">
             <button className="btn-primary-sm" onClick={startAddNew}>＋ 添加角色</button>
-            {hasChapters && (
-              <button className="btn-ghost-sm" onClick={handleAnalyzeAll} disabled={analyzing}>
-                {analyzing ? '⏳ 识别中...' : '🔍 AI识别'}
-              </button>
-            )}
+            <button className="btn-ghost-sm" onClick={handleAnalyzeAll} disabled={analyzing || !hasChapters} title={hasChapters ? 'AI识别角色信息' : '需要先创建章节才能AI识别'}>
+              {analyzing ? '⏳ 识别中...' : '🔍 AI识别'}
+            </button>
           </div>
         </div>
       ) : (
@@ -2709,11 +2703,9 @@ function CharacterPanel(props: {
               )}
               {!collapsedChars.has(idx) && (
               <div className="character-card-actions">
-                {hasChapters && (
-                  <button className="btn-ghost-sm" onClick={() => handleAnalyzeOne(char.name)} disabled={analyzingName === char.name} title="AI识别此角色信息">
-                    {analyzingName === char.name ? '🤖 识别中...' : '🔍 识别'}
-                  </button>
-                )}
+                <button className="btn-ghost-sm" onClick={() => handleAnalyzeOne(char.name)} disabled={analyzingName === char.name || !hasChapters} title={hasChapters ? 'AI识别此角色信息' : '需要先创建章节才能AI识别'}>
+                  {analyzingName === char.name ? '🤖 识别中...' : '🔍 识别'}
+                </button>
                 <button className="btn-ghost-sm" onClick={() => startEdit(idx)}>✏️ 编辑</button>
                 <button className="btn-ghost-sm" onClick={() => deleteChar(idx)} style={{color:'#e74c3c'}}>🗑️</button>
               </div>
@@ -3565,11 +3557,9 @@ function PlotPanel(props: {
           <p className="text-muted">点击「添加卷大纲」手动添加，或用AI识别自动提取</p>
           <div className="bible-empty-actions">
             <button className="btn-primary-sm" onClick={addVolumeOutline}>＋ 添加卷大纲</button>
-            {hasChapters && (
-              <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume('', '全部章节')}>
-                🔍 AI识别全部
-              </button>
-            )}
+            <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume('', '全部章节')} disabled={!hasChapters} title={hasChapters ? 'AI识别全部章节剧情' : '需要先创建章节才能AI识别'}>
+              🔍 AI识别全部
+            </button>
           </div>
         </div>
       ) : (
@@ -3603,11 +3593,9 @@ function PlotPanel(props: {
                   <button className="btn-ghost-sm" onClick={() => handleDesignNodes(vol.volume_id || '', vol.volume || `第${idx + 1}卷`, vol.volume_index || (idx + 1))} disabled={nodeDesigning === (vol.volume_id || vol.volume)} title="AI设计此卷情节节点">
                     {nodeDesigning === (vol.volume_id || vol.volume) ? '⏳ 节点中...' : '🎯 节点设计'}
                   </button>
-                  {hasChapters && (
-                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume)} title="AI识别此卷剧情">
-                      {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}
-                    </button>
-                  )}
+                  <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume) || !hasChapters} title={hasChapters ? 'AI识别此卷剧情' : '需要先创建章节才能AI识别'}>
+                    {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}
+                  </button>
                   <button className="btn-ghost-sm" onClick={() => startEditVol(vol.volume_id || vol.volume, vol.main_plot || '')}>✏️ 编辑</button>
                   <button className="btn-ghost-sm" onClick={() => deleteVolume(idx)} style={{color:'#e74c3c'}}>🗑️</button>
                 </div>
@@ -3931,9 +3919,9 @@ function InventoryPanel(props: {
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} title="AI 协同创作物资库">
             ✨ AI创作
           </button>
-          {hasChapters && (
+          {(
             <>
-              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
+              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
                 {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
               {volSelectorOpen && (
@@ -4202,11 +4190,9 @@ function BibleEditPanel(props: {
               <button className="btn-ghost-sm" onClick={() => onOpenAiCreate(tab.field)} disabled={aiAssisting}>
                 {aiAssisting ? '🤖 生成中...' : '✨ AI创作'}
               </button>
-              {hasChapters && (
-                <button className="btn-ghost-sm" onClick={onAnalyzeDimension} disabled={dimAnalyzing} title="AI分析已有章节，自动识别此维度内容">
-                  {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
-                </button>
-              )}
+              <button className="btn-ghost-sm" onClick={onAnalyzeDimension} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别此维度内容' : '需要先创建章节才能AI识别'}>
+                {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
+              </button>
               <button className="btn-primary-sm" onClick={onStartEdit}>编辑</button>
               {content && (
                 <button className="btn-ghost-sm" onClick={onDelete} style={{color:'#e74c3c'}} title="清空此维度内容">🗑️</button>
@@ -4270,11 +4256,9 @@ function BibleEditPanel(props: {
             <button className="btn-primary-sm" onClick={(e) => { e.stopPropagation(); onOpenAiCreate(tab.field); }} disabled={aiAssisting}>
               {aiAssisting ? '⏳ 生成中...' : '✨ AI创作'}
             </button>
-            {hasChapters && (
-              <button className="btn-ghost-sm" onClick={(e) => { e.stopPropagation(); onAnalyzeDimension(); }} disabled={dimAnalyzing}>
-                {dimAnalyzing ? '⏳ 识别中...' : '🔍 AI识别'}
-              </button>
-            )}
+            <button className="btn-ghost-sm" onClick={(e) => { e.stopPropagation(); onAnalyzeDimension(); }} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别' : '需要先创建章节才能AI识别'}>
+              {dimAnalyzing ? '⏳ 识别中...' : '🔍 AI识别'}
+            </button>
           </div>
         </div>
       )}
@@ -4508,11 +4492,9 @@ function OutlineCombinedPanel(props: {
               <button className="btn-ghost-sm" onClick={() => onOpenAiCreate(subTab === 'worldview' ? 'worldbuilding' : 'plot_design')} disabled={aiAssisting}>
                 {aiAssisting ? '🤖 生成中...' : '✨ AI创作'}
               </button>
-              {hasChapters && (
-                <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(subTab === 'outline' ? 'outline' : 'worldview')} disabled={dimAnalyzing} title="AI分析已有章节，自动识别">
-                  {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
-                </button>
-              )}
+              <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(subTab === 'outline' ? 'outline' : 'worldview')} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别' : '需要先创建章节才能AI识别'}>
+                {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
+              </button>
               <button className="btn-primary-sm" onClick={startEdit}>编辑</button>
               {currentContent && (
                 <button className="btn-ghost-sm" onClick={handleDelete} style={{color:'#e74c3c'}}>🗑️ 删除</button>
@@ -5659,9 +5641,9 @@ function ForeshadowingPanel(props: {
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} style={{marginLeft:0}}>
             ✨ AI创作
           </button>
-          {hasChapters && (
+          {(
             <>
-              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
+              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
                 {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
               {volSelectorOpen && (
@@ -6069,9 +6051,9 @@ function LocationsPanel(props: {
         )}
         <div className="bible-edit-actions" style={{position:'relative',flexShrink:0}}>
           <button className="btn-ghost-sm" onClick={onOpenAiCreate} title="AI 全屏创作地点体系">✨ AI创作</button>
-          {hasChapters && (
+          {(
             <>
-              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol} title="选择卷进行AI识别">
+              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
                 {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
               {volSelectorOpen && (
