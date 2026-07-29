@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { AuthContext } from '../App';
 import type { Book, BookBible, SkillPack } from '../types';
+import AiCreateModal from './AiCreateModal';
 
 export default function WorkbenchPage() {
   const navigate = useNavigate();
@@ -35,16 +36,13 @@ export default function WorkbenchPage() {
   const [editBookForm, setEditBookForm] = useState({ title: '', genre: 'other', book_type: 'short_story', synopsis: '' });
   const [editBookSaving, setEditBookSaving] = useState(false);
 
-  // 总AI创作面板状态
-  const [masterCreateBookId, setMasterCreateBookId] = useState('');
+  // 总AI创作面板状态（与创作页 AiCreateModal 完全一致，仅多一步"选择作品"）
   const [masterCreatePacks, setMasterCreatePacks] = useState<SkillPack[]>([]);
-  const [masterCreateSelectedPackIds, setMasterCreateSelectedPackIds] = useState<string[]>([]);
-  const [masterCreateDims, setMasterCreateDims] = useState<string[]>(MASTER_DIMS.map(d => d.key));
-  const [masterCreateInstruction, setMasterCreateInstruction] = useState('');
-  const [masterCreateLoading, setMasterCreateLoading] = useState(false);
-  const [masterCreateResults, setMasterCreateResults] = useState<Array<{ dimension: string; label: string; field: string; content?: string; error?: string }>>([]);
-  const [masterCreatePacksExpanded, setMasterCreatePacksExpanded] = useState(false);
-  const [showMasterCreateModal, setShowMasterCreateModal] = useState(false);
+  const [showMasterCreateModal, setShowMasterCreateModal] = useState(false); // 作品选择弹窗
+  const [aiModalBook, setAiModalBook] = useState<Book | null>(null); // 选中的作品
+  const [aiBible, setAiBible] = useState<BookBible | null>(null);
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiModalLoading, setAiModalLoading] = useState(false);
 
   async function handleRenameBook(book: Book) {
     setEditBookId(book.id);
@@ -109,13 +107,6 @@ export default function WorkbenchPage() {
   useEffect(() => {
     api.listSkillPacks().then(all => setMasterCreatePacks(all)).catch(() => { /* ignore */ });
   }, []);
-
-  // 默认选中最近编辑的作品
-  useEffect(() => {
-    if (recentBook && !masterCreateBookId) {
-      setMasterCreateBookId(recentBook.id);
-    }
-  }, [recentBook, masterCreateBookId]);
 
   async function handleCreateBook() {
     if (!newBookForm.title) return;
@@ -196,82 +187,53 @@ export default function WorkbenchPage() {
     setImporting(false);
   }
 
-  // 切换技能包选中状态
-  function toggleMasterPack(id: string) {
-    setMasterCreateSelectedPackIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  }
-
-  // 切换维度选中状态
-  function toggleMasterDim(key: string) {
-    setMasterCreateDims(prev => prev.includes(key) ? prev.filter(x => x !== key) : [...prev, key]);
-  }
-
-  // 开始 AI 总创作
-  async function handleMasterCreate() {
-    if (!masterCreateBookId || masterCreateDims.length === 0) return;
+  // 选择作品后打开 AiCreateModal（与创作页完全一致，仅多一步"选择作品"）
+  async function handleSelectBookForAi(book: Book) {
     const ok = await requireAuth();
     if (!ok) return;
-    setMasterCreateLoading(true);
+    setShowMasterCreateModal(false);
+    setAiModalLoading(true);
+    setAiModalBook(book);
     try {
-      const dims = MASTER_DIMS.filter(d => masterCreateDims.includes(d.key)).map(d => d.key);
-      const res = await api.aiMasterCreate(masterCreateBookId, dims, masterCreateSelectedPackIds, masterCreateInstruction);
-      setMasterCreateResults(res.results || []);
-      if ((res.results || []).length === 0) {
-        alert('未返回任何创作结果');
-      }
+      const bb = await api.getBible(book.id);
+      setAiBible(bb);
+      setAiModalOpen(true);
     } catch (e: any) {
-      alert('AI 创作失败：' + (e.message || '请重试'));
+      alert('加载作品设定失败：' + (e.message || '请重试'));
+      setAiModalBook(null);
     }
-    setMasterCreateLoading(false);
+    setAiModalLoading(false);
   }
 
-  // 编辑某个维度的创作结果内容
-  function updateMasterResultContent(field: string, content: string) {
-    setMasterCreateResults(prev => prev.map(r => r.field === field ? { ...r, content } : r));
-  }
-
-  // 确认填入单个维度到作品设定
-  async function handleApplyMasterResult(field: string) {
-    const r = masterCreateResults.find(x => x.field === field);
-    if (!r || !r.content) return;
-    const ok = await requireAuth();
-    if (!ok) return;
+  // 单维度填入：保存到对应 BookBible 字段（与创作页 handleAiCreateApply 一致）
+  async function handleAiCreateApply(field: string, content: string) {
+    if (!aiModalBook) return;
     try {
-      await api.updateBible(masterCreateBookId, { [field]: r.content } as Partial<BookBible>);
-      alert(`✅ 已填入「${r.label}」`);
-      setMasterCreateResults(prev => prev.filter(x => x.field !== field));
+      const updated = await api.updateBible(aiModalBook.id, { [field]: content } as Partial<BookBible>);
+      setAiBible(updated);
     } catch (e: any) {
       alert('填入失败：' + (e.message || '请重试'));
     }
   }
 
-  // 丢弃单个维度的创作结果
-  function handleDiscardMasterResult(field: string) {
-    setMasterCreateResults(prev => prev.filter(x => x.field !== field));
+  // 全局多维度批量填入（与创作页 handleAiCreateApplyMany 一致）
+  async function handleAiCreateApplyMany(results: { field: string; content: string }[]) {
+    if (!aiModalBook || results.length === 0) return;
+    const patch: Partial<BookBible> = {};
+    for (const r of results) (patch as any)[r.field] = r.content;
+    try {
+      const updated = await api.updateBible(aiModalBook.id, patch);
+      setAiBible(updated);
+    } catch (e: any) {
+      alert('填入失败：' + (e.message || '请重试'));
+    }
   }
 
-  // 一键填入所有创作结果
-  async function handleApplyAllMasterResults() {
-    if (masterCreateResults.length === 0) return;
-    const ok = await requireAuth();
-    if (!ok) return;
-    const valid = masterCreateResults.filter(r => r.content);
-    if (valid.length === 0) {
-      alert('没有可填入的内容');
-      return;
-    }
-    const succeededFields: string[] = [];
-    let failed = 0;
-    for (const r of valid) {
-      try {
-        await api.updateBible(masterCreateBookId, { [r.field]: r.content } as Partial<BookBible>);
-        succeededFields.push(r.field);
-      } catch {
-        failed++;
-      }
-    }
-    alert(`✅ 成功填入 ${succeededFields.length} 个维度${failed > 0 ? `，${failed} 个失败` : ''}`);
-    setMasterCreateResults(prev => prev.filter(r => !succeededFields.includes(r.field)));
+  // 关闭 AiCreateModal
+  function handleCloseAiModal() {
+    setAiModalOpen(false);
+    setAiModalBook(null);
+    setAiBible(null);
   }
 
   if (loading) return <div className="page loading-screen"><span>加载中...</span></div>;
@@ -380,19 +342,19 @@ export default function WorkbenchPage() {
       {/* AI 总创作入口 */}
       <div className="home-section">
         <div className="home-section-header">
-          <h2>🤖 AI 总创作</h2>
+          <h2>🤖</h2>
         </div>
         <button
           className="master-create-entry"
           onClick={() => setShowMasterCreateModal(true)}
-          disabled={!recentBook}
+          disabled={books.length === 0}
         >
           <div className="master-create-entry-icon">🤖</div>
           <div className="master-create-entry-content">
-            <div className="master-create-entry-label">总览全局创作</div>
-            <div className="master-create-entry-desc">{recentBook ? `为「${recentBook.title}」生成构思/设定/世界观/人物/大纲/剧情` : '请先创建作品'}</div>
+            <div className="master-create-entry-label">Ai总创作</div>
+            <div className="master-create-entry-desc">{books.length > 0 ? '选择作品，对构思/设定/世界观/人物/大纲/剧情协同生成' : '请先创建作品'}</div>
           </div>
-          <div className="master-create-entry-arrow">{recentBook ? '→' : ''}</div>
+          <div className="master-create-entry-arrow">{books.length > 0 ? '→' : ''}</div>
         </button>
       </div>
 
@@ -658,102 +620,68 @@ export default function WorkbenchPage() {
         </div>
       )}
 
-      {/* AI 总创作半屏模态框 */}
+      {/* AI 总创作 - 作品选择弹窗（首页入口多出的一步，选完作品后进入与创作页完全一致的 AiCreateModal） */}
       {showMasterCreateModal && (
         <div className="modal-overlay" onClick={() => setShowMasterCreateModal(false)}>
-          <div className="master-create-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
             <div className="master-create-modal-header">
-              <h2>🤖 AI 总创作</h2>
+              <h2>🤖 Ai总创作</h2>
               <button className="btn-ghost" onClick={() => setShowMasterCreateModal(false)}>✕</button>
             </div>
-            <div className="master-create-modal-body">
-              {/* 作品选择 */}
-              <div className="form-field">
-                <label>选择作品</label>
-                <select className="input" value={masterCreateBookId} onChange={e => setMasterCreateBookId(e.target.value)} disabled={masterCreateLoading}>
-                  {books.map(b => <option key={b.id} value={b.id}>{b.title}</option>)}
-                </select>
+            <p className="text-muted" style={{ fontSize: 13, marginBottom: 16 }}>
+              选择要创作的作品，进入后可对构思/设定/大纲/世界观/人物/剧情等维度协同生成（与创作界面入口为同一功能）
+            </p>
+            {books.length === 0 ? (
+              <div className="empty-state" style={{ padding: 24 }}>
+                <p>还没有作品，请先新建</p>
+                <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => { setShowMasterCreateModal(false); setShowNewBook(true); }}>+ 新建作品</button>
               </div>
-
-              {/* 折叠技能包选择器 */}
-              <div style={{ marginTop: 12 }}>
-                <div
-                  style={{ cursor: 'pointer', userSelect: 'none', padding: '8px 0', fontWeight: 600, fontSize: 14 }}
-                  onClick={() => setMasterCreatePacksExpanded(!masterCreatePacksExpanded)}
-                >
-                  📂 协同技能包（可选）{masterCreatePacksExpanded ? ' ▾' : ' ▸'}
-                  {masterCreateSelectedPackIds.length > 0 && ` · 已选 ${masterCreateSelectedPackIds.length} 个`}
-                </div>
-                {masterCreatePacksExpanded && (
-                  <div className="skill-pack-checkbox-list">
-                    {masterCreatePacks.length === 0 ? (
-                      <div className="text-muted" style={{ fontSize: 12, padding: '4px 0' }}>暂无可用技能包</div>
-                    ) : masterCreatePacks.map(p => (
-                      <label key={p.id} className={`skill-pack-checkbox-item ${masterCreateSelectedPackIds.includes(p.id) ? 'checked' : ''}`}>
-                        <input type="checkbox" checked={masterCreateSelectedPackIds.includes(p.id)} onChange={() => toggleMasterPack(p.id)} disabled={masterCreateLoading} />
-                        <span className="skill-pack-checkbox-icon">{p.icon}</span>
-                        <span className="skill-pack-checkbox-name">{p.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* 维度选择 */}
-              <div className="form-field" style={{ marginTop: 12 }}>
-                <label>创作维度（默认全选）</label>
-                <div className="skill-pack-checkbox-list">
-                  {MASTER_DIMS.map(d => (
-                    <label key={d.key} className={`skill-pack-checkbox-item ${masterCreateDims.includes(d.key) ? 'checked' : ''}`}>
-                      <input type="checkbox" checked={masterCreateDims.includes(d.key)} onChange={() => toggleMasterDim(d.key)} disabled={masterCreateLoading} />
-                      <span className="skill-pack-checkbox-name">{d.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* 创作指令 */}
-              <div className="form-field" style={{ marginTop: 12 }}>
-                <label>额外指令（可选）</label>
-                <textarea className="input master-create-textarea" rows={10} placeholder="如：主角是穿越者，背景设定在末世..." value={masterCreateInstruction} onChange={e => setMasterCreateInstruction(e.target.value)} disabled={masterCreateLoading} />
-              </div>
-
-              {/* 开始按钮 */}
-              <div style={{ marginTop: 12 }}>
-                <button className="btn-primary" onClick={handleMasterCreate} disabled={masterCreateLoading || !masterCreateBookId || masterCreateDims.length === 0}>
-                  {masterCreateLoading ? '⏳ 创作中...' : '✨ 开始 AI 总创作'}
-                </button>
-              </div>
-
-              {/* 结果展示区 */}
-              {masterCreateResults.length > 0 && (
-                <div style={{ marginTop: 16, borderTop: '1px solid #eee', paddingTop: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
-                    <strong>创作结果（{masterCreateResults.length}）</strong>
-                    <button className="btn-secondary" onClick={handleApplyAllMasterResults} disabled={masterCreateLoading}>✅ 一键全部填入</button>
-                  </div>
-                  {masterCreateResults.map(r => (
-                    <div key={r.field} style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 12, marginBottom: 12 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
-                        <strong>
-                          {r.label}
-                          {r.error && <span style={{ color: '#e74c3c', marginLeft: 6 }}>· {r.error}</span>}
-                        </strong>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button className="btn-primary" onClick={() => handleApplyMasterResult(r.field)} disabled={!r.content || masterCreateLoading}>✅ 确认填入</button>
-                          <button className="btn-ghost" onClick={() => handleDiscardMasterResult(r.field)}>❌ 丢弃</button>
-                        </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
+                {books.map(b => (
+                  <button
+                    key={b.id}
+                    className="ai-picker-item"
+                    onClick={() => handleSelectBookForAi(b)}
+                    disabled={aiModalLoading}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
+                      background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
+                      borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                    }}
+                  >
+                    <span style={{ fontSize: 24 }}>{b.cover_path ? '📖' : '📚'}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.title}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {b.book_type === 'novel' ? '长篇' : b.book_type === 'script' ? '剧本' : '短篇'} · {GENRE_MAP[b.genre] || b.genre} · {b.word_count.toLocaleString()}字 · {b.chapter_count}章
                       </div>
-                      {r.content !== undefined && (
-                        <textarea className="input" rows={6} value={r.content} onChange={e => updateMasterResultContent(r.field, e.target.value)} disabled={masterCreateLoading} />
-                      )}
                     </div>
-                  ))}
-                </div>
-              )}
+                    <span style={{ color: 'var(--accent)' }}>→</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="modal-actions" style={{ marginTop: 16 }}>
+              <button className="btn-ghost" onClick={() => setShowMasterCreateModal(false)}>取消</button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* AiCreateModal：与创作页完全一致的全屏 AI 创作弹窗 */}
+      {aiModalOpen && aiModalBook && (
+        <AiCreateModal
+          mode="global"
+          bookId={aiModalBook.id}
+          book={aiModalBook}
+          bible={aiBible}
+          skillPacks={masterCreatePacks}
+          selectedSkillPackIds={[]}
+          onApply={handleAiCreateApply}
+          onApplyMany={handleAiCreateApplyMany}
+          onClose={handleCloseAiModal}
+        />
       )}
     </div>
   );
@@ -786,13 +714,3 @@ const FIELD_LABELS: Record<string, string> = {
   character_profiles: '人物及关系', timeline: '剧情', foreshadowing: '伏笔',
   locations: '地图/地点', generated_summary: '内容摘要',
 };
-
-// 总AI创作支持的维度配置
-const MASTER_DIMS: Array<{ key: string; label: string; field: string }> = [
-  { key: 'concept', label: '构思', field: 'concept' },
-  { key: 'key_rules', label: '设定/规则', field: 'key_rules' },
-  { key: 'worldbuilding', label: '世界观', field: 'worldbuilding' },
-  { key: 'character_profiles', label: '人物', field: 'character_profiles' },
-  { key: 'plot_design', label: '大纲', field: 'plot_design' },
-  { key: 'timeline', label: '剧情', field: 'timeline' },
-];
