@@ -1958,7 +1958,6 @@ function ChapterPanel(props: {
   return (
     <div className="chapter-list-panel">
       <div className="chapter-list-header">
-        <h3>📚 章节 <span className="chapter-count">{chapters.filter(c => !c.is_volume).length}章</span></h3>
         <div style={{display:'flex',gap:6,flexWrap:'wrap',justifyContent:'flex-end'}}>
           <button className="btn-ghost-sm" onClick={() => onCreateVolume()} title="新建卷">📂 新卷</button>
           <button className="btn-ghost-sm" onClick={handleRebinVolumes} disabled={rebinning || !bookId || chapters.filter(c => !c.is_volume).length === 0} title="按50章/卷自动重新分卷（清空现有卷结构后重建）">
@@ -4426,7 +4425,6 @@ function OutlineCombinedPanel(props: {
   return (
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
-        <h3>📋 大纲</h3>
         <div className="bible-edit-actions" style={{flexShrink:0}}>
           {!editing ? (
             <>
@@ -4945,7 +4943,6 @@ function DynamicMemoryPanel(props: {
   return (
     <div className="dm-panel">
       <div className="dm-header">
-        <h3>🗂️ 动态文件</h3>
         <div className="dm-header-actions">
           <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating || batchMode} title="检查并自动生成缺失的报告">
             {generating ? '⏳ 处理中...' : '🔄 自动检查'}
