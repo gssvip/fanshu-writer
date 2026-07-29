@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
-import type { Book, BookBible, BrainstormResult, BrainstormSuggestion, Chapter, SkillPack, DynamicReport } from '../types';
+import type { Book, BookBible, BrainstormResult, BrainstormSuggestion, Chapter, SkillPack, DynamicReport, AISession } from '../types';
 import AiCreateModal from './AiCreateModal';
 import EntityRegistryModal from './EntityRegistryModal';
 
@@ -162,6 +162,53 @@ export default function WritePage() {
   const [aiCreateModalState, setAiCreateModalState] = useState<{ mode: 'global' | 'single'; dimension?: string } | null>(null);
   const [showEntityRegistry, setShowEntityRegistry] = useState(false);
 
+  // ===== AI总创作会话历史（需求1b/3：首页与创作页消息互通 + 历史聊天记录管理） =====
+  const [aiSessions, setAiSessions] = useState<AISession[]>([]);
+  const [resumeSession, setResumeSession] = useState<AISession | null>(null);
+
+  const refreshAiSessions = useCallback(async () => {
+    if (!bookId) { setAiSessions([]); return; }
+    try {
+      const list = await api.listAISessions(bookId, 'global_create');
+      setAiSessions(list || []);
+    } catch { /* 静默 */ }
+  }, [bookId]);
+
+  useEffect(() => { refreshAiSessions(); }, [refreshAiSessions]);
+
+  // 批量删除会话
+  const handleDeleteAiSessions = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    showConfirm(`确认删除选中的 ${ids.length} 条聊天记录？此操作不可撤销。`, async () => {
+      try {
+        await Promise.all(ids.map(id => api.deleteAISession(id)));
+        await refreshAiSessions();
+      } catch (e: any) { alert('删除失败：' + (e.message || '未知错误')); }
+    });
+  }, [refreshAiSessions, showConfirm]);
+
+  // 重命名会话
+  const handleRenameAiSession = useCallback(async (id: string, title: string) => {
+    if (!title.trim()) return;
+    try {
+      await api.updateAISession(id, { title: title.trim() });
+      await refreshAiSessions();
+    } catch (e: any) { alert('重命名失败：' + (e.message || '未知错误')); }
+  }, [refreshAiSessions]);
+
+  // 打开历史会话继续对话
+  const handleResumeAiSession = useCallback((session: AISession) => {
+    setResumeSession(session);
+    setAiCreateModalState({ mode: 'global' });
+  }, []);
+
+  // 打开新对话（从构思面板或头部入口）
+  const openNewAiCreate = useCallback(() => {
+    setResumeSession(null);
+    setAiCreateModalState({ mode: 'global' });
+  }, []);
+
+
   // 单维度填入：保存到对应 BookBible 字段
   const handleAiCreateApply = useCallback(async (field: string, content: string) => {
     if (!bookId) return;
@@ -250,10 +297,10 @@ export default function WritePage() {
     }
   }, [bible]);
 
-  // 从首页 AI总创作 入口跳转过来时，URL 带 ai=global，自动打开 AI总创作 Modal
+  // 从首页 AI总创作 入口跳转过来时，URL 带 ai=global，自动打开 AI总创作 Modal（新对话）
   useEffect(() => {
     if (bookId && searchParams.get('ai') === 'global' && bible) {
-      setAiCreateModalState({ mode: 'global' });
+      openNewAiCreate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId, bible]);
@@ -1411,7 +1458,7 @@ ${chapterEditContent}`;
         <div className="page-header-right">
           <button
             className="btn-ghost-sm"
-            onClick={() => setAiCreateModalState({ mode: 'global' })}
+            onClick={openNewAiCreate}
             disabled={!bookId}
             title="AI 全屏创作：选择维度，输入要求，流式生成，可提修改意见重新生成，确定后自动填入"
             style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)', color: '#fff' }}
@@ -1502,7 +1549,12 @@ ${chapterEditContent}`;
             selectedSkillPackIds={selectedSkillPackIds}
             onToggleSkillPack={toggleSkillPack}
             selectedSkillPacks={selectedSkillPacks}
-            onOpenAiCreate={() => setAiCreateModalState({ mode: 'global' })}
+            onOpenAiCreate={openNewAiCreate}
+            aiSessions={aiSessions}
+            onRefreshSessions={refreshAiSessions}
+            onDeleteAiSessions={handleDeleteAiSessions}
+            onRenameAiSession={handleRenameAiSession}
+            onResumeAiSession={handleResumeAiSession}
           />
         ) : isMapTab ? (
           <LocationsPanel
@@ -1730,7 +1782,9 @@ ${chapterEditContent}`;
           selectedSkillPackIds={selectedSkillPackIds}
           onApply={handleAiCreateApply}
           onApplyMany={handleAiCreateApplyMany}
-          onClose={() => setAiCreateModalState(null)}
+          onClose={() => { setAiCreateModalState(null); setResumeSession(null); }}
+          resumeSession={resumeSession}
+          onSessionSaved={refreshAiSessions}
         />
       )}
 
@@ -1782,15 +1836,82 @@ function ConceptPanel(props: {
   onToggleSkillPack: (id: string) => void;
   selectedSkillPacks: SkillPack[];
   onOpenAiCreate: () => void;
+  // AI总创作会话历史（需求3）
+  aiSessions: AISession[];
+  onRefreshSessions: () => void;
+  onDeleteAiSessions: (ids: string[]) => void;
+  onRenameAiSession: (id: string, title: string) => void;
+  onResumeAiSession: (session: AISession) => void;
 }) {
-  const { concept, setConcept, bible, brainstorming, brainstormResult, brainstormError, adoptedSuggestions, onAdopt, bookId, onBibleUpdate,
+  const { concept, brainstorming, brainstormResult, brainstormError, adoptedSuggestions, onAdopt,
     hasChapters, conceptAiMode, conceptAiPrompt, conceptAiAssisting, conceptAiError,
     onExecuteConceptAi, onCancelConceptAi, onEditConceptAiPrompt,
     onAnalyzeDimension, dimAnalyzing,
-    skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, onOpenAiCreate } = props;
+    skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, onOpenAiCreate,
+    aiSessions, onRefreshSessions, onDeleteAiSessions, onRenameAiSession, onResumeAiSession } = props;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const selectedCount = selectedSkillPackIds.length;
+
+  // 聊天记录管理状态（需求3）
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [renamingId, setRenamingId] = useState<string>('');
+  const [renameValue, setRenameValue] = useState('');
+  const [historyExpanded, setHistoryExpanded] = useState(true);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleSelectAll = () => {
+    setSelectedIds(prev => prev.size === aiSessions.length ? new Set() : new Set(aiSessions.map(s => s.id)));
+  };
+  const startRename = (id: string, currentTitle: string) => {
+    setRenamingId(id); setRenameValue(currentTitle);
+  };
+  const submitRename = () => {
+    if (renamingId && renameValue.trim()) onRenameAiSession(renamingId, renameValue);
+    setRenamingId(''); setRenameValue('');
+  };
+  const handleBatchDelete = () => {
+    if (selectedIds.size === 0) return;
+    onDeleteAiSessions(Array.from(selectedIds));
+    setSelectedIds(new Set());
+  };
+
+  // 提取会话预览（最后一条助手消息的首行）
+  const getPreview = (s: AISession): string => {
+    const msgs = s.messages || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'assistant') {
+        try {
+          const payload = JSON.parse(msgs[i].content);
+          if (payload && payload.outputs) {
+            const firstOut = Object.values(payload.outputs)[0] as string | undefined;
+            if (firstOut) return firstOut.replace(/\s+/g, ' ').slice(0, 60);
+          }
+        } catch {}
+        return msgs[i].content.replace(/\s+/g, ' ').slice(0, 60);
+      }
+    }
+    const firstUser = msgs.find(m => m.role === 'user');
+    return firstUser ? firstUser.content.replace(/\s+/g, ' ').slice(0, 60) : '（空对话）';
+  };
+
+  const formatTime = (iso: string | null): string => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+    if (diff < 60000) return '刚刚';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`;
+    if (diff < 604800000) return `${Math.floor(diff / 86400000)}天前`;
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  };
 
   const handlePromptKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -1880,34 +2001,48 @@ function ConceptPanel(props: {
       <div className="concept-input-section">
         <div className="concept-label-row">
           <label className="concept-label">一句话构思</label>
-          <button className="btn-ghost-sm concept-dim-analyze-btn" onClick={onAnalyzeDimension} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别构思' : '需要先创建章节才能AI识别'}>
-            {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
-          </button>
-        </div>
-        <textarea
-          className="input concept-textarea"
-          rows={6}
-          placeholder="例如：一个程序员穿越到修仙世界，用代码思维重新定义修炼体系..."
-          value={concept}
-          onChange={e => setConcept(e.target.value)}
-        />
-        <div className="concept-actions">
+          {/* 需求2：原 AI识别 按钮替换为 AI总创作，点击弹出与首页一致的创作 Modal */}
           <button
-            className="btn-primary"
+            className="btn-primary concept-dim-analyze-btn"
             onClick={onOpenAiCreate}
-            disabled={brainstorming}
             title="AI 总创作：全维度协同生成，可对构思/设定/大纲/人物等批量创作"
             style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)' }}
           >
             ✨ AI总创作
           </button>
-          {concept !== (bible?.concept || '') && (
-            <button className="btn-ghost-sm" onClick={async () => {
-              if (!bookId) return;
-              const updated = await api.updateBible(bookId, { concept } as any);
-              onBibleUpdate(updated);
-            }}>保存构思</button>
-          )}
+        </div>
+        {/* 需求2：移除文字框，改为只读预览；构思内容通过 AI总创作 或 AI识别 填充 */}
+        {concept && concept.trim() ? (
+          <div
+            className="concept-preview"
+            style={{
+              whiteSpace: 'pre-wrap', padding: '10px 12px', minHeight: 48,
+              background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 13,
+              lineHeight: 1.7, border: '1px solid var(--border-color)',
+              maxHeight: 180, overflowY: 'auto',
+            }}
+            title="点击 ✨ AI总创作 重新生成或提修改意见"
+          >
+            {concept}
+          </div>
+        ) : (
+          <div
+            className="concept-empty-hint"
+            style={{
+              padding: '14px 12px', textAlign: 'center',
+              background: 'var(--bg-tertiary)', borderRadius: 8,
+              fontSize: 12, color: 'var(--text-muted)',
+              border: '1px dashed var(--border-color)',
+            }}
+          >
+            暂无构思，点击右上角「✨ AI总创作」开始创作
+          </div>
+        )}
+        {/* 保留单维度 AI识别（从已有章节提取构思），作为辅助入口 */}
+        <div className="concept-actions">
+          <button className="btn-ghost-sm" onClick={onAnalyzeDimension} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别构思' : '需要先创建章节才能AI识别'}>
+            {dimAnalyzing ? '🤖 识别中...' : '🔍 从章节识别构思'}
+          </button>
         </div>
         {brainstormError && <div className="error-msg">{brainstormError}</div>}
       </div>
@@ -1952,6 +2087,138 @@ function ConceptPanel(props: {
           <p>AI正在为你生成多维度创作方案...</p>
         </div>
       )}
+
+      {/* 需求3：近期 AI总创作 聊天记录，支持批量删除/编辑/重命名/继续对话 */}
+      <div className="ai-chat-history" style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <button
+            className="btn-ghost-sm"
+            onClick={() => setHistoryExpanded(v => !v)}
+            style={{ padding: '2px 8px', fontSize: 12, fontWeight: 600 }}
+            title={historyExpanded ? '收起' : '展开'}
+          >
+            {historyExpanded ? '▼' : '▶'} 💬 近期 AI 创作对话 {aiSessions.length > 0 && `(${aiSessions.length})`}
+          </button>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {aiSessions.length > 0 && (
+              <>
+                <button
+                  className="btn-ghost-sm"
+                  onClick={toggleSelectAll}
+                  style={{ padding: '2px 8px', fontSize: 11 }}
+                  title="全选/取消全选"
+                >
+                  {selectedIds.size === aiSessions.length ? '取消全选' : '全选'}
+                </button>
+                <button
+                  className="btn-ghost-sm"
+                  onClick={handleBatchDelete}
+                  disabled={selectedIds.size === 0}
+                  style={{ padding: '2px 8px', fontSize: 11, color: selectedIds.size === 0 ? undefined : '#e74c3c' }}
+                  title={selectedIds.size === 0 ? '先选中要删除的对话' : `删除选中的 ${selectedIds.size} 条对话`}
+                >
+                  🗑️ 删除选中 {selectedIds.size > 0 && `(${selectedIds.size})`}
+                </button>
+              </>
+            )}
+            <button
+              className="btn-ghost-sm"
+              onClick={onRefreshSessions}
+              style={{ padding: '2px 8px', fontSize: 11 }}
+              title="刷新列表"
+            >
+              🔄
+            </button>
+          </div>
+        </div>
+
+        {historyExpanded && (
+          aiSessions.length === 0 ? (
+            <div style={{ padding: '16px 12px', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px dashed var(--border-color)' }}>
+              暂无聊天记录。点击上方「✨ AI总创作」开始第一次创作，生成的内容会自动保存到这里。
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
+              {aiSessions.map(s => {
+                const checked = selectedIds.has(s.id);
+                const isRenaming = renamingId === s.id;
+                return (
+                  <div
+                    key={s.id}
+                    className="chat-history-item"
+                    style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px',
+                      background: 'var(--bg-secondary)', borderRadius: 8,
+                      border: `1px solid ${checked ? 'var(--accent)' : 'var(--border-color)'}`,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSelect(s.id)}
+                      style={{ marginTop: 3, flexShrink: 0 }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {isRenaming ? (
+                        <input
+                          className="input"
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onBlur={submitRename}
+                          onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') { setRenamingId(''); setRenameValue(''); } }}
+                          autoFocus
+                          style={{ fontSize: 13, padding: '4px 8px', width: '100%' }}
+                        />
+                      ) : (
+                        <div
+                          style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                          onClick={() => onResumeAiSession(s)}
+                          title="点击继续对话"
+                        >
+                          {s.title || '未命名对话'}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {getPreview(s)}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {formatTime(s.updated_at || s.created_at)} · {(s.messages || []).length} 条消息
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+                      <button
+                        className="btn-ghost-sm"
+                        onClick={() => onResumeAiSession(s)}
+                        style={{ padding: '2px 6px', fontSize: 10 }}
+                        title="打开并继续与 AI 对话，可提修改意见"
+                      >
+                        💬 继续
+                      </button>
+                      <button
+                        className="btn-ghost-sm"
+                        onClick={() => startRename(s.id, s.title || '未命名对话')}
+                        disabled={isRenaming}
+                        style={{ padding: '2px 6px', fontSize: 10 }}
+                        title="重命名"
+                      >
+                        ✏️ 重命名
+                      </button>
+                      <button
+                        className="btn-ghost-sm"
+                        onClick={() => onDeleteAiSessions([s.id])}
+                        style={{ padding: '2px 6px', fontSize: 10, color: '#e74c3c' }}
+                        title="删除"
+                      >
+                        🗑️ 删除
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        )}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { api } from '../api';
-import type { Book, BookBible, SkillPack } from '../types';
+import type { Book, BookBible, SkillPack, AISession, AIMessage } from '../types';
 
 // 维度 field → AI 创作 prompt（与 WritePage 内 FIELD_AI_PROMPTS 保持一致）
 // 【P1修复】补充明确的「输出格式铁律」与平台 bible 字段格式对齐，避免模型自由发挥导致前后不搭
@@ -53,6 +53,7 @@ const DIMENSION_SKILL_KEYS: Record<string, string[]> = {
 };
 
 // 全部可创作的维度清单（全局模式选择用）
+// 物资库和动态文件不在此列：它们根据章节正文提取，不走 AI 总创作
 const ALL_DIMENSIONS = [
   { field: 'concept', label: '构思', icon: '💡' },
   { field: 'key_rules', label: '设定', icon: '⚙️' },
@@ -62,8 +63,6 @@ const ALL_DIMENSIONS = [
   { field: 'timeline', label: '剧情', icon: '📅' },
   { field: 'foreshadowing', label: '伏笔', icon: '🔮' },
   { field: 'locations', label: '地点', icon: '🗺️' },
-  { field: 'inventory', label: '物资库', icon: '🎒' },
-  { field: 'dynamic_volumes', label: '动态文件', icon: '📊' },
 ];
 
 const DIM_LABEL: Record<string, string> = Object.fromEntries(ALL_DIMENSIONS.map(d => [d.field, d.label]));
@@ -102,12 +101,15 @@ interface AiCreateModalProps {
   onApply: (field: string, content: string) => Promise<void>; // 单维度填入
   onApplyMany: (results: { field: string; content: string }[]) => Promise<void>; // 全局批量填入
   onClose: () => void;
+  resumeSession?: AISession | null; // 恢复历史会话（继续对话），传入完整会话对象
+  onSessionSaved?: (sessionId: string) => void; // 会话保存后回调（刷新历史列表）
 }
 
 type Phase = 'input' | 'streaming' | 'done';
 
 export default function AiCreateModal({
   mode, dimension, bookId, book, bible, skillPacks, selectedSkillPackIds, onApply, onApplyMany, onClose,
+  resumeSession, onSessionSaved,
 }: AiCreateModalProps) {
   // 选中的维度（全局模式可多选，单维度模式锁定）
   const [selectedDims, setSelectedDims] = useState<string[]>(mode === 'single' && dimension ? [dimension] : ['concept']);
@@ -126,6 +128,76 @@ export default function AiCreateModal({
   const stoppedRef = useRef(false); // 标记用户是否主动停止（避免 catch 时误报"生成失败"）
   // 记录最近一次生成参数（用于重新生成时带上修改意见）
   const lastGenRef = useRef<{ instruction: string; modification: string }>({ instruction: '', modification: '' });
+
+  // ===== 会话持久化（需求1b：首页与创作页消息互通） =====
+  // scope=global_create 的会话按书聚合，每次"开始生成/重新生成"追加一轮 user+assistant 消息
+  const sessionIdRef = useRef<string>('');
+  const sessionMessagesRef = useRef<AIMessage[]>([]);
+
+  // 恢复历史会话：传入 resumeSession 时，回填维度/输出/指令，并直接进入 done 阶段（可提修改意见重新生成）
+  useEffect(() => {
+    if (!resumeSession) return;
+    const msgs = resumeSession.messages || [];
+    sessionIdRef.current = resumeSession.id;
+    sessionMessagesRef.current = msgs;
+    // 从最后一条 assistant 消息恢复 outputs/dims
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'assistant') {
+        try {
+          const payload = JSON.parse(msgs[i].content);
+          if (payload && payload.type === 'ai_create') {
+            if (Array.isArray(payload.dims) && payload.dims.length) {
+              // 单维度模式保留锁定维度，全局模式恢复多选
+              if (isGlobal) setSelectedDims(payload.dims);
+            }
+            if (payload.outputs && typeof payload.outputs === 'object') {
+              setOutputs(payload.outputs);
+              setEditedOutputs({});
+            }
+            break;
+          }
+        } catch { /* 非 JSON 文本，忽略 */ }
+      }
+    }
+    // 恢复指令（取第一条 user 消息作为原始创作要求）
+    const firstUser = msgs.find(m => m.role === 'user');
+    if (firstUser && !firstUser.content.startsWith('修改意见')) {
+      setInstruction(firstUser.content);
+      lastGenRef.current = { instruction: firstUser.content, modification: '' };
+    }
+    setPhase('done');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeSession]);
+
+  // 持久化一轮对话到 AISession（best-effort，失败不阻断主流程）
+  const persistSession = useCallback(async (userMsg: string, dims: string[], outs: Record<string, string>) => {
+    if (!bookId) return;
+    // 跳过空输出（如用户主动停止且无内容）
+    const hasContent = Object.values(outs).some(v => v && v.trim());
+    if (!hasContent) return;
+    try {
+      const assistantContent = JSON.stringify({ type: 'ai_create', dims, outputs: outs });
+      const newMessages: AIMessage[] = [
+        ...sessionMessagesRef.current,
+        { role: 'user', content: userMsg },
+        { role: 'assistant', content: assistantContent },
+      ];
+      if (sessionIdRef.current) {
+        await api.updateAISession(sessionIdRef.current, { messages: newMessages });
+        sessionMessagesRef.current = newMessages;
+        onSessionSaved?.(sessionIdRef.current);
+      } else {
+        const title = (userMsg || 'AI总创作对话').replace(/^修改意见：/, '').slice(0, 24).trim() || 'AI总创作对话';
+        const created = await api.createAISession({ book_id: bookId, scope: 'global_create', scope_id: '', title });
+        await api.updateAISession(created.id, { messages: newMessages });
+        sessionIdRef.current = created.id;
+        sessionMessagesRef.current = newMessages;
+        onSessionSaved?.(created.id);
+      }
+    } catch {
+      // 持久化失败静默处理
+    }
+  }, [bookId, onSessionSaved]);
 
   const selectedPacks = skillPacks.filter(p => localSkillPackIds.includes(p.id));
   const isGlobal = mode === 'global';
@@ -253,6 +325,9 @@ export default function AiCreateModal({
       }
       setCurrentDim('');
       setPhase('done');
+      // 持久化本轮对话（需求1b：首页与创作页消息互通）
+      const gUserMsg = modificationNote ? `修改意见：${modificationNote}` : (userInstruction || 'AI总创作');
+      persistSession(gUserMsg, orderedDims, newOutputs);
       return;
     }
 
@@ -304,7 +379,10 @@ export default function AiCreateModal({
     }
     setCurrentDim('');
     setPhase('done');
-  }, [buildMessages, outputs, isGlobal, bookId, localSkillPackIds]);
+    // 持久化本轮对话（需求1b：首页与创作页消息互通）
+    const sUserMsg = modificationNote ? `修改意见：${modificationNote}` : (userInstruction || 'AI创作');
+    persistSession(sUserMsg, orderedDims, newOutputs);
+  }, [buildMessages, outputs, isGlobal, bookId, localSkillPackIds, persistSession]);
 
   // 停止生成：中断 fetch 和 reader，保留已生成内容
   function stopGenerate() {
