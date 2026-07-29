@@ -770,54 +770,175 @@ export default function WritePage() {
     try {
       const contextConcept = concept || bible?.concept || book?.synopsis || '暂无构思';
 
-      // 优先获取动态报告作为前文记忆（节省token），没有时回退到章节摘要
-      let memoryContext = '';
-      let prevChapters = '';
+      // ===== 丰富上下文注入（对齐 Agent 管线水平，保证前后文连贯）=====
+      // 1) 前4章完整正文（紧邻当前章节，保证即时衔接；每章超长取尾部1500字保护token）
+      const prevRealChapters = chapters
+        .filter(c => !c.is_volume && c.order_index < activeChapter.order_index)
+        .slice()
+        .sort((a, b) => a.order_index - b.order_index)
+        .slice(-4);
+      const prevChaptersText = prevRealChapters.length > 0
+        ? prevRealChapters.map(c => `【${c.title}】\n${(c.content || '').slice(-1500) || '（空）'}`).join('\n\n')
+        : '（本章为开篇，无前文）';
+
+      // 2) 最近10份动态文件（防遗忘记忆；后端已改为返回10份）
+      let dynamicMemoryText = '';
       try {
-        const dmContext = await api.getDynamicReportContext(bookId);
-        if (dmContext.context_text && dmContext.context_text.trim()) {
-          memoryContext = dmContext.context_text;
-          // 仍取最近1章尾部作为即时衔接
-          const prevCh = chapters
-            .filter(c => c.order_index < activeChapter.order_index)
-            .slice(-1)[0];
-          prevChapters = prevCh ? `【${prevCh.title}】${(prevCh.content || '').slice(-400)}` : '';
+        const dmCtx = await api.getDynamicReportContext(bookId);
+        dynamicMemoryText = (dmCtx.context_text || '').slice(0, 8000);
+      } catch { /* 无动态报告忽略 */ }
+
+      // 3) 前一卷 + 本卷剧情大纲（从 bible.timeline 解析卷纲）
+      let volumeOutlineText = '';
+      let prevVol: any = null, currVol: any = null;
+      try {
+        if (bible?.timeline && bible.timeline.trim().startsWith('[')) {
+          const arr = JSON.parse(bible.timeline);
+          if (Array.isArray(arr)) {
+            const vidx = (v: any) => {
+              const raw = v?.volume_index ?? (() => { const m = String(v?.volume || v?.volume_id || '').match(/\d+/); return m ? parseInt(m[0]) : 0; })();
+              return parseInt(raw) || 0;
+            };
+            const sorted = arr.filter((v: any) => v && typeof v === 'object').sort((a: any, b: any) => vidx(a) - vidx(b));
+            // 用当前章在全书的序号定位所属卷（按 nodes 章号范围，无则按卷序均分）
+            const currChNum = activeChapter.order_index + 1;
+            for (let i = 0; i < sorted.length; i++) {
+              const nodes: any[] = sorted[i].nodes || [];
+              let maxCh = 0;
+              for (const n of nodes) {
+                const nums = String(n.chapters || '').match(/\d+/g);
+                if (nums) maxCh = Math.max(maxCh, ...nums.map(Number));
+              }
+              const volEnd = maxCh || ((i + 1) * 50);
+              if (currChNum <= volEnd || i === sorted.length - 1) {
+                currVol = sorted[i];
+                if (i > 0) prevVol = sorted[i - 1];
+                break;
+              }
+            }
+            const fmtVol = (v: any, role: string) => {
+              if (!v) return '';
+              const parts = [`▼ [${role}] 第${vidx(v)}卷「${v.volume || v.volume_title || ''}」`];
+              if (v.main_plot || v.core_goal) parts.push(`  主线：${(v.main_plot || v.core_goal || '').slice(0, 300)}`);
+              if (v.core_conflict) parts.push(`  核心冲突：${String(v.core_conflict).slice(0, 150)}`);
+              const ns: any[] = v.nodes || [];
+              if (ns.length) {
+                parts.push('  情节节点：');
+                for (const n of ns.slice(0, 6)) {
+                  parts.push(`    · [${n.type || 'M'}] ${n.chapters || ''} ${n.title || ''}：${String(n.summary || '').slice(0, 80)}`);
+                }
+              }
+              if (v.ending_hook || v.ending) parts.push(`  卷尾钩子：${String(v.ending_hook || v.ending || '').slice(0, 150)}`);
+              return parts.join('\n');
+            };
+            volumeOutlineText = [fmtVol(prevVol, '上一卷回顾'), fmtVol(currVol, '本卷进行')].filter(Boolean).join('\n\n');
+          }
         }
-      } catch {
-        // 动态报告获取失败，回退到旧逻辑
+      } catch { /* timeline 解析失败忽略 */ }
+      if (!volumeOutlineText && bible?.plot_design) {
+        volumeOutlineText = `【总纲】${bible.plot_design.slice(0, 800)}`;
       }
 
-      // 如果没有动态报告，使用旧逻辑获取最近3章摘要
-      if (!memoryContext) {
-        prevChapters = chapters
-          .filter(c => c.order_index < activeChapter.order_index)
-          .slice(-3)
-          .map(c => `【${c.title}】${(c.content || '').slice(-500)}`)
-          .join('\n\n');
-      }
+      // 4) 人物及关系（拉取人物列表 + 关系图谱 + 人物档案）
+      let charactersText = bible?.character_profiles?.slice(0, 1000) || '';
+      try {
+        const chars = await api.listCharacters(bookId);
+        if (Array.isArray(chars) && chars.length > 0) {
+          const charLines = chars.slice(0, 12).map(c =>
+            `· ${c.name}（${c.role || ''}）：${(c.description || '').slice(0, 80)}；性格：${(c.personality || '').slice(0, 60)}`
+          ).join('\n');
+          charactersText += `\n【出场人物】\n${charLines}`;
+        }
+      } catch { /* 忽略 */ }
+      const relationText = bible?.relation_graph?.slice(0, 800) || '';
 
-      // 构建前文记忆段落
-      const memorySection = memoryContext
-        ? `前文动态记忆（防遗忘摘要）：\n${memoryContext}\n\n最近章节衔接：${prevChapters || '无'}`
-        : `前文摘要：${prevChapters || '这是第一章'}`;
-
-      let systemContent = '';
-      let userContent = '';
+      // 5) 物资库 / 6) 伏笔 / 7) 地图（含本卷按卷维度）
+      const inventoryText = bible?.inventory?.slice(0, 600) || '';
+      let foreshadowingText = bible?.foreshadowing?.slice(0, 600) || '';
+      let locationsText = bible?.locations?.slice(0, 600) || '';
+      // 本卷按卷维度补充
+      const sliceVolField = (field: string, limit: number) => {
+        try {
+          if (!currVol || !currVol[field]) return '';
+          const val = typeof currVol[field] === 'string' ? currVol[field] : JSON.stringify(currVol[field]);
+          return String(val).slice(0, limit);
+        } catch { return ''; }
+      };
+      const fv = sliceVolField('foreshadowing_volumes', 400) || sliceVolField('foreshadow', 400);
+      if (fv) foreshadowingText += `\n【本卷伏笔】${fv}`;
+      const lv = sliceVolField('locations_volumes', 400) || sliceVolField('locations', 400);
+      if (lv) locationsText += `\n【本卷地点】${lv}`;
 
       // 提取已勾选技能包的提示词（合并多个）
       const skillKeys = CHAPTER_SKILL_KEYS[aiCreateMode] || [];
       const skillPrompt = extractSkillPrompt(selectedSkillPacks, skillKeys);
       const skillNote = selectedSkillPacks.length > 0 ? `\n\n【已加载技能包：${selectedSkillPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
 
+      // 读者期待感（信息差三态）创作技巧
+      const suspenseGuide = `\n【读者期待感·信息差三态技法】
+1. 读者知道、主角不知道：让读者先获得关键信息（如反派阴谋、物品真相、他人企图），主角蒙在鼓里仍推进行动，制造"何时揭穿"的悬念与紧张感。
+2. 主角知道、读者不知道：主角掌握秘密（如底牌、真实身份、已识破伪装）但向读者隐瞒，制造"主角为何如此行动"的悬念，适当时机揭晓带来爽感。
+3. 主角和读者都不知道：突发未知危机/谜团，双方同步摸索，制造纯粹的悬念与好奇。
+每章至少运用一种信息差，章末留下钩子（悬念/反转/新谜团），让读者产生"必须看下一章"的冲动。`;
+
+      // 拼装前文记忆段
+      const memorySection = `【前4章正文（即时衔接）】\n${prevChaptersText}\n\n【动态记忆（最近10份防遗忘报告）】\n${dynamicMemoryText || '（暂无）'}`;
+
+      let systemContent = '';
+      let userContent = '';
+
       if (aiCreateMode === 'write') {
-        systemContent = `你是专业网文作家，擅长${book?.genre || '通用'}题材。请根据用户的创作要求和故事设定，创作章节内容。要求：对话自然，避免说教和AI味，节奏紧凑，章末留悬念。输出1500-3000字。${skillNote}`;
-        userContent = `作品：${book?.title}\n构思：${contextConcept}\n世界观：${bible?.worldbuilding?.slice(0, 400) || '无'}\n人物：${bible?.character_profiles?.slice(0, 400) || '无'}\n大纲：${bible?.plot_design?.slice(0, 400) || '无'}\n\n${memorySection}\n\n当前章节：${chapterEditTitle}\n已有内容：${chapterEditContent.slice(-400) || '（空白）'}\n\n用户创作要求：${currentPrompt}`;
+        systemContent = `你是番茄小说金番级网文作家，擅长${book?.genre || '通用'}题材。请根据用户的创作要求和故事设定，创作章节正文。要求：对话自然口语化，避免说教和AI味，节奏紧凑，场景感强，章末必留悬念。输出2000-2800字。${suspenseGuide}${skillNote}`;
+        userContent = `作品：${book?.title}
+构思：${contextConcept}
+世界观：${bible?.worldbuilding?.slice(0, 500) || '无'}
+核心规则：${bible?.key_rules?.slice(0, 400) || '无'}
+
+【剧情大纲（上一卷+本卷）】
+${volumeOutlineText || '无'}
+
+【人物与关系】
+${charactersText || '无'}
+${relationText ? '关系图谱：' + relationText : ''}
+
+【物资库】${inventoryText || '无'}
+【伏笔】${foreshadowingText || '无'}
+【地图】${locationsText || '无'}
+
+${memorySection}
+
+当前章节：${chapterEditTitle}
+已有内容：${chapterEditContent.slice(-400) || '（空白）'}
+
+用户创作要求：${currentPrompt}`;
       } else if (aiCreateMode === 'continue') {
-        systemContent = `你是专业网文作家，擅长${book?.genre || '通用'}题材。请根据用户的续写要求和已有内容继续创作，保持风格一致。要求：对话自然，避免说教，节奏紧凑。输出800-1500字。${skillNote}`;
-        userContent = `作品：${book?.title}\n构思：${contextConcept}\n世界观：${bible?.worldbuilding?.slice(0, 300) || '无'}\n人物：${bible?.character_profiles?.slice(0, 300) || '无'}\n\n${memorySection}\n\n当前章节：${chapterEditTitle}\n已有内容：${chapterEditContent.slice(-800) || '（空白，请开篇）'}\n\n用户续写要求：${currentPrompt}`;
+        systemContent = `你是专业网文作家，擅长${book?.genre || '通用'}题材。请根据用户的续写要求和已有内容继续创作，保持风格一致，自然衔接。要求：对话自然，避免说教，节奏紧凑。输出800-1500字。${suspenseGuide}${skillNote}`;
+        userContent = `作品：${book?.title}
+构思：${contextConcept}
+
+【剧情大纲（上一卷+本卷）】
+${volumeOutlineText || '无'}
+
+【人物与关系】
+${charactersText || '无'}
+
+${memorySection}
+
+当前章节：${chapterEditTitle}
+已有内容：${chapterEditContent.slice(-800) || '（空白，请开篇）'}
+
+用户续写要求：${currentPrompt}`;
       } else {
-        systemContent = `你是专业网文编辑。请根据用户的润色要求对内容进行优化，保持原意不变，提升文采和节奏感。直接输出润色后的全文。${skillNote}`;
-        userContent = `章节：${chapterEditTitle}\n\n用户润色要求：${currentPrompt}\n\n原文：\n${chapterEditContent}`;
+        systemContent = `你是专业网文编辑。请根据用户的润色要求对内容进行优化，保持原意不变，提升文采和节奏感，增强场景感与信息差悬念。直接输出润色后的全文。${skillNote}`;
+        userContent = `章节：${chapterEditTitle}
+
+【人物与关系】${charactersText ? '\n' + charactersText : '无'}
+【伏笔】${foreshadowingText || '无'}
+
+用户润色要求：${currentPrompt}
+
+原文：
+${chapterEditContent}`;
       }
 
       const messages = [

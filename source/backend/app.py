@@ -8478,10 +8478,10 @@ def auto_check_dynamic_report(book_id):
 @login_required
 def get_dynamic_report_context(book_id):
     """获取最近的动态报告内容（用于AI创作时注入上下文，减少token）"""
-    # 返回最近3份报告
+    # 返回最近10份报告（覆盖更长前文记忆，保证剧情连贯）
     reports = DynamicReport.query.filter_by(book_id=book_id).order_by(
         DynamicReport.chapter_start.desc()
-    ).limit(3).all()
+    ).limit(10).all()
     # 按正序返回
     reports.reverse()
     return jsonify({
