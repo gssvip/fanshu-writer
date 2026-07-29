@@ -2291,16 +2291,38 @@ function CharacterPanel(props: {
     }
   }
 
-  // 将某卷识别的角色合并到全局人物档案
+  // 将某卷识别的角色智能合并到全局人物档案（同名更新，新角色追加）
   async function mergeVolumeToGlobal(idx: number) {
     const vol = displayCharVolumes[idx];
     if (!vol || !vol.characters || vol.characters.length === 0) return;
-    showConfirm(`将「${vol.volume}」识别的 ${vol.characters.length} 个角色合并到全局人物档案？（重名角色会跳过）`, async () => {
-      const existingNames = new Set(characters.map(c => c.name));
-      const toAdd: CharacterData[] = [];
+    showConfirm(`将「${vol.volume}」识别的 ${vol.characters.length} 个角色与全局人物档案相互验证更新？\n• 同名角色：用本卷新信息补充更新（不覆盖已有非空字段）\n• 新角色：自动追加到全局档案`, async () => {
+      const globalMap = new Map<string, { char: CharacterData; idx: number }>();
+      characters.forEach((c, i) => { if (c.name) globalMap.set(c.name, { char: c, idx: i }); });
+      let updatedCount = 0;
+      let addedCount = 0;
+      const newChars = [...characters];
       for (const c of vol.characters) {
-        if (c.name && !existingNames.has(c.name)) {
-          toAdd.push({
+        if (!c.name) continue;
+        const existing = globalMap.get(c.name);
+        if (existing) {
+          // 同名角色：补充更新（仅填充全局档案中为空的字段）
+          const merged = { ...existing.char };
+          let changed = false;
+          const fields: (keyof CharacterData)[] = ['role', 'identity', 'personality', 'motivation', 'background', 'relationships', 'abilities', 'items'];
+          for (const f of fields) {
+            const newVal = (c as any)[f];
+            if (newVal && newVal.trim() && !(merged[f] && (merged[f] as string).trim())) {
+              (merged as any)[f] = newVal;
+              changed = true;
+            }
+          }
+          if (changed) {
+            newChars[existing.idx] = merged;
+            updatedCount++;
+          }
+        } else {
+          // 新角色：追加
+          newChars.push({
             name: c.name,
             role: c.role || '',
             identity: c.identity || '',
@@ -2310,15 +2332,86 @@ function CharacterPanel(props: {
             abilities: c.abilities || '',
             items: c.items || '',
           });
-          existingNames.add(c.name);
+          globalMap.set(c.name, { char: newChars[newChars.length - 1], idx: newChars.length - 1 });
+          addedCount++;
         }
       }
-      if (toAdd.length === 0) {
-        alert('该卷角色已全部在全局档案中，无需合并');
+      if (updatedCount === 0 && addedCount === 0) {
+        alert('该卷角色已全部在全局档案中且无新信息可更新');
         return;
       }
-      await saveCharacters([...characters, ...toAdd]);
-      alert(`已合并 ${toAdd.length} 个角色到全局人物档案`);
+      await saveCharacters(newChars);
+      const parts: string[] = [];
+      if (addedCount > 0) parts.push(`新增 ${addedCount} 个角色`);
+      if (updatedCount > 0) parts.push(`更新 ${updatedCount} 个角色信息`);
+      alert(`相互验证完成：${parts.join('，')}`);
+    });
+  }
+
+  // 将全局人物档案同步回写到所有分卷（同名更新，新角色追加到对应卷）
+  async function syncGlobalToVolumes() {
+    if (characters.length === 0) { alert('全局人物档案为空，无法同步'); return; }
+    if (charVolumes.length === 0) { alert('暂无分卷人物数据，无法同步'); return; }
+    showConfirm(`将全局人物档案（${characters.length}人）同步到所有分卷？\n• 同名角色：用全局信息补充更新分卷（不覆盖分卷已有非空字段）\n• 全局有但分卷没有的角色：追加到对应卷`, async () => {
+      let totalUpdated = 0;
+      let totalAdded = 0;
+      const newList = charVolumes.map((vol: any) => {
+        const volChars: any[] = vol.characters ? [...vol.characters] : [];
+        const volMap = new Map<string, number>();
+        volChars.forEach((c: any, i: number) => { if (c.name) volMap.set(c.name, i); });
+        let updated = 0;
+        let added = 0;
+        for (const gc of characters) {
+          if (!gc.name) continue;
+          const existIdx = volMap.get(gc.name);
+          if (existIdx !== undefined) {
+            // 同名：补充更新
+            const merged = { ...volChars[existIdx] };
+            let changed = false;
+            const fields = ['role', 'identity', 'personality', 'motivation', 'background', 'relationships', 'abilities', 'items'];
+            for (const f of fields) {
+              const gVal = (gc as any)[f];
+              if (gVal && gVal.trim() && !(merged[f] && merged[f].trim())) {
+                merged[f] = gVal;
+                changed = true;
+              }
+            }
+            if (changed) { volChars[existIdx] = merged; updated++; }
+          } else {
+            // 新角色：追加到该卷
+            volChars.push({
+              name: gc.name,
+              role: gc.role || '',
+              identity: gc.identity || '',
+              personality: gc.personality || '',
+              motivation: gc.motivation || '',
+              relationships: gc.relationships || '',
+              abilities: gc.abilities || '',
+              items: gc.items || '',
+              arc: '',
+            });
+            volMap.set(gc.name, volChars.length - 1);
+            added++;
+          }
+        }
+        totalUpdated += updated;
+        totalAdded += added;
+        return { ...vol, characters: volChars };
+      });
+      if (totalUpdated === 0 && totalAdded === 0) {
+        alert('所有分卷人物已与全局档案一致，无需更新');
+        return;
+      }
+      try {
+        const updated = await api.updateBible(bookId, { character_volumes: JSON.stringify(newList, null, 2) } as any);
+        onBibleUpdate(updated);
+        const parts: string[] = [];
+        if (totalUpdated > 0) parts.push(`更新 ${totalUpdated} 个角色`);
+        if (totalAdded > 0) parts.push(`追加 ${totalAdded} 个角色到分卷`);
+        alert(`同步完成：${parts.join('，')}`);
+      } catch (e: any) {
+        alert('同步失败: ' + e.message);
+      }
     });
   }
 
@@ -2549,7 +2642,7 @@ function CharacterPanel(props: {
                   <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolCharacters(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷人物数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
                   {(vol.characters || []).length > 0 && (
                     <>
-                      <button className="btn-ghost-sm" onClick={() => mergeVolumeToGlobal(idx)} title="合并到全局人物档案" style={{color:'#27ae60'}}>⬇ 合并</button>
+                      <button className="btn-ghost-sm" onClick={() => mergeVolumeToGlobal(idx)} title="与全局人物档案相互验证更新（同名补充，新角色追加）" style={{color:'#27ae60'}}>⇅ 验证更新</button>
                       <button className="btn-ghost-sm" onClick={() => deleteVolumeCharacters(idx)} style={{color:'#e74c3c'}} title="删除此卷人物数据">🗑️</button>
                     </>
                   )}
@@ -2672,7 +2765,12 @@ function CharacterPanel(props: {
                     <button className="btn-ghost-sm" onClick={deleteCheckedChars} disabled={charCheckedIds.size === 0} style={{color:'#e74c3c'}} title="删除选中角色">🗑️ 删除选中({charCheckedIds.size})</button>
                   </>
                 ) : (
-                  <button className="btn-ghost-sm" onClick={() => setCharBatchMode(true)} title="批量选择并删除角色">☑ 批量管理</button>
+                  <>
+                    {charVolumes.length > 0 && (
+                      <button className="btn-ghost-sm" onClick={syncGlobalToVolumes} title="将全局人物同步到所有分卷（同名补充，新角色追加）" style={{color:'#27ae60'}}>⇅ 同步到分卷</button>
+                    )}
+                    <button className="btn-ghost-sm" onClick={() => setCharBatchMode(true)} title="批量选择并删除角色">☑ 批量管理</button>
+                  </>
                 )}
               </div>
             </div>
