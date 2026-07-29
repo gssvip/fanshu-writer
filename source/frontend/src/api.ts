@@ -602,4 +602,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ dimensions, skill_pack_ids: skillPackIds || [], instruction: instruction || '' }),
     }),
+  // 总AI创作流式版（SSE）：逐维度流式输出，注入已有维度上下文
+  aiMasterCreateStream: (bookId: string, dimensions: string[], skillPackIds: string[], instruction: string, signal?: AbortSignal) => {
+    const cfg: RequestInit = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dimensions, skill_pack_ids: skillPackIds, instruction }) };
+    if (signal) cfg.signal = signal;
+    return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-master-create/stream`, cfg);
+  },
 };

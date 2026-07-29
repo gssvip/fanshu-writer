@@ -6372,13 +6372,16 @@ def ai_master_create(book_id):
                       'prompt': '设计地点体系。\n【输出格式】严格 JSON 数组三级结构：[一级大区域{"name","description","secondaries":[{"name","description","scenes":[{"name","description","key_events"}]}]}]. 设计 2-3 个一级大区域。'},
         'inventory': {'field': 'inventory', 'label': '物资库', 'keys': ['lock_facts', 'level_system', 'power_system', 'ability_tree'],
                       'prompt': '生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[{"name","type","source","effect","owner","first_appearance"}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。'},
+        'dynamic_volumes': {'field': 'dynamic_volumes', 'label': '动态文件', 'keys': ['narrative_debt', 'foreshadow_register', 'lock_facts'],
+                            'prompt': '生成分卷动态文件摘要。\n【输出格式】严格 JSON 数组：[{"volume_id":"1","volume":"第1卷 副标题","volume_index":1,"summary":"本卷概述100-200字","characters":"本卷人物变化50-100字","events":"本卷关键事件50-100字","timeline":"本卷时间线","locations":"本卷地点变化","factions":"本卷势力变化","foreshadowing":"本卷伏笔动态","realms":"本卷境界变化","relationships":"本卷关系变化"}]. 每卷一条记录，全书所有卷都要覆盖。'},
     }
 
     # agent 协同：串行执行，本轮产出回流到下一轮上下文
-    DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory']
+    DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory', 'dynamic_volumes']
     ordered_dims = [d for d in DIM_ORDER if d in dimensions]
 
     # 上下文字典：初始值来自 bible 已有内容，运行中动态追加本轮产出
+    # 【P0修复】必须覆盖 DIM_ORDER 全部维度，否则 ctx[up_dim] 访问缺失维度会抛 KeyError
     ctx = {
         'concept': bb.concept or '',
         'key_rules': bb.key_rules or '',
@@ -6386,6 +6389,10 @@ def ai_master_create(book_id):
         'character_profiles': bb.character_profiles or '',
         'plot_design': bb.plot_design or '',
         'timeline': bb.timeline or '',
+        'foreshadowing': bb.foreshadowing or '',
+        'locations': bb.locations or '',
+        'inventory': bb.inventory or '',
+        'dynamic_volumes': bb.dynamic_volumes or '',
     }
 
     results = []
@@ -6524,6 +6531,218 @@ def ai_master_create(book_id):
 
     # 返回最新 bible 供前端同步状态
     return jsonify({'results': results, 'bible': bb.to_dict()})
+
+
+@app.route('/api/books/<book_id>/ai-master-create/stream', methods=['POST'])
+@login_required
+def ai_master_create_stream(book_id):
+    """总AI创作流式版（SSE）：按番茄金番工作流串行协同，逐维度流式输出。
+    每个维度生成时注入已有bible维度+本轮上游已生成维度作为上下文，保证一致性。
+    SSE 格式：
+      data: {"dim":"concept","label":"构思","start":true}\n\n
+      data: {"choices":[{"delta":{"content":"..."}}]}\n\n  (流式chunk)
+      data: {"dim":"concept","done":true}\n\n
+      ... 下一维度 ...
+    """
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Not found'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    data = request.json or {}
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    dimensions = data.get('dimensions', ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design'])
+    instruction = data.get('instruction', '')
+
+    # 复用 ai_master_create 的 DIM_MAP 逻辑
+    DIM_MAP = {
+        'concept': {'field': 'concept', 'label': '构思', 'keys': ['tomato_plan', 'one_line_concept', 'master_outline'],
+                    'prompt': '生成核心构思。\n【输出格式】纯文本分项（空行分隔）：1) 一句话核心概念；2) 核心卖点（3-5条）；3) 目标读者画像；4) 主线冲突；5) 独特亮点。'},
+        'key_rules': {'field': 'key_rules', 'label': '设定/规则', 'keys': ['tomato_setting', 'lock_facts'],
+                      'prompt': '生成核心设定规则。\n【输出格式】编号列表，每条以"① ② ③..."开头，规则间空行分隔。包括：世界必须遵循的铁律、人物能力边界、代价/反噬机制、禁忌事项。'},
+        'worldbuilding': {'field': 'worldbuilding', 'label': '世界观', 'keys': ['tomato_setting', 'lock_facts'],
+                          'prompt': '生成详细世界观。\n【输出格式】分小节二级标题"## 力量体系/## 社会结构/## 地理概况/## 历史脉络"，每小节下用编号列表。不要写成段落散文。'},
+        'character_profiles': {'field': 'character_profiles', 'label': '人物', 'keys': ['tomato_character', 'character_cognition'],
+                               'prompt': '生成主要人物。\n【输出格式】每个角色一个"## 角色：<姓名>"二级标题，下方依次：身份/性格（3-5个关键词）/背景故事（100-200字）/核心动机/与其他角色关系（"→ 角色名：关系"）。主角 + 3-5个配角。'},
+        'plot_design': {'field': 'plot_design', 'label': '大纲', 'keys': ['master_outline', 'tomato_outline', 'volume_breakdown'],
+                        'prompt': '生成五幕式总纲。\n【输出格式】每幕"## 第N幕：<幕名>"二级标题，下方：幕核心目标/主要冲突/卷入角色/关键转折点/幕尾悬念/对应分卷范围（"第X-Y卷"）。共5幕，对应全书所有分卷。'},
+        'timeline': {'field': 'timeline', 'label': '剧情', 'keys': ['volume_breakdown', 'chapter_plan', 'tomato_outline'],
+                     'prompt': '生成分卷详细剧情。\n【分卷铁律·必读】**每卷固定 50 章**，全书卷数 = 总章数÷50（向上取整），卷序号从1开始连续。卷名格式"第N卷 副标题"。\n【输出格式·必读】严格 JSON 数组，不要任何解释文字、不要 markdown 代码块。结构：[{"volume_index":1,"volume":"第1卷 副标题","main_plot":"本卷主线剧情100-200字","core_conflict":"本卷核心冲突","ending_hook":"卷尾钩子","nodes":[{"title":"节点1","chapters":"1-10","type":"M","summary":"概要","cool_type":"实力碾压"}]}]. 每卷 5-8 个 nodes；chapters 字段"起始-结束"，全书 chapter 编号连续不重叠。'},
+        'foreshadowing': {'field': 'foreshadowing', 'label': '伏笔', 'keys': ['foreshadow_register', 'narrative_debt'],
+                          'prompt': '埋设伏笔线索。\n【输出格式】编号列表，每条"## 伏笔N：<标题>\\n- 埋设内容：xxx\\n- 埋设时机：第X卷Y章附近\\n- 预期回收：第X卷Y章附近\\n- 回收方式：xxx\\n- 对剧情的影响：xxx"。设计 3-5 条。'},
+        'locations': {'field': 'locations', 'label': '地点', 'keys': ['lock_facts', 'tomato_setting', 'geography'],
+                      'prompt': '设计地点体系。\n【输出格式】严格 JSON 数组三级结构：[一级大区域{"name","description","secondaries":[{"name","description","scenes":[{"name","description","key_events"}]}]}]. 设计 2-3 个一级大区域。'},
+        'inventory': {'field': 'inventory', 'label': '物资库', 'keys': ['lock_facts', 'level_system', 'power_system', 'ability_tree'],
+                      'prompt': '生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[{"name","type","source","effect","owner","first_appearance"}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。'},
+        'dynamic_volumes': {'field': 'dynamic_volumes', 'label': '动态文件', 'keys': ['narrative_debt', 'foreshadow_register', 'lock_facts'],
+                            'prompt': '生成分卷动态文件摘要。\n【输出格式】严格 JSON 数组：[{"volume_id":"1","volume":"第1卷 副标题","volume_index":1,"summary":"本卷概述100-200字","characters":"本卷人物变化50-100字","events":"本卷关键事件50-100字","timeline":"本卷时间线","locations":"本卷地点变化","factions":"本卷势力变化","foreshadowing":"本卷伏笔动态","realms":"本卷境界变化","relationships":"本卷关系变化"}]. 每卷一条记录，全书所有卷都要覆盖。'},
+    }
+    DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory', 'dynamic_volumes']
+    ordered_dims = [d for d in DIM_ORDER if d in dimensions]
+
+    # 上下文：初始值来自 bible 已有内容（注入已有维度，解决"维度创作不读其他维度"问题）
+    ctx = {
+        'concept': bb.concept or '',
+        'key_rules': bb.key_rules or '',
+        'worldbuilding': bb.worldbuilding or '',
+        'character_profiles': bb.character_profiles or '',
+        'plot_design': bb.plot_design or '',
+        'timeline': bb.timeline or '',
+        'foreshadowing': bb.foreshadowing or '',
+        'locations': bb.locations or '',
+        'inventory': bb.inventory or '',
+        'dynamic_volumes': bb.dynamic_volumes or '',
+    }
+
+    config = AIConfig.query.first()
+    api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
+    base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
+    model = config.get_model_for_task('creation') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    def generate():
+        try:
+            for dim in ordered_dims:
+                info = DIM_MAP[dim]
+                # 推送维度开始信号
+                yield f'data: {json.dumps({"dim": dim, "label": info["label"], "start": True}, ensure_ascii=False)}\n\n'
+
+                skill_note = _get_skill_prompts(skill_pack_ids, info['keys'], mode='agent')
+                format_integration_note = ''
+                if skill_note:
+                    format_integration_note = '\n\n【格式整合铁律·必读】上方「技能包内容」是创作方法论（指导原则），不是输出格式模板。必须严格按下方任务的「输出格式」骨架输出，技能包的要求整合映射到对应字段。'
+
+                # 组装上游上下文：已有bible维度 + 本轮已生成维度
+                upstream_parts = []
+                for up_dim in DIM_ORDER:
+                    up_val = ctx[up_dim]
+                    if up_val.strip() and up_dim != dim:
+                        up_label = DIM_MAP[up_dim]['label']
+                        upstream_parts.append(f'【{up_label}（已确认）】\n{up_val[:800]}')
+                upstream_ctx = '\n\n'.join(upstream_parts) if upstream_parts else '（暂无上游维度，自由发挥）'
+
+                dim_idx = DIM_ORDER.index(dim)
+                upstream_names = [DIM_MAP[d]['label'] for d in DIM_ORDER[:dim_idx] if ctx[d].strip()]
+                downstream_names = [DIM_MAP[d]['label'] for d in DIM_ORDER[dim_idx+1:] if d in ordered_dims]
+                position_note = f'你正在执行第 {dim_idx+1}/{len(DIM_ORDER)} 步：{info["label"]}设计'
+                if upstream_names:
+                    position_note += f'（上游已完成：{"→".join(upstream_names)}）'
+                if downstream_names:
+                    position_note += f'（下游将基于你的产出继续：{"→".join(downstream_names)}）'
+
+                is_timeline_dim = (dim == 'timeline')
+                if is_timeline_dim:
+                    system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
+{position_note}
+
+任务：{info['prompt']}
+
+书名：{book.title}
+题材：{book.genre}
+
+【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
+{upstream_ctx}
+
+【五幕模型对齐】各卷对应五幕：立身→立足→立势→立威→立命
+【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 nodes.chapters 全书连续编号。
+
+【分卷铁律·必读】**每卷固定 50 章**。全书卷数 = 总章数÷50（向上取整），卷序号从 1 开始连续递增。卷名格式"第N卷 副标题"。
+
+{skill_note}{format_integration_note}
+
+【输出格式铁律】严格输出 JSON 数组（不要包裹在 markdown 代码块中）。直接输出 JSON 数组，不要任何解释性文字。"""
+                    user_prompt = instruction or f'请为这本小说生成分卷剧情JSON数组，**每卷固定 50 章**，与已确认的上游维度保持一致，各卷符合五幕模型且卷间严格衔接。'
+                else:
+                    system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
+{position_note}
+
+任务：{info['prompt']}
+
+书名：{book.title}
+题材：{book.genre}
+
+【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
+{upstream_ctx}
+
+{skill_note}{format_integration_note}
+
+直接输出{info['label']}内容（严格按任务要求的格式铁律输出）。确保与上游维度衔接一致。"""
+                    user_prompt = instruction or f'请为这本小说生成{info["label"]}，与已确认的上游维度保持一致，并严格按输出格式铁律输出。'
+
+                max_tokens = 8000 if is_timeline_dim else 2500
+
+                # 流式调用 LLM
+                base = base_url.rstrip('/')
+                if not base.endswith('/v1'):
+                    base += '/v1'
+                resp = requests.post(f'{base}/chat/completions',
+                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    json={'model': model,
+                          'messages': [{'role': 'system', 'content': system_prompt},
+                                       {'role': 'user', 'content': user_prompt}],
+                          'temperature': 0.7,
+                          'max_tokens': max_tokens,
+                          'stream': True},
+                    stream=True, timeout=180)
+                full_content = ''
+                for line in resp.iter_lines():
+                    if line:
+                        line = line.decode('utf-8')
+                        if line.startswith('data: '):
+                            chunk = line[6:]
+                            if chunk == '[DONE]':
+                                break
+                            # 透传 chunk 给前端
+                            yield f'data: {chunk}\n\n'
+                            try:
+                                parsed = json.loads(chunk)
+                                delta = parsed.get('choices', [{}])[0].get('delta', {}).get('content', '')
+                                full_content += delta
+                            except:
+                                pass
+
+                # 维度完成信号
+                # timeline 维度：校验 JSON
+                if is_timeline_dim and full_content:
+                    import re as _re_s
+                    cleaned = full_content.strip()
+                    fence = _re_s.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
+                    if fence:
+                        cleaned = fence.group(1).strip()
+                    try:
+                        parsed_tl = json.loads(cleaned)
+                        if isinstance(parsed_tl, dict):
+                            for k in ('volumes', 'data', 'result', 'items', 'list'):
+                                if isinstance(parsed_tl.get(k), list):
+                                    parsed_tl = parsed_tl[k]
+                                    break
+                        if isinstance(parsed_tl, list) and parsed_tl:
+                            full_content = json.dumps(parsed_tl, ensure_ascii=False, indent=2)
+                    except:
+                        pass
+
+                # 回流到 ctx 供下一维度使用
+                ctx[dim] = full_content
+                # 直接落库
+                try:
+                    setattr(bb, info['field'], full_content)
+                    db.session.commit()
+                except:
+                    db.session.rollback()
+
+                yield f'data: {json.dumps({"dim": dim, "done": True}, ensure_ascii=False)}\n\n'
+
+            yield 'data: [DONE]\n\n'
+        except Exception as e:
+            yield f'data: {json.dumps({"error": str(e)[:300]}, ensure_ascii=False)}\n\n'
+
+    return app.response_class(generate(), mimetype='text/event-stream')
 
 
 # ==== AI 共创 / 头脑风暴 ====

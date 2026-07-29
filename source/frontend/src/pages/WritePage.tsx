@@ -1509,6 +1509,7 @@ ${chapterEditContent}`;
             selectedSkillPackIds={selectedSkillPackIds}
             onToggleSkillPack={toggleSkillPack}
             selectedSkillPacks={selectedSkillPacks}
+            onOpenAiCreate={() => setAiCreateModalState({ mode: 'single', dimension: 'dynamic_volumes' })}
           />
         ) : isOutlineTab ? (
           <OutlineCombinedPanel
@@ -2557,6 +2558,10 @@ function CharacterPanel(props: {
   // 按卷编辑：editingVolIdx 为正在编辑的卷索引，editVolJson 为编辑中的 JSON 文本
   const [editingVolIdx, setEditingVolIdx] = useState<number | null>(null);
   const [editVolJson, setEditVolJson] = useState('');
+  // 关系图谱编辑
+  const [relGraphCollapsed, setRelGraphCollapsed] = useState(true);
+  const [relGraphEditing, setRelGraphEditing] = useState(false);
+  const [relGraphValue, setRelGraphValue] = useState('');
 
   function toggleChar(idx: number) {
     setCollapsedChars(prev => {
@@ -3247,6 +3252,41 @@ function CharacterPanel(props: {
           </div>
         </div>
       )}
+
+      {/* 关系图谱编辑区 */}
+      <div className="plot-volume-list" style={{marginTop:16}}>
+        <div className="plot-volume-card">
+          <div className="plot-volume-header" onClick={() => setRelGraphCollapsed(v => !v)} style={{cursor:'pointer'}}>
+            <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{relGraphCollapsed ? '▶' : '▼'}</span>
+            <h4>🔗 人物关系图谱</h4>
+            <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+              {relGraphEditing ? (
+                <>
+                  <button className="btn-primary-sm" onClick={async () => {
+                    const updated = await api.updateBible(bookId, { relation_graph: relGraphValue } as any);
+                    onBibleUpdate(updated);
+                    setRelGraphEditing(false);
+                  }}>💾 保存</button>
+                  <button className="btn-ghost-sm" onClick={() => { setRelGraphEditing(false); setRelGraphValue(bible?.relation_graph || ''); }}>取消</button>
+                </>
+              ) : (
+                <button className="btn-ghost-sm" onClick={() => { setRelGraphEditing(true); setRelGraphValue(bible?.relation_graph || ''); }} title="编辑人物关系图谱">✏️ 编辑</button>
+              )}
+            </div>
+          </div>
+          {!relGraphCollapsed && (
+            <div className="plot-volume-body">
+              {relGraphEditing ? (
+                <textarea className="input" value={relGraphValue} onChange={e => setRelGraphValue(e.target.value)} rows={10} style={{fontFamily:'monospace',fontSize:12}} placeholder="用文本描述人物关系图谱，例如：\n张三 → 李四：师徒\n张三 → 王五：宿敌\n李四 → 赵六：恋人" />
+              ) : (
+                <div style={{fontSize:13,lineHeight:1.7,whiteSpace:'pre-wrap',color: bible?.relation_graph ? 'var(--text-primary)' : 'var(--text-muted)'}}>
+                  {bible?.relation_graph || '暂无关系图谱，点击「编辑」手动输入或通过 AI 识别生成'}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -5074,6 +5114,7 @@ function DynamicMemoryPanel(props: {
   selectedSkillPackIds: string[];
   onToggleSkillPack: (id: string) => void;
   selectedSkillPacks: SkillPack[];
+  onOpenAiCreate: () => void;
 }) {
   const { bookId, chapters, showConfirm, selectedSkillPackIds } = props;
   const [reports, setReports] = useState<DynamicReport[]>(_dmReportsCache[bookId] || []);
@@ -5500,6 +5541,9 @@ function DynamicMemoryPanel(props: {
     <div className="dm-panel">
       <div className="dm-header">
         <div className="dm-header-actions">
+          <button className="btn-primary-sm" onClick={() => props.onOpenAiCreate()} title="AI创作动态文件内容">
+            ✨ AI创作
+          </button>
           <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating || batchMode} title="检查并自动生成缺失的报告">
             {generating ? '⏳ 处理中...' : '🔄 自动检查'}
           </button>

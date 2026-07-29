@@ -14,13 +14,14 @@ const FIELD_AI_PROMPTS: Record<string, string> = {
   foreshadowing: '根据已确定的人物、剧情与世界，埋设伏笔线索。\n【输出格式】编号列表，每条格式"## 伏笔N：<伏笔标题>\\n- 埋设内容：xxx\\n- 埋设时机：第X卷Y章附近\\n- 预期回收：第X卷Y章附近\\n- 回收方式：xxx\\n- 对剧情的影响：xxx"。设计 3-5 条。',
   locations: '根据已确定的世界观，设计地点体系。\n【输出格式】严格 JSON 数组，三级结构：[一级大区域 {name, description, secondaries:[二级城市/门派 {name, description, scenes:[三级具体场景 {name, description, key_events}]}]}]. 设计 2-3 个一级大区域。',
   inventory: '根据已确定的人物与世界，生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[物品 {name, type, source, effect, owner, first_appearance}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。',
+  dynamic_volumes: '根据已确定的设定、人物、剧情和章节内容，生成分卷动态文件摘要。\n【输出格式】严格 JSON 数组：[卷 {volume_id, volume, volume_index, summary, characters, events, timeline, locations, factions, foreshadowing, realms, relationships}]。summary 为本卷概述（100-200字），characters/events 等为该卷的关键变化（各50-100字）。每卷一条记录，全书所有卷都要覆盖。',
 };
 
 // 维度协同顺序：上游先做，下游基于上游产出
 // 选定维度会按这个顺序串行执行；下游维度的 prompt 注入上游已生成内容作为上下文
 const DIM_COLLAB_ORDER = [
   'concept', 'key_rules', 'worldbuilding', 'character_profiles',
-  'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory',
+  'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory', 'dynamic_volumes',
 ];
 
 // 维度 field → 协同标签（用于上游上下文展示）
@@ -34,6 +35,7 @@ const DIM_COLLAB_LABELS: Record<string, string> = {
   foreshadowing: '伏笔',
   locations: '地点',
   inventory: '物资',
+  dynamic_volumes: '动态文件',
 };
 
 // 维度 field → 技能包 prompt_key 映射
@@ -47,6 +49,7 @@ const DIMENSION_SKILL_KEYS: Record<string, string[]> = {
   foreshadowing: ['foreshadow_register', 'narrative_debt', 'truth_card', 'info_gap', 'red_herring'],
   locations: ['lock_facts', 'tomato_setting', 'geography'],
   inventory: ['lock_facts', 'level_system', 'power_system', 'ability_tree'],
+  dynamic_volumes: ['narrative_debt', 'foreshadow_register', 'lock_facts'],
 };
 
 // 全部可创作的维度清单（全局模式选择用）
@@ -60,6 +63,7 @@ const ALL_DIMENSIONS = [
   { field: 'foreshadowing', label: '伏笔', icon: '🔮' },
   { field: 'locations', label: '地点', icon: '🗺️' },
   { field: 'inventory', label: '物资库', icon: '🎒' },
+  { field: 'dynamic_volumes', label: '动态文件', icon: '📊' },
 ];
 
 const DIM_LABEL: Record<string, string> = Object.fromEntries(ALL_DIMENSIONS.map(d => [d.field, d.label]));
@@ -103,7 +107,7 @@ interface AiCreateModalProps {
 type Phase = 'input' | 'streaming' | 'done';
 
 export default function AiCreateModal({
-  mode, dimension, book, bible, skillPacks, selectedSkillPackIds, onApply, onApplyMany, onClose,
+  mode, dimension, bookId, book, bible, skillPacks, selectedSkillPackIds, onApply, onApplyMany, onClose,
 }: AiCreateModalProps) {
   // 选中的维度（全局模式可多选，单维度模式锁定）
   const [selectedDims, setSelectedDims] = useState<string[]>(mode === 'single' && dimension ? [dimension] : ['concept']);
@@ -133,6 +137,7 @@ export default function AiCreateModal({
 
   // 组装单维度的 messages
   // upstream：本轮已生成的上游维度内容（按 DIM_COLLAB_ORDER 顺序回流），用于保持各维度前后一致
+  // bibleCtx：已有bible其他维度内容（单维度模式注入，解决"不读其他维度"问题）
   const buildMessages = useCallback((
     dim: string,
     userInstruction: string,
@@ -143,31 +148,29 @@ export default function AiCreateModal({
     const prompt = FIELD_AI_PROMPTS[dim] || `请为「${DIM_LABEL[dim] || dim}」维度生成内容。`;
     const skillKeys = DIMENSION_SKILL_KEYS[dim] || [];
     const skillPrompt = extractSkillPrompt(selectedPacks, skillKeys);
-    // 【P1修复】格式整合铁律：技能包是创作方法论，必须整合到平台维度的格式骨架里，不能替换顶层结构
-    // 这样即使技能包自带"CDL档案/金手指四法则"等独立格式要求，模型也会按"## 角色：<姓名>"+ 字段列表输出
     const formatIntegrationRule = selectedPacks.length > 0 ? `\n\n【格式整合铁律·必读】下方「技能包内容」是创作方法论（指导原则），不是输出格式模板。**必须**严格按上方任务的「输出格式」骨架输出，技能包的要求**整合映射**到对应字段。例如：技能包要求"CDL角色档案"中的"外貌特征/战斗风格"应并入"## 角色：<姓名>"下方的"身份"或新增子项；技能包要求"五不妥协原则"应整合到"## 力量体系"等小节内。不要把技能包字段原样搬出来，要按平台格式重新组织。` : '';
     const skillNote = selectedPacks.length > 0 ? `\n\n【已加载技能包：${selectedPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}${formatIntegrationRule}` : '';
     const concept = bible?.concept || book?.synopsis || '暂无构思';
-    const existing = (bible as any)?.[dim] || '';
 
-    // 拼接上游已生成维度（按协同顺序，每维度最多 800 字，避免 prompt 过长）
-    const upstreamParts: string[] = [];
+    // 拼接已有bible其他维度作为上下文（单维度模式时注入，弥补不走后端master_create的不足）
+    const bibleCtxParts: string[] = [];
     for (const up of DIM_COLLAB_ORDER) {
-      if (up === dim) break; // 跳过当前维度
-      const v = upstream[up];
+      if (up === dim) continue;
+      // 优先用本轮上游产物（如果有），否则用已有bible内容
+      const v = upstream[up] || (bible as any)?.[up] || '';
       if (v && v.trim()) {
-        upstreamParts.push(`【${DIM_COLLAB_LABELS[up] || up}（本轮已确认的上游产物，请保持一致）】\n${v.slice(0, 800)}`);
+        bibleCtxParts.push(`【${DIM_COLLAB_LABELS[up] || up}（已确认）】\n${v.slice(0, 800)}`);
       }
     }
-    const upstreamCtx = upstreamParts.length > 0
-      ? '\n\n【上游已确认维度产物（必须与本维度保持一致，不可矛盾；缺失维度视为未规划）】\n' + upstreamParts.join('\n\n')
-      : '\n\n【上游维度】暂无已确认的上游产物，本维度为起点。';
+    const upstreamCtx = bibleCtxParts.length > 0
+      ? '\n\n【已确认的其他维度产物（必须与本维度保持一致，不可矛盾；缺失维度视为未规划）】\n' + bibleCtxParts.join('\n\n')
+      : '\n\n【其他维度】暂无已确认的产物，本维度为起点。';
 
     const system = `你是专业网文创作助手，正在参与多维度协同创作。用户正在创作一部${book?.book_type || '小说'}，题材为${book?.genre || '通用'}。
 【你的当前任务】生成「${DIM_LABEL[dim] || dim}」维度内容。
-【核心约束】必须与上游已确认维度保持一致；不可与上游矛盾；缺失的上游维度可在产物中预留对接点但不要凭空生成。${upstreamCtx}${skillNote}`;
+【核心约束】必须与已确认维度保持一致；不可与其他维度矛盾；缺失的维度可在产物中预留对接点但不要凭空生成。${upstreamCtx}${skillNote}`;
 
-    let user = `${prompt}\n\n【用户原始构思】${concept}\n\n【已有${DIM_LABEL[dim] || dim}内容（仅参考，请勿复制）】${(existing || '').slice(0, 600) || '无'}\n\n【用户要求】${userInstruction || '请基于上游产物自由发挥'}`;
+    let user = `${prompt}\n\n【用户原始构思】${concept}\n\n【用户要求】${userInstruction || '请基于已确认维度自由发挥'}`;
     if (modificationNote) {
       user += `\n\n【上一轮生成结果】\n${(prevOutput || '').slice(0, 2000)}\n\n【用户修改意见】${modificationNote}\n请根据修改意见调整优化。`;
     }
@@ -177,9 +180,9 @@ export default function AiCreateModal({
     ];
   }, [bible, book, selectedPacks]);
 
-  // 流式生成（支持多维度串行）
-  // 【P1修复】按 DIM_COLLAB_ORDER 协同顺序串行执行；维护 generatedSoFar，每个下游维度
-  //   都能看到所有上游已生成的内容，从根本上解决"各维度前后不搭、剧情混乱"
+  // 流式生成
+  // 全局模式：走后端 ai-master-create/stream（注入已有bible+本轮上游维度，格式铁律更完善）
+  // 单维度模式：走前端 aiChatStream（注入已有bible其他维度作为上下文，解决"不读其他维度"问题）
   const streamGenerate = useCallback(async (dims: string[], userInstruction: string, modificationNote: string) => {
     if (dims.length === 0) {
       setError('请至少选择一个维度');
@@ -194,12 +197,67 @@ export default function AiCreateModal({
     setOutputs({});
     setEditedOutputs({});
 
-    // 按协同顺序排序用户选择的维度（确保上游先做）
     const orderedDims = DIM_COLLAB_ORDER.filter(d => dims.includes(d));
 
-    // 本轮已生成的维度内容（实时回流给下游）
-    const generatedSoFar: Record<string, string> = {};
+    if (isGlobal) {
+      // ===== 全局模式：走后端流式接口 =====
+      try {
+        const response = await api.aiMasterCreateStream(
+          bookId, orderedDims, localSkillPackIds, userInstruction,
+          abortRef.current?.signal,
+        );
+        if (!response.ok || !response.body) throw new Error(`请求失败 (HTTP ${response.status})`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let curDim = '';
+        while (true) {
+          if (abortRef.current?.signal.aborted) { try { reader.cancel(); } catch {} break; }
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const chunk = line.slice(6).trim();
+            if (chunk === '[DONE]') break;
+            try {
+              const parsed = JSON.parse(chunk);
+              // 维度开始/结束信号
+              if (parsed.dim && parsed.start) {
+                curDim = parsed.dim;
+                setCurrentDim(curDim);
+                newOutputs[curDim] = newOutputs[curDim] || '';
+                continue;
+              }
+              if (parsed.dim && parsed.done) {
+                continue;
+              }
+              if (parsed.error) {
+                setError(`生成失败：${parsed.error}`);
+                break;
+              }
+              // 流式内容 chunk
+              const delta = parsed.choices?.[0]?.delta?.content || '';
+              if (delta && curDim) {
+                newOutputs[curDim] = (newOutputs[curDim] || '') + delta;
+                setOutputs({ ...newOutputs });
+              }
+            } catch { /* ignore parse error */ }
+          }
+        }
+      } catch (e: any) {
+        if (stoppedRef.current || abortRef.current?.signal.aborted) { /* 用户主动停止 */ }
+        else setError(`全局创作失败：${e.message || '网络错误'}`);
+      }
+      setCurrentDim('');
+      setPhase('done');
+      return;
+    }
 
+    // ===== 单维度模式：走前端串行（注入已有bible其他维度上下文） =====
+    const generatedSoFar: Record<string, string> = {};
     for (const dim of orderedDims) {
       if (abortRef.current?.signal.aborted) break;
       setCurrentDim(dim);
@@ -209,17 +267,12 @@ export default function AiCreateModal({
       try {
         const response = await api.aiChatStream(messages, abortRef.current?.signal);
         if (abortRef.current?.signal.aborted) break;
-        if (!response.ok || !response.body) {
-          throw new Error(`请求失败 (HTTP ${response.status})`);
-        }
+        if (!response.ok || !response.body) throw new Error(`请求失败 (HTTP ${response.status})`);
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
         while (true) {
-          if (abortRef.current?.signal.aborted) {
-            try { reader.cancel(); } catch { /* ignore */ }
-            break;
-          }
+          if (abortRef.current?.signal.aborted) { try { reader.cancel(); } catch {} break; }
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
@@ -240,7 +293,6 @@ export default function AiCreateModal({
             }
           }
         }
-        // 关键：本维度生成完毕，立即回流到 generatedSoFar，供下游维度使用
         generatedSoFar[dim] = newOutputs[dim] || '';
       } catch (e: any) {
         if (stoppedRef.current || abortRef.current?.signal.aborted) break;
@@ -252,7 +304,7 @@ export default function AiCreateModal({
     }
     setCurrentDim('');
     setPhase('done');
-  }, [buildMessages, outputs]);
+  }, [buildMessages, outputs, isGlobal, bookId, localSkillPackIds]);
 
   // 停止生成：中断 fetch 和 reader，保留已生成内容
   function stopGenerate() {
