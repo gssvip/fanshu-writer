@@ -1458,15 +1458,6 @@ ${chapterEditContent}`;
         <div className="page-header-right">
           <button
             className="btn-ghost-sm"
-            onClick={openNewAiCreate}
-            disabled={!bookId}
-            title="AI 全屏创作：选择维度，输入要求，流式生成，可提修改意见重新生成，确定后自动填入"
-            style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)', color: '#fff' }}
-          >
-            <span aria-hidden>✨</span><span className="btn-label">AI总创作</span>
-          </button>
-          <button
-            className="btn-ghost-sm"
             onClick={() => setShowEntityRegistry(true)}
             disabled={!bookId}
             title="跨维度统一管理角色/势力/地点/物品，重命名/合并会同步到全部设定与正文"
@@ -1843,10 +1834,9 @@ function ConceptPanel(props: {
   onRenameAiSession: (id: string, title: string) => void;
   onResumeAiSession: (session: AISession) => void;
 }) {
-  const { concept, brainstorming, brainstormResult, brainstormError, adoptedSuggestions, onAdopt,
-    hasChapters, conceptAiMode, conceptAiPrompt, conceptAiAssisting, conceptAiError,
+  const { brainstorming, brainstormResult, adoptedSuggestions, onAdopt,
+    conceptAiMode, conceptAiPrompt, conceptAiAssisting, conceptAiError,
     onExecuteConceptAi, onCancelConceptAi, onEditConceptAiPrompt,
-    onAnalyzeDimension, dimAnalyzing,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, onOpenAiCreate,
     aiSessions, onRefreshSessions, onDeleteAiSessions, onRenameAiSession, onResumeAiSession } = props;
 
@@ -1998,53 +1988,21 @@ function ConceptPanel(props: {
 
   return (
     <div className="concept-panel">
-      <div className="concept-input-section">
-        <div className="concept-label-row">
-          <label className="concept-label">一句话构思</label>
-          {/* 需求2：原 AI识别 按钮替换为 AI总创作，点击弹出与首页一致的创作 Modal */}
-          <button
-            className="btn-primary concept-dim-analyze-btn"
-            onClick={onOpenAiCreate}
-            title="AI 总创作：全维度协同生成，可对构思/设定/大纲/人物等批量创作"
-            style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)' }}
-          >
-            ✨ AI总创作
-          </button>
-        </div>
-        {/* 需求2：移除文字框，改为只读预览；构思内容通过 AI总创作 或 AI识别 填充 */}
-        {concept && concept.trim() ? (
-          <div
-            className="concept-preview"
-            style={{
-              whiteSpace: 'pre-wrap', padding: '10px 12px', minHeight: 48,
-              background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 13,
-              lineHeight: 1.7, border: '1px solid var(--border-color)',
-              maxHeight: 180, overflowY: 'auto',
-            }}
-            title="点击 ✨ AI总创作 重新生成或提修改意见"
-          >
-            {concept}
-          </div>
-        ) : (
-          <div
-            className="concept-empty-hint"
-            style={{
-              padding: '14px 12px', textAlign: 'center',
-              background: 'var(--bg-tertiary)', borderRadius: 8,
-              fontSize: 12, color: 'var(--text-muted)',
-              border: '1px dashed var(--border-color)',
-            }}
-          >
-            暂无构思，点击右上角「✨ AI总创作」开始创作
-          </div>
-        )}
-        {/* 保留单维度 AI识别（从已有章节提取构思），作为辅助入口 */}
-        <div className="concept-actions">
-          <button className="btn-ghost-sm" onClick={onAnalyzeDimension} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别构思' : '需要先创建章节才能AI识别'}>
-            {dimAnalyzing ? '🤖 识别中...' : '🔍 从章节识别构思'}
-          </button>
-        </div>
-        {brainstormError && <div className="error-msg">{brainstormError}</div>}
+      {/* 构思维度：仅保留居中的 AI总创作 入口，图标放大2倍；一句话构思/消息框/从章节识别构思 已移除 */}
+      <div className="concept-input-section" style={{ alignItems: 'center', justifyContent: 'center', flex: 0 }}>
+        <button
+          className="btn-primary concept-ai-create-cta"
+          onClick={onOpenAiCreate}
+          title="AI 总创作：全维度协同生成，可对构思/设定/大纲/人物等批量创作"
+          style={{
+            background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)',
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '14px 28px', fontSize: 15, fontWeight: 700,
+          }}
+        >
+          <span style={{ fontSize: '2em', lineHeight: 1 }} aria-hidden>✨</span>
+          <span>AI总创作</span>
+        </button>
       </div>
 
       {brainstormResult && (

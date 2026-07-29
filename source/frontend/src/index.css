@@ -757,9 +757,9 @@ textarea{resize:vertical;line-height:1.8}
   .btn-ghost-sm{min-height:34px;padding:6px 10px}
   .btn-primary-sm{min-height:34px}
   .tab-item{min-height:50px}
-  /* 手机端 page-header 右侧按钮只显示图标，文字用 title 显示（长按可看） */
-  .page-header-right .btn-label{display:none}
-  .page-header-right .btn-ghost-sm{padding:6px 8px;gap:0}
+  /* 手机端 page-header 右侧按钮显示图标+文字（实体管理/全部识别） */
+  .page-header-right .btn-label{display:inline}
+  .page-header-right .btn-ghost-sm{padding:6px 8px;gap:4px;font-size:12px}
   /* 隐藏 book-meta 进一步腾出空间 */
   .page-header-left .book-meta{display:none}
   /* 章节维度头部两排按钮：移动端紧凑化，row1 四个等分、row2 两个等分，均不换行 */
