@@ -1,12 +1,14 @@
 """
 实体注册表（P2-Entity Registry）
-从 BookBible 各维度字段抽取角色/势力/地点/物品，提供跨维度重命名与合并。
+从 BookBible 全部十个维度抽取角色/势力/地点/物品/技能，提供跨维度重命名与合并。
 
-抽取来源：
-  - characters: character_profiles（## 角色：<姓名>）+ Character 表 + inventory.owner + relation_graph
-  - factions: character_profiles 中"势力"关键词 + dynamic_volumes.factions
-  - locations: locations 三级 JSON.name + locations_volumes
-  - items: inventory JSON.name
+抽取来源（覆盖平台十个维度）：
+  - characters: character_profiles（## 角色：<姓名>）+ Character 表 + inventory.owner + dynamic_volumes 文本
+  - factions: dynamic_volumes.factions + 各维度文本中"势力/门派/阵营"关键词
+  - locations: locations 三级 JSON.name + dynamic_volumes.locations
+  - items: inventory JSON.name（type≠功法/技能）
+  - skills: inventory JSON.name（type=功法/技能）+ key_rules/worldbuilding 中"## 功法/## 技能"标题
+            + character_profiles 中"功法/技能"行
 
 重命名策略：事务性扫描 bible 全部文本字段 + chapters.content，整词替换并返回影响行数。
 合并策略：将多个实体名归并到一个主名，其余名作为别名。
@@ -61,12 +63,13 @@ def _extract_names_from_locations(loc_json) -> List[str]:
 
 
 def extract_entities(bb) -> Dict:
-    """从 BookBible 抽取全部实体，返回 {characters, factions, locations, items}。
+    """从 BookBible 全部十个维度抽取实体，返回 {characters, factions, locations, items, skills}。
     每个实体：{name, aliases:[], dim_refs:[字段名...]}"""
     characters: Dict[str, set] = {}  # name -> dim_refs
     factions: Dict[str, set] = {}
     locations: Dict[str, set] = {}
     items: Dict[str, set] = {}
+    skills: Dict[str, set] = {}
 
     def _add(bucket: Dict, name: str, ref: str):
         name = (name or '').strip()
@@ -88,13 +91,17 @@ def extract_entities(bb) -> Dict:
     except Exception:
         pass
 
-    # 3. inventory JSON: name + owner
+    # 3. inventory JSON: name + owner；type=功法/技能 归入 skills，其余归入 items
     inv = _safe_json_loads(bb.inventory, [])
     if isinstance(inv, list):
         for it in inv:
             if isinstance(it, dict):
+                itype = (it.get('type') or '').strip()
                 if it.get('name'):
-                    _add(items, it['name'], 'inventory')
+                    if itype in ('功法', '技能'):
+                        _add(skills, it['name'], 'inventory')
+                    else:
+                        _add(items, it['name'], 'inventory')
                 if it.get('owner'):
                     _add(characters, it['owner'], 'inventory.owner')
 
@@ -129,7 +136,21 @@ def extract_entities(bb) -> Dict:
                             else:
                                 _add(characters, name, f'dynamic_volumes.{field}')
 
-    # 6. foreshadowing 文本：## 伏笔N：<标题> 不算实体，但内容里出现的人名靠章节正文交叉验证（略）
+    # 6. 从全部文本维度扫描：势力/门派/阵营 关键词 → factions；
+    #    "## 功法/## 技能/<功法名>" 标题 → skills
+    SKILL_TITLE_RE = re.compile(r'##\s*(?:功法|技能)[：:]\s*(.+?)(?:\n|$)')
+    for field in BIBLE_TEXT_FIELDS:
+        txt = getattr(bb, field, '') or ''
+        if not txt:
+            continue
+        # 势力关键词上下文（行内出现"势力/门派/宗派/阵营：XXX"）
+        for m in re.finditer(r'(?:势力|门派|宗派|阵营)[：:]\s*([^\n，,；;]{1,20})', txt):
+            _add(factions, m.group(1).strip(), field)
+        # 功法/技能标题
+        for m in SKILL_TITLE_RE.finditer(txt):
+            _add(skills, m.group(1).strip(), field)
+
+    # 7. foreshadowing 文本：## 伏笔N：<标题> 不算实体，但内容里出现的人名靠章节正文交叉验证（略）
 
     def _serialize(bucket: Dict) -> List[Dict]:
         return [{'name': k, 'aliases': [], 'dim_refs': sorted(v)} for k, v in sorted(bucket.items())]
@@ -139,6 +160,7 @@ def extract_entities(bb) -> Dict:
         'factions': _serialize(factions),
         'locations': _serialize(locations),
         'items': _serialize(items),
+        'skills': _serialize(skills),
     }
 
 

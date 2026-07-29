@@ -639,11 +639,11 @@ export default function AiCreateModal({
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-color)', display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0, paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' }}>
             <button className="btn-ghost-sm" onClick={handleClose}>取消</button>
             <button
-              className="btn-ghost-sm"
+              className="btn-primary"
               onClick={handleRegenerate}
               disabled={!modification.trim()}
               title={modification.trim() ? '带上修改意见重新生成' : '请先填写修改意见'}
-              style={!modification.trim() ? { opacity: 0.5 } : {}}
+              style={!modification.trim() ? { opacity: 0.5, background: 'linear-gradient(135deg,#e67e22 0%,#d35400 100%)' } : { background: 'linear-gradient(135deg,#e67e22 0%,#d35400 100%)', boxShadow: '0 2px 8px rgba(211,84,0,0.35)' }}
             >
               🔄 重新生成
             </button>

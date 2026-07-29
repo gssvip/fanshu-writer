@@ -7,18 +7,19 @@ interface EntityRegistryModalProps {
   onRenamed?: () => void; // 重命名完成后刷新外部数据
 }
 
-type EntityType = 'characters' | 'factions' | 'locations' | 'items';
+type EntityType = 'characters' | 'factions' | 'locations' | 'items' | 'skills';
 const ENTITY_LABELS: Record<EntityType, { label: string; icon: string; type: string }> = {
   characters: { label: '角色', icon: '👤', type: 'character' },
   factions: { label: '势力', icon: '⚔️', type: 'faction' },
   locations: { label: '地点', icon: '🗺️', type: 'location' },
   items: { label: '物品', icon: '🎒', type: 'item' },
+  skills: { label: '技能', icon: '✨', type: 'skill' },
 };
 
 export default function EntityRegistryModal({ bookId, onClose, onRenamed }: EntityRegistryModalProps) {
   const [activeTab, setActiveTab] = useState<EntityType>('characters');
-  const [entities, setEntities] = useState<{ characters: any[]; factions: any[]; locations: any[]; items: any[] }>({
-    characters: [], factions: [], locations: [], items: [],
+  const [entities, setEntities] = useState<{ characters: any[]; factions: any[]; locations: any[]; items: any[]; skills: any[] }>({
+    characters: [], factions: [], locations: [], items: [], skills: [],
   });
   const [loading, setLoading] = useState(true);
   const [renaming, setRenaming] = useState(false);
@@ -110,7 +111,7 @@ export default function EntityRegistryModal({ bookId, onClose, onRenamed }: Enti
           <div>
             <div style={{ fontSize: 16, fontWeight: 700 }}>🏗️ 实体注册表</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-              跨维度统一管理角色/势力/地点/物品，重命名/合并会同步到全部设定与正文
+              跨维度统一管理角色/势力/地点/物品/技能，重命名/合并会同步到全部设定与正文
             </div>
           </div>
           <button className="btn-ghost-sm" onClick={onClose}>✕</button>

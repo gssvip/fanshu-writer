@@ -46,10 +46,10 @@ export default function Home() {
             className="btn-primary"
             onClick={() => setShowAiPicker(true)}
             disabled={books.length === 0}
-            title={books.length === 0 ? '请先创建作品' : '选择作品进入 AI 总创作（全维度协同生成）'}
+            title={books.length === 0 ? '请先创建作品' : 'AI总创作：选择作品进入全维度协同生成（与创作界面入口为同一功能）'}
             style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)' }}
           >
-            ✨ AI总创作
+            ✨
           </button>
           <button className="btn-ghost mob-hide" onClick={() => setTheme(theme==='light'?'dark':'light')}>
             {theme==='light'?'🌙':'☀️'}

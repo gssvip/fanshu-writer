@@ -375,7 +375,7 @@ export const api = {
 
   // P2-Entity：实体注册表 - 抽取/重命名/合并
   listEntities: (bookId: string) =>
-    request<{ characters: any[]; factions: any[]; locations: any[]; items: any[] }>(`/books/${bookId}/entities`),
+    request<{ characters: any[]; factions: any[]; locations: any[]; items: any[]; skills: any[] }>(`/books/${bookId}/entities`),
   renameEntity: (bookId: string, oldName: string, newName: string, entityType: string = 'character') =>
     request<{ success: boolean; fields_updated: string[]; chapters_affected: number; total_replacements: number; error?: string }>(
       `/books/${bookId}/entities/rename`,

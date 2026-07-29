@@ -2105,11 +2105,12 @@ function ConceptPanel(props: {
                     key={s.id}
                     className="chat-history-item"
                     style={{
-                      display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px',
+                      display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px',
                       background: 'var(--bg-secondary)', borderRadius: 8,
                       border: `1px solid ${checked ? 'var(--accent)' : 'var(--border-color)'}`,
                     }}
                   >
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                     <input
                       type="checkbox"
                       checked={checked}
@@ -2143,11 +2144,12 @@ function ConceptPanel(props: {
                         {formatTime(s.updated_at || s.created_at)} · {(s.messages || []).length} 条消息
                       </div>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'row', gap: 6, justifyContent: 'flex-end', flexShrink: 0, paddingTop: 2, borderTop: '1px dashed var(--border-color)' }}>
                       <button
                         className="btn-ghost-sm"
                         onClick={() => onResumeAiSession(s)}
-                        style={{ padding: '2px 6px', fontSize: 10 }}
+                        style={{ padding: '3px 10px', fontSize: 11 }}
                         title="打开并继续与 AI 对话，可提修改意见"
                       >
                         💬 继续
@@ -2156,7 +2158,7 @@ function ConceptPanel(props: {
                         className="btn-ghost-sm"
                         onClick={() => startRename(s.id, s.title || '未命名对话')}
                         disabled={isRenaming}
-                        style={{ padding: '2px 6px', fontSize: 10 }}
+                        style={{ padding: '3px 10px', fontSize: 11 }}
                         title="重命名"
                       >
                         ✏️ 重命名
@@ -2164,7 +2166,7 @@ function ConceptPanel(props: {
                       <button
                         className="btn-ghost-sm"
                         onClick={() => onDeleteAiSessions([s.id])}
-                        style={{ padding: '2px 6px', fontSize: 10, color: '#e74c3c' }}
+                        style={{ padding: '3px 10px', fontSize: 11, color: '#e74c3c' }}
                         title="删除"
                       >
                         🗑️ 删除
