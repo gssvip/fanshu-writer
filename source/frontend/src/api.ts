@@ -75,15 +75,19 @@ export function warmUpBackend(): void {
  * - 第 2 次失败后等 8 秒重试（共等待约 11 秒，覆盖大部分冷启动场景）
  * - 第 3 次仍失败则抛错
  */
-async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 2): Promise<Response> {
+async function fetchWithRetry(url: string, options: RequestInit, externalSignal?: AbortSignal, maxRetries = 2): Promise<Response> {
   const delays = [3000, 8000]; // 重试间隔（毫秒）
   let lastError: any;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (externalSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000);
+      const onExternalAbort = () => controller.abort();
+      if (externalSignal) externalSignal.addEventListener('abort', onExternalAbort);
       const res = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(timeoutId);
+      if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
       // 5xx 错误重试（可能是冷启动中），4xx 直接返回
       if (res.status >= 500 && attempt < maxRetries) {
         await new Promise(r => setTimeout(r, delays[attempt]));
@@ -92,7 +96,8 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 2)
       return res;
     } catch (e: any) {
       lastError = e;
-      // 网络错误/超时重试（Render 冷启动典型表现）
+      // 网络错误/超时重试（Render 冷启动典型表现），但用户主动中止则直接抛错
+      if (externalSignal?.aborted) throw e;
       if (attempt < maxRetries) {
         await new Promise(r => setTimeout(r, delays[attempt]));
         continue;
@@ -102,13 +107,13 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 2)
   throw lastError;
 }
 
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
+async function request<T>(url: string, options?: RequestInit, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(options?.headers as Record<string, string> || {}) };
   const token = getToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   try {
-    const res = await fetchWithRetry(`${getApiBaseUrl()}${url}`, { ...options, headers });
+    const res = await fetchWithRetry(`${getApiBaseUrl()}${url}`, { ...options, headers }, signal);
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
@@ -120,7 +125,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     return {} as T;
   } catch (e: any) {
     if (e.name === 'AbortError') {
-      throw new Error('请求超时（服务器可能正在冷启动，已自动重试仍失败，请稍后再试）');
+      throw new Error('请求已取消');
     }
     if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
       throw new Error('无法连接到服务器，可能正在冷启动中。请稍等几秒后重试，或检查「我的 → 服务器」配置');
@@ -197,8 +202,9 @@ export const api = {
   testAIConnection: (baseUrl: string, apiKey: string, model: string) =>
     request<{ success: boolean; reply: string; model: string; usage?: any }>('/ai/test', { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, model }) }),
   aiChat: (messages: { role: string; content: string }[]) => request<{ content: string; usage?: any }>('/ai/chat', { method: 'POST', body: JSON.stringify({ messages }) }),
-  aiChatStream: (messages: { role: string; content: string }[]) => {
-    const cfg = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages }) };
+  aiChatStream: (messages: { role: string; content: string }[], signal?: AbortSignal) => {
+    const cfg: RequestInit = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages }) };
+    if (signal) cfg.signal = signal;
     return fetch(`${getApiBaseUrl()}/ai/chat/stream`, cfg);
   },
 
@@ -308,7 +314,7 @@ export const api = {
     request<ReviewResult>(`/books/${bookId}/review`, { method: 'POST', body: JSON.stringify({ scope, content }) }),
 
   // AI Continue（14项优化版）：返回正文+审校状态+章节计划+一致性检查结果等
-  aiContinue: (bookId: string, instruction: string, skillPackIds?: string[], enableConsistencyCheck?: boolean) =>
+  aiContinue: (bookId: string, instruction: string, skillPackIds?: string[], enableConsistencyCheck?: boolean, signal?: AbortSignal) =>
     request<{
       content: string;
       draft?: string | null;
@@ -328,7 +334,7 @@ export const api = {
         skill_pack_ids: skillPackIds || [],
         enable_consistency_check: enableConsistencyCheck !== false,
       }),
-    }),
+    }, signal),
 
   // AI Continue 流式版（#8：SSE 推送初稿）。返回原始 Response，前端用 ReadableStream 解析
   aiContinueStream: (bookId: string, instruction: string, skillPackIds?: string[]) => {

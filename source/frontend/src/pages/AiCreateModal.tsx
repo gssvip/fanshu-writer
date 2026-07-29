@@ -97,6 +97,8 @@ export default function AiCreateModal({
   const [skillExpanded, setSkillExpanded] = useState(false); // 协同技能包折叠
   const [localSkillPackIds, setLocalSkillPackIds] = useState<string[]>(selectedSkillPackIds); // 本地技能包选择（默认继承主页面勾选）
   const outputRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null); // 用于中断 AI 流式生成
+  const stoppedRef = useRef(false); // 标记用户是否主动停止（避免 catch 时误报"生成失败"）
   // 记录最近一次生成参数（用于重新生成时带上修改意见）
   const lastGenRef = useRef<{ instruction: string; modification: string }>({ instruction: '', modification: '' });
 
@@ -137,18 +139,22 @@ export default function AiCreateModal({
     }
     setError('');
     setPhase('streaming');
+    stoppedRef.current = false;
+    abortRef.current = new AbortController();
     lastGenRef.current = { instruction: userInstruction, modification: modificationNote };
     const newOutputs: Record<string, string> = {};
     setOutputs({});
     setEditedOutputs({});
 
     for (const dim of dims) {
+      if (abortRef.current?.signal.aborted) break;
       setCurrentDim(dim);
       newOutputs[dim] = '';
       const prev = modificationNote ? (outputs[dim] || '') : undefined;
       const messages = buildMessages(dim, userInstruction, modificationNote, prev);
       try {
-        const response = await api.aiChatStream(messages);
+        const response = await api.aiChatStream(messages, abortRef.current?.signal);
+        if (abortRef.current?.signal.aborted) break;
         if (!response.ok || !response.body) {
           throw new Error(`请求失败 (HTTP ${response.status})`);
         }
@@ -156,6 +162,10 @@ export default function AiCreateModal({
         const decoder = new TextDecoder();
         let buffer = '';
         while (true) {
+          if (abortRef.current?.signal.aborted) {
+            try { reader.cancel(); } catch { /* ignore */ }
+            break;
+          }
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
@@ -177,7 +187,9 @@ export default function AiCreateModal({
           }
         }
       } catch (e: any) {
+        if (stoppedRef.current || abortRef.current?.signal.aborted) break;
         setError(`「${DIM_LABEL[dim] || dim}」生成失败：${e.message || '网络错误'}`);
+        setCurrentDim('');
         setPhase('done');
         return;
       }
@@ -185,6 +197,16 @@ export default function AiCreateModal({
     setCurrentDim('');
     setPhase('done');
   }, [buildMessages, outputs]);
+
+  // 停止生成：中断 fetch 和 reader，保留已生成内容
+  function stopGenerate() {
+    if (!abortRef.current) return;
+    stoppedRef.current = true;
+    abortRef.current.abort();
+    abortRef.current = null;
+    setCurrentDim('');
+    setPhase('done');
+  }
 
   // 开始生成
   function handleStart() {
@@ -238,18 +260,31 @@ export default function AiCreateModal({
     }
   }, [outputs, phase]);
 
+  // 组件卸载时中止进行中的请求
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   const hasOutput = Object.values(outputs).some(v => v && v.trim());
   const totalChars = Object.values(outputs).reduce((s, v) => s + (v?.length || 0), 0);
 
+  // 包装关闭：流式中关闭时先停生成，避免后台 fetch/reader 泄漏
+  const handleClose = useCallback(() => {
+    if (phase === 'streaming') stopGenerate();
+    onClose();
+  }, [phase, onClose]);
+
   return (
-    <div className="modal-overlay" onClick={() => phase !== 'streaming' && onClose()}>
+    <div className="modal-overlay" onClick={() => phase !== 'streaming' && handleClose()}>
       <div className="master-create-modal" onClick={e => e.stopPropagation()}>
         {/* 顶部 Header */}
         <div className="master-create-modal-header">
           <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>
             ✨ {isGlobal ? 'AI 总创作' : `AI 创作·${DIM_LABEL[dimension || ''] || ''}`}
           </h2>
-          <button className="btn-ghost-sm" onClick={onClose} disabled={phase === 'streaming'} title="关闭">✕</button>
+          <button className="btn-ghost-sm" onClick={handleClose} disabled={phase === 'streaming'} title="关闭">✕</button>
         </div>
 
         {/* 主体 */}
@@ -380,8 +415,16 @@ export default function AiCreateModal({
                 );
               })}
               {phase === 'streaming' && (
-                <div style={{ textAlign: 'center', padding: 12, color: 'var(--text-muted)', fontSize: 12 }}>
-                  ⏳ 正在生成「{DIM_LABEL[currentDim] || ''}」… 已输出 {totalChars} 字
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 12, color: 'var(--text-muted)', fontSize: 12 }}>
+                  <span>⏳ 正在生成「{DIM_LABEL[currentDim] || ''}」… 已输出 {totalChars} 字</span>
+                  <button
+                    className="btn-ghost-sm"
+                    onClick={stopGenerate}
+                    style={{ padding: '4px 12px', fontSize: 12, color: 'var(--accent)', borderColor: 'var(--accent)' }}
+                    title="立即停止生成（已生成内容会保留）"
+                  >
+                    ⏹ 停止
+                  </button>
                 </div>
               )}
             </div>
@@ -408,7 +451,7 @@ export default function AiCreateModal({
         {/* 底部操作栏（完成后） */}
         {phase === 'done' && (
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-color)', display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0, paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' }}>
-            <button className="btn-ghost-sm" onClick={onClose}>取消</button>
+            <button className="btn-ghost-sm" onClick={handleClose}>取消</button>
             <button
               className="btn-ghost-sm"
               onClick={handleRegenerate}

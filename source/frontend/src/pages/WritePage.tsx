@@ -196,6 +196,9 @@ export default function WritePage() {
   // P0-1: 多Agent协同开关（开启时调用 ai-continue 后端管线，走章节计划+正文+去AI味+一致性检查）
   const [useAgentPipeline, setUseAgentPipeline] = useState(false);
   const [agentMeta, setAgentMeta] = useState<any>(null); // 存放 aiContinue 返回的 chapter_plan/温度/卷信息等
+  // 中止 AI 创作：流式通过 AbortController 取消 fetch/reader；非流式分支立即退出等待态
+  const aiAbortRef = useRef<AbortController | null>(null);
+  const aiStoppedRef = useRef(false);
 
   // 缓存回调——必须在所有 useState 之后，防止每次渲染新建函数引用引发子组件无限循环
   const startConceptAi = useCallback(() => { setConceptAiMode(true); setConceptAiError(''); }, []);
@@ -673,11 +676,15 @@ export default function WritePage() {
     setAiStreamError('');
     setAiGeneratedContent('');
     setAgentMeta(null);
+    aiStoppedRef.current = false;
+    aiAbortRef.current = new AbortController();
+    const signal = aiAbortRef.current.signal;
 
     // P0-1: 多Agent协同管线分支（章节计划→正文→去AI味→一致性检查）
     if (useAgentPipeline && (aiCreateMode === 'write' || aiCreateMode === 'continue')) {
       try {
-        const result = await api.aiContinue(bookId, aiUserPrompt, selectedSkillPackIds, true);
+        const result = await api.aiContinue(bookId, aiUserPrompt, selectedSkillPackIds, true, signal);
+        if (signal.aborted || aiStoppedRef.current) return;
         setAiGeneratedContent(result.content);
         setAgentMeta({
           chapter_plan: result.chapter_plan,
@@ -692,9 +699,10 @@ export default function WritePage() {
           has_draft: !!result.draft,
         });
       } catch (e: any) {
+        if (signal.aborted || aiStoppedRef.current) return;
         setAiStreamError(e.message || 'Agent管线调用失败，请检查AI配置');
       } finally {
-        setAiCreating(false);
+        if (!signal.aborted) setAiCreating(false);
       }
       return;
     }
@@ -757,7 +765,8 @@ export default function WritePage() {
         { role: 'user', content: userContent },
       ];
 
-      const response = await api.aiChatStream(messages);
+      const response = await api.aiChatStream(messages, signal);
+      if (signal.aborted) return;
       if (!response.ok) {
         const err = await response.json().catch(() => ({ error: '请求失败' }));
         throw new Error(err.error || `HTTP ${response.status}`);
@@ -771,6 +780,10 @@ export default function WritePage() {
       let fullContent = '';
 
       while (true) {
+        if (signal.aborted) {
+          try { reader.cancel(); } catch { /* ignore */ }
+          break;
+        }
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -797,9 +810,22 @@ export default function WritePage() {
         }
       }
     } catch (e: any) {
+      if (signal.aborted || aiStoppedRef.current) return;
       setAiStreamError(e.message || 'AI创作失败，请检查AI配置');
     }
+    if (!aiAbortRef.current?.signal.aborted) {
+      setAiCreating(false);
+    }
+  }
+
+  // 停止 AI 创作：流式时中断 fetch/reader；非流式分支仅退出等待态（后端可能继续运行）
+  function stopAiCreate() {
+    if (!aiAbortRef.current) return;
+    aiStoppedRef.current = true;
+    aiAbortRef.current.abort();
+    aiAbortRef.current = null;
     setAiCreating(false);
+    setAiStreamError('已停止生成');
   }
 
   // 确认AI生成内容，填入章节
@@ -821,12 +847,21 @@ export default function WritePage() {
 
   // 取消AI创作
   function cancelAiCreate() {
+    aiAbortRef.current?.abort();
+    aiAbortRef.current = null;
     setAiCreateMode(null);
     setAiGeneratedContent('');
     setAiCreating(false);
     setAiStreamError('');
     setAiUserPrompt('');
   }
+
+  // 组件卸载时中止进行中的请求
+  useEffect(() => {
+    return () => {
+      aiAbortRef.current?.abort();
+    };
+  }, []);
 
   // 一键排版（按小说阅读习惯）
   function formatChapter() {
@@ -1084,6 +1119,7 @@ export default function WritePage() {
             onExecuteAiCreate={executeAiCreate}
             onConfirmAiContent={confirmAiContent}
             onCancelAiCreate={cancelAiCreate}
+            onStopAiCreate={stopAiCreate}
             onEditAiContent={setAiGeneratedContent}
             onEditAiPrompt={setAiUserPrompt}
             onFormat={formatChapter}
@@ -1539,6 +1575,7 @@ function ChapterPanel(props: {
   onExecuteAiCreate: () => void;
   onConfirmAiContent: () => void;
   onCancelAiCreate: () => void;
+  onStopAiCreate: () => void;
   onEditAiContent: (v: string) => void;
   onEditAiPrompt: (v: string) => void;
   onFormat: () => void;
@@ -1554,7 +1591,7 @@ function ChapterPanel(props: {
     aiCreateMode, aiGeneratedContent, aiCreating, aiStreamError, aiUserPrompt,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
     onSelectChapter, onCreateChapter, onCreateVolume, onSaveChapter, onDeleteChapter, onCancelEdit, onStartEdit,
-    onEditTitle, onEditContent, onBackToList, onStartAiCreate, onExecuteAiCreate, onConfirmAiContent, onCancelAiCreate, onEditAiContent, onEditAiPrompt, onFormat,
+    onEditTitle, onEditContent, onBackToList, onStartAiCreate, onExecuteAiCreate, onConfirmAiContent, onCancelAiCreate, onStopAiCreate, onEditAiContent, onEditAiPrompt, onFormat,
     onRenameVolume, onDeleteVolume, bookId,
     useAgentPipeline: useAgent, onToggleAgentPipeline, agentMeta,
   } = props;
@@ -1844,6 +1881,16 @@ function ChapterPanel(props: {
             />
             <div className="ai-prompt-bottom-row">
               <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
+              {aiCreating && (
+                <button
+                  className="btn-ghost-sm"
+                  onClick={onStopAiCreate}
+                  style={{ marginRight: 8, color: 'var(--accent)', borderColor: 'var(--accent)' }}
+                  title="立即停止生成（已生成内容会保留）"
+                >
+                  ⏹ 停止
+                </button>
+              )}
               <button className="btn-primary ai-prompt-submit" onClick={onExecuteAiCreate} disabled={aiCreating || !aiUserPrompt.trim()}>
                 {aiCreating ? '⏳ 创作中...' : (hasResult ? '🔄 重新生成' : '🚀 发送')}
               </button>
