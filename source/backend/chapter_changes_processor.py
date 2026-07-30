@@ -130,6 +130,17 @@ def apply_chapter_changes(
                     graph.mark_resolved(fid, chapter_num)
             bb.foreshadowing_graph = json.dumps(graph.to_dict(), ensure_ascii=False)
             summary['fields_updated'].append('foreshadowing_graph')
+            # P2 单一真相源同步：DAG 状态变更后，将渲染后的文本清单回写到 bb.foreshadowing，
+            # 消除"文本清单显示未回收，但DAG已标记回收"的双轨不一致问题。
+            # 仅当 foreshadowing 文本字段已有内容时才覆盖（避免空文本覆盖已有DAG）；
+            # 渲染保留原始埋设内容，只更新状态字段，不丢失人工编辑。
+            try:
+                rendered_text = graph.to_text_view()
+                if rendered_text and rendered_text.strip():
+                    bb.foreshadowing = rendered_text
+                    summary['fields_updated'].append('foreshadowing')
+            except Exception:
+                pass  # 渲染失败不影响DAG已更新
         except Exception as e:
             summary['errors'].append(f'foreshadowing_graph: {str(e)[:100]}')
 

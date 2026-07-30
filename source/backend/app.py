@@ -4654,21 +4654,91 @@ def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=
     return pending[:top_n]
 
 
-def _extract_appearing_characters(recent_chapters):
+def _extract_appearing_characters(recent_chapters, bb=None):
     """从最近章节正文中启发式提取出场角色名。
-    简单策略：识别"X说"、"X道"、"X想"、"X看"等模式中的 X。"""
-    if not recent_chapters:
-        return set()
-    import re as _re_char
-    text = '\n'.join([(c.content or '') for c in recent_chapters])
+    P2增强：融合 chapter_changes_log 的结构化角色名（CharacterStateChanges.CharacterId），
+    比纯正则更准——结构化数据是章后回写的权威角色记录，正则只能启发式猜测。
+    简单策略：识别"X说"、"X道"等模式中的 X + chapter_changes_log 的角色名。"""
     names = set()
-    # 中文姓名 2-4 字
-    for m in _re_char.finditer(r'([\u4e00-\u9fa5]{2,4})(?:说|道|想|看|笑|怒|惊|叹|问|答|吼|喊|冷哼|微笑|皱眉)', text):
-        name = m.group(1)
-        # 排除常见动词误判
-        if name not in {'这是', '那是', '于是', '然后', '突然', '只见', '心想', '不禁', '不由'}:
-            names.add(name)
+    import re as _re_char
+
+    # 1. 从 chapter_changes_log 提取结构化角色名（最近20章，权威来源）
+    if bb and getattr(bb, 'chapter_changes_log', ''):
+        try:
+            log_list = json.loads(bb.chapter_changes_log)
+            if isinstance(log_list, list):
+                for entry in log_list[-20:]:
+                    if not isinstance(entry, dict):
+                        continue
+                    chg = entry.get('changes') or {}
+                    if not isinstance(chg, dict):
+                        continue
+                    for c in (chg.get('CharacterStateChanges') or []):
+                        if isinstance(c, dict):
+                            nm = c.get('CharacterId') or c.get('Name') or ''
+                            if nm and isinstance(nm, str) and 2 <= len(nm) <= 8:
+                                names.add(nm.strip())
+                    # 物品转移的持有者也视为出场角色
+                    for it in (chg.get('ItemTransfers') or []):
+                        if isinstance(it, dict):
+                            for holder_key in ('FromHolder', 'ToHolder'):
+                                holder = it.get(holder_key) or ''
+                                if holder and isinstance(holder, str) and 2 <= len(holder) <= 8:
+                                    names.add(holder.strip())
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+    # 2. 从最近章节正文启发式提取（正则，补充结构化数据未覆盖的角色）
+    if recent_chapters:
+        text = '\n'.join([(c.content or '') for c in recent_chapters])
+        # 中文姓名 2-4 字
+        for m in _re_char.finditer(r'([\u4e00-\u9fa5]{2,4})(?:说|道|想|看|笑|怒|惊|叹|问|答|吼|喊|冷哼|微笑|皱眉)', text):
+            name = m.group(1)
+            # 排除常见动词误判
+            if name not in {'这是', '那是', '于是', '然后', '突然', '只见', '心想', '不禁', '不由'}:
+                names.add(name)
     return names
+
+
+def _recall_related_chapters(book_id, appearing_chars, current_chapter_num, max_chapters=6):
+    """轻量RAG：基于出场角色召回相关历史章节摘要，补充前4章完整正文窗口的盲区。
+    策略：扫描所有历史章节（排除最近4章，避免与即时层重复）的 summary，
+    召回 summary 中含当前章出场角色的章节，按章号降序取最近 max_chapters 条。
+    无 summary 的章节跳过（无法判断相关性）。
+    返回 [{'chapter_num','title','summary'}] 列表。"""
+    if not appearing_chars:
+        return []
+    try:
+        # 排除最近4章（即时层已覆盖），排除分卷占位章
+        threshold = max(1, current_chapter_num - 4)
+        candidates = Chapter.query.filter(
+            Chapter.book_id == book_id,
+            Chapter.is_volume == False,
+            Chapter.order_index < threshold
+        ).order_by(Chapter.order_index.desc()).limit(200).all()  # 扫描最近200章历史
+    except Exception:
+        return []
+
+    recalled = []
+    seen_chapters = set()
+    for ch in candidates:
+        summary = (ch.summary or '').strip()
+        if not summary or len(summary) < 10:
+            continue  # 无 summary 无法判断相关性
+        # 相关性判定：summary 含当前章出场角色名
+        if any(name in summary for name in appearing_chars):
+            if ch.order_index not in seen_chapters:
+                seen_chapters.add(ch.order_index)
+                recalled.append({
+                    'chapter_num': ch.order_index,
+                    'title': ch.title or '',
+                    'summary': summary[:200],  # summary 字段上限 200 字
+                })
+            if len(recalled) >= max_chapters:
+                break
+    # 按章号升序排列（剧情时间顺序）
+    recalled.sort(key=lambda x: x['chapter_num'])
+    return recalled
 
 
 def _filter_bible_by_relevance(bb, appearing_chars, max_per_field=None):
@@ -5384,7 +5454,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
     # ===== 2. 分层 bible 上下文（#5：相关性筛选 + #14：预算管理）=====
     # 提取最近4章出场角色，用于 character_profiles 相关性筛选
     recent_for_chars = all_chapters[-4:] if all_chapters else []
-    appearing_chars = _extract_appearing_characters(recent_for_chars)
+    appearing_chars = _extract_appearing_characters(recent_for_chars, bb)
     filtered_bible = _filter_bible_by_relevance(bb, appearing_chars)
 
     bible_sections = []
@@ -5464,8 +5534,19 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
     else:
         chapters_text = '（开篇第一章，无前文）'
 
+    # 轻量RAG：基于当前章出场角色召回相关历史章节摘要，补充前4章窗口盲区
+    # 让 AI 看到涉及角色在更早章节的经历，避免"角色历史行为遗忘"
+    recalled_chapters = _recall_related_chapters(book_id, appearing_chars, current_chapter_num, max_chapters=6)
+    recall_section = ''
+    if recalled_chapters:
+        rc_lines = [f'- 第{rc["chapter_num"]}章《{rc["title"]}》：{rc["summary"]}' for rc in recalled_chapters]
+        recall_section = f"""
+【相关历史章节召回】（基于本章出场角色智能召回，补充前4章窗口盲区，角色历史经历须与此一致）：
+{chr(10).join(rc_lines)}
+"""
+
     memory_section = f"""【前文动态报告】（最近10份动态文件摘要，防长线遗忘）：
-{report_context}{historical_section}
+{report_context}{historical_section}{recall_section}
 
 【最近4章完整正文】（即时层，剧情衔接依据，必须严格保持连贯）：
 {chapters_text}"""
