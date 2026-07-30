@@ -5537,9 +5537,9 @@ function DynamicMemoryPanel(props: {
 
   const chapterCount = chapters.filter(c => !c.is_volume).length;
 
-  function loadReports(silent = false) {
+  // 拉取动态报告列表并更新缓存（供手动刷新场景使用）
+  function refreshReports() {
     if (!bookId) return;
-    if (!silent) setLoading(true);
     api.listDynamicReports(bookId).then(data => {
       setReports(data);
       _dmReportsCache[bookId] = data;
@@ -5551,8 +5551,16 @@ function DynamicMemoryPanel(props: {
   }
 
   useEffect(() => {
-    // 有缓存则静默刷新，无缓存显示加载态
-    loadReports(!!_dmReportsCache[bookId]);
+    // 有缓存：直接用缓存数据，不重复请求（避免每次切 tab 都等网络延迟导致卡顿）
+    // 数据刷新依赖用户操作（自动检查/生成报告等会主动 refreshReports）
+    if (_dmReportsCache[bookId]) {
+      setReports(_dmReportsCache[bookId]);
+      setLoading(false);
+      return;
+    }
+    // 无缓存：显示加载态并发请求
+    setLoading(true);
+    refreshReports();
   }, [bookId]);
 
   // 自动选中第一份报告

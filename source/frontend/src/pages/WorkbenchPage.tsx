@@ -42,7 +42,6 @@ export default function WorkbenchPage() {
   const [aiModalBook, setAiModalBook] = useState<Book | null>(null); // 选中的作品
   const [aiBible, setAiBible] = useState<BookBible | null>(null);
   const [aiModalOpen, setAiModalOpen] = useState(false);
-  const [aiModalLoading, setAiModalLoading] = useState(false);
 
   async function handleRenameBook(book: Book) {
     setEditBookId(book.id);
@@ -188,21 +187,22 @@ export default function WorkbenchPage() {
   }
 
   // 选择作品后打开 AiCreateModal（与创作页完全一致，仅多一步"选择作品"）
+  // 优化：先立即打开弹窗（bible 传 null，AiCreateModal 内部均为可选链安全访问），bible 后台异步加载
   async function handleSelectBookForAi(book: Book) {
     const ok = await requireAuth();
     if (!ok) return;
+    // 先关闭作品选择弹窗，立即打开 AiCreateModal（bible=null 占位），让用户立刻看到界面
     setShowMasterCreateModal(false);
-    setAiModalLoading(true);
     setAiModalBook(book);
+    setAiBible(null);
+    setAiModalOpen(true);
+    // 后台异步加载 bible，加载完成后回填（不阻塞弹窗显示）
     try {
       const bb = await api.getBible(book.id);
       setAiBible(bb);
-      setAiModalOpen(true);
     } catch (e: any) {
       alert('加载作品设定失败：' + (e.message || '请重试'));
-      setAiModalBook(null);
     }
-    setAiModalLoading(false);
   }
 
   // 单维度填入：保存到对应 BookBible 字段（与创作页 handleAiCreateApply 一致）
@@ -640,7 +640,6 @@ export default function WorkbenchPage() {
                     key={b.id}
                     className="ai-picker-item"
                     onClick={() => handleSelectBookForAi(b)}
-                    disabled={aiModalLoading}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
                       background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
