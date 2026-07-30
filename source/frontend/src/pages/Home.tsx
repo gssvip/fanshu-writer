@@ -12,7 +12,7 @@ export default function Home() {
   const navigate = useNavigate();
   const [showNew, setShowNew] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [nf, setNf] = useState({ title:'',author:'',genre:'other',book_type:'short_story',synopsis:'',template_id:'',target_words:0,total_volumes:0,novel_styles:[] as string[] });
+  const [nf, setNf] = useState({ title:'',author:'',genre:'other',book_type:'novel',synopsis:'',template_id:'',target_words:0,total_volumes:0,novel_styles:[] as string[] });
   const [menuOpen, setMenuOpen] = useState(false);
   const [showAiPicker, setShowAiPicker] = useState(false);
 
@@ -136,7 +136,7 @@ export default function Home() {
             <div className="form-group"><label>书名 *</label><input value={nf.title} onChange={e=>setNf({...nf,title:e.target.value})} placeholder="输入书名"/></div>
             <div className="form-group"><label>作者</label><input value={nf.author} onChange={e=>setNf({...nf,author:e.target.value})} placeholder="笔名"/></div>
             <div style={{display:'flex',gap:8}}>
-              <div className="form-group" style={{flex:1}}><label>类型</label><select value={nf.book_type} onChange={e=>handleBookTypeChange(e.target.value)}><option value="short_story">短篇</option><option value="novel">长篇</option><option value="script">剧本</option></select></div>
+              <div className="form-group" style={{flex:1}}><label>类型</label><select value={nf.book_type} onChange={e=>handleBookTypeChange(e.target.value)}><option value="novel">长篇</option><option value="short_story">短篇</option></select></div>
               <div className="form-group" style={{flex:1}}><label>题材</label><select value={nf.genre} onChange={e=>handleGenreChange(e.target.value)}>
                 <optgroup label="通用"><option value="other">其他</option></optgroup>
                 <optgroup label="男频">

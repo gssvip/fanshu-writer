@@ -4,6 +4,7 @@ import { api } from '../api';
 import type { Book, BookBible, BrainstormResult, BrainstormSuggestion, Chapter, SkillPack, DynamicReport, AISession } from '../types';
 import AiCreateModal from './AiCreateModal';
 import EntityRegistryModal from './EntityRegistryModal';
+import { CHAPTER_LANG_STYLES, buildChapterLangStylePrompt } from '../constants';
 
 // 两行 Tab 布局：上下各 5 个维度
 const TAB_ROW_1 = [
@@ -264,6 +265,15 @@ export default function WritePage() {
   const [agentMeta, setAgentMeta] = useState<any>(null); // 存放 aiContinue 返回的 chapter_plan/温度/卷信息等
   const [spotFixing, setSpotFixing] = useState(false); // P2-9：Spot-Fix 修订中
   const [spotFixMsg, setSpotFixMsg] = useState(''); // P2-9：修订结果提示
+  // 本章语言风格（行文文风，最多3个叠加），注入 AI 指导本章行文
+  const [chapterLangStyles, setChapterLangStyles] = useState<string[]>([]);
+  const toggleChapterLangStyle = useCallback((key: string) => {
+    setChapterLangStyles(prev => {
+      if (prev.includes(key)) return prev.filter(k => k !== key);
+      if (prev.length >= 3) return prev; // 最多3个
+      return [...prev, key];
+    });
+  }, []);
   // 中止 AI 创作：流式通过 AbortController 取消 fetch/reader；非流式分支立即退出等待态
   const aiAbortRef = useRef<AbortController | null>(null);
   const aiStoppedRef = useRef(false);
@@ -881,7 +891,7 @@ export default function WritePage() {
         // 上一版未保存内容：只在重新生成/修改意见场景传（prevGenerated 有值时），
         // 正常首发生成不传（避免把当前正在生成的内容误当上一章）
         const prevChapterContent = prevGenerated.trim().length > 200 ? prevGenerated : undefined;
-        const result = await api.aiContinue(bookId, currentPrompt, selectedSkillPackIds, true, signal, { targetChapterNum, prevChapterContent });
+        const result = await api.aiContinue(bookId, currentPrompt, selectedSkillPackIds, true, signal, { targetChapterNum, prevChapterContent, chapterLangStyles });
         if (signal.aborted || aiStoppedRef.current) return;
         setAiGeneratedContent(result.content);
         setAiChatHistory(prev => [...prev, { role: 'assistant', content: result.content, chapterTitle: chapterEditTitle, type: 'content' }]);
@@ -1055,11 +1065,14 @@ export default function WritePage() {
       // 拼装前文记忆段
       const memorySection = `【前4章正文（即时衔接）】\n${prevChaptersText}\n\n【动态记忆（最近10份防遗忘报告）】\n${dynamicMemoryText || '（暂无）'}${afDiagBrief ? '\n\n【防遗忘检查诊断（须规避）】\n' + afDiagBrief : ''}`;
 
+      // 本章语言风格块（行文文风，最多3个叠加），注入 write/continue 模式指导行文
+      const langStyleBlock = buildChapterLangStylePrompt(chapterLangStyles);
+
       let systemContent = '';
       let userContent = '';
 
       if (aiCreateMode === 'write') {
-        systemContent = `你是番茄小说金番级网文作家，擅长${book?.genre || '通用'}题材。请根据用户的创作要求和故事设定，创作章节正文。要求：对话自然口语化，避免说教和AI味，节奏紧凑，场景感强，章末必留悬念。【字数铁律】正文字数严格控制在2400±100字（2300-2500字），不得超出此范围。${suspenseGuide}${skillNote}`;
+        systemContent = `你是番茄小说金番级网文作家，擅长${book?.genre || '通用'}题材。请根据用户的创作要求和故事设定，创作章节正文。要求：对话自然口语化，避免说教和AI味，节奏紧凑，场景感强，章末必留悬念。【字数铁律】正文字数严格控制在2400±100字（2300-2500字），不得超出此范围。${suspenseGuide}${skillNote}${langStyleBlock ? '\n' + langStyleBlock : ''}`;
         userContent = `作品：${book?.title}
 构思：${contextConcept}
 世界观：${bible?.worldbuilding?.slice(0, 500) || '无'}
@@ -1083,7 +1096,7 @@ ${memorySection}
 
 用户创作要求：${currentPrompt}${prevGenerated ? `\n\n【上一版生成内容（请基于此修改调整，不要推翻重写）】\n${prevGenerated}` : ''}`;
       } else if (aiCreateMode === 'continue') {
-        systemContent = `你是专业网文作家，擅长${book?.genre || '通用'}题材。请根据用户的续写要求和已有内容继续创作，保持风格一致，自然衔接。要求：对话自然，避免说教，节奏紧凑。【字数铁律】续写后本章总字数严格控制在2400±100字（2300-2500字），不得超出此范围，请按已有字数酌情增补。${suspenseGuide}${skillNote}`;
+        systemContent = `你是专业网文作家，擅长${book?.genre || '通用'}题材。请根据用户的续写要求和已有内容继续创作，保持风格一致，自然衔接。要求：对话自然，避免说教，节奏紧凑。【字数铁律】续写后本章总字数严格控制在2400±100字（2300-2500字），不得超出此范围，请按已有字数酌情增补。${suspenseGuide}${skillNote}${langStyleBlock ? '\n' + langStyleBlock : ''}`;
         userContent = `作品：${book?.title}
 构思：${contextConcept}
 
@@ -1709,6 +1722,8 @@ ${chapterEditContent}`;
             onRefreshChapterAnchor={refreshChapterAnchor}
             onRegenerateAiContent={regenerateAiContent}
             aiTargetChapterId={aiTargetChapterId}
+            chapterLangStyles={chapterLangStyles}
+            onToggleChapterLangStyle={toggleChapterLangStyle}
           />
         ) : isDynamicMemoryTab ? (
           <DynamicMemoryPanel
@@ -2362,6 +2377,9 @@ function ChapterPanel(props: {
   onRefreshChapterAnchor: () => void;
   onRegenerateAiContent: () => void;
   aiTargetChapterId: string | null;
+  // 本章语言风格（行文文风，最多3个叠加）
+  chapterLangStyles?: string[];
+  onToggleChapterLangStyle?: (key: string) => void;
 }) {
   const { chapters, activeChapter, chapterEditing, chapterEditTitle, chapterEditContent, chapterSaving,
     aiCreateMode, aiGeneratedContent, aiCreating, aiStreamError, aiUserPrompt,
@@ -2372,6 +2390,7 @@ function ChapterPanel(props: {
     useAgentPipeline: useAgent, onToggleAgentPipeline, agentMeta,
     spotFixing, spotFixMsg, onSpotFix,
     aiChatHistory, onClearAiChatHistory, onToggleChatMsgCollapse, onRefreshChapterAnchor, onRegenerateAiContent, aiTargetChapterId,
+    chapterLangStyles: langStyles, onToggleChapterLangStyle,
   } = props;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
@@ -2688,7 +2707,7 @@ function ChapterPanel(props: {
           )}
         </div>
 
-        {/* 底部：控制区（多Agent开关+技能包+输入框，固定在底部） */}
+        {/* 底部：控制区（多Agent开关+本章语言风格+技能包+输入框，固定在底部） */}
         <div className="ai-create-control-bar">
           {/* P0-1: 多Agent协同管线开关（紧邻协同技能包，两行相邻） */}
           {onToggleAgentPipeline && aiCreateMode === 'write' && (
@@ -2698,6 +2717,34 @@ function ChapterPanel(props: {
                 <span>🤖 多Agent协同管线</span>
                 <span className="text-muted">（计划→正文→去AI味→一致性）</span>
               </label>
+            </div>
+          )}
+          {/* 本章语言风格（行文文风，最多3个叠加）—— 指导AI本章行文基调 */}
+          {onToggleChapterLangStyle && (aiCreateMode === 'write' || aiCreateMode === 'continue') && (
+            <div className="lang-style-row" style={{ marginBottom: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+                🎨 本章语言风格（指导行文，可多选最多3个 · 已选 {(langStyles || []).length}/3）
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 92, overflowY: 'auto' }}>
+                {Object.entries(CHAPTER_LANG_STYLES).map(([k, s]) => {
+                  const sel = (langStyles || []).includes(k);
+                  const disabled = !sel && (langStyles || []).length >= 3;
+                  return (
+                    <button key={k} type="button"
+                      onClick={() => onToggleChapterLangStyle(k)}
+                      disabled={aiCreating || disabled}
+                      title={s.desc}
+                      style={{ padding: '3px 9px', fontSize: 12, borderRadius: 12,
+                        cursor: (aiCreating || disabled) ? 'not-allowed' : 'pointer',
+                        border: `1px solid ${sel ? 'var(--accent)' : 'var(--border-color)'}`,
+                        background: sel ? 'var(--accent)' : 'transparent',
+                        color: sel ? '#fff' : 'var(--text-primary)',
+                        opacity: (aiCreating || disabled) ? 0.4 : 1 }}>
+                      {s.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
           {/* 技能包多选器（可折叠，紧凑模式） */}

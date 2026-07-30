@@ -5224,6 +5224,55 @@ def _build_core_params_block(bb, book):
     return '\n'.join(parts)
 
 
+# 章节正文「语言风格」表（行文文风，区别于题材流派）
+# 与前端 constants.ts CHAPTER_LANG_STYLES 保持一致
+CHAPTER_LANG_STYLES = {
+    'general': ('通用', '行文规范流畅，叙述与对话比例均衡，节奏舒张有度，不刻意炫技也不寡淡；用词准确，符合现代汉语习惯。适合大多数题材的常规叙事。'),
+    'baimiao': ('白描', '用最简练的笔墨勾勒人物与场景，不加渲染烘托；少用形容词，多用动词和名词；叙述客观克制，让事实自己说话。适合动作戏、硬汉派、克制情感。'),
+    'jijian': ('极简', '句子短促有力，信息密度高，大量留白；砍掉一切冗余修饰与过渡；对话简洁，动作直接。适合快节奏、冷硬叙事与悬疑短篇。'),
+    'youmo': ('幽默', '善用夸张、反语、双关与俏皮话制造笑点，插科打诨中藏锋芒；语言口语化，节奏跳跃；笑而不俗、讽而不戾。适合轻松日常、吐槽向、反套路喜剧。'),
+    'shuangwen': ('爽文', '节奏明快，爽点密集，三章一冲突五章一反转；主角步步升级、打脸逆袭；情绪外放，多用反差对比烘托主角强大。适合玄幻都市升级流。'),
+    'rexue': ('热血', '语言激昂奔放，多用短句排比与感叹，动作大开大合；情感外放，强调兄弟情、信念与战斗意志；场面燃点高，节奏层层推进。适合少年向、战斗竞技。'),
+    'beiqing': ('悲情', '语调低沉绵长，多用环境烘托与意象铺陈情感；以克制写伤痛、以细节写离别；不滥情却字字戳心，留有余韵。适合虐心、悲剧、历史向与救赎类。'),
+    'zhiyu': ('治愈', '笔调温柔舒缓，多写日常细节与微小温暖；语言清新柔和，少冲突多陪伴；以烟火气抚慰人心，情绪平稳上扬。适合日常向、慢生活与情感救赎类。'),
+    'shijing': ('市井', '语言俚俗鲜活，多方言口语与江湖切口；人物三教九流，场景茶馆酒肆；叙述带烟火气与油滑感，对白占比较高。适合武侠江湖、都市底层与市井志怪。'),
+    'gufeng': ('古风', '用词典雅，化用诗词典故与文言句式；句式工整讲究韵律，意境含蓄深远；适度文白相间，避免晦涩。适合仙侠、古言、宫斗与历史权谋题材。'),
+    'guijue': ('诡谲', '氛围阴郁压抑，多用阴影、雾气、异响等意象制造不安；叙事扑朔迷离，留悬念与歧义；节奏沉滞中暗藏惊悚。适合悬疑、克苏鲁、志怪灵异与惊悚题材。'),
+    'shiyi': ('诗意', '语言富于音乐性与意象美，重意境与情绪渲染；节奏舒缓，比喻空灵；近似散文诗，以景抒情、以物写心。适合文艺向、情感流与风景心境段落。'),
+    'lengjun': ('冷峻', '零度叙事，极度冷静客观，杜绝抒情与价值判断；短句为主，动词精准；以不动声色写残酷，情感内敛于事实之下。适合悬疑、谍战、现实悲剧与硬派推理。'),
+    'huali': ('华丽', '辞藻丰赡，修辞密集，多用比喻通感与色彩词；意象层叠，追求感官冲击与画面张力；句式繁复绵密。适合玄幻史诗、宫廷权谋等需要宏大氛围的场景。'),
+    'kouyu': ('口语化', '语言贴近日常口语，句式短、用词俗；可省主语、语序倒置、语气词丰富；叙述如说话，代入感强。适合都市生活、青春校园、第一人称与轻松吐槽向。'),
+    'dianying': ('电影感', '借鉴镜头语言，远近中特写切换自如；用蒙太奇剪接跳过冗余过渡；光影天气暗示情绪，五感通感营造现场感。适合高画面需求、动作戏与影视化叙事。'),
+    'yishiliu': ('意识流', '打破线性时间与逻辑因果，以人物意识流动推进；多用内心独白、记忆闪回、联想跳跃；语言可碎片化、语义朦胧。适合心理向、文艺实验与回忆梦境段落。'),
+    'baogao': ('报告体', '模仿新闻报道或档案记录，语言客观简洁、信息密集；时间地点人物事件清晰，少修饰多白描；强调真实感与现场感。适合纪实向、悬疑案件与硬核设定段落。'),
+    'erciyuan': ('二次元', '融合ACG语境，善用玩梗、吐槽与夸张颜艺描写；动作以"指令—反馈"式呈现，可加系统UI元素；节奏轻快，反差萌与中二感并存。适合轻小说、系统流与游戏异界。'),
+    'zhelisibian': ('哲理思辨', '语言抽象凝练，常以议论介入叙事；多用设问、悖论与格言式句子；借人物之口探讨存在、命运与价值。适合问道向、严肃文学与成长思辨类。'),
+    'dianyaninglian': ('典雅凝练', '用词考究文雅，句式工整有韵律；化用古语与典故而不晦涩；意境含蓄隽永，言简意丰。适合古言、文人雅士题材与需要文化底蕴的段落。'),
+    'huangdan': ('荒诞', '以反逻辑与错位制造荒诞感，正经写荒唐、冷静写癫狂；语言可冷面幽默或黑色幽默；解构套路，预期违背生笑点。适合黑色幽默、讽刺、反套路与癫系创作。'),
+}
+
+
+def _build_chapter_lang_style_prompt(style_keys):
+    """根据前端传入的语言风格 key 列表，拼装注入 system_prompt 的「本章语言风格」指导文本。
+    返回空串表示未选择（AI 按默认通用风格行文）。"""
+    if not style_keys:
+        return ''
+    try:
+        keys = style_keys if isinstance(style_keys, list) else json.loads(style_keys or '[]')
+    except Exception:
+        keys = []
+    if not keys:
+        return ''
+    parts = []
+    for k in keys[:3]:
+        item = CHAPTER_LANG_STYLES.get(k)
+        if item:
+            parts.append(f"- {item[0]}：{item[1]}")
+    if not parts:
+        return ''
+    return '【本章语言风格·行文指导】请按以下风格基调行文（可融合）：\n' + '\n'.join(parts)
+
+
 def _build_master_upstream_ctx(dim, ctx):
     """按 DAG 依赖图只注入该维度的上游维度产物（不再无差别全注入）。
     自适应截断：世界观/人物档案给 2000 字预算（下游 timeline/dynamic_volumes/foreshadowing
@@ -5705,7 +5754,7 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
         return True, ''
 
 
-def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None):
+def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None, chapter_lang_styles=None):
     """构建章节正文写作的完整上下文（被 ai_continue 和 ai_continue_stream 共用）。
     返回 dict，包含 system_prompt, user_prompt, temperature, max_tokens, chapter_plan, api 信息等。
 
@@ -5713,6 +5762,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     - target_chapter_num：前端传入的待写章号（基于 word_count>=100 已写判定，比后端 max+1 更准）
     - prev_chapter_content：上一章已生成但未保存的正文（重新生成/连续创作场景），
       会作为"最近一章"注入上下文，避免 AI 接不上刚写的内容。
+    - chapter_lang_styles：本章语言风格（行文文风，最多3个），拼入 system_prompt 指导行文。
     """
     book = Book.query.get(book_id)
     config = AIConfig.query.first()
@@ -5933,9 +5983,12 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     # 注意：memory_section 含前4章完整正文（约9600字）+ 10份动态报告（约8000字），总量较大但独立注入
     # 【核心创作参数】卷数+风格流派，作为本章写作的核心依据（人物塑造/节奏/爽点须契合所选流派）
     core_params_block = _build_core_params_block(bb, book)
+    # 【本章语言风格】用户为本章选定的行文文风（最多3个叠加），指导行文基调
+    chapter_lang_style_block = _build_chapter_lang_style_prompt(chapter_lang_styles)
     system_prompt = f"""你是番茄小说金番作者级别的写手，正在协作写一本小说，当前准备写第 {current_chapter_num} 章。
 
 {core_params_block}
+{chapter_lang_style_block}
 
 【设定权威分级·冲突仲裁规则】（P0-3）
 当下方各层设定发生冲突时，按权威层级从高到低取信：
@@ -6030,9 +6083,11 @@ def ai_continue(book_id):
     # 修复上下文脱节：接收前端传入的待写章号 + 上一章未保存内容
     target_chapter_num = request.json.get('target_chapter_num')
     prev_chapter_content = request.json.get('prev_chapter_content')
+    # 章节正文语言风格（行文文风，最多3个叠加）
+    chapter_lang_styles = request.json.get('chapter_lang_styles', [])
 
     try:
-        ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content)
+        ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles)
         system_prompt = ctx['system_prompt']
         user_prompt = ctx['user_prompt']
         temperature = ctx['temperature']
@@ -6337,8 +6392,10 @@ def ai_continue_stream(book_id):
     # 修复上下文脱节：接收前端传入的待写章号 + 上一章未保存内容
     target_chapter_num = request.json.get('target_chapter_num')
     prev_chapter_content = request.json.get('prev_chapter_content')
+    # 章节正文语言风格（行文文风，最多3个叠加）
+    chapter_lang_styles = request.json.get('chapter_lang_styles', [])
 
-    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content)
+    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles)
     api_key = ctx['api_key']
     base_url = ctx['base_url']
     model = ctx['model']

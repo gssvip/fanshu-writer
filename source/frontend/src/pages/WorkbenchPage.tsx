@@ -12,7 +12,7 @@ export default function WorkbenchPage() {
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewBook, setShowNewBook] = useState(false);
-  const [newBookForm, setNewBookForm] = useState({ title: '', genre: 'other', book_type: 'short_story', synopsis: '', total_volumes: 0, novel_styles: [] as string[] });
+  const [newBookForm, setNewBookForm] = useState({ title: '', genre: 'other', book_type: 'novel', synopsis: '', total_volumes: 0, novel_styles: [] as string[] });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -34,7 +34,7 @@ export default function WorkbenchPage() {
 
   // 书架作品操作
   const [editBookId, setEditBookId] = useState('');
-  const [editBookForm, setEditBookForm] = useState({ title: '', genre: 'other', book_type: 'short_story', synopsis: '', total_volumes: 0, novel_styles: [] as string[] });
+  const [editBookForm, setEditBookForm] = useState({ title: '', genre: 'other', book_type: 'novel', synopsis: '', total_volumes: 0, novel_styles: [] as string[] });
   const [editBookSaving, setEditBookSaving] = useState(false);
 
   // 总AI创作面板状态（与创作页 AiCreateModal 完全一致，仅多一步"选择作品"）
@@ -187,7 +187,7 @@ export default function WorkbenchPage() {
       const book = await api.createBook(newBookForm);
       setBooks(prev => [book, ...prev]);
       setShowNewBook(false);
-      setNewBookForm({ title: '', genre: 'other', book_type: 'short_story', synopsis: '', total_volumes: 0, novel_styles: [] });
+      setNewBookForm({ title: '', genre: 'other', book_type: 'novel', synopsis: '', total_volumes: 0, novel_styles: [] });
       navigate(`/write?book=${book.id}`);
     } catch (e: any) {
       setCreateError(e.message || '创建失败，请重试');
@@ -464,9 +464,8 @@ export default function WorkbenchPage() {
             <input className="input" placeholder="作品标题" value={newBookForm.title} onChange={e => setNewBookForm(prev => ({ ...prev, title: e.target.value }))} />
             <div className="form-row">
               <select className="input" value={newBookForm.book_type} onChange={e => handleNewBookTypeChange(e.target.value)}>
-                <option value="short_story">短篇</option>
                 <option value="novel">长篇</option>
-                <option value="script">剧本</option>
+                <option value="short_story">短篇</option>
               </select>
               <select className="input" value={newBookForm.genre} onChange={e => handleNewGenreChange(e.target.value)}>
                 <optgroup label="通用">
@@ -592,7 +591,6 @@ export default function WorkbenchPage() {
                 <select className="input" value={importForm.book_type} onChange={e => setImportForm(prev => ({ ...prev, book_type: e.target.value }))}>
                   <option value="novel">长篇</option>
                   <option value="short_story">短篇</option>
-                  <option value="script">剧本</option>
                 </select>
               </div>
               <div className="form-field">
@@ -698,9 +696,8 @@ export default function WorkbenchPage() {
             <input className="input" placeholder="作品标题" value={editBookForm.title} onChange={e => setEditBookForm(prev => ({ ...prev, title: e.target.value }))} />
             <div className="form-row">
               <select className="input" value={editBookForm.book_type} onChange={e => handleEditBookTypeChange(e.target.value)}>
-                <option value="short_story">短篇</option>
                 <option value="novel">长篇</option>
-                <option value="script">剧本</option>
+                <option value="short_story">短篇</option>
               </select>
               <select className="input" value={editBookForm.genre} onChange={e => handleEditGenreChange(e.target.value)}>
                 <optgroup label="通用"><option value="other">其他</option></optgroup>
