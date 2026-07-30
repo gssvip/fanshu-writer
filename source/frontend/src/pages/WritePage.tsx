@@ -3830,6 +3830,23 @@ function CharacterPanel(props: {
 }
 
 /* ===== 剧情面板（按卷） ===== */
+// 防御性文本化：AI 生成的 timeline JSON 中某些字段可能为对象/数组而非字符串，
+// 直接渲染会触发 React error #31（"Objects are not valid as a React child"）。
+// 此函数将任意值安全转为可渲染的字符串。
+function safeText(v: any): string {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) return v.map(x => safeText(x)).filter(Boolean).join('；');
+  if (typeof v === 'object') {
+    // 优先取常见名称字段，否则 JSON 序列化
+    const name = v.name || v.title || v.summary || v.description || '';
+    if (typeof name === 'string' && name.trim()) return name;
+    try { return JSON.stringify(v); } catch { return ''; }
+  }
+  return String(v);
+}
+
 function PlotPanel(props: {
   bookId: string;
   bible: BookBible | null;
@@ -4584,11 +4601,11 @@ function PlotPanel(props: {
                   }} style={{cursor:'pointer'}}>
                     <span className="volume-plan-arrow">{expanded ? '▼' : '▶'}</span>
                     <span className="volume-plan-vol-label">
-                      第{vol.index}卷{vol.title ? `·${vol.title}` : ''}
+                      第{safeText(vol.index)}卷{vol.title ? `·${safeText(vol.title)}` : ''}
                     </span>
-                    <span className="volume-plan-badge">{vol.arc}幕</span>
-                    <span className="volume-plan-badge">{vol.chRange}章</span>
-                    <span className="volume-plan-badge">{(vol.words / 10000).toFixed(1)}万字</span>
+                    <span className="volume-plan-badge">{safeText(vol.arc)}幕</span>
+                    <span className="volume-plan-badge">{safeText(vol.chRange)}章</span>
+                    <span className="volume-plan-badge">{(Number(vol.words) / 10000).toFixed(1)}万字</span>
                     <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); aiGenerateVolumeOutline(idx); }} disabled={volumeGenerating} title="AI补全此卷详情" style={{marginLeft:'auto'}}>
                       {volumeGenerating ? '⏳' : '🤖'}
                     </button>
@@ -4598,27 +4615,27 @@ function PlotPanel(props: {
                       <div className="volume-plan-grid">
                         <div className="volume-plan-field">
                           <span className="volume-plan-field-label">认知质变</span>
-                          <span className="volume-plan-field-val">{vol.cognChange || '—'}</span>
+                          <span className="volume-plan-field-val">{safeText(vol.cognChange) || '—'}</span>
                         </div>
                         <div className="volume-plan-field">
                           <span className="volume-plan-field-label">核心冲突</span>
-                          <span className="volume-plan-field-val">{vol.coreConflict || '—'}</span>
+                          <span className="volume-plan-field-val">{safeText(vol.coreConflict) || '—'}</span>
                         </div>
                         <div className="volume-plan-field">
                           <span className="volume-plan-field-label">情感驱动</span>
-                          <span className="volume-plan-field-val">{vol.emotionDriver || '—'}</span>
+                          <span className="volume-plan-field-val">{safeText(vol.emotionDriver) || '—'}</span>
                         </div>
                         <div className="volume-plan-field">
                           <span className="volume-plan-field-label">卷BOSS</span>
-                          <span className="volume-plan-field-val">{vol.boss || '—'}</span>
+                          <span className="volume-plan-field-val">{safeText(vol.boss) || '—'}</span>
                         </div>
                         <div className="volume-plan-field">
                           <span className="volume-plan-field-label">击败代价</span>
-                          <span className="volume-plan-field-val">{vol.bossCost || '—'}</span>
+                          <span className="volume-plan-field-val">{safeText(vol.bossCost) || '—'}</span>
                         </div>
                         <div className="volume-plan-field">
                           <span className="volume-plan-field-label">伏笔/钩子</span>
-                          <span className="volume-plan-field-val">新埋{vol.foreshadowNew}·回收{vol.foreshadowRecycle}·{vol.hookType}钩子</span>
+                          <span className="volume-plan-field-val">新埋{safeText(vol.foreshadowNew)}·回收{safeText(vol.foreshadowRecycle)}·{safeText(vol.hookType)}钩子</span>
                         </div>
                       </div>
                       {/* 情节节点 */}
@@ -4627,14 +4644,14 @@ function PlotPanel(props: {
                           <h5>🎯 情节节点（{vol.nodes.length}个）</h5>
                           <div className="node-list">
                             {vol.nodes.map((n: any, ni: number) => (
-                              <div key={ni} className={`node-card node-type-${n.type}`}>
+                              <div key={ni} className={`node-card node-type-${safeText(n.type)}`}>
                                 <div className="node-card-header">
-                                  <span className="node-index">{n.index}</span>
-                                  <span className="node-type-badge">{n.type}</span>
-                                  <span className="node-ch-range">{n.chRange}章</span>
-                                  <span className="node-cool-type">{n.coolType}</span>
+                                  <span className="node-index">{safeText(n.index)}</span>
+                                  <span className="node-type-badge">{safeText(n.type)}</span>
+                                  <span className="node-ch-range">{safeText(n.chRange)}章</span>
+                                  <span className="node-cool-type">{safeText(n.coolType)}</span>
                                 </div>
-                                {n.coreEvent && <div className="node-core-event">{n.coreEvent}</div>}
+                                {n.coreEvent && <div className="node-core-event">{safeText(n.coreEvent)}</div>}
                                 <div className="node-chap-breakdown">
                                   {(['M','C','W','D','F'] as const).map(t => (
                                     <span key={t} className="node-chap-type" title={`${CHAPTER_TYPE_DESC[t]}: ${(n as any)['ch'+t] || 0}%`}>
@@ -4642,7 +4659,7 @@ function PlotPanel(props: {
                                     </span>
                                   ))}
                                 </div>
-                                {n.hook && <div className="node-hook">🪝 {n.hook}</div>}
+                                {n.hook && <div className="node-hook">🪝 {safeText(n.hook)}</div>}
                               </div>
                             ))}
                           </div>
@@ -4692,7 +4709,7 @@ function PlotPanel(props: {
                     style={{flex:1}}
                   />
                 ) : (
-                  <h4 onDoubleClick={() => { setEditingVolName(vol.volume); setEditVolName(vol.volume); }}>{vol.volume || `第${idx + 1}卷`}</h4>
+                  <h4 onDoubleClick={() => { setEditingVolName(vol.volume); setEditVolName(vol.volume); }}>{safeText(vol.volume) || `第${idx + 1}卷`}</h4>
                 )}
                 {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                 <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
@@ -4716,25 +4733,25 @@ function PlotPanel(props: {
                 </div>
               ) : (
                 <div className="plot-volume-body">
-                  {vol.main_plot ? <p>{vol.main_plot}</p> : <p className="text-muted" style={{fontSize:13}}>暂无剧情，点击「编辑」或「识别」添加</p>}
+                  {vol.main_plot ? <p>{safeText(vol.main_plot)}</p> : <p className="text-muted" style={{fontSize:13}}>暂无剧情，点击「编辑」或「识别」添加</p>}
                   {vol.key_events && vol.key_events.length > 0 && (
                     <div className="plot-events">
                       <b>关键事件：</b>
-                      <ul>{vol.key_events.map((ev: string, i: number) => <li key={i}>{ev}</li>)}</ul>
+                      <ul>{vol.key_events.map((ev: any, i: number) => <li key={i}>{safeText(ev)}</li>)}</ul>
                     </div>
                   )}
                   {vol.turning_points && vol.turning_points.length > 0 && (
                     <div className="plot-events">
                       <b>转折点：</b>
-                      <ul>{vol.turning_points.map((tp: string, i: number) => <li key={i}>{tp}</li>)}</ul>
+                      <ul>{vol.turning_points.map((tp: any, i: number) => <li key={i}>{safeText(tp)}</li>)}</ul>
                     </div>
                   )}
-                  {vol.climax && <p><b>高潮：</b>{vol.climax}</p>}
-                  {vol.ending && <p><b>结局：</b>{vol.ending}</p>}
+                  {vol.climax && <p><b>高潮：</b>{safeText(vol.climax)}</p>}
+                  {vol.ending && <p><b>结局：</b>{safeText(vol.ending)}</p>}
                   {vol.foreshadowing && vol.foreshadowing.length > 0 && (
                     <div className="plot-events">
                       <b>伏笔：</b>
-                      <ul>{vol.foreshadowing.map((f: string, i: number) => <li key={i}>{f}</li>)}</ul>
+                      <ul>{vol.foreshadowing.map((f: any, i: number) => <li key={i}>{safeText(f)}</li>)}</ul>
                     </div>
                   )}
                   {vol.nodes && vol.nodes.length > 0 && (
@@ -4743,12 +4760,12 @@ function PlotPanel(props: {
                       <ul>
                         {vol.nodes.map((n: any, i: number) => (
                           <li key={i}>
-                            <span style={{color:'#5b8def',fontWeight:600}}>[{n.type || 'M'}]</span>{' '}
-                            {n.chapters && <span style={{color:'#888'}}>{n.chapters}章：</span>}
-                            {n.title || n.coreEvent || '节点'}
-                            {n.cool_type && <span style={{color:'#e87d3e'}}> · {n.cool_type}</span>}
-                            {n.summary && <span style={{color:'#666'}}> — {n.summary}</span>}
-                            {n.hook && <span style={{color:'#27ae60'}}> · 钩子:{n.hook}</span>}
+                            <span style={{color:'#5b8def',fontWeight:600}}>[{safeText(n.type) || 'M'}]</span>{' '}
+                            {n.chapters && <span style={{color:'#888'}}>{safeText(n.chapters)}章：</span>}
+                            {safeText(n.title) || safeText(n.coreEvent) || '节点'}
+                            {n.cool_type && <span style={{color:'#e87d3e'}}> · {safeText(n.cool_type)}</span>}
+                            {n.summary && <span style={{color:'#666'}}> — {safeText(n.summary)}</span>}
+                            {n.hook && <span style={{color:'#27ae60'}}> · 钩子:{safeText(n.hook)}</span>}
                           </li>
                         ))}
                       </ul>
@@ -5083,11 +5100,11 @@ function InventoryPanel(props: {
                           <ul>
                             {vol.items.map((item: any, i: number) => (
                               <li key={i}>
-                                <span style={{color:'#5b8def',fontWeight:600}}>{CATEGORY_LABELS[item.category] || '🔹'} {item.name}</span>
-                                {item.owner && <span style={{color:'#888'}}> · 持有：{item.owner}</span>}
-                                {item.category && <span style={{color:'#27ae60'}}> · {item.category}</span>}
-                                {item.status && <span style={{color:'#e87d3e'}}> · {item.status}</span>}
-                                {item.description && <span style={{color:'#666'}}> — {item.description}</span>}
+                                <span style={{color:'#5b8def',fontWeight:600}}>{CATEGORY_LABELS[item.category] || '🔹'} {safeText(item.name)}</span>
+                                {item.owner && <span style={{color:'#888'}}> · 持有：{safeText(item.owner)}</span>}
+                                {item.category && <span style={{color:'#27ae60'}}> · {safeText(item.category)}</span>}
+                                {item.status && <span style={{color:'#e87d3e'}}> · {safeText(item.status)}</span>}
+                                {item.description && <span style={{color:'#666'}}> — {safeText(item.description)}</span>}
                               </li>
                             ))}
                           </ul>
@@ -5099,9 +5116,9 @@ function InventoryPanel(props: {
                           <ul>
                             {vol.realms.map((r: any, i: number) => (
                               <li key={i}>
-                                <span style={{color:'#9b59b6',fontWeight:600}}>{r.character}</span>
-                                {r.realm && <span style={{color:'#27ae60'}}> · {r.realm}</span>}
-                                {r.progress && <span style={{color:'#666'}}> — {r.progress}</span>}
+                                <span style={{color:'#9b59b6',fontWeight:600}}>{safeText(r.character)}</span>
+                                {r.realm && <span style={{color:'#27ae60'}}> · {safeText(r.realm)}</span>}
+                                {r.progress && <span style={{color:'#666'}}> — {safeText(r.progress)}</span>}
                               </li>
                             ))}
                           </ul>
@@ -6174,15 +6191,15 @@ function DynamicMemoryPanel(props: {
                       <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据，点击「🔍 AI识别」选择此卷生成摘要</p>
                     ) : (
                       <div className="plot-events">
-                        {d.summary && <p><b>综合摘要：</b>{d.summary}</p>}
-                        {d.characters && <p><b>登场人物：</b>{d.characters}</p>}
-                        {d.events && <p><b>关键事件：</b>{d.events}</p>}
-                        {d.timeline && <p><b>时间线：</b>{d.timeline}</p>}
-                        {d.locations && <p><b>地点：</b>{d.locations}</p>}
-                        {d.factions && <p><b>势力动态：</b>{d.factions}</p>}
-                        {d.foreshadowing && <p><b>伏笔：</b>{d.foreshadowing}</p>}
-                        {d.realms && <p><b>境界变化：</b>{d.realms}</p>}
-                        {d.relationships && <p><b>关系变化：</b>{d.relationships}</p>}
+                        {d.summary && <p><b>综合摘要：</b>{safeText(d.summary)}</p>}
+                        {d.characters && <p><b>登场人物：</b>{safeText(d.characters)}</p>}
+                        {d.events && <p><b>关键事件：</b>{safeText(d.events)}</p>}
+                        {d.timeline && <p><b>时间线：</b>{safeText(d.timeline)}</p>}
+                        {d.locations && <p><b>地点：</b>{safeText(d.locations)}</p>}
+                        {d.factions && <p><b>势力动态：</b>{safeText(d.factions)}</p>}
+                        {d.foreshadowing && <p><b>伏笔：</b>{safeText(d.foreshadowing)}</p>}
+                        {d.realms && <p><b>境界变化：</b>{safeText(d.realms)}</p>}
+                        {d.relationships && <p><b>关系变化：</b>{safeText(d.relationships)}</p>}
                       </div>
                     )}
                   </div>
