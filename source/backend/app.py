@@ -6825,8 +6825,8 @@ def ai_outline_volume(book_id):
             prev_end_chapters = chapters[-3:]
         prev_volume_end_summary = '\n'.join([f'第{c.order_index}章 {c.title or ""}：{(c.content or "")[-300:]}' for c in prev_end_chapters])
 
-    # 【P1修复】existing_timeline 改为分级注入：上一卷完整 + 其余卷仅钩子摘要，
-    # 突破2000字截断导致的早期卷细节丢失问题
+    # 【P1修复】existing_timeline 分级注入：上一卷完整 + 其余卷主线+节点摘要，
+    # 让节点设计能感知全部已有卷的节点，保证全书节点剧情连贯
     existing_timeline = ''
     if existing_volumes_for_ctx:
         tl_parts = []
@@ -6838,20 +6838,27 @@ def ai_outline_volume(book_id):
                 v_idx_int = int(v_idx)
             except (ValueError, TypeError):
                 v_idx_int = 0
-            # 上一卷（volume_index-1）注入完整信息
+            v_nodes = v.get('nodes') or []
+            # 上一卷（volume_index-1）注入完整信息（含完整节点）
             if v_idx_int == volume_index - 1:
                 tl_parts.append(f'▼ [上一卷·完整] 第{v_idx}卷「{v.get("volume", v.get("volume_title", ""))}」\n'
                                 + f'  主线：{(v.get("main_plot") or v.get("core_goal") or "")[:400]}\n'
                                 + f'  核心冲突：{str(v.get("core_conflict", ""))[:200]}\n'
                                 + f'  关键转折：{", ".join(v.get("key_events", []) or v.get("turning_points", []))[:200]}\n'
                                 + f'  卷尾钩子：{str(v.get("ending") or v.get("ending_hook") or v.get("climax") or "")[:200]}\n'
-                                + f'  情节节点：' + ' | '.join([f'{n.get("chapters","")} {n.get("title","")}' for n in (v.get("nodes") or [])[:6]]))
+                                + f'  情节节点：' + ' | '.join([f'{n.get("chapters","")} {n.get("title","")}' for n in v_nodes[:8]]))
+            elif v_nodes:
+                # 其余已有节点的卷：注入主线 + 节点摘要（保证全书节点连贯）
+                main = (v.get('main_plot') or v.get('core_goal') or '')[:120]
+                hook = v.get('ending') or v.get('ending_hook') or v.get('climax') or ''
+                nodes_brief = ' | '.join([f'{n.get("chapters","")}{n.get("title","")}' for n in v_nodes[:6]])
+                tl_parts.append(f'· 第{v_idx}卷「{v.get("volume", v.get("volume_title", ""))}」主线：{main}；卷尾钩子：{str(hook)[:80]}；节点：{nodes_brief[:200]}')
             else:
-                # 其余卷仅注入钩子摘要，控制token
+                # 无节点的卷：仅主线+钩子
                 hook = v.get('ending') or v.get('ending_hook') or v.get('climax') or ''
                 main = (v.get('main_plot') or v.get('core_goal') or '')[:80]
                 tl_parts.append(f'· 第{v_idx}卷「{v.get("volume", v.get("volume_title", ""))}」主线：{main}；卷尾钩子：{str(hook)[:100]}')
-        existing_timeline = '\n'.join(tl_parts)[:4000]
+        existing_timeline = '\n'.join(tl_parts)[:4500]
     else:
         existing_timeline = (bb.timeline or '')[:2000]
     master_outline = (bb.plot_design or '')[:3000]
@@ -6934,7 +6941,8 @@ def ai_outline_volume(book_id):
 
 【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
 【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
-本卷约 {chapters_per_volume} 章，分5-8个情节节点。节点 chapters 必须从 {start_chapter} 开始连续递增。
+本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），分5-8个情节节点。节点 chapters 必须从 {start_chapter} 开始连续递增。
+【节点容量铁律】每个情节节点的 summary 必须足够支撑其 chapters 范围内的字数容量（按每章2400字估算），不得过于简略；各节点剧情须与上下卷节点连贯，避免剧情断裂。
 
 {skill_note}"""
 
@@ -7052,6 +7060,13 @@ def ai_extract_volumes_from_outline(book_id):
 
     skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
 
+    # 卷数：优先前端传入（来自 book.total_volumes），回退 book.total_volumes，再回退让AI自行决定
+    if not volume_count:
+        try:
+            volume_count = int(getattr(book, 'total_volumes', 0) or 0)
+        except Exception:
+            volume_count = 0
+
     # 上下文：总纲 + 世界观 + 规则 + 人物
     context_parts = [f'【五幕式总纲】\n{bb.plot_design[:4000]}']
     if bb.worldbuilding:
@@ -7062,7 +7077,7 @@ def ai_extract_volumes_from_outline(book_id):
         context_parts.append(f'【人物档案】\n{bb.character_profiles[:1000]}')
     context = '\n\n'.join(context_parts)
 
-    count_hint = f'约 {volume_count} 卷' if volume_count else '根据总纲内容自行决定合理的卷数（通常5-8卷）'
+    count_hint = f'严格 {volume_count} 卷' if volume_count else '根据总纲内容自行决定合理的卷数（通常5-8卷）'
 
     # ===== 【P1弊端7修复】五幕模型对齐约束 =====
     act_descriptions = {
@@ -7074,7 +7089,9 @@ def ai_extract_volumes_from_outline(book_id):
     }
 
     system_prompt = f"""你是番茄小说金番作者级别的剧情架构师。
-任务：根据五幕式总纲，一次性提取全部卷的详细剧情，输出为 JSON 数组。
+任务：根据五幕式总纲，一次性提取全部卷的【主线剧情】，输出为 JSON 数组。
+
+【重要】本次只构建各卷主线剧情，**不生成情节节点**（nodes 输出为空数组）。情节节点由用户后续手动点击「节点设计」逐卷生成。
 
 【五幕模型对齐】各卷必须对应五幕模型，确保全书结构完整：
 - 第1卷对应「立身」幕：{act_descriptions['立身']}
@@ -7084,22 +7101,23 @@ def ai_extract_volumes_from_outline(book_id):
 - 第5卷对应「立命」幕：{act_descriptions['立命']}
 （若卷数超过5卷，按进度比例映射到五幕；每卷 main_plot 中需标注所属幕）
 
+【内容容量铁律】每卷固定 50 章约 12 万字（50章×2400字）。每卷 main_plot 必须足够丰满，能支撑 50 章 12 万字的内容容量，不得过于单薄；核心冲突、关键事件要充实，为后续节点设计留足展开空间。
+
 【卷间衔接铁律】（多卷必须保持连贯）
 - 第N卷的 ending_hook 必须与第N+1卷开头场景直接衔接
-- 第N+1卷第一个节点的 chapters 必须紧接第N卷最后一个节点的结束章号
-- 卷间不得出现章节范围空洞或重叠
+- 卷间不得出现剧情断裂或矛盾
 
 【输入上下文】
 {context}
 
 【输出要求】严格输出 JSON 数组（不要包裹在 markdown 代码块中），{count_hint}。
-每卷结构如下：
+每卷结构如下（nodes 必须为空数组，由后续节点设计填充）：
 {{
   "volume_id": "1",
   "volume": "第1卷 卷名",
   "volume_index": 1,
   "act": "立身",
-  "main_plot": "本卷主线剧情（100-200字，需标注所属幕）",
+  "main_plot": "本卷主线剧情（150-300字，需标注所属幕，须支撑50章12万字容量）",
   "core_conflict": "本卷核心冲突",
   "emotion_driver": "情感驱动力",
   "key_events": ["关键事件1", "关键事件2", "关键事件3"],
@@ -7108,19 +7126,12 @@ def ai_extract_volumes_from_outline(book_id):
   "ending": "本卷结局/卷尾钩子",
   "ending_hook": "本卷卷尾钩子具体内容（下一卷开头需承接此钩子）",
   "foreshadowing": ["新埋伏笔1"],
-  "nodes": [
-    {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
-  ]
+  "nodes": []
 }}
-
-【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
-【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
-每卷 5-8 个情节节点，节点章节范围不重叠，覆盖整卷。
-各卷 nodes 的 chapters 必须全书连续编号（第1卷1-50，第2卷51-100，依此类推）。
 
 {skill_note}"""
 
-    user_prompt = f'请根据五幕式总纲提取全部卷的详细剧情，{count_hint}。注意各卷必须符合五幕模型定位，且卷间 ending_hook 与开头严格衔接。'
+    user_prompt = f'请根据五幕式总纲提取全部卷的主线剧情，{count_hint}。注意：只构建各卷主线，不要生成情节节点（nodes 留空）；各卷必须符合五幕模型定位且卷间 ending_hook 与开头严格衔接；每卷主线须能支撑50章12万字容量。'
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
@@ -7198,6 +7209,7 @@ def ai_extract_volumes_from_outline(book_id):
 
     # ===== 【P0弊端3修复】写入逻辑改为 upsert 合并，而非整体覆盖 =====
     # 保留用户手工微调的卷数据，只更新本次生成的卷
+    # 本次只生成主线（nodes 为空），若已有卷已设计过节点，保留其 nodes 不覆盖
     existing_volumes_list = []
     if bb.timeline:
         try:
@@ -7207,10 +7219,22 @@ def ai_extract_volumes_from_outline(book_id):
         except (json.JSONDecodeError, ValueError, TypeError):
             pass
 
+    # 建立已有卷索引 → nodes 的映射，用于回填被保留的节点设计
+    existing_nodes_map = {}
+    for v in existing_volumes_list:
+        idx = v.get('volume_index')
+        if idx is not None:
+            existing_nodes_map[int(idx)] = v.get('nodes') or []
+
     # 用本次生成的卷覆盖同 volume_index 的旧卷，保留未涉及的卷
     new_idx_set = {v['volume_index'] for v in volumes}
     merged_volumes = [v for v in existing_volumes_list if v.get('volume_index') not in new_idx_set]
-    merged_volumes.extend(volumes)
+    # 对本次生成的卷：若 nodes 为空且已有卷存在节点设计，回填保留
+    for v in volumes:
+        existing_ns = existing_nodes_map.get(int(v['volume_index']))
+        if (not v.get('nodes')) and existing_ns:
+            v['nodes'] = existing_ns
+        merged_volumes.append(v)
     merged_volumes.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
 
     bb.timeline = json.dumps(merged_volumes, ensure_ascii=False, indent=2)

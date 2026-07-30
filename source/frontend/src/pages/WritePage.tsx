@@ -1776,6 +1776,7 @@ ${chapterEditContent}`;
             bible={bible}
             onBibleUpdate={setBible}
             bookTitle={book?.title || ''}
+            totalVolumes={book?.total_volumes || 0}
             chapters={chapters}
             hasChapters={chapters.length > 0}
             showConfirm={showConfirm}
@@ -3852,6 +3853,7 @@ function PlotPanel(props: {
   bible: BookBible | null;
   onBibleUpdate: (b: BookBible) => void;
   bookTitle: string;
+  totalVolumes: number;
   chapters: Chapter[];
   hasChapters: boolean;
   showConfirm: (message: string, onConfirm: () => void) => void;
@@ -3863,7 +3865,7 @@ function PlotPanel(props: {
   onRefreshChapters: () => void;
   onOpenAiCreate: () => void;
 }) {
-  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept, onRefreshChapters } = props;
+  const { bookId, bible, onBibleUpdate, totalVolumes, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept, onRefreshChapters } = props;
   const [volumes, setVolumes] = useState<any[]>([]);
   const [editingVol, setEditingVol] = useState<string | null>(null);
   const [editForm, setEditForm] = useState('');
@@ -3884,8 +3886,9 @@ function PlotPanel(props: {
   const [importLoading, setImportLoading] = useState(false);
   // 自动分卷规划
   const [targetWords, setTargetWords] = useState<number>(0);
+  const [targetVolumeCount, setTargetVolumeCount] = useState<number>(0);
   const [showVolumeCalc, setShowVolumeCalc] = useState(false);
-  const [volumeGenerating, setVolumeGenerating] = useState(false);
+  const [volumeGeneratingIdx, setVolumeGeneratingIdx] = useState<number | null>(null);
   const [volumeData, setVolumeData] = useState<any[]>([]);
   const [expandedVol, setExpandedVol] = useState<Set<number>>(new Set());
   // 工作流状态（getter 仍被按钮 disabled 使用；setter 已废弃，因 generateOutlineMaster 已移除）
@@ -4116,11 +4119,20 @@ function PlotPanel(props: {
   // ==== 大纲工作流相关函数（从大纲维度迁移） ====
 
   function generateVolumeBreakdown() {
-    if (targetWords <= 0) { alert('请先输入小说目标字数'); return; }
     const CH_PER_VOL = 50;
     const WORDS_PER_CH = 2400;
-    const totalCh = Math.ceil(targetWords / WORDS_PER_CH);
-    const volCount = Math.ceil(totalCh / CH_PER_VOL);
+    // 优先使用卷数输入；未填卷数时回退到字数推算
+    let volCount: number;
+    if (targetVolumeCount > 0) {
+      volCount = targetVolumeCount;
+    } else if (targetWords > 0) {
+      const totalCh = Math.ceil(targetWords / WORDS_PER_CH);
+      volCount = Math.ceil(totalCh / CH_PER_VOL);
+    } else {
+      alert('请先输入卷数（或目标字数）');
+      return;
+    }
+    const totalCh = volCount * CH_PER_VOL;
 
     const data: any[] = [];
     for (let v = 0; v < volCount; v++) {
@@ -4133,7 +4145,7 @@ function PlotPanel(props: {
       const startCh = v * CH_PER_VOL + 1;
       const endCh = Math.min((v + 1) * CH_PER_VOL, totalCh);
 
-      // 生成5-8个情节节点
+      // 生成5-8个情节节点（仅框架占位，coreEvent 留空待 AI 补全）
       const nodeCount = 5 + (v % 4);
       const nodes: any[] = [];
       const nodeTypes = ['过渡', '蓄力', '高潮', '蓄力', '大高潮'];
@@ -4180,21 +4192,30 @@ function PlotPanel(props: {
     setShowVolumeCalc(false);
   }
 
-  // AI辅助生成卷大纲
+  // AI辅助生成卷大纲（逐卷补全：仅点击的卷显示补全中，其余卷仍可独立点击）
   async function aiGenerateVolumeOutline(volIdx: number) {
     if (!bookId) return;
     const vol = volumeData[volIdx];
     if (!vol) return;
-    setVolumeGenerating(true);
+    setVolumeGeneratingIdx(volIdx);
     try {
       const contextConcept = concept || bible?.concept || '暂无构思';
-      const existingOutline = bible?.plot_design?.slice(0, 800) || '无';
-      const worldSetting = bible?.worldbuilding?.slice(0, 500) || '无';
+      // 读取各维度现有资料，主要是五幕式总纲；同时注入世界观/规则/人物保证一致性
+      const existingOutline = bible?.plot_design?.slice(0, 1500) || '无';
+      const worldSetting = bible?.worldbuilding?.slice(0, 600) || '无';
+      const keyRules = bible?.key_rules?.slice(0, 500) || '无';
+      const characters = bible?.character_profiles?.slice(0, 600) || '无';
+      // 已有 timeline 各卷主线（保证卷间连贯）
+      const existingVols = volumes
+        .filter(v => v && v.volume !== '全部剧情')
+        .map(v => `第${v.volume_index || ''}卷「${v.volume || ''}」：${(v.main_plot || v.core_goal || '').slice(0, 120)}`)
+        .join('\n');
       const skillKeys = ['volume_breakdown', 'master_outline', 'tomato_outline'];
       const skillPrompt = extractSkillPrompt(selectedSkillPacks, skillKeys);
       const skillNote = selectedSkillPacks.length > 0 ? `\n\n【已加载技能包：${selectedSkillPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
+      const actName = volIdx < volumeData.length ? ARC_NAMES[Math.min(Math.floor(volIdx / Math.ceil(volumeData.length / 5)), 4)] : ARC_NAMES[0];
       const msgs = [
-        { role: 'system', content: `你是番茄小说金番作者。请按以下模板为第${vol.index}卷（第${vol.chRange}章，${ARC_NAMES[volIdx < volumeData.length ? Math.min(Math.floor(volIdx / Math.ceil(volumeData.length / 5)), 4) : 0]}幕）填写分卷大纲。输出必须是纯JSON格式。${skillNote}` },
+        { role: 'system', content: `你是番茄小说金番作者。请按以下模板为第${vol.index}卷（第${vol.chRange}章，${actName}幕）填写分卷大纲。输出必须是纯JSON格式。${skillNote}\n\n【内容容量铁律】本卷固定50章约12万字，主线剧情必须足够丰满以支撑这一容量，不得过于单薄。` },
         { role: 'user', content: `【第${vol.index}卷大纲模板】
 {
   "title": "卷标题（4-8字，吸引读者）",
@@ -4215,14 +4236,19 @@ function PlotPanel(props: {
   ]
 }
 
-已有构思：${contextConcept}
-已有世界观：${worldSetting}
-已有大纲：${existingOutline}
-小说题材：${bible?.worldbuilding ? '玄幻/仙侠' : '通用'}
-本卷章范围：第${vol.chRange}章，约${(vol.words / 10000).toFixed(1)}万字
+【五幕式总纲】（本卷必须符合总纲要求，不得偏离）
+${existingOutline}
+
+【已有构思】${contextConcept}
+【世界观设定】${worldSetting}
+【核心规则】${keyRules}
+【人物档案】${characters}
+【已有各卷主线】（本卷须与之连贯，不得矛盾）
+${existingVols || '（暂无）'}
+本卷章范围：第${vol.chRange}章，约${(vol.words / 10000).toFixed(1)}万字（50章×2400字）
 所属幕：${vol.arc}（${vol.arcTheme}）
 
-请填写完整的JSON，所有字段必填，情节节点的coreEvent要有具体内容。只输出JSON不要其他文字。` }
+请填写完整的JSON，所有字段必填。核心冲突与主线必须足够支撑50章12万字的容量，与五幕式总纲及已有各卷保持连贯。情节节点的coreEvent要有具体内容。只输出JSON不要其他文字。` }
       ];
       const result = await api.aiChat(msgs);
       let parsed: any;
@@ -4238,13 +4264,14 @@ function PlotPanel(props: {
         alert('AI返回格式异常，请重试');
       }
     } catch (e: any) { alert('AI生成失败: ' + e.message); }
-    setVolumeGenerating(false);
+    setVolumeGeneratingIdx(null);
   }
 
   // 将当前分卷数据导出到 plot_design（通过 API 更新）
   async function exportVolumePlan() {
     if (volumeData.length === 0) { alert('请先生成分卷规划'); return; }
-    let text = `【分卷规划】目标${(targetWords / 10000).toFixed(1)}万字 · ${volumeData.length}卷 · ${Math.ceil(targetWords / 2400)}章 · 每章2400字\n\n`;
+    const totalWords = volumeData.reduce((s, v) => s + (Number(v.words) || 0), 0);
+    let text = `【分卷规划】${volumeData.length}卷 · ${volumeData.length * 50}章 · ${(totalWords / 10000).toFixed(1)}万字 · 每卷50章约12万字\n\n`;
     for (const vol of volumeData) {
       text += `━━━ 第${vol.index}卷${vol.title ? '：' + vol.title : ''} ━━━\n`;
       text += `章范围：${vol.chRange} · 约${(vol.words / 10000).toFixed(1)}万字 · ${vol.arc}幕\n`;
@@ -4276,6 +4303,7 @@ function PlotPanel(props: {
   }
 
   // 从大纲总纲一次性提取各卷剧情
+  // 仅构建各卷主线剧情（不生成节点），节点由用户手动点击「节点设计」生成
   async function handleExtractVolumes() {
     if (!bookId) return;
     if (!bible?.plot_design || !bible.plot_design.trim()) {
@@ -4284,9 +4312,9 @@ function PlotPanel(props: {
     }
     setExtractLoading(true);
     try {
-      const result = await api.extractVolumesFromOutline(bookId, selectedSkillPackIds);
+      const result = await api.extractVolumesFromOutline(bookId, selectedSkillPackIds, totalVolumes || undefined);
       if (result.bible) onBibleUpdate(result.bible);
-      alert(`已从大纲提取 ${result.volumes?.length || 0} 卷剧情`);
+      alert(`已从大纲提取 ${result.volumes?.length || 0} 卷剧情（仅主线，节点请逐卷点击「🎯 节点设计」）`);
     } catch (e: any) {
       alert('提取各卷失败：' + (e.message || '请检查AI配置'));
     }
@@ -4495,7 +4523,7 @@ function PlotPanel(props: {
               className="btn-ghost-sm"
               onClick={() => setShowVolumeCalc(s => !s)}
               disabled={outlineWorkflowLoading !== ''}
-              title="输入目标字数，按每卷50章×2400字自动分卷"
+              title="输入卷数，按每卷50章×2400字自动生成分卷框架"
               style={showVolumeCalc ? { background: '#6c5ce7', color: '#fff' } : {}}
             >
               📊 自动分卷规划
@@ -4542,17 +4570,17 @@ function PlotPanel(props: {
       {showVolumeCalc && (
         <div className="volume-calc-section" style={{ marginBottom: 8 }}>
           <div className="volume-calc-form">
-            <label className="volume-calc-label">输入小说目标字数，按每卷50章×2400字自动分卷</label>
+            <label className="volume-calc-label">输入卷数，按每卷50章×2400字（约12万字）自动生成分卷框架</label>
             <div className="volume-calc-input-row">
-              <input className="input" type="number" value={targetWords || ''} onChange={e => setTargetWords(parseInt(e.target.value) || 0)} placeholder="如：1000000（100万字）" />
-              <span className="volume-calc-unit">字</span>
+              <input className="input" type="number" value={targetVolumeCount || ''} onChange={e => setTargetVolumeCount(parseInt(e.target.value) || 0)} placeholder="如：10（卷）" min={1} max={30} />
+              <span className="volume-calc-unit">卷</span>
               <button className="btn-primary-sm" onClick={generateVolumeBreakdown}>生成分卷框架</button>
               <button className="btn-ghost-sm" onClick={() => setShowVolumeCalc(false)}>收起</button>
             </div>
-            <p className="text-muted" style={{fontSize:11,marginTop:4}}>按金番作者体系：每卷50章×2400字，五幕弧线自动分配，生成5-8个情节节点/卷</p>
-            {targetWords > 0 && (
+            <p className="text-muted" style={{fontSize:11,marginTop:4}}>按金番作者体系：每卷50章×2400字≈12万字，五幕弧线自动分配。生成框架后逐卷点击 🤖 补全详情，再点击 🎯 节点设计。</p>
+            {targetVolumeCount > 0 && (
               <div className="volume-calc-preview">
-                预计 {Math.ceil(targetWords / 2400 / 50)}卷 · {Math.ceil(targetWords / 2400)}章 · {(targetWords / 10000).toFixed(1)}万字
+                预计 {targetVolumeCount}卷 · {targetVolumeCount * 50}章 · {((targetVolumeCount * 50 * 2400) / 10000).toFixed(1)}万字
               </div>
             )}
           </div>
@@ -4586,7 +4614,7 @@ function PlotPanel(props: {
       {volumeData.length > 0 && (
         <div className="volume-plan-display">
           <div className="volume-plan-header">
-            <h4>📚 分卷规划（{(targetWords / 10000).toFixed(1)}万字 · {volumeData.length}卷）</h4>
+            <h4>📚 分卷规划（{volumeData.length}卷 · 每卷50章约12万字）</h4>
             <div style={{display:'flex',gap:6}}>
               <button className="btn-ghost-sm" onClick={exportVolumePlan}>📝 导出到大纲</button>
             </div>
@@ -4606,8 +4634,8 @@ function PlotPanel(props: {
                     <span className="volume-plan-badge">{safeText(vol.arc)}幕</span>
                     <span className="volume-plan-badge">{safeText(vol.chRange)}章</span>
                     <span className="volume-plan-badge">{(Number(vol.words) / 10000).toFixed(1)}万字</span>
-                    <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); aiGenerateVolumeOutline(idx); }} disabled={volumeGenerating} title="AI补全此卷详情" style={{marginLeft:'auto'}}>
-                      {volumeGenerating ? '⏳' : '🤖'}
+                    <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); aiGenerateVolumeOutline(idx); }} disabled={volumeGeneratingIdx !== null} title="AI补全此卷详情（逐卷补全，读取五幕式总纲等各维度资料）" style={{marginLeft:'auto'}}>
+                      {volumeGeneratingIdx === idx ? '⏳ 补全中' : '🤖 补全'}
                     </button>
                   </div>
                   {expanded && (
