@@ -397,6 +397,94 @@ def _realm_index(realm_str: str, realm_order: List[str]) -> int:
     return -1
 
 
+# 境界体系解析的常见锚点词（出现这些词的行/段大概率在描述境界体系）
+_REALM_ANCHOR_KEYWORDS = ['境界', '修为', '实力划分', '等级划分', '力量等级', '修炼体系', '阶位', '段位', '品阶']
+# 界定境界顺序的连接词
+_REALM_SEPARATORS = ['→', '➜', '➞', '>', '＞', '，', '、', '/', '|', '至', '到', '然后']
+
+
+def _parse_realm_order_from_bible(bible: Dict) -> Optional[List[str]]:
+    """从 key_rules / worldbuilding 维度动态解析境界等级体系。
+    识别策略：
+      1. 优先找"境界/修为/等级划分"锚点行，提取该行的境界序列
+      2. 提取"X→Y→Z"或"X、Y、Z"格式的境界链
+      3. 过滤掉过短（<2字）或过长（>6字）的项
+    返回从低到高的境界列表；解析失败返回 None（回退默认表）。
+    """
+    if not bible:
+        return None
+    combined = ((bible.get('key_rules') or '') + '\n' + (bible.get('worldbuilding') or ''))
+    if not combined.strip():
+        return None
+
+    # 策略1：找含锚点词的行，提取该行的境界序列
+    for line in combined.split('\n'):
+        line = line.strip()
+        if not line or len(line) > 200:
+            continue
+        if not any(kw in line for kw in _REALM_ANCHOR_KEYWORDS):
+            continue
+        # 该行很可能在描述境界体系，尝试提取境界链
+        realms = _extract_realm_chain(line)
+        if realms and len(realms) >= 3:
+            return realms
+
+    # 策略2：扫描全文找"X→Y→Z"格式的境界链（至少4个环节才算体系）
+    import re as _re_realm
+    # 匹配 "境界1→境界2→境界3→..." 这类显式链
+    chain_pattern = r'([\u4e00-\u9fa5A-Za-z]{2,6}(?:→|➜|➞|>)[\u4e00-\u9fa5A-Za-z]{2,6}(?:(?:→|➜|➞|>)[\u4e00-\u9fa5A-Za-z]{2,6}){2,})'
+    for m in _re_realm.finditer(chain_pattern, combined):
+        chain = m.group(1)
+        realms = _extract_realm_chain(chain)
+        if realms and len(realms) >= 4:
+            return realms
+
+    return None
+
+
+def _extract_realm_chain(text: str) -> List[str]:
+    """从一段文本中提取境界序列。
+    按 →/>/、/， 等分隔符拆分，过滤非境界词。
+    """
+    import re as _re_split
+    # 按多种分隔符拆分
+    parts = _re_split.split(r'[→➜➞>＞，、/|至]', text)
+    realms = []
+    seen = set()
+    for p in parts:
+        p = p.strip()
+        # 去掉前缀编号和说明性文字
+        p = _re_split.sub(r'^[①②③④⑤⑥⑦⑧⑨⑩\d.、\s]+', '', p)
+        # 去掉"XX划分/XX体系/XX等级"这类说明性前缀（保留真正的境界名）
+        # 前缀最多8个中文字（如"异能等级划分""武道力量体系"）
+        p = _re_split.sub(r'^[\u4e00-\u9fa5]{0,8}(?:等级|境界|修为|实力|划分|体系|阶位|段位|品阶)[：:]\s*', '', p)
+        p = _re_split.sub(r'[：:（(].*$', '', p).strip()
+        # 过滤：长度2-6字，非纯说明词
+        if not p or len(p) < 2 or len(p) > 6:
+            continue
+        # 排除明显的非境界词（含说明性复合词）
+        if p in {'境界', '修为', '实力', '等级', '划分', '体系', '修炼', '阶段', '分为', '以下',
+                 '以上', '分别', '对应', '例如', '如下', '说明', '注',
+                 '境界划分', '修为划分', '实力划分', '等级划分', '力量等级',
+                 '异能等级', '异能等级划分', '武道体系', '修炼体系', '力量体系'}:
+            continue
+        # 排除含"划分/体系/等级/境界"子串的说明性词组
+        if any(kw in p for kw in ['划分', '体系', '等级', '境界', '修为', '实力', '阶位', '段位', '品阶']):
+            continue
+        if p not in seen:
+            seen.add(p)
+            realms.append(p)
+    return realms
+
+
+def _get_realm_order(bible: Dict) -> List[str]:
+    """获取境界等级表：优先用 bible 动态解析，失败回退默认表。"""
+    dynamic = _parse_realm_order_from_bible(bible)
+    if dynamic and len(dynamic) >= 3:
+        return dynamic
+    return _DEFAULT_REALM_ORDER
+
+
 def _check_dead_character_revival(text: str, bible: Dict, result: ValidationResult):
     """死亡角色复活检测（critical）：已死亡角色在本章说话/行动。"""
     dead_chars = _extract_dead_characters_from_log(bible)
@@ -427,11 +515,15 @@ def _check_dead_character_revival(text: str, bible: Dict, result: ValidationResu
 
 
 def _check_realm_regression(text: str, bible: Dict, result: ValidationResult):
-    """境界回退检测（critical）：角色已记录境界，本章出现明显更低的境界。"""
+    """境界回退检测（critical）：角色已记录境界，本章出现明显更低的境界。
+    P2增强：优先使用从 key_rules/worldbuilding 动态解析的境界体系，
+    非修仙题材（都市/科幻/异能）也能检测境界回退；解析失败回退默认表。
+    """
     char_realms = _extract_character_realms_from_log(bible)
     if not char_realms:
         return
-    realm_order = _DEFAULT_REALM_ORDER
+    # 动态解析境界表（P2增强），失败回退默认表
+    realm_order = _get_realm_order(bible)
     for name, (recorded_realm, rec_ch) in char_realms.items():
         if not name or len(name) < 2 or not recorded_realm:
             continue

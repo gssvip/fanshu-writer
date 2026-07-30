@@ -2808,6 +2808,80 @@ def ai_anti_forget_check(book_id):
             dim_ctx_parts.append(f'【{lbl}】\n{v[:800]}')
     dim_ctx = '\n\n'.join(dim_ctx_parts) or '（维度数据为空）'
 
+    # ===== P2增强：注入章级变更日志 + 伏笔DAG结构化状态 =====
+    # 让防遗忘检查从"LLM凭正文推断"升级为"对照结构化数据校验"：
+    #   - chapter_changes_log：章级 delta（境界/物品/伏笔/地点），可对照检查"境界跳变/物品凭空获得"
+    #   - foreshadowing_graph：结构化伏笔状态（pending/resolved），比 LLM 从文本推断更准
+    structured_ctx_parts = []
+
+    # 1. 章级变更日志摘要（最近 30 章，聚焦境界/物品/伏笔/死亡类变更）
+    try:
+        log_list = json.loads(bb.chapter_changes_log) if bb.chapter_changes_log else []
+        if isinstance(log_list, list) and log_list:
+            recent_logs = log_list[-30:]
+            log_lines = []
+            for entry in recent_logs:
+                if not isinstance(entry, dict):
+                    continue
+                ch_num = entry.get('chapter_num', '?')
+                chg = entry.get('changes') or {}
+                if not isinstance(chg, dict):
+                    continue
+                segs = []
+                # 境界变化（防遗忘检查重点关注）
+                for c in (chg.get('CharacterStateChanges') or []):
+                    if isinstance(c, dict):
+                        nm = c.get('CharacterId') or c.get('Name') or '?'
+                        lvl = c.get('NewLevel') or ''
+                        ke = c.get('KeyEvent') or ''
+                        if lvl or ke:
+                            segs.append(f'{nm}{"→"+lvl if lvl else ""}{":"+ke[:40] if ke else ""}')
+                # 物品转移
+                for it in (chg.get('ItemTransfers') or []):
+                    if isinstance(it, dict):
+                        nm = it.get('ItemName') or it.get('ItemId') or '?'
+                        th = it.get('ToHolder') or ''
+                        if th:
+                            segs.append(f'{nm}→{th}')
+                # 伏笔动作
+                for fa in (chg.get('ForeshadowingActions') or []):
+                    if isinstance(fa, dict):
+                        fid = fa.get('ForeshadowId') or '?'
+                        act = fa.get('Action') or ''
+                        if act:
+                            segs.append(f'伏笔{fid}:{act}')
+                if segs:
+                    log_lines.append(f'- 第{ch_num}章：{"；".join(segs)}')
+            if log_lines:
+                structured_ctx_parts.append('【章级变更日志】（最近30章的结构化delta，请对照检查境界跳变/物品凭空获得/伏笔状态矛盾）\n' + '\n'.join(log_lines))
+    except Exception:
+        pass
+
+    # 2. 伏笔 DAG 结构化状态（pending 节点 + 已回收节点）
+    try:
+        if bb.foreshadowing_graph and get_hooks_for_chapter:
+            graph = ForeshadowingGraph.from_dict(json.loads(bb.foreshadowing_graph))
+            pending_nodes = graph.get_pending_nodes()
+            resolved_nodes = [n for n in (graph.nodes or []) if getattr(n, 'status', '') in ('resolved', 'payoff', '已回收', '已揭示')]
+            fs_dag_lines = []
+            if pending_nodes:
+                fs_dag_lines.append(f'待回收伏笔（{len(pending_nodes)}条）：')
+                for node in pending_nodes[:20]:
+                    desc = (node.content or node.title or '')[:80]
+                    planted = getattr(node, 'setup_chapter', '') or getattr(node, 'planted_chapter', '') or ''
+                    fs_dag_lines.append(f'  - [{node.id}] {desc}（埋设于第{planted}章）')
+            if resolved_nodes:
+                fs_dag_lines.append(f'已回收伏笔（{len(resolved_nodes)}条，若正文再次当作未回收则属违规）：')
+                for node in resolved_nodes[:10]:
+                    desc = (node.content or node.title or '')[:60]
+                    fs_dag_lines.append(f'  - [{node.id}] {desc}')
+            if fs_dag_lines:
+                structured_ctx_parts.append('【伏笔DAG结构化状态】（权威伏笔状态，以此为准检查正文是否矛盾）\n' + '\n'.join(fs_dag_lines))
+    except Exception:
+        pass
+
+    structured_ctx = '\n\n'.join(structured_ctx_parts)
+
     system_prompt = f"""你是「长篇小说防遗忘与一致性审查员」，整合多个防遗忘技能协同工作：
 1. 设定锁定员(lock_facts)：从各维度提取不可变核心事实清单
 2. 一致性审查员(consistency_check)：检查近期章节是否违反已锁定设定
@@ -2843,7 +2917,7 @@ def ai_anti_forget_check(book_id):
   "summary": "本次检查总体结论（100字内）"
 }}"""
 
-    user_prompt = f'作品标题：{book.title}\n数据来源：{source_label}（共{ch_count}章）\n\n【各维度全景】\n{dim_ctx}\n\n【已有动态文件摘要】\n{dyn_ctx or "（无）"}\n\n【待审查内容】\n{chapter_text}'
+    user_prompt = f'作品标题：{book.title}\n数据来源：{source_label}（共{ch_count}章）\n\n【各维度全景】\n{dim_ctx}\n\n【已有动态文件摘要】\n{dyn_ctx or "（无）"}\n\n【结构化状态参照】\n{structured_ctx or "（无）"}\n\n【待审查内容】\n{chapter_text}'
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
@@ -4788,7 +4862,11 @@ def _build_master_ctx(bb, session_outputs=None):
 
 
 def _build_master_upstream_ctx(dim, ctx):
-    """按 DAG 依赖图只注入该维度的上游维度产物（不再无差别全注入），每维度截断 800 字。"""
+    """按 DAG 依赖图只注入该维度的上游维度产物（不再无差别全注入）。
+    自适应截断：世界观/人物档案给 2000 字预算（下游 timeline/dynamic_volumes/foreshadowing
+    高度依赖完整设定，800字会丢失关键体系细节），其他维度 800 字。"""
+    # 高预算维度：设定体量大且下游强依赖
+    HIGH_BUDGET_DIMS = {'worldbuilding': 2000, 'character_profiles': 2000, 'key_rules': 1500}
     upstream_dims = MASTER_DIM_UPSTREAM.get(dim, [])
     parts = []
     for up_dim in upstream_dims:
@@ -4797,7 +4875,8 @@ def _build_master_upstream_ctx(dim, ctx):
         up_val = ctx[up_dim]
         if up_val and up_val.strip():
             up_label = MASTER_DIM_MAP[up_dim]['label']
-            parts.append(f'【{up_label}（已确认上游）】\n{up_val[:800]}')
+            budget = HIGH_BUDGET_DIMS.get(up_dim, 800)
+            parts.append(f'【{up_label}（已确认上游）】\n{up_val[:budget]}')
     return '\n\n'.join(parts) if parts else '（暂无上游维度，自由发挥）'
 
 
