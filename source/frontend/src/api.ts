@@ -654,11 +654,11 @@ export const api = {
       body: JSON.stringify({ dimensions, skill_pack_ids: skillPackIds || [], instruction: instruction || '' }),
     }),
   // 总AI创作流式版（SSE）：逐维度流式输出，注入已有维度上下文
-  aiMasterCreateStream: (bookId: string, dimensions: string[], skillPackIds: string[], instruction: string, signal?: AbortSignal) => {
+  aiMasterCreateStream: (bookId: string, dimensions: string[], skillPackIds: string[], instruction: string, signal?: AbortSignal, sessionOutputs?: Record<string, string>) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    const cfg: RequestInit = { method: 'POST', headers, body: JSON.stringify({ dimensions, skill_pack_ids: skillPackIds, instruction }) };
+    const cfg: RequestInit = { method: 'POST', headers, body: JSON.stringify({ dimensions, skill_pack_ids: skillPackIds, instruction, session_outputs: sessionOutputs || {} }) };
     if (signal) cfg.signal = signal;
     return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-master-create/stream`, cfg);
   },

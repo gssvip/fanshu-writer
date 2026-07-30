@@ -6955,6 +6955,9 @@ def ai_master_create_stream(book_id):
     skill_pack_ids = data.get('skill_pack_ids', [])
     dimensions = data.get('dimensions', ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design'])
     instruction = data.get('instruction', '')
+    # 本轮会话已生成但尚未"确认填入"的维度内容（前端传入，用于跨维度实时互通）
+    # 优先级：本轮已生成 > bible 已有内容（本轮产出是最新的协作基线）
+    session_outputs = data.get('session_outputs') or {}
 
     # 复用 ai_master_create 的 DIM_MAP 逻辑
     DIM_MAP = {
@@ -6982,18 +6985,19 @@ def ai_master_create_stream(book_id):
     DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory', 'dynamic_volumes']
     ordered_dims = [d for d in DIM_ORDER if d in dimensions]
 
-    # 上下文：初始值来自 bible 已有内容（注入已有维度，解决"维度创作不读其他维度"问题）
+    # 上下文：初始值来自 bible 已有内容；若本轮会话已生成该维度（session_outputs），用本轮产出覆盖
+    # 这样"先生成构思→不确认→再生成人物"时，人物能读到本轮最新构思，实现跨维度实时互通
     ctx = {
-        'concept': bb.concept or '',
-        'key_rules': bb.key_rules or '',
-        'worldbuilding': bb.worldbuilding or '',
-        'character_profiles': bb.character_profiles or '',
-        'plot_design': bb.plot_design or '',
-        'timeline': bb.timeline or '',
-        'foreshadowing': bb.foreshadowing or '',
-        'locations': bb.locations or '',
-        'inventory': bb.inventory or '',
-        'dynamic_volumes': bb.dynamic_volumes or '',
+        'concept': session_outputs.get('concept') or bb.concept or '',
+        'key_rules': session_outputs.get('key_rules') or bb.key_rules or '',
+        'worldbuilding': session_outputs.get('worldbuilding') or bb.worldbuilding or '',
+        'character_profiles': session_outputs.get('character_profiles') or bb.character_profiles or '',
+        'plot_design': session_outputs.get('plot_design') or bb.plot_design or '',
+        'timeline': session_outputs.get('timeline') or bb.timeline or '',
+        'foreshadowing': session_outputs.get('foreshadowing') or bb.foreshadowing or '',
+        'locations': session_outputs.get('locations') or bb.locations or '',
+        'inventory': session_outputs.get('inventory') or bb.inventory or '',
+        'dynamic_volumes': session_outputs.get('dynamic_volumes') or bb.dynamic_volumes or '',
     }
 
     config = AIConfig.query.first()

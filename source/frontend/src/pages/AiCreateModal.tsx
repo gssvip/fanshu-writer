@@ -255,7 +255,7 @@ export default function AiCreateModal({
   // 流式生成
   // 全局模式：走后端 ai-master-create/stream（注入已有bible+本轮上游维度，格式铁律更完善）
   // 单维度模式：走前端 aiChatStream（注入已有bible其他维度作为上下文，解决"不读其他维度"问题）
-  const streamGenerate = useCallback(async (dims: string[], userInstruction: string, modificationNote: string) => {
+  const streamGenerate = useCallback(async (dims: string[], userInstruction: string, modificationNote: string, opts?: { keepOthers?: boolean }) => {
     if (dims.length === 0) {
       setError('请至少选择一个维度');
       return;
@@ -265,18 +265,36 @@ export default function AiCreateModal({
     stoppedRef.current = false;
     abortRef.current = new AbortController();
     lastGenRef.current = { instruction: userInstruction, modification: modificationNote };
-    const newOutputs: Record<string, string> = {};
-    setOutputs({});
-    setEditedOutputs({});
+    // keepOthers=true（单维度重做）：保留其他维度已生成内容，只重做指定维度
+    const keepOthers = !!opts?.keepOthers;
+    const newOutputs: Record<string, string> = keepOthers ? { ...outputs, ...editedOutputs } : {};
+    if (!keepOthers) {
+      setOutputs({});
+      setEditedOutputs({});
+    } else {
+      // 清掉待重做维度的旧内容，保留其他
+      for (const d of dims) { delete newOutputs[d]; }
+      setOutputs({ ...newOutputs });
+      setEditedOutputs({});
+    }
 
     const orderedDims = DIM_COLLAB_ORDER.filter(d => dims.includes(d));
 
     if (isGlobal) {
       // ===== 全局模式：走后端流式接口 =====
+      // 传入本轮已生成内容（含用户编辑），让后端注入为跨维度上下文，实现"先生成构思→再生成人物时能读构思"的实时互通
+      // 优先级：用户编辑过的（editedOutputs）> 原始流式产出（outputs）
+      const sessionOutputs: Record<string, string> = {};
+      const allDims = Array.from(new Set([...Object.keys(outputs), ...Object.keys(editedOutputs)]));
+      for (const d of allDims) {
+        const v = editedOutputs[d] ?? outputs[d];
+        if (v && v.trim()) sessionOutputs[d] = v;
+      }
       try {
         const response = await api.aiMasterCreateStream(
           bookId, orderedDims, localSkillPackIds, userInstruction,
           abortRef.current?.signal,
+          sessionOutputs,
         );
         if (!response.ok || !response.body) throw new Error(`请求失败 (HTTP ${response.status})`);
         const reader = response.body.getReader();
@@ -382,7 +400,7 @@ export default function AiCreateModal({
     // 持久化本轮对话（需求1b：首页与创作页消息互通）
     const sUserMsg = modificationNote ? `修改意见：${modificationNote}` : (userInstruction || 'AI创作');
     persistSession(sUserMsg, orderedDims, newOutputs);
-  }, [buildMessages, outputs, isGlobal, bookId, localSkillPackIds, persistSession]);
+  }, [buildMessages, outputs, editedOutputs, isGlobal, bookId, localSkillPackIds, persistSession]);
 
   // 停止生成：中断 fetch 和 reader，保留已生成内容
   function stopGenerate() {
@@ -406,6 +424,11 @@ export default function AiCreateModal({
   function handleRegenerate() {
     streamGenerate(selectedDims, lastGenRef.current.instruction, modification.trim());
     setModification('');
+  }
+
+  // 单维度重新生成：只重做指定维度，其他维度已生成内容作为上下文注入（跨维度实时互通）
+  function handleRegenerateDim(dim: string) {
+    streamGenerate([dim], lastGenRef.current.instruction, '', { keepOthers: true });
   }
 
   // 确定：填入对应维度
@@ -581,7 +604,17 @@ export default function AiCreateModal({
                         {isCurrent && <span style={{ color: 'var(--accent)', marginLeft: 6, fontSize: 11 }}>⏳ 生成中…</span>}
                       </div>
                       {phase === 'done' && content && (
-                        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{content.length} 字</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{content.length} 字</span>
+                          <button
+                            className="btn-ghost-sm"
+                            onClick={() => handleRegenerateDim(dim)}
+                            title="只重新生成此维度（其他维度已生成内容会作为上下文注入，保持一致）"
+                            style={{ fontSize: 11, padding: '2px 8px' }}
+                          >
+                            🔄 重做
+                          </button>
+                        </div>
                       )}
                     </div>
                     {phase === 'done' ? (
