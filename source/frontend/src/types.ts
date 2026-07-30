@@ -100,6 +100,7 @@ export interface BookBible {
   dynamic_volumes?: string;
   foreshadowing_volumes?: string;
   locations_volumes?: string;
+  anti_forget_reports?: string; // 防遗忘检查报告 JSON 数组
 }
 
 export interface SkillPack {

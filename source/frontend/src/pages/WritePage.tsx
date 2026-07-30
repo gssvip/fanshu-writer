@@ -921,6 +921,33 @@ export default function WritePage() {
         dynamicMemoryText = (dmCtx.context_text || '').slice(0, 8000);
       } catch { /* 无动态报告忽略 */ }
 
+      // 2.5) 最近防遗忘检查诊断（精简），让自建上下文模式也规避已诊断问题
+      let afDiagBrief = '';
+      try {
+        const afRaw = (bible as any)?.anti_forget_reports;
+        if (afRaw) {
+          const afList = JSON.parse(afRaw);
+          if (Array.isArray(afList) && afList.length > 0) {
+            const recent = afList.slice(-2);
+            const lines: string[] = [];
+            for (const r of recent) {
+              const rp = r?.report || {};
+              const vs = Array.isArray(rp.violations) ? rp.violations.slice(0, 5) : [];
+              for (const v of vs) {
+                const msg = typeof v === 'string' ? v : (v?.issue || v?.message || v?.desc || '');
+                if (msg) lines.push(`- ${msg.slice(0, 120)}`);
+              }
+              const ps = Array.isArray(rp.pending_foreshadowing) ? rp.pending_foreshadowing.slice(0, 3) : [];
+              for (const p of ps) {
+                const msg = typeof p === 'string' ? p : (p?.desc || p?.title || '');
+                if (msg) lines.push(`- 待回收伏笔：${msg.slice(0, 100)}`);
+              }
+            }
+            if (lines.length > 0) afDiagBrief = lines.join('\n');
+          }
+        }
+      } catch { /* ignore */ }
+
       // 3) 前一卷 + 本卷剧情大纲（从 bible.timeline 解析卷纲）
       let volumeOutlineText = '';
       let prevVol: any = null, currVol: any = null;
@@ -1015,7 +1042,7 @@ export default function WritePage() {
 每章至少运用一种信息差，章末留下钩子（悬念/反转/新谜团），让读者产生"必须看下一章"的冲动。`;
 
       // 拼装前文记忆段
-      const memorySection = `【前4章正文（即时衔接）】\n${prevChaptersText}\n\n【动态记忆（最近10份防遗忘报告）】\n${dynamicMemoryText || '（暂无）'}`;
+      const memorySection = `【前4章正文（即时衔接）】\n${prevChaptersText}\n\n【动态记忆（最近10份防遗忘报告）】\n${dynamicMemoryText || '（暂无）'}${afDiagBrief ? '\n\n【防遗忘检查诊断（须规避）】\n' + afDiagBrief : ''}`;
 
       let systemContent = '';
       let userContent = '';
@@ -1062,11 +1089,32 @@ ${memorySection}
 
 用户续写要求：${currentPrompt}${prevGenerated ? `\n\n【上一版生成内容（请基于此修改调整，不要推翻重写）】\n${prevGenerated}` : ''}`;
       } else {
+        // polish 模式：注入防遗忘诊断（精简），让润色规避已诊断问题
+        let afBrief = '';
+        try {
+          const afRaw = (bible as any)?.anti_forget_reports;
+          if (afRaw) {
+            const afList = JSON.parse(afRaw);
+            if (Array.isArray(afList) && afList.length > 0) {
+              const recent = afList.slice(-2);
+              const lines: string[] = [];
+              for (const r of recent) {
+                const rp = r?.report || {};
+                const vs = Array.isArray(rp.violations) ? rp.violations.slice(0, 4) : [];
+                for (const v of vs) {
+                  const msg = typeof v === 'string' ? v : (v?.issue || v?.message || v?.desc || '');
+                  if (msg) lines.push(`- ${msg.slice(0, 100)}`);
+                }
+              }
+              if (lines.length > 0) afBrief = `\n【防遗忘诊断（润色须规避）】\n${lines.join('\n')}`;
+            }
+          }
+        } catch { /* ignore */ }
         systemContent = `你是专业网文编辑。请根据用户的润色要求对内容进行优化，保持原意不变，提升文采和节奏感，增强场景感与信息差悬念。直接输出润色后的全文。${skillNote}`;
         userContent = `章节：${chapterEditTitle}
 
 【人物与关系】${charactersText ? '\n' + charactersText : '无'}
-【伏笔】${foreshadowingText || '无'}
+【伏笔】${foreshadowingText || '无'}${afBrief}
 
 用户润色要求：${currentPrompt}
 

@@ -4674,6 +4674,87 @@ def _collect_relevant_reports(book_id, current_chapter_num, window=10, max_repor
     return result
 
 
+def _collect_anti_forget_alerts(bb, max_reports=3, max_alerts=12):
+    """提取最近 N 份防遗忘检查报告的诊断要点（违规/待回收伏笔/叙事债务/改进建议）。
+    用于在后续 AI 创作（章节写作/维度创作/一致性检查）中回注，让 AI 自动规避已诊断出的问题。
+    返回字符串（已格式化，可直接拼入 prompt）；无报告时返回空字符串。"""
+    if not bb or not bb.anti_forget_reports:
+        return ''
+    try:
+        reports = json.loads(bb.anti_forget_reports) if bb.anti_forget_reports else []
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return ''
+    if not isinstance(reports, list) or not reports:
+        return ''
+    # 取最近 max_reports 份（按 checked_at 降序，兼容旧数据无 checked_at 的情况）
+    def _ts(r):
+        return r.get('checked_at', '') or ''
+    recent = sorted([r for r in reports if isinstance(r, dict)], key=_ts, reverse=True)[:max_reports]
+    if not recent:
+        return ''
+
+    sections = []
+    for rec in recent:
+        title = rec.get('title', '检查')
+        report = rec.get('report') or {}
+        # 不是 dict 的报告跳过细节提取
+        if not isinstance(report, dict):
+            report = {}
+        parts = [f'■ {title}']
+        summary = (report.get('summary') or rec.get('summary') or '').strip()
+        if summary:
+            parts.append(f'  摘要：{summary[:200]}')
+        violations = report.get('violations') or []
+        if isinstance(violations, list) and violations:
+            v_lines = []
+            for v in violations[:max_alerts]:
+                if isinstance(v, dict):
+                    msg = v.get('issue') or v.get('message') or v.get('desc') or v.get('description') or str(v)
+                else:
+                    msg = str(v)
+                v_lines.append(f'  - {msg[:150]}')
+            if v_lines:
+                parts.append('  违规/不一致：\n' + '\n'.join(v_lines))
+        pending = report.get('pending_foreshadowing') or []
+        if isinstance(pending, list) and pending:
+            p_lines = []
+            for p in pending[:6]:
+                if isinstance(p, dict):
+                    msg = p.get('desc') or p.get('description') or p.get('title') or str(p)
+                else:
+                    msg = str(p)
+                p_lines.append(f'  - {msg[:120]}')
+            if p_lines:
+                parts.append('  待回收伏笔：\n' + '\n'.join(p_lines))
+        debts = report.get('narrative_debts') or report.get('debts') or []
+        if isinstance(debts, list) and debts:
+            d_lines = []
+            for d in debts[:6]:
+                if isinstance(d, dict):
+                    msg = d.get('desc') or d.get('description') or d.get('title') or str(d)
+                else:
+                    msg = str(d)
+                d_lines.append(f'  - {msg[:120]}')
+            if d_lines:
+                parts.append('  叙事债务：\n' + '\n'.join(d_lines))
+        suggestions = report.get('suggestions') or report.get('improvements') or []
+        if isinstance(suggestions, list) and suggestions:
+            s_lines = []
+            for s in suggestions[:6]:
+                if isinstance(s, dict):
+                    msg = s.get('suggestion') or s.get('desc') or s.get('description') or str(s)
+                else:
+                    msg = str(s)
+                s_lines.append(f'  - {msg[:150]}')
+            if s_lines:
+                parts.append('  改进建议：\n' + '\n'.join(s_lines))
+        if len(parts) > 1:  # 有实质内容才加入
+            sections.append('\n'.join(parts))
+    if not sections:
+        return ''
+    return '\n\n'.join(sections)
+
+
 def _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, chapters_in_vol):
     """根据章节在卷中的位置动态计算 temperature。
     - 卷开篇（第1章）：0.8（需要更多创意建立场景）
@@ -4882,12 +4963,14 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
                        api_key, base_url, model, max_tokens=800, chapter_plan=''):
     """一致性检查 Agent：检查正文是否违反 key_rules/人设，并比对 chapter_plan 是否被执行。
     【P1扩展】新增 chapter_plan 比对，检测剧情偏离。
+    【防遗忘回注】注入最近防遗忘检查诊断，使章后检查能对照历史诊断结果，避免重复犯错。
     返回 (passed, issues_text)。失败时返回 (True, '')（不阻塞）。"""
     if not draft_content or len(draft_content) < 100:
         return True, ''
     key_rules = (bb.key_rules or '')[:800]
     chars = (bb.character_profiles or '')[:800]
-    if not key_rules and not chars and not chapter_plan:
+    af_alerts = _collect_anti_forget_alerts(bb, max_reports=2, max_alerts=8)
+    if not key_rules and not chars and not chapter_plan and not af_alerts:
         return True, ''
 
     # 构建 chapter_plan 比对段（若有）
@@ -4900,6 +4983,14 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
 
 【计划执行检查】除一致性外，额外检查正文是否实现了本章计划的核心冲突、关键场景、章尾钩子。若正文明显偏离计划（如跳过关键场景、改写核心冲突、丢失章尾钩子），记为问题。"""
 
+    # 防遗忘诊断对照段（若有）
+    af_check_section = ''
+    if af_alerts:
+        af_check_section = f"""
+
+【历史防遗忘诊断】（最近检查发现的问题，检查正文是否重犯了类似错误）
+{af_alerts}"""
+
     check_system = f"""你是小说一致性审查员。检查以下章节正文是否违反"项目宪法"，并比对本章计划是否被执行。
 只检查，不修改。返回 JSON：{{"passed": true/false, "issues": ["问题1", "问题2"]}}
 
@@ -4908,8 +4999,7 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
 {key_rules}
 
 人物档案（节选）：
-{chars}
-{plan_check_section}
+{chars}{plan_check_section}{af_check_section}
 
 【待检查正文】
 {draft_content[:3000]}"""
@@ -5074,6 +5164,13 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
         except Exception:
             pass  # DAG 解析失败退回原文本伏笔清单
 
+    # ===== 4.5 防遗忘检查报告回注（让 AI 自动规避已诊断出的问题）=====
+    af_alerts = _collect_anti_forget_alerts(bb, max_reports=3, max_alerts=12)
+    af_section = ''
+    if af_alerts:
+        af_section = f"""【防遗忘检查诊断】（最近检查发现的问题，本次写作必须主动规避/修正）
+{af_alerts}"""
+
     # P1-4 + P1-5：从四级大纲取本章戏剧位置，注入节拍模板
     beat_section = ''
     if build_dramatic_position_prompt and build_beat_prompt and bb.outline_hierarchy:
@@ -5127,6 +5224,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
 
 {foreshadowing_section}
 
+{af_section}
+
 {beat_section}
 
 {plan_section}
@@ -5143,7 +5242,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
 7. 章尾必留钩子，七种类型不重复
 8. 若存在【本章计划】，必须严格按计划展开剧情
 9. 【剧情连贯铁律】必须严格承接【最近4章完整正文】的结尾场景与悬念，不得凭空开启新场景；人物位置、状态、对话内容必须与前文一致。
-10. 【字数自检】输出前必须自检字数：用中文计数（含标点），若不在 2300-2500 区间必须调整后再输出。"""
+10. 【字数自检】输出前必须自检字数：用中文计数（含标点），若不在 2300-2500 区间必须调整后再输出。
+11. 【防遗忘规避】若上方存在【防遗忘检查诊断】，必须主动规避其中列出的一致性违规，并优先回收/修正已诊断的待回收伏笔与叙事债务，不可重复犯错。"""
 
     # P2-11：在 system_prompt 末尾追加 PRE_WRITE_CHECK 模板（要求 LLM 写正文前先输出意图表）
     if build_pre_write_check_prompt:
@@ -7008,6 +7108,15 @@ def ai_master_create_stream(book_id):
     if not api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
+    # 防遗忘检查诊断回注（让维度创作也规避已诊断出的问题）
+    af_alerts_master = _collect_anti_forget_alerts(bb, max_reports=2, max_alerts=8)
+    af_block_master = ''
+    if af_alerts_master:
+        af_block_master = f"""
+【防遗忘检查诊断】（最近检查发现的问题，本维度创作必须保持一致、主动规避）
+{af_alerts_master}
+"""
+
     def generate():
         try:
             for dim in ordered_dims:
@@ -7050,7 +7159,7 @@ def ai_master_create_stream(book_id):
 
 【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
 {upstream_ctx}
-
+{af_block_master}
 【五幕模型对齐】各卷对应五幕：立身→立足→立势→立威→立命
 【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 nodes.chapters 全书连续编号。
 
@@ -7071,7 +7180,7 @@ def ai_master_create_stream(book_id):
 
 【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
 {upstream_ctx}
-
+{af_block_master}
 {skill_note}{format_integration_note}
 
 直接输出{info['label']}内容（严格按任务要求的格式铁律输出）。确保与上游维度衔接一致。"""
