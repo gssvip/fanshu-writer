@@ -2944,8 +2944,8 @@ function ChapterPanel(props: {
           <button
             className="btn-primary-sm"
             onClick={() => onStartAiCreate('write')}
-            disabled={aiCreating || chapters.filter(c => !c.is_volume).length === 0}
-            title="章节正文AI创作（自动识别当前进度，聊天式交互）"
+            disabled={aiCreating}
+            title="章节正文AI创作（无章节时确认填入会自动新建第1卷第1章）"
           >
             ✨ AI创作
           </button>

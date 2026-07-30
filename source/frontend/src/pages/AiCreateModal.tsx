@@ -432,6 +432,18 @@ export default function AiCreateModal({
     streamGenerate([dim], lastGenRef.current.instruction, '', { keepOthers: true });
   }
 
+  // 追加维度：保留已生成的维度内容作为上下文，生成用户新勾选但尚未生成的维度
+  // 用于"已生成构思，现在想基于构思再生成人物/大纲等"的场景
+  function handleAppendDims() {
+    const finalOutputs = { ...outputs, ...editedOutputs };
+    const newDims = selectedDims.filter(d => !(finalOutputs[d] || '').trim());
+    if (newDims.length === 0) {
+      setError('没有新维度需要生成（已选维度均已生成，可改选其他维度后再追加）');
+      return;
+    }
+    streamGenerate(newDims, lastGenRef.current.instruction, '', { keepOthers: true });
+  }
+
   // 确定：填入对应维度
   async function handleConfirm() {
     setApplying(true);
@@ -503,7 +515,7 @@ export default function AiCreateModal({
           {isGlobal && (phase === 'input' || phase === 'done') && (
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                选择要创作的维度（可多选，将串行生成）{phase === 'done' && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}> · 改选后点「重新生成」生效</span>}
+                选择要创作的维度（可多选，将串行生成）{phase === 'done' && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}> · 新勾选维度后点「追加维度」基于已生成内容生成</span>}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {ALL_DIMENSIONS.map(d => (
@@ -682,6 +694,15 @@ export default function AiCreateModal({
         {phase === 'done' && (
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-color)', display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0, paddingBottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' }}>
             <button className="btn-ghost-sm" onClick={handleClose}>取消</button>
+            <button
+              className="btn-ghost-sm"
+              onClick={handleAppendDims}
+              disabled={applying}
+              title="保留已生成的维度内容，基于它们生成新勾选的维度（例如已生成构思，再基于构思生成人物/大纲）"
+              style={{ background: 'linear-gradient(135deg,#27ae60 0%,#1e8449 100%)', color: '#fff', border: 'none' }}
+            >
+              ➕ 追加维度
+            </button>
             <button
               className="btn-primary"
               onClick={handleRegenerate}
