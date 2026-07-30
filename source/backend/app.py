@@ -19,10 +19,11 @@ from werkzeug.utils import secure_filename
 
 # P0-1：确定性后写校验器（零 LLM 成本，章节生成后检测 AI 痕迹）
 try:
-    from post_write_validator import validate_chapter, get_repair_hints
+    from post_write_validator import validate_chapter, validate_chapter_with_bible, get_repair_hints
 except ImportError:
     # 静默降级：模块缺失时不阻断主流程
     validate_chapter = None
+    validate_chapter_with_bible = None
     get_repair_hints = None
 
 # P0-2：伏笔 DAG 管理器
@@ -2916,9 +2917,10 @@ def ai_anti_forget_check(book_id):
         'report': report,  # 完整报告 JSON
     }
     existing_reports.append(new_report_record)
-    # 限制最多保留 50 份历史报告，超出则删除最早的
-    if len(existing_reports) > 50:
-        existing_reports = existing_reports[-50:]
+    # 限制最多保留 200 份历史报告（百万字长篇需保留更多历史诊断供回注与回溯），超出则删除最早的
+    _MAX_ANTI_FORGET_REPORTS = 200
+    if len(existing_reports) > _MAX_ANTI_FORGET_REPORTS:
+        existing_reports = existing_reports[-_MAX_ANTI_FORGET_REPORTS:]
     bb.anti_forget_reports = json.dumps(existing_reports, ensure_ascii=False, indent=2)
 
     db.session.commit()
@@ -4491,13 +4493,15 @@ def _get_adjacent_volumes_outline(book_id, volume_index):
         return ''
 
 
-def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=15):
+def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=25):
     """伏笔按"到期紧迫度"排序，提取 Top N 待回收伏笔。
-    【P1优化】
-    - 有计划回收章号：紧迫度 = |计划回收章号 - 当前章号|，越小越紧迫
-    - 无计划回收章号：按"已沉淀时长"排序，沉淀越久（埋设章号距当前越远）越应优先回收，
-      避免长线遗忘。沉淀时长 = 当前章号 - 埋设章号，越大越紧迫。
-    - 扩展 Top N 从 5 到 15，覆盖更多伏笔。
+    【P2优化·百万字长线防遗忘】
+    - 有计划回收章号且已过期（target < current）：最高紧迫，urgency=0（逾期必回收）
+    - 有计划回收章号且将到期（target >= current）：urgency = target - current（越近越紧迫）
+    - 无计划回收章号但沉淀已久（current-planted >= 50）：urgency = 500（沉淀越久越紧迫，不再被挤出）
+      沉淀时长越长越往下偏移一点，保证最老的优先
+    - 无计划回收章号且沉淀不久：urgency = 800
+    - 扩展 Top N 从 15 到 25，覆盖更多伏笔，避免百万字时长线伏笔被挤出。
     优先从 foreshadowing_volumes 取结构化数据，否则从全局 foreshadowing 文本启发式提取。"""
     pending = []
 
@@ -4527,14 +4531,22 @@ def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=
                         target_n = int(target) if target else 0
                     except (ValueError, TypeError):
                         target_n = 0
-                    # 紧迫度计算：有目标章号用距离；无目标章号用沉淀时长（取负数使其优先级低于即将到期的）
-                    if target_n:
-                        urgency = abs(target_n - current_chapter_num)
+                    # 紧迫度计算（数值越小越紧迫）
+                    if target_n and target_n < current_chapter_num:
+                        # 逾期未回收：最高紧迫
+                        urgency = 0
+                    elif target_n:
+                        # 将到期：距离越近越紧迫
+                        urgency = target_n - current_chapter_num
+                    elif planted_n and (current_chapter_num - planted_n) >= 50:
+                        # 无目标但沉淀已久（≥50章）：给予中等紧迫度，沉淀越久越优先
+                        # 用 500 - min(沉淀时长, 200) 让最老的伏笔 urgency 低至 300
+                        urgency = 500 - min(current_chapter_num - planted_n, 200)
                     elif planted_n:
-                        # 无目标章号：沉淀越久越紧迫，用 (当前-埋设) 作为紧迫度，但加 1000 偏移使其排在有目标且即将到期的之后
-                        urgency = 1000 + max(0, current_chapter_num - planted_n)
+                        # 无目标且沉淀不久：较低紧迫
+                        urgency = 800
                     else:
-                        urgency = 9999
+                        urgency = 999
                     pending.append((urgency, planted_n, target_n, desc))
         except (json.JSONDecodeError, ValueError, TypeError):
             pass
@@ -4553,11 +4565,14 @@ def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=
             if nums:
                 target_n = int(nums[-1])
                 planted_n = int(nums[0]) if len(nums) > 1 else 0
-                urgency = abs(target_n - current_chapter_num)
+                if target_n < current_chapter_num:
+                    urgency = 0
+                else:
+                    urgency = target_n - current_chapter_num
             else:
                 target_n = 0
                 planted_n = 0
-                urgency = 9999
+                urgency = 800
             pending.append((urgency, planted_n, target_n, line))
 
     # 按紧迫度升序排序，取 Top N
@@ -4672,6 +4687,230 @@ def _collect_relevant_reports(book_id, current_chapter_num, window=10, max_repor
             'content': content,
         })
     return result
+
+
+def _collect_historical_volume_digest(book_id, current_chapter_num, max_volumes=4, per_volume_limit=400):
+    """百万字长线记忆：聚合"早期卷"的动态报告为按卷摘要，补充 _collect_relevant_reports 的窗口盲区。
+    当 current_chapter_num 较大（如300章）时，window=100 只能覆盖最近100章，
+    本函数把更早的卷（如第1-4卷）的动态报告按卷聚合，每卷取一份摘要注入，避免长线剧情遗忘。
+    只聚合 chapter_end < current - 100 的早期报告（不与 _collect_relevant_reports 重叠）。"""
+    try:
+        threshold = current_chapter_num - 100
+        if threshold <= 50:
+            return []  # 章数不多时无需历史摘要
+        early_reports = DynamicReport.query.filter(
+            DynamicReport.book_id == book_id,
+            DynamicReport.chapter_end < threshold
+        ).order_by(DynamicReport.chapter_start).all()
+    except Exception:
+        return []
+    if not early_reports:
+        return []
+    # 按 50 章一卷分组聚合
+    volume_buckets = {}
+    for r in early_reports:
+        vol_idx = (r.chapter_start - 1) // 50 + 1 if r.chapter_start > 0 else 1
+        volume_buckets.setdefault(vol_idx, []).append(r)
+    # 每卷取第一份报告的摘要作为该卷代表（最早的报告概括卷的开端，最能代表该卷基调）
+    result = []
+    for vol_idx in sorted(volume_buckets.keys())[:max_volumes]:
+        reports_in_vol = volume_buckets[vol_idx]
+        # 取该卷所有报告内容的拼接摘要
+        combined = ' '.join([(r.content or '')[:150] for r in reports_in_vol[:3]])
+        combined = combined[:per_volume_limit]
+        ch_start = reports_in_vol[0].chapter_start
+        ch_end = reports_in_vol[-1].chapter_end
+        result.append({
+            'volume': f'第{vol_idx}卷',
+            'chapter_range': f'{ch_start}-{ch_end}章',
+            'digest': combined,
+        })
+    return result
+
+
+# ===== Ai总创作公共常量（被 ai_master_create 和 ai_master_create_stream 共用，避免重复定义）=====
+# 维度协同顺序：上游维度产物会注入到下游维度的 prompt（严格按 DAG 依赖，不再无差别全注入）
+MASTER_DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory', 'dynamic_volumes']
+
+# 每个维度的上游依赖（只注入这些维度作为"已确认上游产物"，而非所有维度）
+MASTER_DIM_UPSTREAM = {
+    'concept': [],
+    'key_rules': ['concept'],
+    'worldbuilding': ['concept', 'key_rules'],
+    'character_profiles': ['concept', 'key_rules', 'worldbuilding'],
+    'plot_design': ['concept', 'key_rules', 'worldbuilding', 'character_profiles'],
+    'timeline': ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design'],
+    'foreshadowing': ['plot_design', 'timeline', 'character_profiles'],
+    'locations': ['worldbuilding', 'character_profiles'],
+    'inventory': ['worldbuilding', 'character_profiles', 'locations'],
+    'dynamic_volumes': ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory'],
+}
+
+MASTER_DIM_MAP = {
+    'concept': {'field': 'concept', 'label': '构思', 'keys': ['tomato_plan', 'one_line_concept', 'master_outline'],
+                'prompt': '生成核心构思。\n【输出格式】纯文本分项（空行分隔）：1) 一句话核心概念；2) 核心卖点（3-5条）；3) 目标读者画像；4) 主线冲突；5) 独特亮点。'},
+    'key_rules': {'field': 'key_rules', 'label': '设定/规则', 'keys': ['tomato_setting', 'lock_facts'],
+                  'prompt': '生成核心设定规则。\n【输出格式】编号列表，每条以"① ② ③..."开头，规则间空行分隔。包括：世界必须遵循的铁律、人物能力边界、代价/反噬机制、禁忌事项。'},
+    'worldbuilding': {'field': 'worldbuilding', 'label': '世界观', 'keys': ['tomato_setting', 'lock_facts'],
+                      'prompt': '生成详细世界观。\n【输出格式】分小节二级标题"## 力量体系/## 社会结构/## 地理概况/## 历史脉络"，每小节下用编号列表。不要写成段落散文。'},
+    'character_profiles': {'field': 'character_profiles', 'label': '人物', 'keys': ['tomato_character', 'character_cognition'],
+                           'prompt': '生成主要人物。\n【输出格式】每个角色一个"## 角色：<姓名>"二级标题，下方依次：身份/性格（3-5个关键词）/背景故事（100-200字）/核心动机/与其他角色关系（"→ 角色名：关系"）。主角 + 3-5个配角。'},
+    'plot_design': {'field': 'plot_design', 'label': '大纲', 'keys': ['master_outline', 'tomato_outline', 'volume_breakdown'],
+                    'prompt': '生成五幕式总纲。\n【输出格式】每幕"## 第N幕：<幕名>"二级标题，下方：幕核心目标/主要冲突/卷入角色/关键转折点/幕尾悬念/对应分卷范围（"第X-Y卷"）。共5幕，对应全书所有分卷。'},
+    'timeline': {'field': 'timeline', 'label': '剧情', 'keys': ['volume_breakdown', 'chapter_plan', 'tomato_outline'],
+                 'prompt': '生成分卷详细剧情。\n【分卷铁律·必读】**每卷固定 50 章**，全书卷数 = 总章数÷50（向上取整），卷序号从1开始连续。卷名格式"第N卷 副标题"。\n【输出格式·必读】严格 JSON 数组，不要任何解释文字、不要 markdown 代码块。结构：[{"volume_index":1,"volume":"第1卷 副标题","main_plot":"本卷主线剧情100-200字","core_conflict":"本卷核心冲突","ending_hook":"卷尾钩子","nodes":[{"title":"节点1","chapters":"1-10","type":"M","summary":"概要","cool_type":"实力碾压"}]}]. 每卷 5-8 个 nodes；chapters 字段"起始-结束"，全书 chapter 编号连续不重叠。'},
+    'foreshadowing': {'field': 'foreshadowing', 'label': '伏笔', 'keys': ['foreshadow_register', 'narrative_debt'],
+                      'prompt': '埋设伏笔线索。\n【输出格式】编号列表，每条"## 伏笔N：<标题>\\n- 埋设内容：xxx\\n- 埋设时机：第X卷Y章附近\\n- 预期回收：第X卷Y章附近\\n- 回收方式：xxx\\n- 对剧情的影响：xxx"。设计 3-5 条。'},
+    'locations': {'field': 'locations', 'label': '地点', 'keys': ['lock_facts', 'tomato_setting', 'geography'],
+                  'prompt': '设计地点体系。\n【输出格式】严格 JSON 数组三级结构：[一级大区域{"name","description","secondaries":[{"name","description","scenes":[{"name","description","key_events"}]}]}]. 设计 2-3 个一级大区域。'},
+    'inventory': {'field': 'inventory', 'label': '物资库', 'keys': ['lock_facts', 'level_system', 'power_system', 'ability_tree'],
+                  'prompt': '生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[{"name","type","source","effect","owner","first_appearance"}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。'},
+    'dynamic_volumes': {'field': 'dynamic_volumes', 'label': '动态文件', 'keys': ['narrative_debt', 'foreshadow_register', 'lock_facts'],
+                        'prompt': '生成分卷动态文件摘要。\n【输出格式】严格 JSON 数组：[{"volume_id":"1","volume":"第1卷 副标题","volume_index":1,"summary":"本卷概述100-200字","characters":"本卷人物变化50-100字","events":"本卷关键事件50-100字","timeline":"本卷时间线","locations":"本卷地点变化","factions":"本卷势力变化","foreshadowing":"本卷伏笔动态","realms":"本卷境界变化","relationships":"本卷关系变化"}]. 每卷一条记录，全书所有卷都要覆盖。'},
+}
+
+
+def _build_master_ctx(bb, session_outputs=None):
+    """构建维度创作的上下文字典：本轮已生成内容(session_outputs)优先，回退 bible 已有内容。"""
+    session_outputs = session_outputs or {}
+    return {
+        'concept': session_outputs.get('concept') or bb.concept or '',
+        'key_rules': session_outputs.get('key_rules') or bb.key_rules or '',
+        'worldbuilding': session_outputs.get('worldbuilding') or bb.worldbuilding or '',
+        'character_profiles': session_outputs.get('character_profiles') or bb.character_profiles or '',
+        'plot_design': session_outputs.get('plot_design') or bb.plot_design or '',
+        'timeline': session_outputs.get('timeline') or bb.timeline or '',
+        'foreshadowing': session_outputs.get('foreshadowing') or bb.foreshadowing or '',
+        'locations': session_outputs.get('locations') or bb.locations or '',
+        'inventory': session_outputs.get('inventory') or bb.inventory or '',
+        'dynamic_volumes': session_outputs.get('dynamic_volumes') or bb.dynamic_volumes or '',
+    }
+
+
+def _build_master_upstream_ctx(dim, ctx):
+    """按 DAG 依赖图只注入该维度的上游维度产物（不再无差别全注入），每维度截断 800 字。"""
+    upstream_dims = MASTER_DIM_UPSTREAM.get(dim, [])
+    parts = []
+    for up_dim in upstream_dims:
+        if up_dim not in ctx:
+            continue
+        up_val = ctx[up_dim]
+        if up_val and up_val.strip():
+            up_label = MASTER_DIM_MAP[up_dim]['label']
+            parts.append(f'【{up_label}（已确认上游）】\n{up_val[:800]}')
+    return '\n\n'.join(parts) if parts else '（暂无上游维度，自由发挥）'
+
+
+def _build_master_storyline_ctx(book_id, bb):
+    """构建"已写剧情"上下文：章节正文摘要 + 最近动态报告 + 伏笔图 + 关系图。
+    让维度创作能感知已写章节的实际剧情，避免凭空设定与正文冲突。
+    dynamic_volumes/character_profiles 等维度尤其需要，避免"幻觉式推测"。"""
+    parts = []
+
+    # 1. 最近章节正文摘要（取最近 6 章，每章前 300 字，避免 token 膨胀）
+    try:
+        recent_chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index.desc()).limit(6).all()
+        if recent_chs:
+            recent_chs = list(reversed(recent_chs))  # 恢复正序
+            ch_lines = []
+            for c in recent_chs:
+                title = c.title or f'第{c.order_index}章'
+                content = (c.content or '')[:300].replace('\n', ' ').strip()
+                if content:
+                    ch_lines.append(f'- 第{c.order_index}章《{title}》：{content}')
+            if ch_lines:
+                parts.append('【已写章节摘要】（最近6章实际剧情，设定须与之一致，不可矛盾）\n' + '\n'.join(ch_lines))
+    except Exception:
+        pass
+
+    # 2. 最近动态报告摘要（3 份，每份 300 字）
+    try:
+        reports = _collect_relevant_reports(book_id, current_chapter_num=999999, window=999999, max_reports=3, per_report_limit=300)
+        if reports:
+            rp_lines = []
+            for r in reports:
+                rp_lines.append(f'- {r["title"]}（{r["chapter_start"]}-{r["chapter_end"]}章）：{r["content"][:300]}')
+            parts.append('【动态报告摘要】（已写剧情的阶段性归纳）\n' + '\n'.join(rp_lines))
+    except Exception:
+        pass
+
+    # 3. 伏笔 DAG 摘要（待回收伏笔 top 8）
+    try:
+        if bb.foreshadowing_graph:
+            graph = ForeshadowingGraph.from_dict(json.loads(bb.foreshadowing_graph))
+            pending = graph.get_pending_nodes()
+            if pending:
+                fs_lines = []
+                for node in pending[:8]:
+                    desc = (node.content or node.title or '')[:80]
+                    fs_lines.append(f'- {desc}')
+                if fs_lines:
+                    parts.append('【已埋伏笔清单】（已写剧情中埋设的伏笔，新设定须与之兼容）\n' + '\n'.join(fs_lines))
+    except Exception:
+        pass
+
+    # 4. 人物关系图摘要（≤500 字）
+    try:
+        if bb.relation_graph and bb.relation_graph.strip():
+            rg = bb.relation_graph[:500]
+            parts.append('【人物关系图谱】（已确认的人物关系，新人物设定须兼容）\n' + rg)
+    except Exception:
+        pass
+
+    # 5. 章级变更日志摘要（最近 12 章的关键 delta：境界/物品/伏笔/地点变化）
+    # 章级粒度比动态报告更细，能补上"最近几章刚发生的境界提升/物品转移/伏笔回收"，
+    # 避免维度创作与最新正文脱节（尤其 character_profiles/inventory/foreshadowing/dynamic_volumes）。
+    try:
+        log_list = json.loads(bb.chapter_changes_log) if bb.chapter_changes_log else []
+        if isinstance(log_list, list) and log_list:
+            recent_logs = log_list[-12:]  # 最近12章
+            chg_lines = []
+            for entry in recent_logs:
+                if not isinstance(entry, dict):
+                    continue
+                ch_num = entry.get('chapter_num') or '?'
+                chg = entry.get('changes') or {}
+                if not isinstance(chg, dict):
+                    continue
+                segs = []
+                # 角色境界/能力变化
+                for c in (chg.get('CharacterStateChanges') or [])[:3]:
+                    if isinstance(c, dict):
+                        nm = c.get('CharacterId') or c.get('Name') or '?'
+                        lvl = c.get('NewLevel') or ''
+                        ke = c.get('KeyEvent') or ''
+                        if lvl or ke:
+                            segs.append(f'{nm}{"→"+lvl if lvl else ""}{":"+ke[:30] if ke else ""}')
+                # 物品转移
+                for it in (chg.get('ItemTransfers') or [])[:2]:
+                    if isinstance(it, dict):
+                        nm = it.get('ItemName') or it.get('ItemId') or '?'
+                        fh = it.get('FromHolder') or ''
+                        th = it.get('ToHolder') or ''
+                        if th:
+                            segs.append(f'{nm}:{fh or "?"}→{th}')
+                # 伏笔 setup/payoff
+                for fa in (chg.get('ForeshadowingActions') or [])[:2]:
+                    if isinstance(fa, dict):
+                        fid = fa.get('ForeshadowId') or '?'
+                        act = fa.get('Action') or ''
+                        if act:
+                            segs.append(f'伏笔{fid}:{act}')
+                # 地点状态
+                for lc in (chg.get('LocationStateChanges') or [])[:2]:
+                    if isinstance(lc, dict):
+                        nm = lc.get('LocationId') or '?'
+                        ns = lc.get('NewStatus') or ''
+                        if ns:
+                            segs.append(f'{nm}:{ns}')
+                if segs:
+                    chg_lines.append(f'- 第{ch_num}章：{"；".join(segs)}')
+            if chg_lines:
+                parts.append('【最近章级变更日志】（最近12章实际发生的境界/物品/伏笔/地点变化，新设定须承接，不可矛盾或回退）\n' + '\n'.join(chg_lines))
+    except Exception:
+        pass
+
+    return '\n\n'.join(parts) if parts else ''
 
 
 def _collect_anti_forget_alerts(bb, max_reports=3, max_alerts=12):
@@ -5122,6 +5361,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
     # ===== 3. 分层滚动记忆（P1重构：前4章完整正文 + 最近10份动态报告）=====
     # 最近10份动态报告（每份≤800字），覆盖更长剧情跨度
     relevant_reports = _collect_relevant_reports(book_id, current_chapter_num, window=100, max_reports=10, per_report_limit=800)
+    # 百万字长线记忆：早期卷的按卷聚合摘要（补充 window=100 的盲区，避免前200章剧情遗忘）
+    historical_digests = _collect_historical_volume_digest(book_id, current_chapter_num, max_volumes=4, per_volume_limit=400)
     # 前4章完整正文（不截断，保证剧情连贯性）
     recent_chapters_full = all_chapters[-4:] if all_chapters else []
 
@@ -5130,19 +5371,29 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
     else:
         report_context = '（暂无动态报告）'
 
+    # 历史卷摘要段（若有）：百万字时让 AI 看到早期卷的剧情概要
+    historical_section = ''
+    if historical_digests:
+        hd_lines = [f'- {d["volume"]}（{d["chapter_range"]}）：{d["digest"]}' for d in historical_digests]
+        historical_section = f"""
+【早期卷剧情摘要】（百万字长线记忆，避免遗忘前几卷的关键剧情）：
+{chr(10).join(hd_lines)}
+"""
+
     if recent_chapters_full:
         chapters_text = '\n\n'.join([f'【第{c.order_index}章 {c.title or ""}】\n{c.content or ""}' for c in recent_chapters_full])
     else:
         chapters_text = '（开篇第一章，无前文）'
 
     memory_section = f"""【前文动态报告】（最近10份动态文件摘要，防长线遗忘）：
-{report_context}
+{report_context}{historical_section}
 
 【最近4章完整正文】（即时层，剧情衔接依据，必须严格保持连贯）：
 {chapters_text}"""
 
-    # ===== 4. 伏笔防遗忘（#2：按到期紧迫度排序，扩展到Top 15）=====
-    pending_fs = _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=15)
+    # ===== 4. 伏笔防遗忘（#2：按到期紧迫度排序，扩展到Top 25）=====
+    # 百万字长线：top_n 提至 25，且紧迫度算法已对"无目标但沉淀已久"的伏笔加权，避免被挤出
+    pending_fs = _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=25)
     foreshadowing_section = ''
     if pending_fs:
         fs_lines = []
@@ -5278,7 +5529,7 @@ def ai_continue(book_id):
     """正文滚动创作（多 Agent 协同版，14项优化）：
     1. 分层注入 bible 上下文（key_rules/worldbuilding/character_profiles/plot_design/timeline/concept）+ 按卷维度数据 + 卷纲对齐
     2. 分层滚动记忆（即时层最近1章 + 近期层动态报告按当前章号±10窗口筛选）防遗忘
-    3. 伏笔防遗忘：按到期紧迫度排序，注入 Top 5 待回收伏笔清单
+    3. 伏笔防遗忘：按到期紧迫度排序，注入 Top 25 待回收伏笔清单（百万字长线加权）
     4. 章节计划前置（chapter_plan Agent）：先生成200字计划，再写正文
     5. 正文生成（动态 temperature + 智能 instruction）
     6. 去 AI 味审校 Agent：容错+可观测（deai_status）
@@ -5440,8 +5691,21 @@ def ai_continue(book_id):
                 pass  # 回写失败不阻断
 
         # ===== P0-1：确定性后写校验（非流式版，零 LLM 成本）=====
+        # P2 扩展：注入 bb 上下文，启用死亡角色复活/境界回退/角色名错写硬伤检测
         post_validate = None
-        if validate_chapter:
+        if validate_chapter_with_bible:
+            try:
+                body_for_check = _extract_chapter_body(polished_content)
+                bible_ctx = {
+                    'character_profiles': bb.character_profiles or '',
+                    'chapter_changes_log': bb.chapter_changes_log or '',
+                } if bb else None
+                validation = validate_chapter_with_bible(body_for_check, bible_ctx)
+                if validation.issues:
+                    post_validate = validation.to_dict()
+            except Exception:
+                pass
+        elif validate_chapter:
             try:
                 body_for_check = _extract_chapter_body(polished_content)
                 validation = validate_chapter(body_for_check)
@@ -5665,12 +5929,20 @@ def ai_continue_stream(book_id):
 
             # ===== P0-1：确定性后写校验（流结束后，零 LLM 成本）=====
             # 推送校验报告给前端，critical 级问题提示作者可一键修订
-            if validate_chapter and full_content_parts:
+            # P2 扩展：注入 bb 上下文，启用死亡角色复活/境界回退/角色名错写硬伤检测
+            _validator = validate_chapter_with_bible or validate_chapter
+            if _validator and full_content_parts:
                 try:
                     full_content = ''.join(full_content_parts)
                     # 剥离可能的 PRE_WRITE_CHECK 和 CHANGES 标签（P1-6 产物），只校验正文
                     body_for_check = _extract_chapter_body(full_content)
-                    validation = validate_chapter(body_for_check)
+                    bible_ctx = None
+                    if validate_chapter_with_bible and bb:
+                        bible_ctx = {
+                            'character_profiles': bb.character_profiles or '',
+                            'chapter_changes_log': bb.chapter_changes_log or '',
+                        }
+                    validation = _validator(body_for_check, bible_ctx) if bible_ctx else _validator(body_for_check)
                     if validation.issues:
                         yield f'data: {json.dumps({"post_validate": validation.to_dict()}, ensure_ascii=False)}\n\n'
                 except Exception as ve:
@@ -6831,50 +7103,33 @@ def ai_master_create(book_id):
     skill_pack_ids = data.get('skill_pack_ids', [])
     dimensions = data.get('dimensions', ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design'])
     instruction = data.get('instruction', '')
+    # 本轮会话已生成但未确认的内容（跨维度实时互通）
+    session_outputs = data.get('session_outputs') or {}
 
-    # 维度→技能包prompt_key映射 + 生成提示（按番茄金番工作流顺序）
-    # 【P1修复】每个维度的 prompt 都强化「输出格式铁律」与平台 bible 字段格式对齐
-    DIM_MAP = {
-        'concept': {'field': 'concept', 'label': '构思', 'keys': ['tomato_plan', 'one_line_concept', 'master_outline'],
-                    'prompt': '生成核心构思。\n【输出格式】纯文本分项（空行分隔）：1) 一句话核心概念；2) 核心卖点（3-5条）；3) 目标读者画像；4) 主线冲突；5) 独特亮点。'},
-        'key_rules': {'field': 'key_rules', 'label': '设定/规则', 'keys': ['tomato_setting', 'lock_facts'],
-                      'prompt': '生成核心设定规则。\n【输出格式】编号列表，每条以"① ② ③..."开头，规则间空行分隔。包括：世界必须遵循的铁律、人物能力边界、代价/反噬机制、禁忌事项。'},
-        'worldbuilding': {'field': 'worldbuilding', 'label': '世界观', 'keys': ['tomato_setting', 'lock_facts'],
-                          'prompt': '生成详细世界观。\n【输出格式】分小节二级标题"## 力量体系/## 社会结构/## 地理概况/## 历史脉络"，每小节下用编号列表。不要写成段落散文。'},
-        'character_profiles': {'field': 'character_profiles', 'label': '人物', 'keys': ['tomato_character', 'character_cognition'],
-                               'prompt': '生成主要人物。\n【输出格式】每个角色一个"## 角色：<姓名>"二级标题，下方依次：身份/性格（3-5个关键词）/背景故事（100-200字）/核心动机/与其他角色关系（"→ 角色名：关系"）。主角 + 3-5个配角。'},
-        'plot_design': {'field': 'plot_design', 'label': '大纲', 'keys': ['master_outline', 'tomato_outline', 'volume_breakdown'],
-                        'prompt': '生成五幕式总纲。\n【输出格式】每幕"## 第N幕：<幕名>"二级标题，下方：幕核心目标/主要冲突/卷入角色/关键转折点/幕尾悬念/对应分卷范围（"第X-Y卷"）。共5幕，对应全书所有分卷。'},
-        'timeline': {'field': 'timeline', 'label': '剧情', 'keys': ['volume_breakdown', 'chapter_plan', 'tomato_outline'],
-                     'prompt': '生成分卷详细剧情。\n【分卷铁律·必读】**每卷固定 50 章**，全书卷数 = 总章数÷50（向上取整），卷序号从1开始连续。卷名格式"第N卷 副标题"。\n【输出格式·必读】严格 JSON 数组，不要任何解释文字、不要 markdown 代码块。结构：[{"volume_index":1,"volume":"第1卷 副标题","main_plot":"本卷主线剧情100-200字","core_conflict":"本卷核心冲突","ending_hook":"卷尾钩子","nodes":[{"title":"节点1","chapters":"1-10","type":"M","summary":"概要","cool_type":"实力碾压"}]}]. 每卷 5-8 个 nodes；chapters 字段"起始-结束"，全书 chapter 编号连续不重叠。'},
-        'foreshadowing': {'field': 'foreshadowing', 'label': '伏笔', 'keys': ['foreshadow_register', 'narrative_debt'],
-                          'prompt': '埋设伏笔线索。\n【输出格式】编号列表，每条"## 伏笔N：<标题>\\n- 埋设内容：xxx\\n- 埋设时机：第X卷Y章附近\\n- 预期回收：第X卷Y章附近\\n- 回收方式：xxx\\n- 对剧情的影响：xxx"。设计 3-5 条。'},
-        'locations': {'field': 'locations', 'label': '地点', 'keys': ['lock_facts', 'tomato_setting', 'geography'],
-                      'prompt': '设计地点体系。\n【输出格式】严格 JSON 数组三级结构：[一级大区域{"name","description","secondaries":[{"name","description","scenes":[{"name","description","key_events"}]}]}]. 设计 2-3 个一级大区域。'},
-        'inventory': {'field': 'inventory', 'label': '物资库', 'keys': ['lock_facts', 'level_system', 'power_system', 'ability_tree'],
-                      'prompt': '生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[{"name","type","source","effect","owner","first_appearance"}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。'},
-        'dynamic_volumes': {'field': 'dynamic_volumes', 'label': '动态文件', 'keys': ['narrative_debt', 'foreshadow_register', 'lock_facts'],
-                            'prompt': '生成分卷动态文件摘要。\n【输出格式】严格 JSON 数组：[{"volume_id":"1","volume":"第1卷 副标题","volume_index":1,"summary":"本卷概述100-200字","characters":"本卷人物变化50-100字","events":"本卷关键事件50-100字","timeline":"本卷时间线","locations":"本卷地点变化","factions":"本卷势力变化","foreshadowing":"本卷伏笔动态","realms":"本卷境界变化","relationships":"本卷关系变化"}]. 每卷一条记录，全书所有卷都要覆盖。'},
-    }
-
-    # agent 协同：串行执行，本轮产出回流到下一轮上下文
-    DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory', 'dynamic_volumes']
+    DIM_MAP = MASTER_DIM_MAP  # 复用公共常量
+    DIM_ORDER = MASTER_DIM_ORDER
     ordered_dims = [d for d in DIM_ORDER if d in dimensions]
 
-    # 上下文字典：初始值来自 bible 已有内容，运行中动态追加本轮产出
-    # 【P0修复】必须覆盖 DIM_ORDER 全部维度，否则 ctx[up_dim] 访问缺失维度会抛 KeyError
-    ctx = {
-        'concept': bb.concept or '',
-        'key_rules': bb.key_rules or '',
-        'worldbuilding': bb.worldbuilding or '',
-        'character_profiles': bb.character_profiles or '',
-        'plot_design': bb.plot_design or '',
-        'timeline': bb.timeline or '',
-        'foreshadowing': bb.foreshadowing or '',
-        'locations': bb.locations or '',
-        'inventory': bb.inventory or '',
-        'dynamic_volumes': bb.dynamic_volumes or '',
-    }
+    # 上下文字典：本轮已生成内容(session_outputs)优先，回退 bible 已有内容
+    ctx = _build_master_ctx(bb, session_outputs)
+
+    # 防遗忘检查诊断回注（让维度创作也规避已诊断出的问题）
+    af_alerts_master = _collect_anti_forget_alerts(bb, max_reports=2, max_alerts=8)
+    af_block_master = ''
+    if af_alerts_master:
+        af_block_master = f"""
+【防遗忘检查诊断】（最近检查发现的问题，本维度创作必须保持一致、主动规避）
+{af_alerts_master}
+"""
+
+    # 已写剧情上下文（章节摘要+动态报告+伏笔图+关系图），让维度创作感知已写正文
+    storyline_ctx = _build_master_storyline_ctx(book_id, bb)
+    storyline_block = ''
+    if storyline_ctx:
+        storyline_block = f"""
+【已写剧情参照】（已写章节的实际剧情，本维度创作须与之保持一致，不可矛盾）
+{storyline_ctx}
+"""
 
     results = []
     for dim in ordered_dims:
@@ -6886,14 +7141,8 @@ def ai_master_create(book_id):
         if skill_note:
             format_integration_note = '\n\n【格式整合铁律·必读】上方「技能包内容」是创作方法论（指导原则），不是输出格式模板。必须严格按下方任务的「输出格式」骨架输出，技能包的要求整合映射到对应字段。例如：技能包要求"CDL角色档案"中的"外貌特征/战斗风格"应并入角色卡对应字段；技能包要求"五不妥协原则"应整合到对应小节内。不要把技能包字段原样搬出来，要按平台格式重新组织。'
 
-        # 组装上游上下文：本轮已生成的所有维度产物（截断省 token）
-        upstream_parts = []
-        for up_dim in DIM_ORDER:
-            up_val = ctx[up_dim]
-            if up_val.strip() and up_dim != dim:
-                up_label = DIM_MAP[up_dim]['label']
-                upstream_parts.append(f'【{up_label}（已确认）】\n{up_val[:800]}')
-        upstream_ctx = '\n\n'.join(upstream_parts) if upstream_parts else '（暂无上游维度，自由发挥）'
+        # 按 DAG 依赖图只注入该维度的上游维度产物（不再无差别全注入）
+        upstream_ctx = _build_master_upstream_ctx(dim, ctx)
 
         # 标注当前维度在 workflow 中的位置
         dim_idx = DIM_ORDER.index(dim)
@@ -6919,7 +7168,7 @@ def ai_master_create(book_id):
 
 【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
 {upstream_ctx}
-
+{storyline_block}{af_block_master}
 【五幕模型对齐】各卷对应五幕：立身→立足→立势→立威→立命
 【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 nodes.chapters 全书连续编号。
 
@@ -6957,7 +7206,7 @@ def ai_master_create(book_id):
 
 【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
 {upstream_ctx}
-
+{storyline_block}{af_block_master}
 {skill_note}{format_integration_note}
 
 直接输出{info['label']}内容（严格按任务要求的格式铁律输出）。确保与上游维度衔接一致。"""
@@ -7059,46 +7308,13 @@ def ai_master_create_stream(book_id):
     # 优先级：本轮已生成 > bible 已有内容（本轮产出是最新的协作基线）
     session_outputs = data.get('session_outputs') or {}
 
-    # 复用 ai_master_create 的 DIM_MAP 逻辑
-    DIM_MAP = {
-        'concept': {'field': 'concept', 'label': '构思', 'keys': ['tomato_plan', 'one_line_concept', 'master_outline'],
-                    'prompt': '生成核心构思。\n【输出格式】纯文本分项（空行分隔）：1) 一句话核心概念；2) 核心卖点（3-5条）；3) 目标读者画像；4) 主线冲突；5) 独特亮点。'},
-        'key_rules': {'field': 'key_rules', 'label': '设定/规则', 'keys': ['tomato_setting', 'lock_facts'],
-                      'prompt': '生成核心设定规则。\n【输出格式】编号列表，每条以"① ② ③..."开头，规则间空行分隔。包括：世界必须遵循的铁律、人物能力边界、代价/反噬机制、禁忌事项。'},
-        'worldbuilding': {'field': 'worldbuilding', 'label': '世界观', 'keys': ['tomato_setting', 'lock_facts'],
-                          'prompt': '生成详细世界观。\n【输出格式】分小节二级标题"## 力量体系/## 社会结构/## 地理概况/## 历史脉络"，每小节下用编号列表。不要写成段落散文。'},
-        'character_profiles': {'field': 'character_profiles', 'label': '人物', 'keys': ['tomato_character', 'character_cognition'],
-                               'prompt': '生成主要人物。\n【输出格式】每个角色一个"## 角色：<姓名>"二级标题，下方依次：身份/性格（3-5个关键词）/背景故事（100-200字）/核心动机/与其他角色关系（"→ 角色名：关系"）。主角 + 3-5个配角。'},
-        'plot_design': {'field': 'plot_design', 'label': '大纲', 'keys': ['master_outline', 'tomato_outline', 'volume_breakdown'],
-                        'prompt': '生成五幕式总纲。\n【输出格式】每幕"## 第N幕：<幕名>"二级标题，下方：幕核心目标/主要冲突/卷入角色/关键转折点/幕尾悬念/对应分卷范围（"第X-Y卷"）。共5幕，对应全书所有分卷。'},
-        'timeline': {'field': 'timeline', 'label': '剧情', 'keys': ['volume_breakdown', 'chapter_plan', 'tomato_outline'],
-                     'prompt': '生成分卷详细剧情。\n【分卷铁律·必读】**每卷固定 50 章**，全书卷数 = 总章数÷50（向上取整），卷序号从1开始连续。卷名格式"第N卷 副标题"。\n【输出格式·必读】严格 JSON 数组，不要任何解释文字、不要 markdown 代码块。结构：[{"volume_index":1,"volume":"第1卷 副标题","main_plot":"本卷主线剧情100-200字","core_conflict":"本卷核心冲突","ending_hook":"卷尾钩子","nodes":[{"title":"节点1","chapters":"1-10","type":"M","summary":"概要","cool_type":"实力碾压"}]}]. 每卷 5-8 个 nodes；chapters 字段"起始-结束"，全书 chapter 编号连续不重叠。'},
-        'foreshadowing': {'field': 'foreshadowing', 'label': '伏笔', 'keys': ['foreshadow_register', 'narrative_debt'],
-                          'prompt': '埋设伏笔线索。\n【输出格式】编号列表，每条"## 伏笔N：<标题>\\n- 埋设内容：xxx\\n- 埋设时机：第X卷Y章附近\\n- 预期回收：第X卷Y章附近\\n- 回收方式：xxx\\n- 对剧情的影响：xxx"。设计 3-5 条。'},
-        'locations': {'field': 'locations', 'label': '地点', 'keys': ['lock_facts', 'tomato_setting', 'geography'],
-                      'prompt': '设计地点体系。\n【输出格式】严格 JSON 数组三级结构：[一级大区域{"name","description","secondaries":[{"name","description","scenes":[{"name","description","key_events"}]}]}]. 设计 2-3 个一级大区域。'},
-        'inventory': {'field': 'inventory', 'label': '物资库', 'keys': ['lock_facts', 'level_system', 'power_system', 'ability_tree'],
-                      'prompt': '生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[{"name","type","source","effect","owner","first_appearance"}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。'},
-        'dynamic_volumes': {'field': 'dynamic_volumes', 'label': '动态文件', 'keys': ['narrative_debt', 'foreshadow_register', 'lock_facts'],
-                            'prompt': '生成分卷动态文件摘要。\n【输出格式】严格 JSON 数组：[{"volume_id":"1","volume":"第1卷 副标题","volume_index":1,"summary":"本卷概述100-200字","characters":"本卷人物变化50-100字","events":"本卷关键事件50-100字","timeline":"本卷时间线","locations":"本卷地点变化","factions":"本卷势力变化","foreshadowing":"本卷伏笔动态","realms":"本卷境界变化","relationships":"本卷关系变化"}]. 每卷一条记录，全书所有卷都要覆盖。'},
-    }
-    DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory', 'dynamic_volumes']
+    # 复用公共常量
+    DIM_MAP = MASTER_DIM_MAP
+    DIM_ORDER = MASTER_DIM_ORDER
     ordered_dims = [d for d in DIM_ORDER if d in dimensions]
 
-    # 上下文：初始值来自 bible 已有内容；若本轮会话已生成该维度（session_outputs），用本轮产出覆盖
-    # 这样"先生成构思→不确认→再生成人物"时，人物能读到本轮最新构思，实现跨维度实时互通
-    ctx = {
-        'concept': session_outputs.get('concept') or bb.concept or '',
-        'key_rules': session_outputs.get('key_rules') or bb.key_rules or '',
-        'worldbuilding': session_outputs.get('worldbuilding') or bb.worldbuilding or '',
-        'character_profiles': session_outputs.get('character_profiles') or bb.character_profiles or '',
-        'plot_design': session_outputs.get('plot_design') or bb.plot_design or '',
-        'timeline': session_outputs.get('timeline') or bb.timeline or '',
-        'foreshadowing': session_outputs.get('foreshadowing') or bb.foreshadowing or '',
-        'locations': session_outputs.get('locations') or bb.locations or '',
-        'inventory': session_outputs.get('inventory') or bb.inventory or '',
-        'dynamic_volumes': session_outputs.get('dynamic_volumes') or bb.dynamic_volumes or '',
-    }
+    # 上下文：本轮已生成(session_outputs)优先，回退 bible 已有内容
+    ctx = _build_master_ctx(bb, session_outputs)
 
     config = AIConfig.query.first()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
@@ -7117,6 +7333,15 @@ def ai_master_create_stream(book_id):
 {af_alerts_master}
 """
 
+    # 已写剧情上下文（章节摘要+动态报告+伏笔图+关系图），让维度创作感知已写正文
+    storyline_ctx = _build_master_storyline_ctx(book_id, bb)
+    storyline_block = ''
+    if storyline_ctx:
+        storyline_block = f"""
+【已写剧情参照】（已写章节的实际剧情，本维度创作须与之保持一致，不可矛盾）
+{storyline_ctx}
+"""
+
     def generate():
         try:
             for dim in ordered_dims:
@@ -7129,14 +7354,8 @@ def ai_master_create_stream(book_id):
                 if skill_note:
                     format_integration_note = '\n\n【格式整合铁律·必读】上方「技能包内容」是创作方法论（指导原则），不是输出格式模板。必须严格按下方任务的「输出格式」骨架输出，技能包的要求整合映射到对应字段。'
 
-                # 组装上游上下文：已有bible维度 + 本轮已生成维度
-                upstream_parts = []
-                for up_dim in DIM_ORDER:
-                    up_val = ctx[up_dim]
-                    if up_val.strip() and up_dim != dim:
-                        up_label = DIM_MAP[up_dim]['label']
-                        upstream_parts.append(f'【{up_label}（已确认）】\n{up_val[:800]}')
-                upstream_ctx = '\n\n'.join(upstream_parts) if upstream_parts else '（暂无上游维度，自由发挥）'
+                # 按 DAG 依赖图只注入该维度的上游维度产物（不再无差别全注入）
+                upstream_ctx = _build_master_upstream_ctx(dim, ctx)
 
                 dim_idx = DIM_ORDER.index(dim)
                 upstream_names = [DIM_MAP[d]['label'] for d in DIM_ORDER[:dim_idx] if ctx[d].strip()]
@@ -7159,7 +7378,7 @@ def ai_master_create_stream(book_id):
 
 【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
 {upstream_ctx}
-{af_block_master}
+{storyline_block}{af_block_master}
 【五幕模型对齐】各卷对应五幕：立身→立足→立势→立威→立命
 【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 nodes.chapters 全书连续编号。
 
@@ -7180,7 +7399,7 @@ def ai_master_create_stream(book_id):
 
 【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
 {upstream_ctx}
-{af_block_master}
+{storyline_block}{af_block_master}
 {skill_note}{format_integration_note}
 
 直接输出{info['label']}内容（严格按任务要求的格式铁律输出）。确保与上游维度衔接一致。"""

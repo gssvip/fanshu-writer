@@ -7,11 +7,17 @@
   - 只做 warning 提示，不阻断章节入库
   - critical 级问题才建议作者修订
   - 前端可展示报告，作者可选择"一键修订"
+
+P2 扩展：validate_chapter_with_bible 增加"确定性硬伤"校验
+  - 死亡角色复活检测（critical）：chapter_changes_log 中已死亡角色在本章说话/行动
+  - 境界回退检测（critical）：角色已记录境界，本章出现明显更低的境界
+  - 角色名一致性的近似错写检测（warning）：误报率高，仅做提示
 """
 import re
 import os
+import json
 import yaml
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field, asdict
 
 # 配置文件路径
@@ -237,3 +243,298 @@ def get_repair_hints(result: ValidationResult) -> List[Dict[str, str]]:
                 'scope': 'local',  # critical 句式通常是局部问题
             })
     return hints
+
+
+# ====================================================================
+# P2 扩展：基于 BookBible 的确定性硬伤校验
+# ====================================================================
+
+# 修仙/玄幻常见境界等级表（从低到高）。不同小说可部分命中；未命中则跳过境界回退检测。
+_DEFAULT_REALM_ORDER = [
+    '凡人', '练气', '筑基', '金丹', '元婴', '化神', '炼虚', '合体', '大乘', '渡劫', '飞升',
+    '武者', '武师', '大武师', '宗师', '大宗师', '武王', '武皇', '武帝', '武神',
+    '斗者', '斗师', '大斗师', '斗灵', '斗王', '斗皇', '斗宗', '斗尊', '斗圣', '斗帝',
+    '黄阶', '玄阶', '地阶', '天阶',
+    '一阶', '二阶', '三阶', '四阶', '五阶', '六阶', '七阶', '八阶', '九阶',
+]
+
+# 死亡关键词（KeyEvent 含此则判定角色死亡）
+_DEATH_KEYWORDS = ['死亡', '身亡', '陨落', '陨', '战死', '丧命', '毙命', '死去', '身死', '气绝', '断气', '灰飞烟灭', '魂飞魄散']
+
+# 复活关键词（KeyEvent 含此则撤销死亡判定）
+_REVIVE_KEYWORDS = ['复活', '重生', '苏醒', '还魂', '复生', '诈死']
+
+# 活人动作动词（死亡角色不应在正文中与这些词近距离共现）
+_LIVING_ACTIONS = ['说道', '说：', '道：', '笑道', '怒道', '喝道', '冷笑道', '低声道', '高声道',
+                   '点头', '摇头', '走来', '走出', '走入', '起身', '出手', '拔剑', '挥剑',
+                   '运转', '盘膝', '凝视', '叹息', '皱眉', '拱手', '站起', '坐下', '开口']
+
+
+def _extract_character_names_from_bible(bible: Dict) -> set:
+    """从 character_profiles 提取角色名集合。
+    支持两种格式：
+    - 文本：## 角色：<姓名>
+    - JSON：[{"name": "..."}] / [{"CharacterId": "..."}]
+    """
+    names = set()
+    cp = (bible.get('character_profiles') or '').strip()
+    if not cp:
+        return names
+    # 尝试 JSON
+    if cp.startswith('[') or cp.startswith('{'):
+        try:
+            arr = json.loads(cp)
+            if isinstance(arr, list):
+                for c in arr:
+                    if isinstance(c, dict):
+                        nm = c.get('name') or c.get('CharacterId') or c.get('姓名') or ''
+                        if nm and isinstance(nm, str):
+                            names.add(nm.strip())
+            elif isinstance(arr, dict):
+                for c in (arr.get('characters') or []):
+                    if isinstance(c, dict):
+                        nm = c.get('name') or c.get('CharacterId') or ''
+                        if nm and isinstance(nm, str):
+                            names.add(nm.strip())
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+    # 文本格式：## 角色：<姓名>
+    for m in re.finditer(r'##\s*角色\s*[:：]\s*(.+?)$', cp, re.MULTILINE):
+        nm = m.group(1).strip()
+        nm = re.split(r'[（(]', nm)[0].strip()  # 去掉括号说明
+        if nm and 2 <= len(nm) <= 10:
+            names.add(nm)
+    return names
+
+
+def _extract_dead_characters_from_log(bible: Dict) -> Dict[str, int]:
+    """从 chapter_changes_log 提取已死亡角色。
+    返回 {角色名: 死亡章号}。已复活的角色会被移除。
+    """
+    dead: Dict[str, int] = {}
+    log_str = bible.get('chapter_changes_log') or ''
+    if not log_str:
+        return dead
+    try:
+        log_list = json.loads(log_str)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return dead
+    if not isinstance(log_list, list):
+        return dead
+    for entry in log_list:
+        if not isinstance(entry, dict):
+            continue
+        ch_num = entry.get('chapter_num', 0) or 0
+        try:
+            ch_num = int(ch_num)
+        except (ValueError, TypeError):
+            ch_num = 0
+        chg = entry.get('changes') or {}
+        if not isinstance(chg, dict):
+            continue
+        for c in (chg.get('CharacterStateChanges') or []):
+            if not isinstance(c, dict):
+                continue
+            nm = c.get('CharacterId') or c.get('Name') or ''
+            if not nm or not isinstance(nm, str):
+                continue
+            nm = nm.strip()
+            ke = c.get('KeyEvent') or ''
+            if not isinstance(ke, str):
+                ke = str(ke)
+            # 复活判定优先（撤销之前的死亡）
+            if any(kw in ke for kw in _REVIVE_KEYWORDS):
+                dead.pop(nm, None)
+                continue
+            # 死亡判定（后章覆盖前章）
+            if any(kw in ke for kw in _DEATH_KEYWORDS):
+                dead[nm] = ch_num
+    return dead
+
+
+def _extract_character_realms_from_log(bible: Dict) -> Dict[str, tuple]:
+    """从 chapter_changes_log 提取每个角色的最新境界。
+    返回 {角色名: (境界名, 章号)}。后章覆盖前章。
+    """
+    realms: Dict[str, tuple] = {}
+    log_str = bible.get('chapter_changes_log') or ''
+    if not log_str:
+        return realms
+    try:
+        log_list = json.loads(log_str)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return realms
+    if not isinstance(log_list, list):
+        return realms
+    for entry in log_list:
+        if not isinstance(entry, dict):
+            continue
+        ch_num = entry.get('chapter_num', 0) or 0
+        try:
+            ch_num = int(ch_num)
+        except (ValueError, TypeError):
+            ch_num = 0
+        chg = entry.get('changes') or {}
+        if not isinstance(chg, dict):
+            continue
+        for c in (chg.get('CharacterStateChanges') or []):
+            if not isinstance(c, dict):
+                continue
+            nm = c.get('CharacterId') or c.get('Name') or ''
+            lvl = c.get('NewLevel') or ''
+            if nm and lvl and isinstance(nm, str) and isinstance(lvl, str):
+                realms[nm.strip()] = (lvl.strip(), ch_num)
+    return realms
+
+
+def _realm_index(realm_str: str, realm_order: List[str]) -> int:
+    """返回境界在等级表中的序号（越高越大）；未匹配返回 -1。"""
+    if not realm_str:
+        return -1
+    for i, r in enumerate(realm_order):
+        if r in realm_str:
+            return i
+    return -1
+
+
+def _check_dead_character_revival(text: str, bible: Dict, result: ValidationResult):
+    """死亡角色复活检测（critical）：已死亡角色在本章说话/行动。"""
+    dead_chars = _extract_dead_characters_from_log(bible)
+    if not dead_chars:
+        return
+    for name, dead_ch in dead_chars.items():
+        if not name or len(name) < 2:
+            continue
+        if name not in text:
+            continue
+        # 检查角色名出现位置后 20 字内是否有活人动作
+        reported = False
+        for m in re.finditer(re.escape(name), text):
+            window = text[m.end():m.end() + 20]
+            if any(act in window for act in _LIVING_ACTIONS):
+                result.add(ValidationIssue(
+                    severity='critical',
+                    category='死亡角色复活',
+                    pattern=name,
+                    count=1,
+                    position=f'第{dead_ch}章已死亡，本章出现活人动作',
+                    suggestion=f'角色「{name}」已于第{dead_ch}章死亡，但本章让其说话/行动，属硬伤。若为回忆/幻觉/复活剧情，请显式标注。',
+                ))
+                reported = True
+                break
+        if reported:
+            continue
+
+
+def _check_realm_regression(text: str, bible: Dict, result: ValidationResult):
+    """境界回退检测（critical）：角色已记录境界，本章出现明显更低的境界。"""
+    char_realms = _extract_character_realms_from_log(bible)
+    if not char_realms:
+        return
+    realm_order = _DEFAULT_REALM_ORDER
+    for name, (recorded_realm, rec_ch) in char_realms.items():
+        if not name or len(name) < 2 or not recorded_realm:
+            continue
+        rec_idx = _realm_index(recorded_realm, realm_order)
+        if rec_idx < 0:
+            continue  # 记录境界未在等级表中，跳过
+        if name not in text:
+            continue
+        # 在角色名 ±30 字窗口内找境界词
+        for m in re.finditer(re.escape(name), text):
+            window = text[max(0, m.start() - 30):m.end() + 30]
+            hit_lower = None
+            for r in realm_order:
+                if r in window:
+                    cur_idx = realm_order.index(r)
+                    # 允许 1 级误差（描述差异），≥2 级才算回退
+                    if cur_idx <= rec_idx - 2:
+                        hit_lower = r
+                        break
+            if hit_lower:
+                result.add(ValidationIssue(
+                    severity='critical',
+                    category='境界回退',
+                    pattern=f'{name}:{recorded_realm}→{hit_lower}',
+                    count=1,
+                    position=f'第{rec_ch}章记录为{recorded_realm}，本章出现{hit_lower}',
+                    suggestion=f'角色「{name}」已记录为「{recorded_realm}」（第{rec_ch}章），本章出现「{hit_lower}」疑似境界回退，请核对。',
+                ))
+                break  # 同一角色只报一次
+
+
+def _check_unknown_character_names(text: str, bible: Dict, result: ValidationResult):
+    """角色名一致性检测（warning）：正文中以"姓+称谓"出现的疑似新角色，
+    但与已知名编辑距离=1，可能是错写。误报率较高，仅做 warning。
+    """
+    names = _extract_character_names_from_bible(bible)
+    if not names:
+        return
+    # 只对 2-4 字名做近似检测
+    candidates = {n for n in names if 2 <= len(n) <= 4}
+    if not candidates:
+        return
+    # 提取正文中所有"X道/X说"模式中的 X（疑似角色名引用）
+    # 非贪婪 {2,4}? 避免"笑/说/道"等动作字被吞入名字
+    referenced = set()
+    for m in re.finditer(r'([\u4e00-\u9fa5]{2,4}?)(?:说道|道：|说：|笑道|怒道|喝道|冷笑道|低声道)', text):
+        referenced.add(m.group(1))
+    # 对每个引用名，检查是否与已知名编辑距离=1且不相等
+    for ref in referenced:
+        if ref in candidates:
+            continue
+        for nm in candidates:
+            # 简单编辑距离=1：同长度且仅差 1 字，或长度差 1 且为前缀/包含
+            if len(ref) == len(nm):
+                diff = sum(1 for a, b in zip(ref, nm) if a != b)
+                if diff == 1:
+                    result.add(ValidationIssue(
+                        severity='warning',
+                        category='角色名疑似错写',
+                        pattern=f'{ref}≈{nm}',
+                        count=1,
+                        position=f'正文出现「{ref}」，已知角色有「{nm}」',
+                        suggestion=f'正文「{ref}」与已知角色「{nm}」仅一字之差，请确认是否错写。',
+                    ))
+                    break
+
+
+def validate_chapter_with_bible(content: str, bible: Optional[Dict] = None) -> ValidationResult:
+    """带 bible 上下文的确定性后写校验。
+    在 validate_chapter 基础上增加三类硬伤检测：
+      1. 死亡角色复活检测（critical）
+      2. 境界回退检测（critical）
+      3. 角色名疑似错写检测（warning）
+    bible: dict，可选字段 character_profiles / chapter_changes_log
+    """
+    result = validate_chapter(content)
+    if not content or not content.strip():
+        return result
+    if not bible or not isinstance(bible, dict):
+        return result
+
+    text = content.strip()
+
+    # 兜底保护：单次校验内每类硬伤最多报 5 条，避免长章误报刷屏
+    try:
+        _check_dead_character_revival(text, bible, result)
+    except Exception:
+        pass
+    try:
+        _check_realm_regression(text, bible, result)
+    except Exception:
+        pass
+    try:
+        _check_unknown_character_names(text, bible, result)
+    except Exception:
+        pass
+
+    # 限制硬伤类问题总数，避免刷屏
+    hard_categories = {'死亡角色复活', '境界回退', '角色名疑似错写'}
+    hard_issues = [i for i in result.issues if i.category in hard_categories]
+    if len(hard_issues) > 8:
+        # 保留前 8 条，其余移除
+        kept_ids = set(id(i) for i in hard_issues[:8])
+        result.issues = [i for i in result.issues if i.category not in hard_categories or id(i) in kept_ids]
+
+    return result
