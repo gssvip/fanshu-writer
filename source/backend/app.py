@@ -285,6 +285,7 @@ class Chapter(db.Model):
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     notes = db.Column(db.Text, default='')
+    review_snapshots = db.Column(db.Text, default='')  # P1-5：审计-修订闭环 best snapshot 历史（JSON）
 
     versions = db.relationship('ChapterVersion', backref='chapter', lazy=True, cascade='all, delete-orphan', order_by='ChapterVersion.version_num.desc()')
 
@@ -3450,9 +3451,21 @@ def update_book_bible(book_id):
             bb = BookBible(book_id=book_id)
             db.session.add(bb)
         data = request.json
+        foreshadowing_edited = False
         for field in ['worldbuilding', 'character_profiles', 'timeline', 'foreshadowing', 'style_guide', 'key_rules', 'locations', 'concept', 'plot_design', 'relation_graph', 'inventory', 'character_volumes', 'dynamic_volumes', 'foreshadowing_volumes', 'locations_volumes']:
             if field in data:
                 setattr(bb, field, data[field])
+                if field == 'foreshadowing':
+                    foreshadowing_edited = True
+        # P2-7：伏笔双轨一致性 —— 文本字段人工编辑后触发 DAG 重建，避免文本与 DAG 状态不一致
+        if foreshadowing_edited and parse_text_to_dag and bb.foreshadowing:
+            try:
+                new_dag = parse_text_to_dag(bb.foreshadowing)
+                if new_dag and (new_dag.get('nodes') or new_dag.get('edges')):
+                    bb.foreshadowing_graph = json.dumps(new_dag, ensure_ascii=False)
+            except Exception:
+                # DAG 重建失败不阻断文本字段保存
+                pass
         db.session.commit()
         return jsonify(bb.to_dict())
     except Exception as e:
@@ -4394,7 +4407,9 @@ def _identify_current_volume(book_id, current_chapter_num):
 def _inject_volume_dimensions(bb, vol_chapter, volume_index, sections):
     """按卷注入对应卷的维度数据（人物/伏笔/地点/动态）。
     这些字段是 JSON 数组，每条含 volume_id/volume/volume_index + 维度专属字段。
-    若对应卷无数据，则降级使用全局 bible 字段（character_profiles/foreshadowing/locations）。"""
+    若对应卷无数据，则降级使用全局 bible 字段（character_profiles/foreshadowing/locations）。
+    P3-12：明确"按卷数据优先，全局为兜底"的优先级，并在 prompt 中标注数据来源，
+    避免按卷与全局维度边界模糊导致 AI 不知以哪个为准。"""
     if not vol_chapter:
         return
     vol_id = str(vol_chapter.id)
@@ -4418,29 +4433,32 @@ def _inject_volume_dimensions(bb, vol_chapter, volume_index, sections):
         except (json.JSONDecodeError, ValueError, TypeError):
             return None
 
+    # P3-12：优先级声明前缀，按卷数据优先于全局兜底
+    priority_note = '（数据来源：按卷，优先级高于全局；与全局冲突时以此为准）'
+
     # 人物（本卷）
     cv_entry = _find_entry('character_volumes')
     if cv_entry and cv_entry.get('characters'):
         chars_text = json.dumps(cv_entry['characters'], ensure_ascii=False)
-        sections.append(f'【本卷人物档案】（保持人设一致）\n{chars_text[:1500]}')
+        sections.append(f'【本卷人物档案】（保持人设一致）{priority_note}\n{chars_text[:1500]}')
 
     # 伏笔（本卷）
     fv_entry = _find_entry('foreshadowing_volumes')
     if fv_entry and fv_entry.get('data'):
         fs_text = json.dumps(fv_entry['data'], ensure_ascii=False)
-        sections.append(f'【本卷伏笔清单】\n{fs_text[:1200]}')
+        sections.append(f'【本卷伏笔清单】{priority_note}\n{fs_text[:1200]}')
 
     # 地点（本卷）
     lv_entry = _find_entry('locations_volumes')
     if lv_entry and lv_entry.get('data'):
         loc_text = json.dumps(lv_entry['data'], ensure_ascii=False)
-        sections.append(f'【本卷地点信息】\n{loc_text[:1000]}')
+        sections.append(f'【本卷地点信息】{priority_note}\n{loc_text[:1000]}')
 
     # 动态摘要（本卷）
     dv_entry = _find_entry('dynamic_volumes')
     if dv_entry and dv_entry.get('data'):
         dyn_text = json.dumps(dv_entry['data'], ensure_ascii=False)
-        sections.append(f'【本卷动态摘要】\n{dyn_text[:1000]}')
+        sections.append(f'【本卷动态摘要】{priority_note}\n{dyn_text[:1000]}')
 
 
 def _get_volume_outline(vol_chapter, volume_index):
@@ -5187,6 +5205,29 @@ def _get_total_volumes(bb, book=None):
     return max(5, min(30, int(tv)))
 
 
+def _get_chapters_per_volume(bb, book=None):
+    """P3-10：按题材流派动态计算每卷章数，替代硬编码 50。
+    - 短篇/短卷题材（短篇集、都市短篇）：30 章/卷
+    - 长卷题材（玄幻/仙侠/奇幻/科幻/武侠）：60 章/卷
+    - 默认（都市/言情/悬疑/通用）：50 章/卷
+    总章数 = total_volumes × chapters_per_volume，确保百万字长篇时卷数合理。"""
+    genre = ''
+    try:
+        genre = (getattr(book, 'genre', '') or getattr(bb, 'genre', '') or '').lower()
+    except Exception:
+        genre = ''
+    bt = getattr(book, 'book_type', None) or getattr(bb, 'book_type', 'novel')
+    if bt == 'short_story':
+        return 30
+    long_vol_genres = {'玄幻', '仙侠', '奇幻', '科幻', '武侠', '修真', '网游', '历史'}
+    short_vol_genres = {'短篇', '短篇集', '散文', '随笔'}
+    if any(g in genre for g in long_vol_genres):
+        return 60
+    if any(g in genre for g in short_vol_genres):
+        return 30
+    return 50
+
+
 def _get_novel_styles_text(bb, book=None):
     """获取风格流派描述文本（最多3种叠加），按当前题材查对应风格表，用于注入创作上下文。"""
     styles_raw = None
@@ -5683,17 +5724,25 @@ def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_in
 
 
 def _consistency_check(book_id, bb, draft_content, current_chapter_num,
-                       api_key, base_url, model, max_tokens=800, chapter_plan=''):
+                       api_key, base_url, model, max_tokens=1200, chapter_plan=''):
     """一致性检查 Agent：检查正文是否违反 key_rules/人设，并比对 chapter_plan 是否被执行。
     【P1扩展】新增 chapter_plan 比对，检测剧情偏离。
     【防遗忘回注】注入最近防遗忘检查诊断，使章后检查能对照历史诊断结果，避免重复犯错。
+    【P1补全】检查覆盖面扩展到全维度：worldbuilding/timeline/foreshadowing/inventory/locations，
+    按 bible 权威分级分层注入，避免地点矛盾/物资凭空获得/世界观违规等漏检。
     返回 (passed, issues_text)。失败时返回 (True, '')（不阻塞）。"""
     if not draft_content or len(draft_content) < 100:
         return True, ''
     key_rules = (bb.key_rules or '')[:800]
     chars = (bb.character_profiles or '')[:800]
+    worldbuilding = (bb.worldbuilding or '')[:600]
+    timeline = (bb.timeline or '')[:600]
+    foreshadowing = (bb.foreshadowing or '')[:500]
+    inventory = (bb.inventory or '')[:500]
+    locations = (bb.locations or '')[:500]
     af_alerts = _collect_anti_forget_alerts(bb, max_reports=2, max_alerts=8)
-    if not key_rules and not chars and not chapter_plan and not af_alerts:
+    if not any([key_rules, chars, worldbuilding, timeline, foreshadowing, inventory, locations,
+                chapter_plan, af_alerts]):
         return True, ''
 
     # 构建 chapter_plan 比对段（若有）
@@ -5714,15 +5763,30 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
 【历史防遗忘诊断】（最近检查发现的问题，检查正文是否重犯了类似错误）
 {af_alerts}"""
 
+    # 各维度分段（按权威分级分层注入）
+    dim_sections = []
+    if key_rules:
+        dim_sections.append(f'【rules 层·核心规则/金手指】（绝不可违反）\n{key_rules}')
+    if worldbuilding:
+        dim_sections.append(f'【foundation 层·世界观设定】（世界法则不可违反）\n{worldbuilding}')
+    if chars:
+        dim_sections.append(f'【人物档案】（人设/关系/能力边界）\n{chars}')
+    if timeline:
+        dim_sections.append(f'【剧情/时间线】（事件顺序/时间推进须一致）\n{timeline}')
+    if foreshadowing:
+        dim_sections.append(f'【rules 层·伏笔状态】（已回收伏笔不可当未回收，待回收伏笔不可遗忘）\n{foreshadowing}')
+    if inventory:
+        dim_sections.append(f'【物资库】（物品持有者/数量须一致，不可凭空获得/消失）\n{inventory}')
+    if locations:
+        dim_sections.append(f'【地图/地点】（地点状态/归属须一致）\n{locations}')
+    dim_block = '\n\n'.join(dim_sections)
+
     check_system = f"""你是小说一致性审查员。检查以下章节正文是否违反"项目宪法"，并比对本章计划是否被执行。
+按权威分级（rules > foundation > 人物 > 剧情 > 伏笔 > 物资 > 地点）逐层检查。
 只检查，不修改。返回 JSON：{{"passed": true/false, "issues": ["问题1", "问题2"]}}
 
-【项目宪法】
-核心规则/金手指：
-{key_rules}
-
-人物档案（节选）：
-{chars}{plan_check_section}{af_check_section}
+【项目宪法·分层】
+{dim_block}{plan_check_section}{af_check_section}
 
 【待检查正文】
 {draft_content[:3000]}"""
@@ -5908,6 +5972,35 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 【最近4章完整正文】（即时层，剧情衔接依据，必须严格保持连贯）：
 {chapters_text}"""
 
+    # P2-9：DynamicMemory 5文件版精简摘要注入（细粒度状态回流章节生成）
+    # 5 文件版提供比 DynamicReport 更精细的角色生态/能力世界/伏笔追踪状态，
+    # 每文件截取前 400 字，避免与动态报告内容重复堆叠
+    dynamic_memory_section = ''
+    try:
+        dm = DynamicMemory.query.filter_by(book_id=book_id).first()
+        if dm:
+            dm_parts = []
+            _dm_fields = [
+                ('narrative_engine', '叙事引擎·节奏/张力状态'),
+                ('foreshadowing_tracker', '伏笔追踪·状态快照'),
+                ('character_ecosystem', '角色生态·关系/状态'),
+                ('ability_world', '能力/世界·境界/势力'),
+                ('health_dashboard', '健康度·债务预警'),
+            ]
+            for field_key, field_label in _dm_fields:
+                raw = getattr(dm, field_key, '') or ''
+                if raw and raw.strip() and raw.strip() != '{}':
+                    # 尝试提取关键信息（若为 JSON 则压缩空白）
+                    snippet = raw.strip()[:400]
+                    dm_parts.append(f'- {field_label}：{snippet}')
+            if dm_parts:
+                dynamic_memory_section = f"""
+【细粒度状态快照】（DynamicMemory 5文件版，比动态报告更精细的角色/能力/伏笔状态，须与此一致）：
+{chr(10).join(dm_parts)}
+"""
+    except Exception:
+        pass
+
     # ===== 4. 伏笔防遗忘（#2：按到期紧迫度排序，扩展到Top 25）=====
     # 百万字长线：top_n 提至 25，且紧迫度算法已对"无目标但沉淀已久"的伏笔加权，避免被挤出
     pending_fs = _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=25)
@@ -5996,6 +6089,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 {bible_context[:5000]}
 
 {memory_section}
+{dynamic_memory_section}
 
 {foreshadowing_section}
 
@@ -6022,7 +6116,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 
     # P2-11：在 system_prompt 末尾追加 PRE_WRITE_CHECK 模板（要求 LLM 写正文前先输出意图表）
     if build_pre_write_check_prompt:
-        system_prompt += build_pre_write_check_prompt(ctx['current_chapter_num'], bb)
+        system_prompt += build_pre_write_check_prompt(current_chapter_num, bb)
 
     # P1-6：在 system_prompt 末尾追加 CHANGES 输出模板（要求 LLM 输出结构化状态变更）
     if build_changes_prompt_template:
@@ -6033,9 +6127,9 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 
     return {
         'system_prompt': system_prompt,
-        'user_prompt': smart_instruction,
+        'user_prompt': user_prompt,
         'temperature': temperature,
-        'max_tokens': 4000,  # 【字数铁律】给足输出空间不物理截断；字数约束由提示词铁律+AI重写修正实现，确保章节完整
+        'max_tokens': 12000,  # 【字数铁律】给足输出空间不物理截断；含 PRE_WRITE_CHECK 13行表 + CHANGES JSON 12字段，12000 token 确保完整
         'chapter_plan': chapter_plan,
         'current_chapter_num': current_chapter_num,
         'vol_chapter': vol_chapter,
@@ -6122,7 +6216,7 @@ def ai_continue(book_id):
                     json={'model': model,
                           'messages': [{'role':'system','content':rewrite_system},
                                        {'role':'user','content':f'请修正以下章节正文字数：\n\n{draft_content}'}],
-                          'temperature': 0.5, 'max_tokens': 4000},
+                          'temperature': 0.5, 'max_tokens': 12000},
                     timeout=180)
                 rewrite_result = rewrite_resp.json()
                 rewritten = rewrite_result['choices'][0]['message']['content'].strip()
@@ -6221,6 +6315,8 @@ def ai_continue(book_id):
 
         # ===== P0-1：确定性后写校验（非流式版，零 LLM 成本）=====
         # P2 扩展：注入 bb 上下文，启用死亡角色复活/境界回退/角色名错写硬伤检测
+        # P3 补全：bible_ctx 覆盖全维度，启用境界表动态解析（依赖 key_rules/worldbuilding）、
+        # 地点/物资一致性参照（inventory/locations）
         post_validate = None
         if validate_chapter_with_bible:
             try:
@@ -6228,6 +6324,11 @@ def ai_continue(book_id):
                 bible_ctx = {
                     'character_profiles': bb.character_profiles or '',
                     'chapter_changes_log': bb.chapter_changes_log or '',
+                    'key_rules': bb.key_rules or '',
+                    'worldbuilding': bb.worldbuilding or '',
+                    'inventory': bb.inventory or '',
+                    'locations': bb.locations or '',
+                    'foreshadowing': bb.foreshadowing or '',
                 } if bb else None
                 validation = validate_chapter_with_bible(body_for_check, bible_ctx)
                 if validation.issues:
@@ -6254,6 +6355,113 @@ def ai_continue(book_id):
             except Exception:
                 pass
 
+        # ===== P1-5：审计-修订闭环（draft→校验→修订→再校验，best snapshot 持久化）=====
+        # 仅当后写校验发现问题且分数不达标时触发，最多2轮，best snapshot 取最高分版本
+        # 合并 P2-6：local 类问题用 spot_fix（省 token），structural 类才整章重写
+        review_cycle_result = None
+        if (run_review_cycle and validate_chapter_with_bible and bb
+                and post_validate and post_validate.get('issues')):
+            try:
+                # 1. 构建 validate_fn：复用 validate_chapter_with_bible，注入全维度 bible_ctx
+                def _validate_fn(content, _bb=bb):
+                    body = _extract_chapter_body(content)
+                    _ctx = {
+                        'character_profiles': _bb.character_profiles or '',
+                        'chapter_changes_log': _bb.chapter_changes_log or '',
+                        'key_rules': _bb.key_rules or '',
+                        'worldbuilding': _bb.worldbuilding or '',
+                        'inventory': _bb.inventory or '',
+                        'locations': _bb.locations or '',
+                        'foreshadowing': _bb.foreshadowing or '',
+                    } if _bb else None
+                    return validate_chapter_with_bible(body, _ctx) if _ctx else validate_chapter(body)
+
+                # 2. 构建 revise_fn：auto 模式路由，local→spot_fix / structural→整章重写
+                def _revise_fn(content, validation, llm_call_fn, _bb=bb, _api_key=api_key,
+                               _base_url=base_url, _model=model):
+                    if not route_revision:
+                        return content
+                    v_dict = validation.to_dict() if validation else {}
+                    routing = route_revision(content, v_dict, mode='auto')
+                    if routing['strategy'] == 'none' or routing['strategy'] == 'rewrite':
+                        # structural 类问题：调用整章重写（复用 LLM call）
+                        rewrite_sys = ("你是小说修订专家。根据校验问题整章重写，保留原剧情走向与人物对话，"
+                                       "只修正结构性问题（OOC/剧情偏离/伏笔遗漏/一致性异常）。"
+                                       "只输出修订后的完整正文。")
+                        issues_text = '; '.join(v_dict.get('issues', [])[:5]) if isinstance(v_dict.get('issues'), list) else str(v_dict.get('issues', ''))[:500]
+                        rewrite_user = f'【校验问题】\n{issues_text}\n\n【原文】\n{content}'
+                        return llm_call_fn(rewrite_sys, rewrite_user)
+
+                    # local 类问题：spot_fix，只送问题段落给 LLM
+                    patches = routing['patches']
+                    if not patches:
+                        return content
+                    sys_prompt, user_prompt = build_spot_fix_prompt(content, patches)
+                    llm_output = llm_call_fn(sys_prompt, user_prompt)
+                    return apply_spot_fix_patches(content, patches, llm_output)
+
+                # 3. 构建 llm_call_fn：封装 requests.post
+                def _llm_call_fn(sys_prompt, user_prompt, _api_key=api_key, _base_url=base_url, _model=model):
+                    resp = requests.post(f'{_base_url}/chat/completions',
+                        headers={'Authorization': f'Bearer {_api_key}', 'Content-Type': 'application/json'},
+                        json={'model': _model,
+                              'messages': [{'role': 'system', 'content': sys_prompt},
+                                           {'role': 'user', 'content': user_prompt}],
+                              'temperature': 0.3, 'max_tokens': 12000},
+                        timeout=180)
+                    result = resp.json()
+                    return result['choices'][0]['message']['content'].strip()
+
+                # 4. 执行闭环
+                cycle_outcome = run_review_cycle(
+                    draft_content=polished_content,
+                    validate_fn=_validate_fn,
+                    revise_fn=_revise_fn,
+                    llm_call_fn=_llm_call_fn,
+                )
+                # 5. best snapshot 落地：若最终内容优于初稿，替换 polished_content
+                if cycle_outcome.get('final_content') and cycle_outcome.get('best_score', 0) > 0:
+                    final_content = cycle_outcome['final_content']
+                    # 仅当 final 与 polished 不同时才替换（避免无谓覆盖）
+                    if final_content != polished_content:
+                        polished_content = final_content
+                    review_cycle_result = {
+                        'best_score': cycle_outcome.get('best_score'),
+                        'rounds': cycle_outcome.get('rounds'),
+                        'passed': cycle_outcome.get('passed'),
+                        'reason': cycle_outcome.get('reason'),
+                        'history': cycle_outcome.get('history'),
+                    }
+                    # best snapshot 持久化到对应 chapter（若已落库）
+                    try:
+                        ch_for_snapshot = Chapter.query.filter_by(
+                            book_id=book_id, is_volume=False
+                        ).order_by(Chapter.order_index.desc()).first()
+                        if ch_for_snapshot:
+                            snapshots = []
+                            if ch_for_snapshot.review_snapshots:
+                                try:
+                                    snapshots = json.loads(ch_for_snapshot.review_snapshots)
+                                    if not isinstance(snapshots, list):
+                                        snapshots = []
+                                except Exception:
+                                    snapshots = []
+                            snapshots.append({
+                                'chapter_num': ctx['current_chapter_num'],
+                                'best_score': cycle_outcome.get('best_score'),
+                                'rounds': cycle_outcome.get('rounds'),
+                                'passed': cycle_outcome.get('passed'),
+                                'timestamp': datetime.now(timezone.utc).isoformat(),
+                            })
+                            # 仅保留最近 20 条快照
+                            ch_for_snapshot.review_snapshots = json.dumps(snapshots[-20:], ensure_ascii=False)
+                            db.session.commit()
+                    except Exception:
+                        db.session.rollback()
+            except Exception:
+                # 闭环失败不阻断章节生成
+                db.session.rollback()
+
         return jsonify({
             'content': polished_content,
             'draft': draft_content if deai_status == 'success' else None,
@@ -6271,6 +6479,8 @@ def ai_continue(book_id):
             'changes_applied': changes_applied,  # 章级变更回写摘要
             # P2-10 新增
             'gate_result': gate_result,  # 落地门禁结果
+            # P1-5 新增
+            'review_cycle': review_cycle_result,  # 审计-修订闭环结果
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -6475,6 +6685,11 @@ def ai_continue_stream(book_id):
                         bible_ctx = {
                             'character_profiles': bb.character_profiles or '',
                             'chapter_changes_log': bb.chapter_changes_log or '',
+                            'key_rules': bb.key_rules or '',
+                            'worldbuilding': bb.worldbuilding or '',
+                            'inventory': bb.inventory or '',
+                            'locations': bb.locations or '',
+                            'foreshadowing': bb.foreshadowing or '',
                         }
                     validation = _validator(body_for_check, bible_ctx) if bible_ctx else _validator(body_for_check)
                     if validation.issues:
@@ -7718,7 +7933,7 @@ def ai_master_create(book_id):
         core_params_block = _build_core_params_block(bb, book)
         if is_timeline_dim:
             tv_for_timeline = _get_total_volumes(bb, book)
-            chapters_per_vol = 50
+            chapters_per_vol = _get_chapters_per_volume(bb, book)
             total_chapters = tv_for_timeline * chapters_per_vol
             system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
 {position_note}
@@ -7936,7 +8151,7 @@ def ai_master_create_stream(book_id):
                 core_params_block = _build_core_params_block(bb, book)
                 if is_timeline_dim:
                     tv_for_timeline = _get_total_volumes(bb, book)
-                    chapters_per_vol = 50
+                    chapters_per_vol = _get_chapters_per_volume(bb, book)
                     total_chapters = tv_for_timeline * chapters_per_vol
                     system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
 {position_note}
@@ -8033,7 +8248,8 @@ def ai_master_create_stream(book_id):
 
                 # 回流到 ctx 供下一维度使用
                 ctx[dim] = full_content
-                # 直接落库
+                # P3-11：事务性落库 —— 只 setattr 到 session，不立即 commit，
+                # 全部维度完成后统一提交，避免中途失败/用户取消导致部分维度落库、bible 状态不一致
                 try:
                     setattr(bb, info['field'], full_content)
                     # P0-2：伏笔维度生成后自动构建 DAG（与文本字段并存）
@@ -8053,11 +8269,18 @@ def ai_master_create_stream(book_id):
                                 bb.outline_hierarchy = json.dumps(hierarchy, ensure_ascii=False)
                         except Exception:
                             pass  # 层级构建失败不影响文本落库
-                    db.session.commit()
-                except:
+                    # 注意：此处不再立即 commit，延迟到所有维度完成后统一提交
+                except Exception:
                     db.session.rollback()
 
                 yield f'data: {json.dumps({"dim": dim, "done": True}, ensure_ascii=False)}\n\n'
+
+            # P3-11：所有维度生成完成后统一提交事务（事务性落库）
+            try:
+                db.session.commit()
+            except Exception as commit_err:
+                db.session.rollback()
+                yield f'data: {json.dumps({"error": f"统一落库失败: {str(commit_err)[:200]}"}, ensure_ascii=False)}\n\n'
 
             yield 'data: [DONE]\n\n'
         except Exception as e:
@@ -9875,28 +10098,49 @@ def _generate_dynamic_report_content(book_id, chapter_start, chapter_end, skill_
 
 请生成动态报告（≤500字）："""
 
+    # P2-8：动态报告失败重试（指数退避，最多2次重试），全失败则降级为章节摘要拼接
+    import time as _time
+    max_retries = 2
+    last_error = None
     try:
         base = base_url.rstrip('/')
         if not base.endswith('/v1'):
             base += '/v1'
-        resp = requests.post(f'{base}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-            json={
-                'model': model,
-                'messages': [
-                    {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': user_content}
-                ],
-                'temperature': 0.3,
-                'max_tokens': 1200,
-            },
-            timeout=120)
-
-        result = resp.json()
-        content = result['choices'][0]['message']['content'].strip()
-        return content, None
+        for attempt in range(max_retries + 1):
+            try:
+                resp = requests.post(f'{base}/chat/completions',
+                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    json={
+                        'model': model,
+                        'messages': [
+                            {'role': 'system', 'content': system_prompt},
+                            {'role': 'user', 'content': user_content}
+                        ],
+                        'temperature': 0.3,
+                        'max_tokens': 1200,
+                    },
+                    timeout=120)
+                result = resp.json()
+                content = result['choices'][0]['message']['content'].strip()
+                if content and len(content) > 50:
+                    return content, None
+                last_error = f'LLM 返回内容过短（{len(content)}字）'
+            except Exception as e:
+                last_error = str(e)
+            # 指数退避：1s, 2s
+            if attempt < max_retries:
+                _time.sleep(2 ** attempt)
+        # 全部重试失败，降级为章节摘要拼接
+        fallback_parts = [f'【降级摘要·第{chapter_start}-{chapter_end}章】（LLM生成失败，自动拼接）']
+        for ch in target_chapters:
+            snippet = (ch.content or '')[:120].replace('\n', ' ').strip()
+            if snippet:
+                fallback_parts.append(f'- {ch.title}：{snippet}')
+        fallback_content = '\n'.join(fallback_parts)[:800]
+        return fallback_content, None
     except Exception as e:
-        return None, str(e)
+        # 连降级都失败的极端情况
+        return None, f'{str(e)} | last_error={last_error}'
 
 
 def _check_and_auto_generate_report(book_id):
