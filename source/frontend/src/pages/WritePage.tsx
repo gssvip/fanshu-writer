@@ -826,6 +826,8 @@ export default function WritePage() {
       alert('没有可重新生成的提问记录');
       return;
     }
+    // 捕获当前生成内容作为"上一版"，传给后端做剧情承接参考（避免重新生成时上下文断档）
+    const prevContentForCtx = aiGeneratedContent;
     // 清空当前结果与上一条助手正文（重新生成会覆盖，避免历史里重复正文）
     setAiGeneratedContent('');
     setAgentMeta(null);
@@ -840,20 +842,21 @@ export default function WritePage() {
       }
       return arr;
     });
-    executeAiCreate(lastUserMsg.content);
+    executeAiCreate(lastUserMsg.content, prevContentForCtx);
   }
 
   // 执行AI创作（用户提问后触发）
   // overridePrompt：重新生成时直接传入上一次提问，跳过清空输入框等操作
-  async function executeAiCreate(overridePrompt?: string) {
+  // prevContentForCtx：上一版生成内容（重新生成场景），传给后端做剧情承接参考，避免上下文断档
+  async function executeAiCreate(overridePrompt?: string, prevContentForCtx?: string) {
     if (!bookId || !activeChapter || !aiCreateMode) return;
     const promptText = (overridePrompt ?? aiUserPrompt).trim();
     if (!promptText) {
       alert('请输入你的创作要求');
       return;
     }
-    // 捕获上一版生成内容（修改意见场景注入上下文；重新生成场景已由调用方清空，此处为空）
-    const prevGenerated = aiGeneratedContent;
+    // 捕获上一版生成内容（修改意见场景注入上下文；重新生成场景由调用方传入 prevContentForCtx）
+    const prevGenerated = prevContentForCtx || aiGeneratedContent;
     // 将用户提问加入聊天历史
     const userMsg = { role: 'user' as const, content: promptText, chapterTitle: chapterEditTitle };
     setAiChatHistory(prev => [...prev, userMsg]);
@@ -870,7 +873,15 @@ export default function WritePage() {
     // P0-1: 多Agent协同管线分支（章节计划→正文→去AI味→一致性检查）
     if (useAgentPipeline && (aiCreateMode === 'write' || aiCreateMode === 'continue')) {
       try {
-        const result = await api.aiContinue(bookId, currentPrompt, selectedSkillPackIds, true, signal);
+        // 修复上下文脱节：传入待写章号 + 上一版未保存内容
+        // - targetChapterNum：前端基于 word_count>=100 已写判定，比后端 max+1 更准
+        // - prevChapterContent：若上一版已生成未保存，让后端把它作为"最近一章"注入，避免剧情断档
+        const progress = computeChapterProgress();
+        const targetChapterNum = progress.targetNum;
+        // 上一版未保存内容：只在重新生成/修改意见场景传（prevGenerated 有值时），
+        // 正常首发生成不传（避免把当前正在生成的内容误当上一章）
+        const prevChapterContent = prevGenerated.trim().length > 200 ? prevGenerated : undefined;
+        const result = await api.aiContinue(bookId, currentPrompt, selectedSkillPackIds, true, signal, { targetChapterNum, prevChapterContent });
         if (signal.aborted || aiStoppedRef.current) return;
         setAiGeneratedContent(result.content);
         setAiChatHistory(prev => [...prev, { role: 'assistant', content: result.content, chapterTitle: chapterEditTitle, type: 'content' }]);

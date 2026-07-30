@@ -314,7 +314,7 @@ export const api = {
     request<ReviewResult>(`/books/${bookId}/review`, { method: 'POST', body: JSON.stringify({ scope, content }) }),
 
   // AI Continue（14项优化版）：返回正文+审校状态+章节计划+一致性检查结果等
-  aiContinue: (bookId: string, instruction: string, skillPackIds?: string[], enableConsistencyCheck?: boolean, signal?: AbortSignal) =>
+  aiContinue: (bookId: string, instruction: string, skillPackIds?: string[], enableConsistencyCheck?: boolean, signal?: AbortSignal, opts?: { targetChapterNum?: number; prevChapterContent?: string }) =>
     request<{
       content: string;
       draft?: string | null;
@@ -355,6 +355,10 @@ export const api = {
         instruction,
         skill_pack_ids: skillPackIds || [],
         enable_consistency_check: enableConsistencyCheck !== false,
+        // 修复上下文脱节：前端传入待写章号 + 上一章未保存内容（若已生成未保存），
+        // 让后端用准确的章号、并把未保存内容作为"最近一章"注入上下文，避免剧情断档。
+        target_chapter_num: opts?.targetChapterNum,
+        prev_chapter_content: opts?.prevChapterContent,
       }),
     }, signal),
 
@@ -388,14 +392,19 @@ export const api = {
     ),
 
   // AI Continue 流式版（#8：SSE 推送初稿）。返回原始 Response，前端用 ReadableStream 解析
-  aiContinueStream: (bookId: string, instruction: string, skillPackIds?: string[]) => {
+  aiContinueStream: (bookId: string, instruction: string, skillPackIds?: string[], opts?: { targetChapterNum?: number; prevChapterContent?: string }) => {
     const token = getToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-continue/stream`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ instruction, skill_pack_ids: skillPackIds || [] }),
+      body: JSON.stringify({
+        instruction,
+        skill_pack_ids: skillPackIds || [],
+        target_chapter_num: opts?.targetChapterNum,
+        prev_chapter_content: opts?.prevChapterContent,
+      }),
     });
   },
 

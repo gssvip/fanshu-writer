@@ -5412,9 +5412,15 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
         return True, ''
 
 
-def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
+def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None):
     """构建章节正文写作的完整上下文（被 ai_continue 和 ai_continue_stream 共用）。
-    返回 dict，包含 system_prompt, user_prompt, temperature, max_tokens, chapter_plan, api 信息等。"""
+    返回 dict，包含 system_prompt, user_prompt, temperature, max_tokens, chapter_plan, api 信息等。
+
+    修复上下文脱节：
+    - target_chapter_num：前端传入的待写章号（基于 word_count>=100 已写判定，比后端 max+1 更准）
+    - prev_chapter_content：上一章已生成但未保存的正文（重新生成/连续创作场景），
+      会作为"最近一章"注入上下文，避免 AI 接不上刚写的内容。
+    """
     book = Book.query.get(book_id)
     config = AIConfig.query.first()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
@@ -5426,11 +5432,16 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
         base_url = base_url.rstrip('/') + '/v1'
 
     # ===== 0. 章号计算（#9：改用 max(order_index)+1，健壮性）=====
+    # 优先用前端传入的章号（前端基于 word_count>=100 已写判定，比后端 max+1 更准，
+    # 能正确处理"已生成未保存"和"中间有空章"的情况，避免上下文脱节）
     all_chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
-    if all_chapters:
-        current_chapter_num = max(c.order_index for c in all_chapters) + 1
+    if target_chapter_num and isinstance(target_chapter_num, int) and target_chapter_num > 0:
+        current_chapter_num = target_chapter_num
     else:
-        current_chapter_num = 1
+        if all_chapters:
+            current_chapter_num = max(c.order_index for c in all_chapters) + 1
+        else:
+            current_chapter_num = 1
     last_chapter = all_chapters[-1] if all_chapters else None
 
     # ===== 1. 识别当前卷（#1+#3）=====
@@ -5533,6 +5544,16 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids):
         chapters_text = '\n\n'.join([f'【第{c.order_index}章 {c.title or ""}】\n{c.content or ""}' for c in recent_chapters_full])
     else:
         chapters_text = '（开篇第一章，无前文）'
+
+    # 修复上下文脱节：若前端传入了"上一章已生成未保存"的内容，把它作为最近一章追加注入。
+    # 场景：用户生成第N章后没点保存就生成第N+1章，此时数据库里没有第N章，
+    # 但 AI 写第N+1章必须知道第N章发生了什么，否则剧情断档。
+    # 截断到 2400 字（单章篇幅），避免过长挤占预算。
+    if prev_chapter_content and prev_chapter_content.strip():
+        prev_trimmed = prev_chapter_content.strip()[:2400]
+        prev_ch_num = current_chapter_num - 1
+        prev_tag = '【上一章（已生成未保存，必须严格承接此章剧情）】'
+        chapters_text = (chapters_text + '\n\n' if chapters_text and chapters_text != '（开篇第一章，无前文）' else '') + f'{prev_tag}\n【第{prev_ch_num}章】\n{prev_trimmed}'
 
     # 轻量RAG：基于当前章出场角色召回相关历史章节摘要，补充前4章窗口盲区
     # 让 AI 看到涉及角色在更早章节的经历，避免"角色历史行为遗忘"
@@ -5709,9 +5730,12 @@ def ai_continue(book_id):
     instruction = request.json.get('instruction', '')
     skill_pack_ids = request.json.get('skill_pack_ids', [])
     enable_consistency_check = request.json.get('enable_consistency_check', True)  # 默认开启一致性检查
+    # 修复上下文脱节：接收前端传入的待写章号 + 上一章未保存内容
+    target_chapter_num = request.json.get('target_chapter_num')
+    prev_chapter_content = request.json.get('prev_chapter_content')
 
     try:
-        ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids)
+        ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content)
         system_prompt = ctx['system_prompt']
         user_prompt = ctx['user_prompt']
         temperature = ctx['temperature']
@@ -6013,8 +6037,11 @@ def ai_continue_stream(book_id):
 
     instruction = request.json.get('instruction', '')
     skill_pack_ids = request.json.get('skill_pack_ids', [])
+    # 修复上下文脱节：接收前端传入的待写章号 + 上一章未保存内容
+    target_chapter_num = request.json.get('target_chapter_num')
+    prev_chapter_content = request.json.get('prev_chapter_content')
 
-    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids)
+    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content)
     api_key = ctx['api_key']
     base_url = ctx['base_url']
     model = ctx['model']
