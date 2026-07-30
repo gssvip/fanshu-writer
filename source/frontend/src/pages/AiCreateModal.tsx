@@ -90,6 +90,30 @@ function extractSkillPrompt(packs: SkillPack[], keys: string[]): string {
   return notes.length > 0 ? notes.join('\n\n') : '';
 }
 
+// 清理 timeline 维度的 JSON 输出：
+// 1) 剥离 markdown 代码块包裹（```json ... ```）
+// 2) 解包 {volumes:[...]} / {data:[...]} 等包装对象
+// 3) 规范化为纯 JSON 数组字符串，保证剧情维度可正确解析
+// 与后端 ai_master_create_stream 的清理逻辑保持一致，避免前端用原始输出覆盖后端已清理的版本
+function cleanTimelineJson(content: string): string {
+  if (!content || !content.trim()) return content;
+  let cleaned = content.trim();
+  const fence = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fence) cleaned = fence[1].trim();
+  try {
+    let parsed = JSON.parse(cleaned);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const k of ['volumes', 'data', 'result', 'items', 'list']) {
+        if (Array.isArray((parsed as any)[k])) { parsed = (parsed as any)[k]; break; }
+      }
+    }
+    if (Array.isArray(parsed)) {
+      return JSON.stringify(parsed, null, 2);
+    }
+  } catch { /* 非合法 JSON，返回去 Fence 后的文本 */ }
+  return cleaned;
+}
+
 interface AiCreateModalProps {
   mode: 'global' | 'single';
   dimension?: string; // single 模式锁定的维度 field
@@ -451,7 +475,15 @@ export default function AiCreateModal({
     try {
       const finalOutputs = { ...outputs, ...editedOutputs }; // 编辑过的优先
       const results = selectedDims
-        .map(d => ({ field: d, content: (finalOutputs[d] || '').trim() }))
+        .map(d => {
+          let content = (finalOutputs[d] || '').trim();
+          // timeline 维度：清理 JSON（剥离 markdown 代码块、解包包装对象），
+          // 保证剧情维度可正确解析为分卷结构，避免被当作纯文本整体显示
+          if (d === 'timeline' && content) {
+            content = cleanTimelineJson(content);
+          }
+          return { field: d, content };
+        })
         .filter(r => r.content);
       if (results.length === 0) {
         setError('没有可填入的内容');

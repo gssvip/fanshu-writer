@@ -3910,8 +3910,18 @@ function PlotPanel(props: {
   // 解析timeline数据
   useEffect(() => {
     if (!bible?.timeline) { setVolumes([]); return; }
+    // 容错：剥离 markdown 代码块包裹（```json ... ```），与后端/AiCreateModal 清理逻辑一致
+    let raw = bible.timeline.trim();
+    const fence = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (fence) raw = fence[1].trim();
     try {
-      const parsed = JSON.parse(bible.timeline);
+      let parsed = JSON.parse(raw);
+      // 容错：解包 {volumes:[...]} / {data:[...]} 等包装对象
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const k of ['volumes', 'data', 'result', 'items', 'list']) {
+          if (Array.isArray((parsed as any)[k])) { parsed = (parsed as any)[k]; break; }
+        }
+      }
       if (Array.isArray(parsed)) { setVolumes(parsed); return; }
     } catch { /* not JSON */ }
     // 纯文本模式：作为整体大纲
