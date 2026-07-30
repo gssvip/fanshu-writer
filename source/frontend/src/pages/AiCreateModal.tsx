@@ -122,6 +122,7 @@ export default function AiCreateModal({
   const [applying, setApplying] = useState(false);
   const [editedOutputs, setEditedOutputs] = useState<Record<string, string>>({}); // 用户手动编辑后的结果
   const [skillExpanded, setSkillExpanded] = useState(false); // 协同技能包折叠
+  const [collapsedDims, setCollapsedDims] = useState<Record<string, boolean>>({}); // 各维度结果折叠状态
   const [localSkillPackIds, setLocalSkillPackIds] = useState<string[]>(selectedSkillPackIds); // 本地技能包选择（默认继承主页面勾选）
   const outputRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null); // 用于中断 AI 流式生成
@@ -498,10 +499,12 @@ export default function AiCreateModal({
 
         {/* 主体 */}
         <div className="master-create-modal-body">
-          {/* 维度选择（全局模式 + 输入阶段） */}
-          {isGlobal && phase === 'input' && (
+          {/* 维度选择（全局模式；输入阶段+完成阶段都显示，继续创作时可改选维度） */}
+          {isGlobal && (phase === 'input' || phase === 'done') && (
             <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>选择要创作的维度（可多选，将串行生成）：</div>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                选择要创作的维度（可多选，将串行生成）{phase === 'done' && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}> · 改选后点「重新生成」生效</span>}
+              </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {ALL_DIMENSIONS.map(d => (
                   <button
@@ -596,16 +599,24 @@ export default function AiCreateModal({
                 const content = editedOutputs[dim] !== undefined ? editedOutputs[dim] : (outputs[dim] || '');
                 const isCurrent = currentDim === dim;
                 const dimMeta = ALL_DIMENSIONS.find(d => d.field === dim);
+                const hasContent = !!(content && content.trim());
+                const isCollapsed = collapsedDims[dim] === true;
+                // 当前正在流式生成的维度不折叠，确保用户能看到实时输出
+                const canCollapse = phase === 'done' && hasContent && !isCurrent;
                 return (
-                  <div key={dim} style={{ marginBottom: 18, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8, border: `1px solid ${isCurrent ? 'var(--accent)' : 'var(--border-color)'}` }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>
+                  <div key={dim} style={{ marginBottom: 12, padding: 10, background: 'var(--bg-tertiary)', borderRadius: 8, border: `1px solid ${isCurrent ? 'var(--accent)' : 'var(--border-color)'}` }}>
+                    <div
+                      style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isCollapsed ? 0 : 8, cursor: canCollapse ? 'pointer' : 'default', userSelect: 'none' }}
+                      onClick={() => canCollapse && setCollapsedDims(prev => ({ ...prev, [dim]: !prev[dim] }))}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {canCollapse && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{isCollapsed ? '▶' : '▼'}</span>}
                         {dimMeta?.icon || '📝'} {DIM_LABEL[dim] || dim}
-                        {isCurrent && <span style={{ color: 'var(--accent)', marginLeft: 6, fontSize: 11 }}>⏳ 生成中…</span>}
+                        {isCurrent && <span style={{ color: 'var(--accent)', marginLeft: 4, fontSize: 11 }}>⏳ 生成中…</span>}
+                        {hasContent && <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>{content.length} 字</span>}
                       </div>
-                      {phase === 'done' && content && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{content.length} 字</span>
+                      {phase === 'done' && hasContent && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={e => e.stopPropagation()}>
                           <button
                             className="btn-ghost-sm"
                             onClick={() => handleRegenerateDim(dim)}
@@ -617,7 +628,7 @@ export default function AiCreateModal({
                         </div>
                       )}
                     </div>
-                    {phase === 'done' ? (
+                    {!isCollapsed && (phase === 'done' ? (
                       <textarea
                         className="input"
                         value={content}
@@ -629,7 +640,7 @@ export default function AiCreateModal({
                       <div style={{ fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', minHeight: 40 }}>
                         {content || (isCurrent ? '（等待输出…）' : '（排队中）')}
                       </div>
-                    )}
+                    ))}
                   </div>
                 );
               })}

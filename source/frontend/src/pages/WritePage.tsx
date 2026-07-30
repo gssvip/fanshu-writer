@@ -2772,6 +2772,30 @@ function ChapterPanel(props: {
                 {aiCreating ? '⏳ 创作中...' : '🚀 发送'}
               </button>
             </div>
+
+            {/* 完成态底部操作栏（与 Ai 总创作一致的修改意见工作流） */}
+            {hasResult && !aiCreating && (
+              <div className="ai-prompt-bottom-actions" style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end', alignItems: 'center', paddingTop: 10, borderTop: '1px solid var(--border-color)' }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 'auto' }}>
+                  💬 修改意见 → 发送重写，或直接重新生成/保存
+                </span>
+                <button
+                  className="btn-primary"
+                  onClick={onRegenerateAiContent}
+                  title="基于上一次要求重新生成（覆盖当前结果）"
+                  style={{ background: 'linear-gradient(135deg,#e67e22 0%,#d35400 100%)', boxShadow: '0 2px 8px rgba(211,84,0,0.35)' }}
+                >
+                  🔄 重新生成
+                </button>
+                <button
+                  className="btn-primary-sm"
+                  onClick={onConfirmAiContent}
+                  title="将本次生成内容保存到目标章节"
+                >
+                  ✓ 保存到章节
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
