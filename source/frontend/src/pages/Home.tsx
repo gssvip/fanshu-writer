@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Template } from '../types';
 import { useStore } from '../store';
 import { api } from '../api';
+import { getStylesForType, getVolumeRange } from '../constants';
 
 const GENRES: Record<string, string> = { fantasy:'玄幻', romance:'言情', mystery:'悬疑', scifi:'科幻', wuxia:'武侠', historical:'历史', horror:'恐怖', comedy:'喜剧', other:'其他' };
 const S: Record<string,{label:string;color:string}> = { draft:{label:'草稿',color:'#9e8f6e'}, writing:{label:'连载',color:'#27ae60'}, completed:{label:'完结',color:'#2980b9'} };
@@ -12,13 +13,35 @@ export default function Home() {
   const navigate = useNavigate();
   const [showNew, setShowNew] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [nf, setNf] = useState({ title:'',author:'',genre:'other',book_type:'short_story',synopsis:'',template_id:'',target_words:0 });
+  const [nf, setNf] = useState({ title:'',author:'',genre:'other',book_type:'short_story',synopsis:'',template_id:'',target_words:0,total_volumes:0,novel_styles:[] as string[] });
   const [menuOpen, setMenuOpen] = useState(false);
   const [showAiPicker, setShowAiPicker] = useState(false);
 
   useEffect(() => { api.listTemplates().then(setTemplates).catch(()=>{}); }, []);
 
   const refresh = () => api.listBooks().then(setBooks);
+
+  // 切换类型时重置卷数和风格（确保符合新类型的范围限制）
+  const handleBookTypeChange = (newType: string) => {
+    const range = getVolumeRange(newType);
+    setNf(prev => ({
+      ...prev,
+      book_type: newType,
+      total_volumes: prev.total_volumes === 0 ? range.default : Math.max(range.min, Math.min(range.max, prev.total_volumes)),
+      // 过滤掉新类型不支持的风格
+      novel_styles: prev.novel_styles.filter(s => Object.prototype.hasOwnProperty.call(getStylesForType(newType), s)),
+    }));
+  };
+
+  // 切换风格多选（最多3种叠加）
+  const toggleStyle = (key: string) => {
+    setNf(prev => {
+      const has = prev.novel_styles.includes(key);
+      if (has) return { ...prev, novel_styles: prev.novel_styles.filter(s => s !== key) };
+      if (prev.novel_styles.length >= 3) return prev; // 最多3种
+      return { ...prev, novel_styles: [...prev.novel_styles, key] };
+    });
+  };
 
   const create = async () => {
     try { const b = await api.createBook(nf); setShowNew(false); refresh(); navigate(`/write?book=${b.id}`); }
@@ -106,9 +129,46 @@ export default function Home() {
             <div className="form-group"><label>书名 *</label><input value={nf.title} onChange={e=>setNf({...nf,title:e.target.value})} placeholder="输入书名"/></div>
             <div className="form-group"><label>作者</label><input value={nf.author} onChange={e=>setNf({...nf,author:e.target.value})} placeholder="笔名"/></div>
             <div style={{display:'flex',gap:8}}>
-              <div className="form-group" style={{flex:1}}><label>类型</label><select value={nf.book_type} onChange={e=>setNf({...nf,book_type:e.target.value})}><option value="short_story">短篇</option><option value="novel">长篇</option><option value="script">剧本</option></select></div>
+              <div className="form-group" style={{flex:1}}><label>类型</label><select value={nf.book_type} onChange={e=>handleBookTypeChange(e.target.value)}><option value="short_story">短篇</option><option value="novel">长篇</option><option value="script">剧本</option></select></div>
               <div className="form-group" style={{flex:1}}><label>题材</label><select value={nf.genre} onChange={e=>setNf({...nf,genre:e.target.value})}>{Object.entries(GENRES).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></div>
             </div>
+            {(() => {
+              const range = getVolumeRange(nf.book_type);
+              const tv = nf.total_volumes || range.default;
+              return (
+                <div className="form-group">
+                  <label>总卷数（{range.min}-{range.max}） · {range.perVolumeWords}</label>
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <input type="range" min={range.min} max={range.max} value={tv} onChange={e=>setNf({...nf,total_volumes:Number(e.target.value)})} style={{flex:1}}/>
+                    <span style={{minWidth:48,textAlign:'center',fontWeight:600,color:'var(--accent)'}}>{tv} {nf.book_type==='short_story'?'篇':'卷'}</span>
+                  </div>
+                  {nf.book_type==='novel' && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>预计总字数约 {tv*12} 万字（每卷约12万字，约50章/卷）</div>}
+                </div>
+              );
+            })()}
+            {(() => {
+              const styles = getStylesForType(nf.book_type);
+              return (
+                <div className="form-group">
+                  <label>风格流派（可多选，最多3种叠加 · 已选 {nf.novel_styles.length}/3）</label>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6,maxHeight:120,overflowY:'auto'}}>
+                    {Object.entries(styles).map(([k,v])=>{
+                      const sel = nf.novel_styles.includes(k);
+                      const disabled = !sel && nf.novel_styles.length>=3;
+                      return (
+                        <button key={k} type="button" onClick={()=>toggleStyle(k)} disabled={disabled}
+                          style={{padding:'4px 10px',fontSize:12,borderRadius:14,cursor:disabled?'not-allowed':'pointer',
+                            border:`1px solid ${sel?'var(--accent)':'var(--border-color)'}`,
+                            background:sel?'var(--accent)':'transparent',
+                            color:sel?'#fff':'var(--text-primary)',opacity:disabled?0.4:1}}>
+                          {v}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
             <div className="form-group"><label>简介</label><textarea rows={2} value={nf.synopsis} onChange={e=>setNf({...nf,synopsis:e.target.value})} placeholder="简单描述..."/></div>
             <div className="form-group"><label>模板</label><select value={nf.template_id} onChange={e=>setNf({...nf,template_id:e.target.value})}><option value="">不用模板</option>{templates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
             <div className="form-actions"><button className="btn-secondary" onClick={()=>setShowNew(false)}>取消</button><button className="btn-primary" onClick={create}>创建</button></div>

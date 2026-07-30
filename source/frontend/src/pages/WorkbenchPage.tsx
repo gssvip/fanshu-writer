@@ -4,6 +4,7 @@ import { api } from '../api';
 import { AuthContext } from '../App';
 import type { Book, BookBible, SkillPack } from '../types';
 import AiCreateModal from './AiCreateModal';
+import { getStylesForType, getVolumeRange } from '../constants';
 
 export default function WorkbenchPage() {
   const navigate = useNavigate();
@@ -11,7 +12,7 @@ export default function WorkbenchPage() {
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewBook, setShowNewBook] = useState(false);
-  const [newBookForm, setNewBookForm] = useState({ title: '', genre: 'other', book_type: 'short_story', synopsis: '' });
+  const [newBookForm, setNewBookForm] = useState({ title: '', genre: 'other', book_type: 'short_story', synopsis: '', total_volumes: 0, novel_styles: [] as string[] });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -33,7 +34,7 @@ export default function WorkbenchPage() {
 
   // 书架作品操作
   const [editBookId, setEditBookId] = useState('');
-  const [editBookForm, setEditBookForm] = useState({ title: '', genre: 'other', book_type: 'short_story', synopsis: '' });
+  const [editBookForm, setEditBookForm] = useState({ title: '', genre: 'other', book_type: 'short_story', synopsis: '', total_volumes: 0, novel_styles: [] as string[] });
   const [editBookSaving, setEditBookSaving] = useState(false);
 
   // 总AI创作面板状态（与创作页 AiCreateModal 完全一致，仅多一步"选择作品"）
@@ -43,9 +44,58 @@ export default function WorkbenchPage() {
   const [aiBible, setAiBible] = useState<BookBible | null>(null);
   const [aiModalOpen, setAiModalOpen] = useState(false);
 
+  // 切换类型时重置卷数和风格（确保符合新类型的范围限制）—— 新建表单
+  const handleNewBookTypeChange = (newType: string) => {
+    const range = getVolumeRange(newType);
+    setNewBookForm(prev => ({
+      ...prev,
+      book_type: newType,
+      total_volumes: prev.total_volumes === 0 ? range.default : Math.max(range.min, Math.min(range.max, prev.total_volumes)),
+      novel_styles: prev.novel_styles.filter(s => Object.prototype.hasOwnProperty.call(getStylesForType(newType), s)),
+    }));
+  };
+
+  // 切换类型时重置卷数和风格 —— 编辑表单
+  const handleEditBookTypeChange = (newType: string) => {
+    const range = getVolumeRange(newType);
+    setEditBookForm(prev => ({
+      ...prev,
+      book_type: newType,
+      total_volumes: prev.total_volumes === 0 ? range.default : Math.max(range.min, Math.min(range.max, prev.total_volumes)),
+      novel_styles: prev.novel_styles.filter(s => Object.prototype.hasOwnProperty.call(getStylesForType(newType), s)),
+    }));
+  };
+
+  // 风格多选切换（最多3种叠加）—— 新建表单
+  const toggleNewStyle = (key: string) => {
+    setNewBookForm(prev => {
+      const has = prev.novel_styles.includes(key);
+      if (has) return { ...prev, novel_styles: prev.novel_styles.filter(s => s !== key) };
+      if (prev.novel_styles.length >= 3) return prev;
+      return { ...prev, novel_styles: [...prev.novel_styles, key] };
+    });
+  };
+
+  // 风格多选切换 —— 编辑表单
+  const toggleEditStyle = (key: string) => {
+    setEditBookForm(prev => {
+      const has = prev.novel_styles.includes(key);
+      if (has) return { ...prev, novel_styles: prev.novel_styles.filter(s => s !== key) };
+      if (prev.novel_styles.length >= 3) return prev;
+      return { ...prev, novel_styles: [...prev.novel_styles, key] };
+    });
+  };
+
   async function handleRenameBook(book: Book) {
     setEditBookId(book.id);
-    setEditBookForm({ title: book.title, genre: book.genre || 'other', book_type: book.book_type || 'short_story', synopsis: book.synopsis || '' });
+    setEditBookForm({
+      title: book.title,
+      genre: book.genre || 'other',
+      book_type: book.book_type || 'short_story',
+      synopsis: book.synopsis || '',
+      total_volumes: book.total_volumes || 0,
+      novel_styles: Array.isArray(book.novel_styles) ? book.novel_styles : [],
+    });
   }
 
   async function handleSaveEditBook() {
@@ -57,6 +107,8 @@ export default function WorkbenchPage() {
         genre: editBookForm.genre,
         book_type: editBookForm.book_type,
         synopsis: editBookForm.synopsis,
+        total_volumes: editBookForm.total_volumes,
+        novel_styles: editBookForm.novel_styles,
       });
       setBooks(prev => prev.map(b => b.id === updated.id ? updated : b));
       setEditBookId('');
@@ -117,7 +169,7 @@ export default function WorkbenchPage() {
       const book = await api.createBook(newBookForm);
       setBooks(prev => [book, ...prev]);
       setShowNewBook(false);
-      setNewBookForm({ title: '', genre: 'other', book_type: 'short_story', synopsis: '' });
+      setNewBookForm({ title: '', genre: 'other', book_type: 'short_story', synopsis: '', total_volumes: 0, novel_styles: [] });
       navigate(`/write?book=${book.id}`);
     } catch (e: any) {
       setCreateError(e.message || '创建失败，请重试');
@@ -393,7 +445,7 @@ export default function WorkbenchPage() {
             <h2>创建新作品</h2>
             <input className="input" placeholder="作品标题" value={newBookForm.title} onChange={e => setNewBookForm(prev => ({ ...prev, title: e.target.value }))} />
             <div className="form-row">
-              <select className="input" value={newBookForm.book_type} onChange={e => setNewBookForm(prev => ({ ...prev, book_type: e.target.value }))}>
+              <select className="input" value={newBookForm.book_type} onChange={e => handleNewBookTypeChange(e.target.value)}>
                 <option value="short_story">短篇</option>
                 <option value="novel">长篇</option>
                 <option value="script">剧本</option>
@@ -425,6 +477,43 @@ export default function WorkbenchPage() {
                 </optgroup>
               </select>
             </div>
+            {(() => {
+              const range = getVolumeRange(newBookForm.book_type);
+              const tv = newBookForm.total_volumes || range.default;
+              return (
+                <div className="form-field">
+                  <label>总卷数（{range.min}-{range.max}） · {range.perVolumeWords}</label>
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <input type="range" min={range.min} max={range.max} value={tv} onChange={e => setNewBookForm(prev => ({ ...prev, total_volumes: Number(e.target.value) }))} style={{flex:1}}/>
+                    <span style={{minWidth:48,textAlign:'center',fontWeight:600,color:'var(--accent)'}}>{tv} {newBookForm.book_type==='short_story'?'篇':'卷'}</span>
+                  </div>
+                  {newBookForm.book_type==='novel' && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>预计总字数约 {tv*12} 万字（每卷约12万字，约50章/卷）</div>}
+                </div>
+              );
+            })()}
+            {(() => {
+              const styles = getStylesForType(newBookForm.book_type);
+              return (
+                <div className="form-field">
+                  <label>风格流派（可多选，最多3种叠加 · 已选 {newBookForm.novel_styles.length}/3）</label>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6,maxHeight:120,overflowY:'auto'}}>
+                    {Object.entries(styles).map(([k,v])=>{
+                      const sel = newBookForm.novel_styles.includes(k);
+                      const disabled = !sel && newBookForm.novel_styles.length>=3;
+                      return (
+                        <button key={k} type="button" onClick={()=>toggleNewStyle(k)} disabled={disabled}
+                          style={{padding:'4px 10px',fontSize:12,borderRadius:14,cursor:disabled?'not-allowed':'pointer',
+                            border:`1px solid ${sel?'var(--accent)':'var(--border-color)'}`,
+                            background:sel?'var(--accent)':'transparent',
+                            color:sel?'#fff':'var(--text-primary)',opacity:disabled?0.4:1}}>
+                          {v}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
             <textarea className="input" rows={3} placeholder="简介（可选）" value={newBookForm.synopsis} onChange={e => setNewBookForm(prev => ({ ...prev, synopsis: e.target.value }))} />
             {createError && <div className="error-msg" style={{marginBottom:8}}>{createError}</div>}
             <div className="modal-actions">
@@ -587,7 +676,7 @@ export default function WorkbenchPage() {
             <h2>编辑作品信息</h2>
             <input className="input" placeholder="作品标题" value={editBookForm.title} onChange={e => setEditBookForm(prev => ({ ...prev, title: e.target.value }))} />
             <div className="form-row">
-              <select className="input" value={editBookForm.book_type} onChange={e => setEditBookForm(prev => ({ ...prev, book_type: e.target.value }))}>
+              <select className="input" value={editBookForm.book_type} onChange={e => handleEditBookTypeChange(e.target.value)}>
                 <option value="short_story">短篇</option>
                 <option value="novel">长篇</option>
                 <option value="script">剧本</option>
@@ -606,6 +695,44 @@ export default function WorkbenchPage() {
                 </optgroup>
               </select>
             </div>
+            {(() => {
+              const range = getVolumeRange(editBookForm.book_type);
+              const tv = editBookForm.total_volumes || range.default;
+              return (
+                <div className="form-field">
+                  <label>总卷数（{range.min}-{range.max}） · {range.perVolumeWords}</label>
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <input type="range" min={range.min} max={range.max} value={tv} onChange={e => setEditBookForm(prev => ({ ...prev, total_volumes: Number(e.target.value) }))} style={{flex:1}}/>
+                    <span style={{minWidth:48,textAlign:'center',fontWeight:600,color:'var(--accent)'}}>{tv} {editBookForm.book_type==='short_story'?'篇':'卷'}</span>
+                  </div>
+                  {editBookForm.book_type==='novel' && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>预计总字数约 {tv*12} 万字（每卷约12万字，约50章/卷）</div>}
+                  <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>提示：题材、卷数、风格将作为后续五幕总纲、剧情大纲等所有创作维度的核心依据</div>
+                </div>
+              );
+            })()}
+            {(() => {
+              const styles = getStylesForType(editBookForm.book_type);
+              return (
+                <div className="form-field">
+                  <label>风格流派（可多选，最多3种叠加 · 已选 {editBookForm.novel_styles.length}/3）</label>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6,maxHeight:120,overflowY:'auto'}}>
+                    {Object.entries(styles).map(([k,v])=>{
+                      const sel = editBookForm.novel_styles.includes(k);
+                      const disabled = !sel && editBookForm.novel_styles.length>=3;
+                      return (
+                        <button key={k} type="button" onClick={()=>toggleEditStyle(k)} disabled={disabled}
+                          style={{padding:'4px 10px',fontSize:12,borderRadius:14,cursor:disabled?'not-allowed':'pointer',
+                            border:`1px solid ${sel?'var(--accent)':'var(--border-color)'}`,
+                            background:sel?'var(--accent)':'transparent',
+                            color:sel?'#fff':'var(--text-primary)',opacity:disabled?0.4:1}}>
+                          {v}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
             <textarea className="input" rows={3} placeholder="简介（可选）" value={editBookForm.synopsis} onChange={e => setEditBookForm(prev => ({ ...prev, synopsis: e.target.value }))} />
             <div className="modal-actions">
               <button className="btn-ghost" onClick={() => setEditBookId('')}>取消</button>

@@ -243,6 +243,10 @@ class Book(db.Model):
     chapter_count = db.Column(db.Integer, default=0)
     status = db.Column(db.String(20), default='draft')  # draft, writing, completed
     target_words = db.Column(db.Integer, default=0)
+    # 总卷数（长篇 5-30，短篇 1-3）：作为五幕总纲/剧情大纲生成的核心依据
+    total_volumes = db.Column(db.Integer, default=10)
+    # 小说风格流派（JSON 数组字符串，最多3种叠加）：爽文流/虐文流/系统流等
+    novel_styles = db.Column(db.Text, default='[]')
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     metadata_json = db.Column(db.Text, default='{}')
@@ -259,6 +263,8 @@ class Book(db.Model):
             'cover_path': self.cover_path, 'template_id': self.template_id,
             'word_count': self.word_count, 'chapter_count': self.chapter_count,
             'status': self.status, 'target_words': self.target_words,
+            'total_volumes': self.total_volumes if self.total_volumes else 10,
+            'novel_styles': json.loads(self.novel_styles or '[]'),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'metadata': json.loads(self.metadata_json or '{}')
@@ -524,6 +530,9 @@ class BookBible(db.Model):
     outline_hierarchy = db.Column(db.Text, default='')
     # P1-6：章级变更日志（JSON 数组，每章的 12 类 CHANGES delta，支持重写回滚）
     chapter_changes_log = db.Column(db.Text, default='')
+    # 总卷数 + 风格流派（与 Book 表同步，创作时从 bible 直接读取注入各维度）
+    total_volumes = db.Column(db.Integer, default=10)
+    novel_styles = db.Column(db.Text, default='[]')
     last_synced_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -1191,15 +1200,36 @@ def get_book(book_id):
 @login_required
 def create_book():
     data = request.json
+    # 总卷数：长篇默认10（范围5-30），短篇默认1（范围1-3）
+    book_type = data.get('book_type', 'novel')
+    default_vols = 1 if book_type == 'short_story' else 10
+    total_volumes = data.get('total_volumes') or default_vols
+    # 卷数范围校验：长篇 5-30，短篇 1-3
+    try:
+        total_volumes = int(total_volumes)
+        if book_type == 'short_story':
+            total_volumes = max(1, min(3, total_volumes))
+        else:
+            total_volumes = max(5, min(30, total_volumes))
+    except (ValueError, TypeError):
+        total_volumes = default_vols
+    # 风格流派：JSON 数组，最多3种
+    novel_styles = data.get('novel_styles', [])
+    if isinstance(novel_styles, list):
+        novel_styles = novel_styles[:3]
+    else:
+        novel_styles = []
     book = Book(
         user_id=request.current_user_id,
         title=data.get('title', '新书'),
         author=data.get('author', ''),
         genre=data.get('genre', 'other'),
-        book_type=data.get('book_type', 'novel'),
+        book_type=book_type,
         synopsis=data.get('synopsis', ''),
         template_id=data.get('template_id', ''),
         target_words=data.get('target_words', 0),
+        total_volumes=total_volumes,
+        novel_styles=json.dumps(novel_styles, ensure_ascii=False),
         status='draft'
     )
     db.session.add(book)
@@ -1231,6 +1261,31 @@ def update_book(book_id):
                 setattr(book, field, json.dumps(data[field], ensure_ascii=False))
             else:
                 setattr(book, field, data[field])
+    # 总卷数 + 风格流派同步
+    if 'total_volumes' in data:
+        try:
+            tv = int(data['total_volumes'])
+            if book.book_type == 'short_story':
+                tv = max(1, min(3, tv))
+            else:
+                tv = max(5, min(30, tv))
+            book.total_volumes = tv
+        except (ValueError, TypeError):
+            pass
+    if 'novel_styles' in data:
+        ns = data['novel_styles']
+        if isinstance(ns, list):
+            ns = ns[:3]
+        else:
+            ns = []
+        book.novel_styles = json.dumps(ns, ensure_ascii=False)
+    # 同步到 BookBible（创作时从 bible 读取注入）
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if bb:
+        if hasattr(book, 'total_volumes') and book.total_volumes:
+            bb.total_volumes = book.total_volumes
+        if hasattr(book, 'novel_styles'):
+            bb.novel_styles = book.novel_styles
     db.session.commit()
     return jsonify(book.to_dict())
 
@@ -4931,6 +4986,83 @@ def _build_master_ctx(bb, session_outputs=None):
     }
 
 
+# 网文风格流派标签库（基于2025中国网络文学蓝皮书与起点三江榜趋势）
+NOVEL_STYLE_LABELS = {
+    'shuang': '爽文流（强爽点、快节奏、升级打脸）',
+    'nue': '虐文流（情感虐心、命运波折）',
+    'tian': '甜文流（CP甜宠、轻松治愈）',
+    'system': '系统流（系统金手指、任务奖励）',
+    'wudi': '无敌流（主角无敌、碾压一切）',
+    'gou': '苟道流（稳健发育、韬光养晦）',
+    'changsheng': '长生流（修仙长生、岁月流转）',
+    'jiazu': '家族流（家族传承、代际接力）',
+    'chongsheng': '重生流（重生逆袭、弥补遗憾）',
+    'wuxian': '无限流（副本穿梭、诸天万界）',
+    'zhongtian': '种田流（经营发展、基建扩张）',
+    'heidark': '黑暗流（暗黑向、道德灰度）',
+    'zhiyu': '治愈流（温暖治愈、日常向）',
+    'xuanyi': '悬疑流（推理解谜、层层反转）',
+    'rexue': '热血流（少年热血、友情羁绊）',
+    # 短篇特有
+    'fanzhuan': '反转向（结局反转、意料之外）',
+    'danyuan': '单元剧（独立单元、短小精悍）',
+    'yingshi': '影视化（镜头语言、改编友好）',
+    'first_person': '第一人称（沉浸叙事、内心独白）',
+}
+
+
+def _get_total_volumes(bb, book=None):
+    """获取总卷数（优先 BookBible，回退 Book，默认10）。长篇5-30，短篇1-3。"""
+    tv = None
+    try:
+        tv = getattr(bb, 'total_volumes', None)
+    except Exception:
+        tv = None
+    if (not tv) and book is not None:
+        tv = getattr(book, 'total_volumes', None)
+    if not tv:
+        tv = 10
+    bt = getattr(book, 'book_type', None) or getattr(bb, 'book_type', 'novel')
+    if bt == 'short_story':
+        return max(1, min(3, int(tv)))
+    return max(5, min(30, int(tv)))
+
+
+def _get_novel_styles_text(bb, book=None):
+    """获取风格流派描述文本（最多3种叠加），用于注入创作上下文。"""
+    styles_raw = None
+    try:
+        styles_raw = getattr(bb, 'novel_styles', None)
+    except Exception:
+        styles_raw = None
+    if (not styles_raw) and book is not None:
+        styles_raw = getattr(book, 'novel_styles', None)
+    try:
+        styles_list = json.loads(styles_raw or '[]') if styles_raw else []
+    except Exception:
+        styles_list = []
+    if not styles_list:
+        return ''
+    labels = [NOVEL_STYLE_LABELS.get(s, s) for s in styles_list[:3]]
+    return '、'.join(labels)
+
+
+def _build_core_params_block(bb, book):
+    """构建「核心创作参数」注入块：卷数+风格流派，作为所有维度创作与章节写作的核心依据。"""
+    tv = _get_total_volumes(bb, book)
+    styles_text = _get_novel_styles_text(bb, book)
+    parts = [f'【核心创作参数·全书依据】',
+             f'总卷数：{tv} 卷（全书所有分卷/五幕总纲/剧情大纲严格按此卷数规划，不得偏离）']
+    bt = getattr(book, 'book_type', 'novel') or 'novel'
+    if bt == 'novel':
+        parts.append(f'预计总字数：约 {tv*12} 万字（每卷约12万字，约50章/卷）')
+    else:
+        parts.append(f'短篇结构：{tv} 个单元/幕')
+    if styles_text:
+        parts.append(f'风格流派：{styles_text}（人物塑造、节奏、爽点设计须契合所选流派）')
+    return '\n'.join(parts)
+
+
 def _build_master_upstream_ctx(dim, ctx):
     """按 DAG 依赖图只注入该维度的上游维度产物（不再无差别全注入）。
     自适应截断：世界观/人物档案给 2000 字预算（下游 timeline/dynamic_volumes/foreshadowing
@@ -5638,7 +5770,11 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     # ===== 8. 组装 system_prompt =====
     # 【P1重构】bible设定（5000字预算）+ 前4章完整正文+动态报告（独立段，不挤占设定预算）
     # 注意：memory_section 含前4章完整正文（约9600字）+ 10份动态报告（约8000字），总量较大但独立注入
+    # 【核心创作参数】卷数+风格流派，作为本章写作的核心依据（人物塑造/节奏/爽点须契合所选流派）
+    core_params_block = _build_core_params_block(bb, book)
     system_prompt = f"""你是番茄小说金番作者级别的写手，正在协作写一本小说，当前准备写第 {current_chapter_num} 章。
+
+{core_params_block}
 
 【设定权威分级·冲突仲裁规则】（P0-3）
 当下方各层设定发生冲突时，按权威层级从高到低取信：
@@ -7342,9 +7478,13 @@ def ai_master_create(book_id):
             position_note += f'（下游将基于你的产出继续：{"→".join(downstream_names)}）'
 
         # ===== 【P0弊端4修复】timeline 维度输出 JSON 数组格式，与 _get_volume_outline 兼容 =====
-        # 【P1修复】硬性铁律：每卷固定 50 章，卷序号连续，chapters 编号全书连续
+        # 【P1修复】硬性铁律：卷数严格按用户选择的总卷数，卷序号连续，chapters 编号全书连续
         is_timeline_dim = (dim == 'timeline')
+        core_params_block = _build_core_params_block(bb, book)
         if is_timeline_dim:
+            tv_for_timeline = _get_total_volumes(bb, book)
+            chapters_per_vol = 50
+            total_chapters = tv_for_timeline * chapters_per_vol
             system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
 {position_note}
 
@@ -7353,13 +7493,15 @@ def ai_master_create(book_id):
 书名：{book.title}
 题材：{book.genre}
 
+{core_params_block}
+
 【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
 {upstream_ctx}
 {storyline_block}{af_block_master}
 【五幕模型对齐】各卷对应五幕：立身→立足→立势→立威→立命
 【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 nodes.chapters 全书连续编号。
 
-【分卷铁律·必读】**每卷固定 50 章**。全书卷数 = 总章数÷50（向上取整），卷序号从 1 开始连续递增。卷名格式"第N卷 副标题"。
+【分卷铁律·必读】**全书共 {tv_for_timeline} 卷，每卷约 {chapters_per_vol} 章，全书约 {total_chapters} 章**。卷序号从 1 开始连续递增到 {tv_for_timeline}。卷名格式"第N卷 副标题"。必须覆盖全部 {tv_for_timeline} 卷，不得多不得少。
 
 {skill_note}{format_integration_note}
 
@@ -7379,9 +7521,9 @@ def ai_master_create(book_id):
   }}
 ]
 
-【分卷章节分配示例】全书 300 章 → 6 卷（每卷 50 章）：第1卷 1-50、第2卷 51-100、... 第6卷 251-300；每卷 nodes 章节连续不重叠。
+【分卷章节分配】全书 {total_chapters} 章 → {tv_for_timeline} 卷（每卷 {chapters_per_vol} 章）：第1卷 1-{chapters_per_vol}、第2卷 {chapters_per_vol+1}-{chapters_per_vol*2}、... 第{tv_for_timeline}卷 {(tv_for_timeline-1)*chapters_per_vol+1}-{total_chapters}；每卷 nodes 章节连续不重叠。
 直接输出 JSON 数组，不要任何解释性文字。"""
-            user_prompt = instruction or f'请为这本小说生成分卷剧情JSON数组，**每卷固定 50 章**，与已确认的上游维度保持一致，各卷符合五幕模型且卷间严格衔接。'
+            user_prompt = instruction or f'请为这本小说生成分卷剧情JSON数组，**共 {tv_for_timeline} 卷，每卷约 {chapters_per_vol} 章**，与已确认的上游维度保持一致，各卷符合五幕模型且卷间严格衔接。'
         else:
             system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
 {position_note}
@@ -7390,6 +7532,8 @@ def ai_master_create(book_id):
 
 书名：{book.title}
 题材：{book.genre}
+
+{core_params_block}
 
 【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
 {upstream_ctx}
@@ -7554,7 +7698,11 @@ def ai_master_create_stream(book_id):
                     position_note += f'（下游将基于你的产出继续：{"→".join(downstream_names)}）'
 
                 is_timeline_dim = (dim == 'timeline')
+                core_params_block = _build_core_params_block(bb, book)
                 if is_timeline_dim:
+                    tv_for_timeline = _get_total_volumes(bb, book)
+                    chapters_per_vol = 50
+                    total_chapters = tv_for_timeline * chapters_per_vol
                     system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
 {position_note}
 
@@ -7563,18 +7711,20 @@ def ai_master_create_stream(book_id):
 书名：{book.title}
 题材：{book.genre}
 
+{core_params_block}
+
 【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
 {upstream_ctx}
 {storyline_block}{af_block_master}
 【五幕模型对齐】各卷对应五幕：立身→立足→立势→立威→立命
 【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 nodes.chapters 全书连续编号。
 
-【分卷铁律·必读】**每卷固定 50 章**。全书卷数 = 总章数÷50（向上取整），卷序号从 1 开始连续递增。卷名格式"第N卷 副标题"。
+【分卷铁律·必读】**全书共 {tv_for_timeline} 卷，每卷约 {chapters_per_vol} 章，全书约 {total_chapters} 章**。卷序号从 1 开始连续递增到 {tv_for_timeline}。卷名格式"第N卷 副标题"。必须覆盖全部 {tv_for_timeline} 卷，不得多不得少。
 
 {skill_note}{format_integration_note}
 
 【输出格式铁律】严格输出 JSON 数组（不要包裹在 markdown 代码块中）。直接输出 JSON 数组，不要任何解释性文字。"""
-                    user_prompt = instruction or f'请为这本小说生成分卷剧情JSON数组，**每卷固定 50 章**，与已确认的上游维度保持一致，各卷符合五幕模型且卷间严格衔接。'
+                    user_prompt = instruction or f'请为这本小说生成分卷剧情JSON数组，**共 {tv_for_timeline} 卷，每卷约 {chapters_per_vol} 章**，与已确认的上游维度保持一致，各卷符合五幕模型且卷间严格衔接。'
                 else:
                     system_prompt = f"""你是番茄小说金番作者级别的{info['label']}设计师，正在与其他维度设计师协同创作。
 {position_note}
@@ -7583,6 +7733,8 @@ def ai_master_create_stream(book_id):
 
 书名：{book.title}
 题材：{book.genre}
+
+{core_params_block}
 
 【已确认的上游维度产物】（必须在你的产出中保持一致，不可与上游矛盾）
 {upstream_ctx}
@@ -10248,6 +10400,11 @@ def init_db():
         _add_column('book_bible', 'outline_hierarchy TEXT')
         # Migration P1-6: 章级变更日志
         _add_column('book_bible', 'chapter_changes_log TEXT')
+        # Migration: 总卷数 + 风格流派（Book 与 BookBible 双写）
+        _add_column('books', 'total_volumes INTEGER DEFAULT 10')
+        _add_column('books', "novel_styles TEXT DEFAULT '[]'")
+        _add_column('book_bible', 'total_volumes INTEGER DEFAULT 10')
+        _add_column('book_bible', "novel_styles TEXT DEFAULT '[]'")
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
