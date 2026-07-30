@@ -341,9 +341,6 @@ export default function WorkbenchPage() {
 
       {/* AI 总创作入口 */}
       <div className="home-section">
-        <div className="home-section-header">
-          <h2>🤖</h2>
-        </div>
         <button
           className="master-create-entry"
           onClick={() => setShowMasterCreateModal(true)}
