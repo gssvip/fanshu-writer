@@ -4987,28 +4987,187 @@ def _build_master_ctx(bb, session_outputs=None):
 
 
 # 网文风格流派标签库（基于2025中国网络文学蓝皮书与起点三江榜趋势）
-NOVEL_STYLE_LABELS = {
-    'shuang': '爽文流（强爽点、快节奏、升级打脸）',
-    'nue': '虐文流（情感虐心、命运波折）',
-    'tian': '甜文流（CP甜宠、轻松治愈）',
-    'system': '系统流（系统金手指、任务奖励）',
-    'wudi': '无敌流（主角无敌、碾压一切）',
-    'gou': '苟道流（稳健发育、韬光养晦）',
-    'changsheng': '长生流（修仙长生、岁月流转）',
-    'jiazu': '家族流（家族传承、代际接力）',
-    'chongsheng': '重生流（重生逆袭、弥补遗憾）',
-    'wuxian': '无限流（副本穿梭、诸天万界）',
-    'zhongtian': '种田流（经营发展、基建扩张）',
-    'heidark': '黑暗流（暗黑向、道德灰度）',
-    'zhiyu': '治愈流（温暖治愈、日常向）',
-    'xuanyi': '悬疑流（推理解谜、层层反转）',
-    'rexue': '热血流（少年热血、友情羁绊）',
-    # 短篇特有
-    'fanzhuan': '反转向（结局反转、意料之外）',
-    'danyuan': '单元剧（独立单元、短小精悍）',
-    'yingshi': '影视化（镜头语言、改编友好）',
-    'first_person': '第一人称（沉浸叙事、内心独白）',
+# 题材 → 风格流派映射表（长篇）
+# 数据来源：番茄小说/起点中文网/七猫小说/晋江文学城等主流平台分类页调研整理
+# key 为风格短码，value 为网文圈通用中文叫法
+NOVEL_GENRE_STYLES = {
+    'fantasy': {
+        'dongfang': '东方玄幻', 'yishi': '异世大陆', 'gaowu': '高武世界', 'wangchao': '王朝争霸',
+        'honghuang': '洪荒流', 'fanren': '凡人流', 'feichai': '废柴逆袭流', 'qiangzhong': '强者重生流',
+        'qiandao': '签到流', 'shenchong': '神宠流', 'dihua': '迪化流', 'shenshu': '全球神祇流',
+    },
+    'xianxia': {
+        'gudian': '古典仙侠', 'xiuzhen': '修真文明', 'huanxiang': '幻想修仙', 'xiandai': '现代修真',
+        'shenhua': '神话修真', 'fengshen': '洪荒封神', 'goudao': '苟道流', 'changsheng': '长生流',
+        'jiazu': '家族修仙流', 'jianxiu': '剑修流', 'liandan': '炼丹流', 'liangi': '炼器流',
+    },
+    'qihuan': {
+        'jianmo': '剑与魔法', 'shishi': '史诗奇幻', 'shenmi': '神秘幻想', 'xiandai': '现代魔法',
+        'lishi': '历史神话', 'xifang': '西方奇幻', 'wushi': '巫师流', 'lingzhu': '领主贵族',
+        'mofa': '魔法校园', 'zhongshi': '中式奇幻',
+    },
+    'wuxia': {
+        'chuantong': '传统武侠', 'wuxia_fs': '武侠幻想', 'guoshu': '国术流', 'xinpa': '新派武侠',
+        'lishi_wx': '历史武侠', 'langzi': '浪子异侠', 'kuaiyi': '快意江湖', 'jianghu': '江湖恩怨',
+    },
+    'urban': {
+        'shenghuo': '都市生活', 'yishu': '异术超能', 'qingchun': '青春校园', 'mingxing': '娱乐明星',
+        'shangzhan': '商战职场', 'guanchang': '官场沉浮', 'dushi_xz': '都市修真', 'dushi_gw': '都市高武',
+        'shenyi': '神医流', 'shenhao': '神豪流', 'jianbao': '鉴宝流', 'bingwang': '兵王回归', 'cunzhi': '乡村种田',
+    },
+    'urban_business': {
+        'shangzhan': '商战职场', 'chuangye': '创业逆袭', 'zhichang': '职场权谋',
+        'shangye': '商业帝国', 'zhulian': '珠联璧合', 'jindiao': '金融大鳄',
+    },
+    'urban_fantasy': {
+        'yishu': '异术超能', 'dushi_xz': '都市修真', 'dushi_gw': '都市高武',
+        'guidze': '规则怪谈', 'dushi_nr': '都市脑洞', 'lingyi': '灵异民俗',
+    },
+    'history': {
+        'jiakong': '架空历史', 'qhsg': '秦汉三国', 'tangsong': '两晋隋唐', 'wudai': '五代十国',
+        'songming': '两宋元明', 'qingmg': '清史民国', 'chuanyue_ls': '穿越历史', 'keju': '科举入仕',
+        'zhongtian_ls': '历史种田', 'quanmou': '权谋庙堂',
+    },
+    'military': {
+        'junlv': '军旅生涯', 'zhanzheng': '军事战争', 'kangzhan': '抗战烽火', 'diedz': '谍战特工',
+        'tezhong': '特种军旅', 'xiandai_zz': '现代战争', 'chuanyue_zz': '穿越战争',
+    },
+    'game': {
+        'djj': '电子竞技', 'wlw': '虚拟网游', 'youxi_yj': '游戏异界', 'youxi_xt': '游戏系统',
+        'quantxi': '全息网游', 'disitianzai': '第四天灾流', 'shuju': '数据流', 'zhandui': '战队夺冠',
+    },
+    'sports': {
+        'zuqiu': '足球运动', 'lanqiu': '篮球运动', 'wangqiu': '网球/乒乓球', 'zonghe_ty': '综合竞技',
+        'dianjing_ty': '电竞体育', 'rexue_ty': '热血竞技', 'xiaoyuan_ty': '体育校园',
+    },
+    'scifi': {
+        'xingji': '星际文明', 'weilai': '未来世界', 'chaojikj': '超级科技', 'shikong': '时空穿梭',
+        'jinhua': '进化变异', 'moshi': '末世危机', 'jijia': '古武机甲', 'saibo': '赛博朋克',
+        'feitu': '废土生存', 'xingji_zz': '星际战争', 'heikeji': '黑科技系统',
+    },
+    'mystery': {
+        'zhentan': '侦探推理', 'guilyi': '诡异神秘', 'guize': '规则怪谈', 'lingyi_ms': '灵异民俗',
+        'fengshui': '风水秘术', 'xingzhen': '刑侦破案', 'daoshu': '道术流', 'kesulu': '克苏鲁',
+        'xunyi': '悬疑探险', 'xisikongjv': '细思极恐', 'shourong': '灵异收容',
+    },
+    'infinite': {
+        'wuxian': '无限流', 'zhutian': '诸天流', 'zongman': '综漫', 'yuanzu': '元祖无限流',
+        'zhushen': '主神流', 'kuaichuan_zt': '快穿诸天', 'yingshi_ct': '影视世界穿越',
+        'dongman_ct': '动漫世界穿越', 'fuben': '副本闯关',
+    },
+    'light_novel': {
+        'yuansheng': '原生幻想', 'yansheng': '衍生同人', 'gaoxiao': '搞笑吐槽', 'liana': '恋爱日常',
+        'erciyuan': '二次元', 'rixi': '日系轻改', 'zhonger': '中二设定', 'shacao': '沙雕轻松',
+        'mengxi': '萌系', 'yishijie': '异世界',
+    },
+    # 女频
+    'romance': {
+        'dushi_tc': '都市甜宠', 'haozong': '豪门总裁', 'xianhun': '先婚后爱', 'pojing': '破镜重圆',
+        'zhuqi': '追妻火葬场', 'bazong': '总裁霸总', 'yulequan': '娱乐圈', 'zhichang_hl': '职场婚恋',
+        'niandai': '年代文', 'xianhun_yw': '闪婚', 'xiaoyuan_qc': '校园青春', 'nuelian': '虐恋情深',
+        'chongsheng_nx': '重生逆袭', 'kuaichuan_yq': '快穿',
+    },
+    'ancient_romance': {
+        'gongdou': '宫斗', 'zhaidou': '宅斗', 'gufeng': '古风世情', 'gudai_ct': '古代穿越',
+        'shunv': '庶女逆袭', 'dinu': '嫡女', 'quanchen': '权臣', 'jiangjun': '将军', 'wangye': '王爷',
+        'daihou': '帝后', 'zhongtian_gy': '种田经商', 'chaoztang': '朝堂权谋', 'daijia': '代嫁代娶', 'chongsheng_gy': '穿越重生',
+    },
+    'fantasy_romance': {
+        'xuanhuan_yq': '玄幻言情', 'qihuan_yq': '奇幻言情', 'xianxia_yq': '仙侠言情', 'xiuxian_yq': '修仙言情',
+        'xuanxue': '玄学相师', 'lingyi_yq': '灵异言情', 'yineng_nv': '异能女主', 'xitong_yq': '系统言情',
+        'chuanshu': '穿书', 'weilai_yq': '未来言情',
+    },
+    'danmei': {
+        'xiandai_ca': '现代都市纯爱', 'gudai_ca': '古代纯爱', 'xiangxiang_ca': '现代幻想纯爱', 'ab0': 'ABO',
+        'qiangqiang': '强强', 'tianwen_ca': '甜文', 'nuewen_ca': '虐文', 'xiaoyuan_ca': '校园',
+        'dianjing_ca': '电竞', 'xianxia_ca': '仙侠纯爱', 'wuxian_ca': '无限流纯爱', 'kuaichuan_ca': '快穿纯爱',
+    },
+    'acg': {
+        'dongfang_ys': '东方衍生', 'xifang_ys': '西方衍生', 'gudian_ys': '古典衍生', 'erciyuan_yq': '二次元言情',
+        'zongying': '综英美', 'zongwuxia': '综武侠', 'zongman_ys': '综漫', 'yingshi_tr': '影视同人',
+        'youxi_tr': '游戏同人', 'dongman_tr': '动漫同人',
+    },
+    'other': {
+        'xiangsheng': '相声评书', 'sanwen': '散文随笔', 'pinglun': '评论文集',
+        'youji': '美文游记', 'shige': '诗歌', 'weixiaoshuo': '微小说',
+    },
 }
+
+# 题材 → 风格流派映射表（短篇，以知乎盐选/盐言故事赛道为主）
+SHORT_GENRE_STYLES = {
+    'romance': {
+        'hunyin': '婚姻信任崩塌', 'poxi': '婆媳边界', 'zhichang_pu': '职场PUA反杀', 'yuansheng': '原生家庭拉扯',
+        'zhongnian': '中年离婚重启', 'chongnianv': '重男轻女', 'jiating': '家庭伦理', 'chongsheng_dy': '重生打脸爽文',
+    },
+    'ancient_romance': {
+        'chongsheng_fc': '重生复仇', 'shunv_nx': '庶女逆袭', 'dinu_fp': '嫡姐反派', 'qianshi': '前世惨死今生逆袭',
+        'yinren': '隐忍蛰伏摊牌打脸', 'qihun': '弃婚另嫁', 'gongdou_dp': '宫斗短篇', 'daijia_dp': '代嫁代娶', 'xianhun_dp': '先婚后爱',
+    },
+    'fantasy_romance': {
+        'bazong_zq': '霸总追妻火葬场', 'baiyueguang': '白月光替身', 'jingshen': '净身出户远走', 'chongfeng': '重逢反差',
+        'lihun': '离婚后惊艳世界', 'shanhun': '闪婚大佬', 'zongcai_bw': '总裁卑微求和', 'zhichang_tc': '职场甜宠', 'xiaoyuan_cl': '校园初恋',
+    },
+    'mystery': {
+        'shenghuohua': '生活化悬疑', 'xisikongju': '细思极恐', 'shikong_laidian': '时空来电', 'wanmei': '完美犯罪',
+        'duochong_fz': '多重反转', 'xiongsha': '凶杀推理', 'mishi': '密室', 'guize_dp': '规则怪谈短篇',
+        'minshu_dp': '民俗志怪', 'jiankong': '监控悬疑',
+    },
+    'urban_fantasy': {
+        'lingchen': '凌晨怪事', 'jiuwu': '旧物惊悚', 'chuzu': '出租屋灵异', 'laoxiaoqu': '老小区鬼事',
+        'fengshui_dp': '风水秘术', 'daoshi': '道士收妖', 'hongyi': '红衣女人', 'mintan': '民间怪谈',
+    },
+    'light_novel': {
+        'qingshed': '轻设定重映射', 'huangyan': '谎言可视化', 'danmu': '弹幕生存', 'chaoshi': '超现实外壳',
+        'she_ding': '设定撑满五千字', 'qiguai': '奇怪群聊', 'zouma': '死亡走马灯', 'gonglve': '攻略者大逃杀',
+    },
+    'other': {
+        'qingganzhiyu': '情感治愈', 'renchong': '人宠双向疗愈', 'xishui': '细水流长', 'yinanping': '意难平',
+        'houjin': '后劲极强', 'wenqing': '温情日常', 'shihuai': '释怀告别', 'chongfeng_jr': '重逢救赎',
+        'jiashu': '家书来信', 'xiaorenwu': '小人物温度',
+    },
+    'fantasy': {
+        'kaiju': '开局一个惨', 'dalian': '打脸爽文', 'baofu': '净身出户后暴富', 'zhenlong': '真龙出狱',
+        'shenyi_xl': '神医下山', 'jianbao_xl': '鉴宝赌石', 'shenhao_xt': '神豪系统', 'chongsheng_zq': '重生赚钱',
+    },
+    'scifi': {
+        'moshi_dunhuo': '末世囤货', 'anquanwu': '安全屋求生', 'gouzh': '苟住生存', 'haidao_qz': '海岛求生',
+        'sangshi': '丧尸围城', 'yidong': '移动基地', 'feitu_dp': '废土短篇', 'chongsheng_ms': '末世重生',
+    },
+    'infinite': {
+        'qiangqingxu': '强情绪快节奏', 'gao_dairu': '高代入感', 'suipian': '碎片阅读适配', 'gouzi_my': '钩子密集',
+        'duanju': '短剧改编向', 'changju': '长剧孵化向', 'dy_rencheng': '第一人称代入',
+    },
+    'wuxia': {
+        'danyuan_an': '单元案件', 'xilie_zhj': '系列主角', 'tanandanyuan': '探案单元', 'guaitan_xl': '怪谈系列',
+        'anjian_chuan': '案件串烧', 'duanpian_ll': '短篇连缀成长篇',
+    },
+    'historical': {
+        'zhenan': '真实案件改编', 'guaimai': '拐卖案', 'qianwen': '奇闻轶事', 'rensheng': '人生经历',
+        'lieqi': '猎奇奇案', 'anjiadz_fz': '案件反转',
+    },
+    'xianxia': {
+        'chongsheng_nx_dp': '重生逆袭', 'bubu': '步步为营', 'luanyi': '乱世成长', 'chaotang_qm': '朝堂权谋',
+        'guifei': '贵妃青云直上', 'shunv_fs': '庶女翻身', 'jingcheng': '京城第一美人',
+    },
+}
+
+# 短篇通用赛道兜底（题材未命中时使用）
+SHORT_FALLBACK_STYLES = {
+    'fanzhuan': '反转向（结局反转）', 'danyuanju': '单元剧', 'yingshi': '影视化（镜头语言）',
+    'first_person': '第一人称', 'shacao_dp': '沙雕爽文', 'dianwen': '颠文', 'bailan': '摆烂流',
+}
+
+
+def _get_style_label(book_type, genre, style_key):
+    """根据类型+题材查风格流派中文标签，找不到则原样返回 key。"""
+    table = SHORT_GENRE_STYLES if book_type == 'short_story' else NOVEL_GENRE_STYLES
+    genre_map = table.get(genre) if genre else None
+    if not genre_map:
+        if book_type == 'short_story':
+            genre_map = SHORT_FALLBACK_STYLES
+        else:
+            genre_map = NOVEL_GENRE_STYLES.get('fantasy', {})
+    return genre_map.get(style_key, style_key)
 
 
 def _get_total_volumes(bb, book=None):
@@ -5029,7 +5188,7 @@ def _get_total_volumes(bb, book=None):
 
 
 def _get_novel_styles_text(bb, book=None):
-    """获取风格流派描述文本（最多3种叠加），用于注入创作上下文。"""
+    """获取风格流派描述文本（最多3种叠加），按当前题材查对应风格表，用于注入创作上下文。"""
     styles_raw = None
     try:
         styles_raw = getattr(bb, 'novel_styles', None)
@@ -5043,7 +5202,9 @@ def _get_novel_styles_text(bb, book=None):
         styles_list = []
     if not styles_list:
         return ''
-    labels = [NOVEL_STYLE_LABELS.get(s, s) for s in styles_list[:3]]
+    bt = getattr(book, 'book_type', 'novel') if book is not None else getattr(bb, 'book_type', 'novel')
+    genre = getattr(book, 'genre', '') if book is not None else getattr(bb, 'genre', '')
+    labels = [_get_style_label(bt, genre, s) for s in styles_list[:3]]
     return '、'.join(labels)
 
 

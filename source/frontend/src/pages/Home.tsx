@@ -3,9 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import type { Template } from '../types';
 import { useStore } from '../store';
 import { api } from '../api';
-import { getStylesForType, getVolumeRange } from '../constants';
+import { GENRES, getStylesForGenre, filterStylesByGenre, getVolumeRange } from '../constants';
 
-const GENRES: Record<string, string> = { fantasy:'玄幻', romance:'言情', mystery:'悬疑', scifi:'科幻', wuxia:'武侠', historical:'历史', horror:'恐怖', comedy:'喜剧', other:'其他' };
 const S: Record<string,{label:string;color:string}> = { draft:{label:'草稿',color:'#9e8f6e'}, writing:{label:'连载',color:'#27ae60'}, completed:{label:'完结',color:'#2980b9'} };
 
 export default function Home() {
@@ -21,15 +20,23 @@ export default function Home() {
 
   const refresh = () => api.listBooks().then(setBooks);
 
-  // 切换类型时重置卷数和风格（确保符合新类型的范围限制）
+  // 切换类型时重置卷数，并过滤掉新类型+当前题材不支持的风格
   const handleBookTypeChange = (newType: string) => {
     const range = getVolumeRange(newType);
     setNf(prev => ({
       ...prev,
       book_type: newType,
       total_volumes: prev.total_volumes === 0 ? range.default : Math.max(range.min, Math.min(range.max, prev.total_volumes)),
-      // 过滤掉新类型不支持的风格
-      novel_styles: prev.novel_styles.filter(s => Object.prototype.hasOwnProperty.call(getStylesForType(newType), s)),
+      novel_styles: filterStylesByGenre(newType, prev.genre, prev.novel_styles),
+    }));
+  };
+
+  // 切换题材时过滤掉新题材不支持的风格（题材-风格联动核心）
+  const handleGenreChange = (newGenre: string) => {
+    setNf(prev => ({
+      ...prev,
+      genre: newGenre,
+      novel_styles: filterStylesByGenre(prev.book_type, newGenre, prev.novel_styles),
     }));
   };
 
@@ -130,7 +137,19 @@ export default function Home() {
             <div className="form-group"><label>作者</label><input value={nf.author} onChange={e=>setNf({...nf,author:e.target.value})} placeholder="笔名"/></div>
             <div style={{display:'flex',gap:8}}>
               <div className="form-group" style={{flex:1}}><label>类型</label><select value={nf.book_type} onChange={e=>handleBookTypeChange(e.target.value)}><option value="short_story">短篇</option><option value="novel">长篇</option><option value="script">剧本</option></select></div>
-              <div className="form-group" style={{flex:1}}><label>题材</label><select value={nf.genre} onChange={e=>setNf({...nf,genre:e.target.value})}>{Object.entries(GENRES).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></div>
+              <div className="form-group" style={{flex:1}}><label>题材</label><select value={nf.genre} onChange={e=>handleGenreChange(e.target.value)}>
+                <optgroup label="通用"><option value="other">其他</option></optgroup>
+                <optgroup label="男频">
+                  <option value="urban">都市</option><option value="urban_business">都市职场</option><option value="urban_fantasy">都市异能</option>
+                  <option value="fantasy">玄幻</option><option value="xianxia">仙侠</option><option value="qihuan">奇幻</option><option value="wuxia">武侠</option>
+                  <option value="history">历史</option><option value="military">军事</option><option value="game">游戏</option><option value="sports">体育</option>
+                  <option value="scifi">科幻</option><option value="mystery">悬疑</option><option value="infinite">诸天无限</option><option value="light_novel">轻小说</option>
+                </optgroup>
+                <optgroup label="女频">
+                  <option value="romance">现代言情</option><option value="ancient_romance">古代言情</option><option value="fantasy_romance">幻想言情</option>
+                  <option value="danmei">纯爱</option><option value="acg">二次元</option>
+                </optgroup>
+              </select></div>
             </div>
             {(() => {
               const range = getVolumeRange(nf.book_type);
@@ -147,10 +166,10 @@ export default function Home() {
               );
             })()}
             {(() => {
-              const styles = getStylesForType(nf.book_type);
+              const styles = getStylesForGenre(nf.book_type, nf.genre);
               return (
                 <div className="form-group">
-                  <label>风格流派（可多选，最多3种叠加 · 已选 {nf.novel_styles.length}/3）</label>
+                  <label>风格流派（随题材变化 · 可多选最多3种 · 已选 {nf.novel_styles.length}/3）</label>
                   <div style={{display:'flex',flexWrap:'wrap',gap:6,maxHeight:120,overflowY:'auto'}}>
                     {Object.entries(styles).map(([k,v])=>{
                       const sel = nf.novel_styles.includes(k);
