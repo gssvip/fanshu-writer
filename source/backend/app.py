@@ -286,6 +286,7 @@ class Chapter(db.Model):
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     notes = db.Column(db.Text, default='')
     review_snapshots = db.Column(db.Text, default='')  # P1-5：审计-修订闭环 best snapshot 历史（JSON）
+    summary = db.Column(db.String(500), default='')  # 章节摘要（用于上下文构建，避免塞入完整正文）
 
     versions = db.relationship('ChapterVersion', backref='chapter', lazy=True, cascade='all, delete-orphan', order_by='ChapterVersion.version_num.desc()')
 
@@ -296,7 +297,8 @@ class Chapter(db.Model):
             'status': self.status, 'is_volume': self.is_volume, 'parent_id': self.parent_id,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'notes': self.notes
+            'notes': self.notes,
+            'summary': self.summary,
         }
         if include_content:
             d['content'] = self.content
@@ -4795,7 +4797,7 @@ def _recall_related_chapters(book_id, appearing_chars, current_chapter_num, max_
     recalled = []
     seen_chapters = set()
     for ch in candidates:
-        summary = (ch.summary or '').strip()
+        summary = (getattr(ch, 'summary', '') or '').strip()
         if not summary or len(summary) < 10:
             continue  # 无 summary 无法判断相关性
         # 相关性判定：summary 含当前章出场角色名
@@ -11210,6 +11212,8 @@ def init_db():
         _add_column('book_bible', "novel_styles TEXT DEFAULT '[]'")
         # Migration P1-5: 章节审计-修订闭环快照（修复保存章节 500 错误：老库缺此列）
         _add_column('chapters', 'review_snapshots TEXT')
+        # Migration: 章节摘要（修复 'Chapter' object has no attribute 'summary'：老库缺此列）
+        _add_column('chapters', 'summary VARCHAR(500)')
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
