@@ -6137,6 +6137,9 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     # ===== 9. 动态 temperature（#10）=====
     temperature = _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, chapters_in_vol)
 
+    # ===== 10. 组装 user_prompt（第6142行返回引用，必须在此定义）=====
+    user_prompt = instruction or f'请写第 {current_chapter_num} 章正文，严格遵循上方设定与计划。'
+
     return {
         'system_prompt': system_prompt,
         'user_prompt': user_prompt,
