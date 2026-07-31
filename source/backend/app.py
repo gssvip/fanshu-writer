@@ -6770,120 +6770,123 @@ def ai_continue_batch(book_id):
         import re as _re_batch
         prev_content = None
         results = []
-        for i in range(count):
-            # 每章进度
-            yield f'data: {json.dumps({"type":"progress","chapter_index":i+1,"total":count}, ensure_ascii=False)}\n\n'
-            try:
-                # 章号：首章用 start_chapter_num 或自动计算，后续递增
-                target_num = start_chapter_num + i if start_chapter_num else None
-                ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids,
-                                                  target_num, prev_content, chapter_lang_styles)
-                api_key = ctx['api_key']
-                base_url = ctx['base_url']
-                model = ctx['model']
-                cur_ch = ctx['current_chapter_num']
+        # SSE 生成器在独立线程执行，请求/应用上下文已退出，需手动进入应用上下文
+        # 否则 db.session / Model.query 会报 "Working outside of application context"
+        with app.app_context():
+            for i in range(count):
+                # 每章进度
+                yield f'data: {json.dumps({"type":"progress","chapter_index":i+1,"total":count}, ensure_ascii=False)}\n\n'
+                try:
+                    # 章号：首章用 start_chapter_num 或自动计算，后续递增
+                    target_num = start_chapter_num + i if start_chapter_num else None
+                    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids,
+                                                      target_num, prev_content, chapter_lang_styles)
+                    api_key = ctx['api_key']
+                    base_url = ctx['base_url']
+                    model = ctx['model']
+                    cur_ch = ctx['current_chapter_num']
 
-                # 正文生成
-                resp = requests.post(f'{base_url}/chat/completions',
-                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                    json={'model': model, 'messages': [{'role':'system','content':ctx['system_prompt']},
-                                                        {'role':'user','content':ctx['user_prompt']}],
-                          'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens']},
-                    timeout=180)
-                draft_content = resp.json()['choices'][0]['message']['content']
+                    # 正文生成
+                    resp = requests.post(f'{base_url}/chat/completions',
+                        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                        json={'model': model, 'messages': [{'role':'system','content':ctx['system_prompt']},
+                                                            {'role':'user','content':ctx['user_prompt']}],
+                              'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens']},
+                        timeout=180)
+                    draft_content = resp.json()['choices'][0]['message']['content']
 
-                # 字数铁律：超出 2300-2500 区间则调用 AI 重写修正
-                draft_len = len(_re_batch.sub(r'\s', '', draft_content))
-                if draft_len > 2500 or draft_len < 2300:
-                    direction = '精简删减冗余' if draft_len > 2500 else '扩写补充场景细节'
-                    method = ('精简方法：删冗余形容词/重复心理描写/过度环境渲染/总结性句子，保留对话动作与剧情走向。'
-                              if draft_len > 2500 else
-                              '扩写方法：增加感官细节/动作描写/对话节拍/场景纵深，不增加新剧情不改变走向。')
-                    rewrite_system = (f'你是字数修正编辑。当前章节初稿{draft_len}字，需{direction}至 2400字±100（2300-2500字区间，含标点）。'
-                                      f'【字数绝对铁律】最终输出必须落在 2300-2500 字区间。'
-                                      f'【保留要求】保留原章节的剧情走向、人物对话、章尾钩子、关键信息，不改变故事内容，只调整篇幅。'
-                                      f'{method}只输出修正后的完整正文，不输出任何说明或前缀。')
-                    try:
-                        rewrite_resp = requests.post(f'{base_url}/chat/completions',
-                            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                            json={'model': model,
-                                  'messages': [{'role':'system','content':rewrite_system},
-                                               {'role':'user','content':f'请修正以下章节正文字数：\n\n{draft_content}'}],
-                                  'temperature': 0.5, 'max_tokens': 12000},
-                            timeout=180)
-                        rewritten = rewrite_resp.json()['choices'][0]['message']['content'].strip()
-                        rewritten_len = len(_re_batch.sub(r'\s', '', rewritten))
-                        if rewritten and 2300 <= rewritten_len <= 2500:
-                            draft_content = rewritten
-                        elif rewritten and rewritten_len > 500 and abs(rewritten_len - 2400) < abs(draft_len - 2400):
-                            draft_content = rewritten
-                    except Exception:
-                        pass
-
-                polished_content = draft_content
-                # 去 AI 味（仅当技能包含 deai 时）
-                if skill_pack_ids:
-                    deai_skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_deai'], max_per_prompt=1200, mode='agent')
-                    if deai_skill_note:
-                        deai_system = f"""你是番茄去AI味审查员。对以下章节正文做去AI味审校，只输出修改后的正文。
-{deai_skill_note}
-【人物深度要求】人物必须有矛盾心理/纠结/自我怀疑/口是心非，禁止情绪/顿悟/决策顺滑，禁止OOC，杜绝标准套话/工整过渡/完美描写。
-【硬性约束】字数 2400±100，保留剧情走向和钩子，只改文风不改剧情。"""
+                    # 字数铁律：超出 2300-2500 区间则调用 AI 重写修正
+                    draft_len = len(_re_batch.sub(r'\s', '', draft_content))
+                    if draft_len > 2500 or draft_len < 2300:
+                        direction = '精简删减冗余' if draft_len > 2500 else '扩写补充场景细节'
+                        method = ('精简方法：删冗余形容词/重复心理描写/过度环境渲染/总结性句子，保留对话动作与剧情走向。'
+                                  if draft_len > 2500 else
+                                  '扩写方法：增加感官细节/动作描写/对话节拍/场景纵深，不增加新剧情不改变走向。')
+                        rewrite_system = (f'你是字数修正编辑。当前章节初稿{draft_len}字，需{direction}至 2400字±100（2300-2500字区间，含标点）。'
+                                          f'【字数绝对铁律】最终输出必须落在 2300-2500 字区间。'
+                                          f'【保留要求】保留原章节的剧情走向、人物对话、章尾钩子、关键信息，不改变故事内容，只调整篇幅。'
+                                          f'{method}只输出修正后的完整正文，不输出任何说明或前缀。')
                         try:
-                            deai_resp = requests.post(f'{base_url}/chat/completions',
+                            rewrite_resp = requests.post(f'{base_url}/chat/completions',
                                 headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                                json={'model': model, 'messages': [{'role':'system','content':deai_system},
-                                    {'role':'user','content':f'去AI味：\n\n{draft_content}'}],
-                                      'temperature': 0.6, 'max_tokens': 12000}, timeout=180)
-                            deai_out = deai_resp.json()['choices'][0]['message']['content'].strip()
-                            if deai_out and len(deai_out) > 200:
-                                polished_content = deai_out
+                                json={'model': model,
+                                      'messages': [{'role':'system','content':rewrite_system},
+                                                   {'role':'user','content':f'请修正以下章节正文字数：\n\n{draft_content}'}],
+                                      'temperature': 0.5, 'max_tokens': 12000},
+                                timeout=180)
+                            rewritten = rewrite_resp.json()['choices'][0]['message']['content'].strip()
+                            rewritten_len = len(_re_batch.sub(r'\s', '', rewritten))
+                            if rewritten and 2300 <= rewritten_len <= 2500:
+                                draft_content = rewritten
+                            elif rewritten and rewritten_len > 500 and abs(rewritten_len - 2400) < abs(draft_len - 2400):
+                                draft_content = rewritten
                         except Exception:
                             pass
 
-                # 一致性检查
-                consistency_passed, consistency_issues = _consistency_check(
-                    book_id, bb, polished_content, cur_ch, api_key, base_url, model,
-                    chapter_plan=ctx.get('chapter_plan', ''))
+                    polished_content = draft_content
+                    # 去 AI 味（仅当技能包含 deai 时）
+                    if skill_pack_ids:
+                        deai_skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_deai'], max_per_prompt=1200, mode='agent')
+                        if deai_skill_note:
+                            deai_system = f"""你是番茄去AI味审查员。对以下章节正文做去AI味审校，只输出修改后的正文。
+{deai_skill_note}
+【人物深度要求】人物必须有矛盾心理/纠结/自我怀疑/口是心非，禁止情绪/顿悟/决策顺滑，禁止OOC，杜绝标准套话/工整过渡/完美描写。
+【硬性约束】字数 2400±100，保留剧情走向和钩子，只改文风不改剧情。"""
+                            try:
+                                deai_resp = requests.post(f'{base_url}/chat/completions',
+                                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                                    json={'model': model, 'messages': [{'role':'system','content':deai_system},
+                                        {'role':'user','content':f'去AI味：\n\n{draft_content}'}],
+                                          'temperature': 0.6, 'max_tokens': 12000}, timeout=180)
+                                deai_out = deai_resp.json()['choices'][0]['message']['content'].strip()
+                                if deai_out and len(deai_out) > 200:
+                                    polished_content = deai_out
+                            except Exception:
+                                pass
 
-                # 标题自动生成：解析【标题】标签，剥离正文标签行
-                suggested_title = _extract_chapter_title(draft_content)
-                if suggested_title:
-                    polished_content = _re_batch.sub(r'【标题】[^\n]*', '', polished_content).rstrip()
+                    # 一致性检查
+                    consistency_passed, consistency_issues = _consistency_check(
+                        book_id, bb, polished_content, cur_ch, api_key, base_url, model,
+                        chapter_plan=ctx.get('chapter_plan', ''))
 
-                # 评分
-                wc = len(_re_batch.sub(r'\s', '', polished_content))
-                chapter_score = _calc_chapter_score(None, consistency_passed, consistency_issues, {}, wc, ctx.get('chapter_plan', ''))
+                    # 标题自动生成：解析【标题】标签，剥离正文标签行
+                    suggested_title = _extract_chapter_title(draft_content)
+                    if suggested_title:
+                        polished_content = _re_batch.sub(r'【标题】[^\n]*', '', polished_content).rstrip()
 
-                # 自动保存为 Chapter（标题优先用解析结果，无则回退"第X章"）
-                title = suggested_title or f'第{cur_ch}章'
-                max_order = db.session.query(db.func.max(Chapter.order_index)).filter_by(book_id=book_id).scalar() or -1
-                ch = Chapter(book_id=book_id, title=title, content=polished_content,
-                             order_index=max_order + 1, is_volume=False,
-                             word_count=count_words(polished_content))
-                db.session.add(ch)
-                db.session.flush()
-                update_book_stats(book_id)
-                db.session.commit()
+                    # 评分
+                    wc = len(_re_batch.sub(r'\s', '', polished_content))
+                    chapter_score = _calc_chapter_score(None, consistency_passed, consistency_issues, {}, wc, ctx.get('chapter_plan', ''))
 
-                # 下一章把本章作为上一章注入
-                prev_content = polished_content
+                    # 自动保存为 Chapter（标题优先用解析结果，无则回退"第X章"）
+                    title = suggested_title or f'第{cur_ch}章'
+                    max_order = db.session.query(db.func.max(Chapter.order_index)).filter_by(book_id=book_id).scalar() or -1
+                    ch = Chapter(book_id=book_id, title=title, content=polished_content,
+                                 order_index=max_order + 1, is_volume=False,
+                                 word_count=count_words(polished_content))
+                    db.session.add(ch)
+                    db.session.flush()
+                    update_book_stats(book_id)
+                    db.session.commit()
 
-                results.append({
-                    'chapter_num': cur_ch,
-                    'chapter_id': ch.id,
-                    'title': title,
-                    'suggested_title': suggested_title,
-                    'score': chapter_score,
-                    'consistency_passed': consistency_passed,
-                    'word_count': wc,
-                })
-                yield f'data: {json.dumps({"type":"chapter_done","chapter":results[-1],"content":polished_content}, ensure_ascii=False)}\n\n'
-            except Exception as e:
-                yield f'data: {json.dumps({"type":"error","chapter_index":i+1,"error":str(e)[:200]}, ensure_ascii=False)}\n\n'
-                # 单章失败不中断，继续下一章
-                continue
-        yield f'data: {json.dumps({"type":"batch_done","results":results,"count":len(results)}, ensure_ascii=False)}\n\n'
+                    # 下一章把本章作为上一章注入
+                    prev_content = polished_content
+
+                    results.append({
+                        'chapter_num': cur_ch,
+                        'chapter_id': ch.id,
+                        'title': title,
+                        'suggested_title': suggested_title,
+                        'score': chapter_score,
+                        'consistency_passed': consistency_passed,
+                        'word_count': wc,
+                    })
+                    yield f'data: {json.dumps({"type":"chapter_done","chapter":results[-1],"content":polished_content}, ensure_ascii=False)}\n\n'
+                except Exception as e:
+                    yield f'data: {json.dumps({"type":"error","chapter_index":i+1,"error":str(e)[:200]}, ensure_ascii=False)}\n\n'
+                    # 单章失败不中断，继续下一章
+                    continue
+            yield f'data: {json.dumps({"type":"batch_done","results":results,"count":len(results)}, ensure_ascii=False)}\n\n'
 
     from flask import Response
     return Response(_generate(), mimetype='text/event-stream')
