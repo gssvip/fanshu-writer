@@ -33,7 +33,8 @@ git config user.email "deploy@fanshu.dev"
 git config user.name "fanshu-deploy"
 git add -A
 git commit -m "deploy: $(date +'%Y-%m-%d %H:%M:%S')" -q || true
-git push -f origin gh-pages
+# 本地分支为 master/main，推到远程 gh-pages 分支
+git push -f origin HEAD:gh-pages
 
 echo "=== 部署完成 ==="
 echo "main: https://fanshu-writer-backend.onrender.com"
