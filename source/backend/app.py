@@ -11205,6 +11205,8 @@ def init_db():
         _add_column('books', "novel_styles TEXT DEFAULT '[]'")
         _add_column('book_bible', 'total_volumes INTEGER DEFAULT 10')
         _add_column('book_bible', "novel_styles TEXT DEFAULT '[]'")
+        # Migration P1-5: 章节审计-修订闭环快照（修复保存章节 500 错误：老库缺此列）
+        _add_column('chapters', 'review_snapshots TEXT')
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
