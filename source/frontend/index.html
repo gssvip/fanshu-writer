@@ -27,6 +27,30 @@
           }
         });
       }
+      // 版本自检：绕过 GitHub Pages index.html 600秒缓存，部署后自动刷新
+      // version.json 由 deploy.sh 每次部署生成，fetch 时带时间戳破缓存
+      (function () {
+        var KEY = 'fanshu-version';
+        function check() {
+          fetch('./version.json?_t=' + Date.now(), { cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (data) {
+              if (!data || !data.v) return;
+              var saved = localStorage.getItem(KEY);
+              if (saved && saved !== data.v) {
+                // 版本不一致，部署了新版，强制刷新拉取新 index.html
+                localStorage.setItem(KEY, data.v);
+                location.reload();
+              } else if (!saved) {
+                localStorage.setItem(KEY, data.v);
+              }
+            })
+            .catch(function () { /* 静默失败，不影响使用 */ });
+        }
+        // 首次加载延迟 3 秒检查（避开冷启动请求高峰），之后每 60 秒轮询
+        setTimeout(check, 3000);
+        setInterval(check, 60000);
+      })();
     </script>
   </head>
   <body>

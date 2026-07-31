@@ -5,6 +5,15 @@ echo "=== 构建前端 ==="
 cd /workspace/source/frontend
 npm run build
 
+echo "=== 生成版本指纹 version.json（供前端自检刷新）==="
+# 从 dist/index.html 提取 JS 文件名作为版本指纹，加时间戳保证每次部署唯一
+JS_FILE=$(grep -oE 'assets/index-[^"]+\.js' dist/index.html | head -1)
+DEPLOY_TS=$(date +%s)
+cat > dist/version.json <<EOF
+{"v": "${DEPLOY_TS}", "js": "${JS_FILE}", "time": "$(date +'%Y-%m-%d %H:%M:%S')"}
+EOF
+echo "version.json 内容: $(cat dist/version.json)"
+
 echo "=== 复制产物到 backend/static ==="
 cd /workspace/source
 rm -rf backend/static/*
@@ -13,6 +22,7 @@ cp -r frontend/dist/* backend/static/
 echo "=== 更新仓库根目录（供 GitHub Pages main 分支使用）==="
 cd /workspace
 cp -f source/frontend/dist/index.html .
+cp -f source/frontend/dist/version.json .
 # 完全清空 assets 目录后再复制，避免旧版本 JS/CSS 残留导致 index.html 引用失配
 rm -rf assets
 mkdir -p assets
