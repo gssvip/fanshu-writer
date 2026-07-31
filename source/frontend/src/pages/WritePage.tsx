@@ -4035,6 +4035,8 @@ function PlotPanel(props: {
   const [targetWords, setTargetWords] = useState<number>(0);
   const [targetVolumeCount, setTargetVolumeCount] = useState<number>(0);
   const [showVolumeCalc, setShowVolumeCalc] = useState(false);
+  // setTargetWords 暂未在 UI 接入，保留以备后续自动分卷输入框；此处引用避免 noUnusedLocals 报错
+  void setTargetWords;
   const [volumeGeneratingIdx, setVolumeGeneratingIdx] = useState<number | null>(null);
   const [volumeData, setVolumeData] = useState<any[]>([]);
   const [expandedVol, setExpandedVol] = useState<Set<number>>(new Set());
