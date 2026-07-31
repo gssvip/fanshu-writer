@@ -241,6 +241,7 @@ export default function WritePage() {
   const [aiCreateMode, setAiCreateMode] = useState<'write' | 'continue' | 'polish' | null>(null);
   const [aiGeneratedContent, setAiGeneratedContent] = useState('');
   const [aiCreating, setAiCreating] = useState(false);
+  const [savingChapter, setSavingChapter] = useState(false);
   const [aiStreamError, setAiStreamError] = useState('');
   const [aiUserPrompt, setAiUserPrompt] = useState('');
   // 章节AI聊天历史（持久保留，类似聊天窗口）
@@ -1303,7 +1304,9 @@ ${chapterEditContent}`;
   // 确认AI生成内容，保存到目标章节；保存后面板保持开启并自动推进到下一章
   // 章节自动归卷：按 50 章/卷规则，新建章节时根据章号计算应归入的卷（无需手动新建章节/卷）
   async function confirmAiContent() {
+    if (savingChapter) return; // 防重复点击
     if (!aiCreateMode || !aiGeneratedContent.trim() || !bookId) return;
+    setSavingChapter(true);
     let content = aiGeneratedContent;
     if (aiCreateMode === 'continue') {
       content = chapterEditContent
@@ -1431,6 +1434,8 @@ ${chapterEditContent}`;
       setAiUserPrompt(`请创作第${nextNum}章正文，要求前后文剧情连贯、剧情符合各维度设定、语句自然无ai味儿，字数2400±100字。`);
     } catch (e: any) {
       alert('保存章节失败: ' + e.message);
+    } finally {
+      setSavingChapter(false);
     }
   }
 
@@ -1739,6 +1744,7 @@ ${chapterEditContent}`;
             aiCreateMode={aiCreateMode}
             aiGeneratedContent={aiGeneratedContent}
             aiCreating={aiCreating}
+            savingChapter={savingChapter}
             aiStreamError={aiStreamError}
             aiUserPrompt={aiUserPrompt}
             skillPacks={skillPacks}
@@ -2425,6 +2431,7 @@ function ChapterPanel(props: {
   aiCreateMode: 'write' | 'continue' | 'polish' | null;
   aiGeneratedContent: string;
   aiCreating: boolean;
+  savingChapter: boolean;
   aiStreamError: string;
   aiUserPrompt: string;
   skillPacks: SkillPack[];
@@ -2476,7 +2483,7 @@ function ChapterPanel(props: {
   onBatchCreate?: () => void;
 }) {
   const { chapters, activeChapter, chapterEditing, chapterEditTitle, chapterEditContent, chapterSaving,
-    aiCreateMode, aiGeneratedContent, aiCreating, aiStreamError, aiUserPrompt,
+    aiCreateMode, aiGeneratedContent, aiCreating, savingChapter, aiStreamError, aiUserPrompt,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
     onSelectChapter, onCreateChapter, onCreateVolume, onSaveChapter, onDeleteChapter, onCancelEdit, onStartEdit,
     onEditTitle, onEditContent, onBackToList, onStartAiCreate, onExecuteAiCreate, onConfirmAiContent, onCancelAiCreate, onStopAiCreate, onEditAiPrompt,
@@ -2986,9 +2993,11 @@ function ChapterPanel(props: {
                 <button
                   className="btn-primary-sm"
                   onClick={onConfirmAiContent}
-                  title="将本次生成内容保存到目标章节"
+                  disabled={savingChapter}
+                  title={savingChapter ? '保存中...' : '将本次生成内容保存到目标章节'}
+                  style={savingChapter ? { opacity: 0.6, cursor: 'not-allowed' } : undefined}
                 >
-                  ✓ 保存到章节
+                  {savingChapter ? '⏳ 保存中...' : '✓ 保存到章节'}
                 </button>
               </div>
             )}
