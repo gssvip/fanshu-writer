@@ -349,6 +349,15 @@ export const api = {
         warning_count: number;
         issues: Array<{ gate: string; severity: string; message: string }>;
       } | null;
+      // 审校评分制：0-100 分 + 等级 + 5 维明细 + auto_revise
+      chapter_score?: {
+        score: number;
+        grade: 'A' | 'B' | 'C' | 'D';
+        auto_revise: boolean;
+        breakdown: Record<string, number>;
+      } | null;
+      // 标题自动生成：AI 解析的章节标题
+      suggested_title?: string;
     }>(`/books/${bookId}/ai-continue`, {
       method: 'POST',
       body: JSON.stringify({
@@ -363,6 +372,24 @@ export const api = {
         chapter_lang_styles: opts?.chapterLangStyles || [],
       }),
     }, signal),
+
+  // 连续创作模式：SSE 流式批量生成 N 章，自动保存。返回原始 Response（含 body 流）
+  aiContinueBatch: (bookId: string, instruction: string, skillPackIds: string[], count: number, opts?: { startChapterNum?: number; chapterLangStyles?: string[] }) => {
+    const token = getToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-continue-batch`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        instruction,
+        skill_pack_ids: skillPackIds || [],
+        count,
+        start_chapter_num: opts?.startChapterNum,
+        chapter_lang_styles: opts?.chapterLangStyles || [],
+      }),
+    });
+  },
 
   // P2-9：Spot-Fix 修订（按校验问题路由：local 类只修补问题段落，省 token）
   aiSpotFix: (bookId: string, content: string, postValidate: any, mode: string = 'auto', signal?: AbortSignal) =>

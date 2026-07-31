@@ -265,6 +265,10 @@ export default function WritePage() {
   const [agentMeta, setAgentMeta] = useState<any>(null); // 存放 aiContinue 返回的 chapter_plan/温度/卷信息等
   const [spotFixing, setSpotFixing] = useState(false); // P2-9：Spot-Fix 修订中
   const [spotFixMsg, setSpotFixMsg] = useState(''); // P2-9：修订结果提示
+  // 连续创作模式：批量生成 N 章
+  const [batchCount, setBatchCount] = useState(3);
+  const [batchCreating, setBatchCreating] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ cur: number; total: number; done: number }>({ cur: 0, total: 0, done: 0 });
   // 本章语言风格（行文文风，最多3个叠加），注入 AI 指导本章行文
   const [chapterLangStyles, setChapterLangStyles] = useState<string[]>([]);
   const toggleChapterLangStyle = useCallback((key: string) => {
@@ -855,6 +859,71 @@ export default function WritePage() {
     executeAiCreate(lastUserMsg.content, prevContentForCtx);
   }
 
+  // 连续创作模式：SSE 流式批量生成 N 章，自动保存
+  async function batchCreate() {
+    if (!bookId || batchCreating) return;
+    if (batchCount < 1 || batchCount > 10) { alert('章数需在 1-10 之间'); return; }
+    setBatchCreating(true);
+    setBatchProgress({ cur: 0, total: batchCount, done: 0 });
+    setAiStreamError('');
+    try {
+      const progress = computeChapterProgress();
+      const resp = await api.aiContinueBatch(bookId, aiUserPrompt || (concept || ''), selectedSkillPackIds, batchCount, {
+        startChapterNum: progress.targetNum,
+        chapterLangStyles,
+      });
+      if (!resp.body) throw new Error('无响应流');
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let doneCount = 0;
+      let lastContent = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.type === 'progress') {
+              setBatchProgress({ cur: evt.chapter_index, total: evt.total, done: doneCount });
+            } else if (evt.type === 'chapter_done') {
+              doneCount++;
+              setBatchProgress({ cur: evt.chapter.chapter_num, total: batchCount, done: doneCount });
+              lastContent = evt.content || '';
+              setAiGeneratedContent(lastContent);
+              // 若返回了 AI 标题，回填当前标题输入框（仅当标题为空或默认"第X章"时）
+              const st = evt.chapter?.suggested_title;
+              if (st) {
+                const cur = chapterEditTitle || '';
+                const isDefault = /^第[一二三四五六七八九十百零0-9]+章\s*$/.test(cur.trim()) || !cur.trim();
+                if (isDefault) setChapterEditTitle(st);
+              }
+            } else if (evt.type === 'error') {
+              setAiStreamError(`第${evt.chapter_index}章生成失败：${evt.error}`);
+            } else if (evt.type === 'batch_done') {
+              setBatchProgress({ cur: batchCount, total: batchCount, done: evt.count });
+              // 刷新章节列表
+              try {
+                const fresh = await api.listChapters(bookId);
+                setChapters(fresh);
+              } catch { /* ignore */ }
+              setAiChatHistory(prev => [...prev, { role: 'assistant', content: `✅ 连续创作完成，共生成 ${evt.count} 章并已自动保存。`, type: 'status' as const }]);
+            }
+          } catch { /* ignore parse error */ }
+        }
+      }
+    } catch (e: any) {
+      setAiStreamError(e.message || '连续创作失败');
+    } finally {
+      setBatchCreating(false);
+      setAiCreating(false);
+    }
+  }
+
   // 执行AI创作（用户提问后触发）
   // overridePrompt：重新生成时直接传入上一次提问，跳过清空输入框等操作
   // prevContentForCtx：上一版生成内容（重新生成场景），传给后端做剧情承接参考，避免上下文断档
@@ -911,7 +980,19 @@ export default function WritePage() {
           changes_applied: result.changes_applied,
           // P2-10 新增：落地门禁结果
           gate_result: result.gate_result,
+          // 审校评分制：0-100 分 + 等级 + 5 维明细 + auto_revise
+          chapter_score: result.chapter_score,
+          // 标题自动生成：AI 解析的标题
+          suggested_title: result.suggested_title,
         });
+        // 标题自动生成：若 AI 返回了标题且当前标题为空或为默认"第X章"，自动回填
+        if (result.suggested_title) {
+          const cur = chapterEditTitle || '';
+          const isDefault = /^第[一二三四五六七八九十百零0-9]+章\s*$/.test(cur.trim()) || !cur.trim();
+          if (isDefault) {
+            setChapterEditTitle(result.suggested_title);
+          }
+        }
       } catch (e: any) {
         if (signal.aborted || aiStoppedRef.current) return;
         setAiStreamError(e.message || 'Agent管线调用失败，请检查AI配置');
@@ -1724,6 +1805,11 @@ ${chapterEditContent}`;
             aiTargetChapterId={aiTargetChapterId}
             chapterLangStyles={chapterLangStyles}
             onToggleChapterLangStyle={toggleChapterLangStyle}
+            batchCount={batchCount}
+            onBatchCountChange={setBatchCount}
+            batchCreating={batchCreating}
+            batchProgress={batchProgress}
+            onBatchCreate={batchCreate}
           />
         ) : isDynamicMemoryTab ? (
           <DynamicMemoryPanel
@@ -2381,6 +2467,12 @@ function ChapterPanel(props: {
   // 本章语言风格（行文文风，最多3个叠加）
   chapterLangStyles?: string[];
   onToggleChapterLangStyle?: (key: string) => void;
+  // 连续创作模式
+  batchCount?: number;
+  onBatchCountChange?: (v: number) => void;
+  batchCreating?: boolean;
+  batchProgress?: { cur: number; total: number; done: number };
+  onBatchCreate?: () => void;
 }) {
   const { chapters, activeChapter, chapterEditing, chapterEditTitle, chapterEditContent, chapterSaving,
     aiCreateMode, aiGeneratedContent, aiCreating, aiStreamError, aiUserPrompt,
@@ -2392,6 +2484,7 @@ function ChapterPanel(props: {
     spotFixing, spotFixMsg, onSpotFix,
     aiChatHistory, onClearAiChatHistory, onToggleChatMsgCollapse, onRefreshChapterAnchor, onRegenerateAiContent, aiTargetChapterId,
     chapterLangStyles: langStyles, onToggleChapterLangStyle,
+    batchCount, onBatchCountChange, batchCreating, batchProgress, onBatchCreate,
   } = props;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
@@ -2668,7 +2761,42 @@ function ChapterPanel(props: {
                     {' · 📝状态已回写'}
                   </span>
                 )}
+                {agentMeta.suggested_title && (
+                  <span style={{ color: '#9b59b6' }} title={`AI自动生成标题：${agentMeta.suggested_title}`}>
+                    {' · 🏷️标题已生成'}「{agentMeta.suggested_title}」
+                  </span>
+                )}
               </div>
+              {/* 审校评分制：0-100 分数仪表盘 + 5 维明细 */}
+              {agentMeta.chapter_score && (() => {
+                const sc = agentMeta.chapter_score;
+                const gradeColor = sc.grade === 'A' ? '#27ae60' : sc.grade === 'B' ? '#2ecc71' : sc.grade === 'C' ? '#f39c12' : '#e74c3c';
+                const scoreColor = sc.score >= 90 ? '#27ae60' : sc.score >= 75 ? '#2ecc71' : sc.score >= 60 ? '#f39c12' : '#e74c3c';
+                const dims = [['一致性', 30], ['AI痕迹', 25], ['字数', 15], ['文风排版', 15], ['计划执行', 15]] as const;
+                return (
+                  <div style={{ marginTop: 6, padding: '6px 8px', background: 'var(--bg-secondary)', borderRadius: 4, borderLeft: `3px solid ${gradeColor}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                      <span style={{ fontSize: 18, fontWeight: 700, color: scoreColor }}>{sc.score}<span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>/100</span></span>
+                      <span style={{ padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, color: '#fff', background: gradeColor }}>{sc.grade}级</span>
+                      {sc.auto_revise && <span style={{ color: '#e74c3c', fontSize: 11 }}>· 建议自动修订</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 10 }}>
+                      {dims.map(([name, full]) => {
+                        const got = sc.breakdown?.[name] ?? 0;
+                        const ratio = got / full;
+                        return (
+                          <div key={name} style={{ minWidth: 70 }}>
+                            <div style={{ color: 'var(--text-secondary)' }}>{name} {got}/{full}</div>
+                            <div style={{ height: 4, background: 'var(--bg-tertiary)', borderRadius: 2, marginTop: 2 }}>
+                              <div style={{ width: `${ratio * 100}%`, height: '100%', background: ratio >= 0.9 ? '#27ae60' : ratio >= 0.6 ? '#f39c12' : '#e74c3c', borderRadius: 2 }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
               {/* P0-1：后写校验报告详情（可折叠） */}
               {agentMeta.post_validate && (agentMeta.post_validate.critical_count > 0 || agentMeta.post_validate.warning_count > 0) && (
                 <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 4, padding: '4px 8px', background: 'var(--bg-secondary)', borderRadius: 4 }}>
@@ -2746,6 +2874,25 @@ function ChapterPanel(props: {
                   );
                 })}
               </div>
+            </div>
+          )}
+          {/* 连续创作模式：批量生成 N 章（仅 write 模式 + 多Agent协同开启时） */}
+          {onBatchCreate && useAgent && aiCreateMode === 'write' && (
+            <div className="batch-create-row" style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6, padding: '6px 8px', background: 'var(--bg-tertiary)', borderRadius: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>📚 连续创作</span>
+              <input type="number" min={1} max={10} value={batchCount ?? 3}
+                onChange={e => onBatchCountChange?.(Math.max(1, Math.min(10, Number(e.target.value) || 3)))}
+                disabled={!!batchCreating} style={{ width: 56, padding: '2px 6px', fontSize: 12, borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>章</span>
+              <button className="btn-primary-sm" onClick={() => onBatchCreate?.()} disabled={!!batchCreating || aiCreating}
+                style={{ padding: '4px 10px', fontSize: 12 }}>
+                {batchCreating ? `⏳ 生成中 ${batchProgress?.done || 0}/${batchProgress?.total || batchCount}...` : '🚀 开始连续创作'}
+              </button>
+              {batchCreating && batchProgress && batchProgress.total > 0 && (
+                <div style={{ flex: '1 1 100%', height: 4, background: 'var(--bg-secondary)', borderRadius: 2, marginTop: 2 }}>
+                  <div style={{ width: `${(batchProgress.done / batchProgress.total) * 100}%`, height: '100%', background: 'var(--accent)', borderRadius: 2, transition: 'width 0.3s' }} />
+                </div>
+              )}
             </div>
           )}
           {/* 技能包多选器（可折叠，紧凑模式） */}

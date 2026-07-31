@@ -114,6 +114,14 @@ def validate_chapter(content: str) -> ValidationResult:
     # 5. 转折词密度检查（warning）
     _check_transition_density(text, cfg, result)
 
+    # 6-11. AI 痕迹扩展检测（审校评分制配套，均为 warning）
+    _check_smooth_feeling(text, result)
+    _check_transition_cliche(text, result)
+    _check_perfect_cliche(text, result)
+    _check_long_sentence(text, result)
+    _check_repetition(text, result)
+    _check_monotone_syntax(text, result)
+
     return result
 
 
@@ -243,6 +251,152 @@ def get_repair_hints(result: ValidationResult) -> List[Dict[str, str]]:
                 'scope': 'local',  # critical 句式通常是局部问题
             })
     return hints
+
+
+# ====================================================================
+# AI 痕迹确定性检测扩展（审校评分制配套）
+# 6 条新规则：顺滑感 / 工整过渡 / 完美套话 / 长句过长 / 重复表达 / 单一句式
+# ====================================================================
+
+# 顺滑副词 + 情绪/顿悟/决策词 组合（禁止情绪/顿悟/决策顺滑）
+_SMOOTH_ADVERBS = ['瞬间', '立刻', '马上', '顿时', '旋即', '霎时', '一下子', '顷刻', '刹那', '转瞬', '迅即', '倏然']
+_SMOOTH_TARGETS = ['顿悟', '释怀', '想通', '接受', '决定', '释然', '平复', '振作', '想明白', '看开', '放下', '振作起来', '冷静下来', '恢复平静']
+
+# AI 工整过渡套话（杜绝工整过渡）
+_TRANSITION_CLICHES = [
+    '在这一刻', '在这一瞬间', '仿佛之间', '一切尽在不言中', '时间仿佛静止', '空气中弥漫着',
+    '在这一刹那', '空气中凝固', '时间停止', '世界安静', '万物归寂', '仿佛整个世界',
+]
+
+# 完美套话词（杜绝完美/标准套话）
+_PERFECT_CLICHES = ['完美', '无懈可击', '恰到好处', '天衣无缝', '浑然天成', '相得益彰', '美轮美奂', '尽善尽美']
+
+
+def _check_smooth_feeling(text: str, result: ValidationResult):
+    """顺滑感检测（warning）：顺滑副词+情绪/顿悟/决策词组合，禁止情绪/顿悟/决策顺滑。"""
+    hits = []
+    for adv in _SMOOTH_ADVERBS:
+        for tgt in _SMOOTH_TARGETS:
+            # 顺滑副词与目标词间距 ≤4 字视为组合命中
+            for m in re.finditer(re.escape(adv), text):
+                window = text[m.end():m.end() + 4]
+                if tgt in window:
+                    hits.append(f'{adv}{tgt}')
+    if hits:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='顺滑感',
+            pattern='、'.join(sorted(set(hits)))[:80],
+            count=len(hits),
+            position=f'共 {len(hits)} 处情绪/顿悟/决策顺滑',
+            suggestion='禁止情绪顺滑/顿悟顺滑/决策顺滑：人物应有矛盾心理、纠结、自我怀疑，不可瞬间释怀/顿悟/决定。',
+        ))
+
+
+def _check_transition_cliche(text: str, result: ValidationResult):
+    """工整过渡套话检测（warning）：杜绝工整过渡与AI结尾套话。"""
+    hits = [c for c in _TRANSITION_CLICHES if c in text]
+    # 排比过度：连续 3 个以上结构相同短句（如"他A，他B，他C，他D"）
+    parallel = re.findall(r'(?:他|她|它)[\u4e00-\u9fa5]{1,6}[，,](?:他|她|它)[\u4e00-\u9fa5]{1,6}[，,](?:他|她|它)[\u4e00-\u9fa5]{1,6}[，,]', text)
+    if len(parallel) >= 1:
+        hits.append('连续排比短句')
+    if hits:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='工整过渡',
+            pattern='、'.join(hits)[:80],
+            count=len(hits),
+            position=f'共 {len(hits)} 处工整过渡/套话',
+            suggestion='杜绝工整过渡、AI结尾套话、过度排比，让文字自然流畅。',
+        ))
+
+
+def _check_perfect_cliche(text: str, result: ValidationResult):
+    """完美套话检测（warning）：杜绝完美/标准套话。"""
+    hits = [c for c in _PERFECT_CLICHES if c in text]
+    if hits:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='完美套话',
+            pattern='、'.join(hits)[:80],
+            count=len(hits),
+            position=f'共 {len(hits)} 处完美/标准套话',
+            suggestion='杜绝完美、无懈可击、恰到好处等标准套话，删掉细碎修饰和刻板结构。',
+        ))
+
+
+def _check_long_sentence(text: str, result: ValidationResult):
+    """长句过长检测（warning）：拆分长句，单句超过 80 字（含标点）。"""
+    # 按句末标点切分
+    sentences = re.split(r'[。！？!?]', text)
+    long_count = 0
+    samples = []
+    for s in sentences:
+        s = s.strip()
+        if len(s) > 80:
+            long_count += 1
+            if len(samples) < 3:
+                samples.append(s[:30] + '...')
+    if long_count > 0:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='长句过长',
+            pattern=f'{long_count}处长句',
+            count=long_count,
+            position=f'共 {long_count} 处单句>80字（{"、".join(samples)}）',
+            suggestion='拆分长句，每段一个叙事重点，提升内容可读性。',
+        ))
+
+
+def _check_repetition(text: str, result: ValidationResult):
+    """重复表达检测（warning）：合并重复观点，连续3句含相同关键词。"""
+    sentences = re.split(r'[。！？!?]', text)
+    sentences = [s.strip() for s in sentences if len(s.strip()) >= 4]
+    hits = 0
+    # 滑动窗口检查连续3句是否有共同关键词（4字子串）
+    for i in range(len(sentences) - 2):
+        s1, s2, s3 = sentences[i], sentences[i + 1], sentences[i + 2]
+        # 提取每句的4字子串集合
+        def _ngrams(s):
+            return {s[j:j + 4] for j in range(len(s) - 3)} if len(s) >= 4 else set()
+        n1, n2, n3 = _ngrams(s1), _ngrams(s2), _ngrams(s3)
+        common = n1 & n2 & n3
+        # 排除纯标点/虚词子串
+        common = {c for c in common if re.search(r'[\u4e00-\u9fa5]', c)}
+        if common:
+            hits += 1
+    if hits > 0:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='重复表达',
+            pattern=f'{hits}处重复',
+            count=hits,
+            position=f'共 {hits} 组连续3句含相同关键词',
+            suggestion='保留核心信息，合并重复观点，删掉细碎修饰，让文字自然流畅。',
+        ))
+
+
+def _check_monotone_syntax(text: str, result: ValidationResult):
+    """单一句式检测（warning）：避免单一句式，连续5句以相同主语开头。"""
+    sentences = re.split(r'[。！？!?]', text)
+    sentences = [s.strip() for s in sentences if len(s.strip()) >= 2]
+    if len(sentences) < 5:
+        return
+    hits = 0
+    for i in range(len(sentences) - 4):
+        # 取每句开头2字作为主语指纹
+        heads = [sentences[i + j][:2] for j in range(5)]
+        if len(set(heads)) == 1:
+            hits += 1
+    if hits > 0:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='单一句式',
+            pattern=f'{hits}处单一句式',
+            count=hits,
+            position=f'共 {hits} 处连续5句同主语开头（{sentences[0][:2]}...）',
+            suggestion='避免单一句式，重构语序，兼顾专业和灵活。',
+        ))
 
 
 # ====================================================================
@@ -486,10 +640,15 @@ def _get_realm_order(bible: Dict) -> List[str]:
 
 
 def _check_dead_character_revival(text: str, bible: Dict, result: ValidationResult):
-    """死亡角色复活检测（critical）：已死亡角色在本章说话/行动。"""
+    """死亡角色复活检测：已死亡角色在本章说话/行动。
+    若 bible/worldbuilding 含转世/复活/封印等铺垫词，降为 warning；否则 critical。"""
     dead_chars = _extract_dead_characters_from_log(bible)
     if not dead_chars:
         return
+    # 检索 bible 是否有复活铺垫
+    revival_hints = ['转世', '复活', '封印', '夺舍', '重生', '还魂', '复生', '轮回', '神魂', '残魂', '残识', '附身', '魂魄', '转生']
+    bible_text = ''.join(str(bible.get(k)) for k in ('key_rules', 'worldbuilding', 'character_profiles') if bible.get(k))
+    has_revival_setup = any(h in bible_text for h in revival_hints)
     for name, dead_ch in dead_chars.items():
         if not name or len(name) < 2:
             continue
@@ -500,14 +659,26 @@ def _check_dead_character_revival(text: str, bible: Dict, result: ValidationResu
         for m in re.finditer(re.escape(name), text):
             window = text[m.end():m.end() + 20]
             if any(act in window for act in _LIVING_ACTIONS):
-                result.add(ValidationIssue(
-                    severity='critical',
-                    category='死亡角色复活',
-                    pattern=name,
-                    count=1,
-                    position=f'第{dead_ch}章已死亡，本章出现活人动作',
-                    suggestion=f'角色「{name}」已于第{dead_ch}章死亡，但本章让其说话/行动，属硬伤。若为回忆/幻觉/复活剧情，请显式标注。',
-                ))
+                # 局部铺垫：本章上下文含复活铺垫词
+                local_hint = any(h in text[max(0, m.start() - 60):m.end() + 60] for h in revival_hints)
+                if has_revival_setup or local_hint:
+                    result.add(ValidationIssue(
+                        severity='warning',
+                        category='死亡角色复活(有铺垫)',
+                        pattern=name,
+                        count=1,
+                        position=f'第{dead_ch}章已死亡，本章出现活人动作（有复活铺垫）',
+                        suggestion=f'角色「{name}」已于第{dead_ch}章死亡，本章让其说话/行动。已有复活铺垫，请确认铺垫充分。',
+                    ))
+                else:
+                    result.add(ValidationIssue(
+                        severity='critical',
+                        category='死亡角色无故复活',
+                        pattern=name,
+                        count=1,
+                        position=f'第{dead_ch}章已死亡，本章出现活人动作',
+                        suggestion=f'角色「{name}」已于第{dead_ch}章死亡，但本章让其说话/行动，属硬伤。若为回忆/幻觉/复活剧情，请显式标注铺垫。',
+                    ))
                 reported = True
                 break
         if reported:
@@ -515,15 +686,17 @@ def _check_dead_character_revival(text: str, bible: Dict, result: ValidationResu
 
 
 def _check_realm_regression(text: str, bible: Dict, result: ValidationResult):
-    """境界回退检测（critical）：角色已记录境界，本章出现明显更低的境界。
-    P2增强：优先使用从 key_rules/worldbuilding 动态解析的境界体系，
-    非修仙题材（都市/科幻/异能）也能检测境界回退；解析失败回退默认表。
+    """境界/功法回退检测：角色已记录境界，本章出现明显更低的境界。
+    检测范围从境界扩展到功法等级，加入"重伤/封印/反噬"等回退铺垫词判定。
+    P2增强：优先使用从 key_rules/worldbuilding 动态解析的境界体系。
     """
     char_realms = _extract_character_realms_from_log(bible)
     if not char_realms:
         return
     # 动态解析境界表（P2增强），失败回退默认表
     realm_order = _get_realm_order(bible)
+    # 回退铺垫词：有这些铺垫则降为 warning
+    regression_hints = ['重伤', '封印', '反噬', '走火入魔', '被废', '废掉', '废除', '丹田破碎', '经脉寸断', '修为尽失']
     for name, (recorded_realm, rec_ch) in char_realms.items():
         if not name or len(name) < 2 or not recorded_realm:
             continue
@@ -544,14 +717,27 @@ def _check_realm_regression(text: str, bible: Dict, result: ValidationResult):
                         hit_lower = r
                         break
             if hit_lower:
-                result.add(ValidationIssue(
-                    severity='critical',
-                    category='境界回退',
-                    pattern=f'{name}:{recorded_realm}→{hit_lower}',
-                    count=1,
-                    position=f'第{rec_ch}章记录为{recorded_realm}，本章出现{hit_lower}',
-                    suggestion=f'角色「{name}」已记录为「{recorded_realm}」（第{rec_ch}章），本章出现「{hit_lower}」疑似境界回退，请核对。',
-                ))
+                # 检查上下文是否有回退铺垫
+                ctx_window = text[max(0, m.start() - 60):m.end() + 60]
+                has_hint = any(h in ctx_window for h in regression_hints)
+                if has_hint:
+                    result.add(ValidationIssue(
+                        severity='warning',
+                        category='境界/功法回退(有铺垫)',
+                        pattern=f'{name}:{recorded_realm}→{hit_lower}',
+                        count=1,
+                        position=f'第{rec_ch}章记录为{recorded_realm}，本章出现{hit_lower}（有回退铺垫）',
+                        suggestion=f'角色「{name}」已记录为「{recorded_realm}」（第{rec_ch}章），本章出现「{hit_lower}」。已有回退铺垫，请确认合理。',
+                    ))
+                else:
+                    result.add(ValidationIssue(
+                        severity='critical',
+                        category='境界/功法无故回退',
+                        pattern=f'{name}:{recorded_realm}→{hit_lower}',
+                        count=1,
+                        position=f'第{rec_ch}章记录为{recorded_realm}，本章出现{hit_lower}',
+                        suggestion=f'角色「{name}」已记录为「{recorded_realm}」（第{rec_ch}章），本章出现「{hit_lower}」疑似境界/功法无故回退，请核对或补铺垫。',
+                    ))
                 break  # 同一角色只报一次
 
 
