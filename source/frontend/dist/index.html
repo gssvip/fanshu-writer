@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="./wangbiao.png" />
+    <link rel="apple-touch-icon" href="./wangbiao.png" />
+    <link rel="manifest" href="./manifest.json" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="蚂蚁写作 - AI原生的中文网文创作工作台，移动端沉浸写作" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="蚂蚁写作" />
+
+    <title>蚂蚁写作</title>
+    <!-- 预连接后端，加速移动端首屏 API 请求 -->
+    <link rel="preconnect" href="https://fanshu-writer-backend.onrender.com" crossorigin>
+    <link rel="dns-prefetch" href="https://fanshu-writer-backend.onrender.com">
+    <script>
+      // 强制注销所有已注册的 Service Worker（它们会缓存旧JS导致React DOM冲突）
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          for (var i = 0; i < registrations.length; i++) {
+            registrations[i].unregister();
+          }
+        });
+      }
+      // 版本自检：绕过 GitHub Pages index.html 600秒缓存，部署后自动刷新
+      // version.json 由 deploy.sh 每次部署生成，fetch 时带时间戳破缓存
+      (function () {
+        var KEY = 'fanshu-version';
+        function check() {
+          fetch('./version.json?_t=' + Date.now(), { cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (data) {
+              if (!data || !data.v) return;
+              var saved = localStorage.getItem(KEY);
+              if (saved && saved !== data.v) {
+                // 版本不一致，部署了新版，强制刷新拉取新 index.html
+                localStorage.setItem(KEY, data.v);
+                location.reload();
+              } else if (!saved) {
+                localStorage.setItem(KEY, data.v);
+              }
+            })
+            .catch(function () { /* 静默失败，不影响使用 */ });
+        }
+        // 首次加载延迟 3 秒检查（避开冷启动请求高峰），之后每 60 秒轮询
+        setTimeout(check, 3000);
+        setInterval(check, 60000);
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/index-DjxAsJWP.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CbVclYMo.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
