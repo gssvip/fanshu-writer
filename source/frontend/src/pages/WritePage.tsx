@@ -2632,7 +2632,6 @@ function ChapterPanel(props: {
         <div className="ai-create-header">
           <div className="ai-create-header-left">
             <button className="btn-ghost-sm" onClick={onCancelAiCreate} disabled={aiCreating}>← 返回</button>
-            <span className="ai-create-title">✨ 章节AI创作</span>
             <span className="ai-chat-target" title="AI当前锚定的章节（点击刷新重新识别进度）">
               📍 {chapterEditTitle}
               <button
@@ -2647,18 +2646,8 @@ function ChapterPanel(props: {
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {aiChatHistory.length > 0 && (
               <button className="btn-ghost-sm" onClick={onClearAiChatHistory} disabled={aiCreating} title="清空全部聊天记录">
-                🗑️ 清空记录
+                ️ 清空记录
               </button>
-            )}
-            {hasResult && !aiCreating && (
-              <>
-                <button className="btn-secondary-sm" onClick={onRegenerateAiContent} title="基于上一次要求重新生成（覆盖当前结果）">
-                  🔄 重新生成
-                </button>
-                <button className="btn-primary-sm" onClick={onConfirmAiContent} title="将本次生成内容保存到目标章节">
-                  ✓ 保存到章节
-                </button>
-              </>
             )}
           </div>
         </div>
