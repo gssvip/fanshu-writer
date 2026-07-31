@@ -31,6 +31,7 @@ rm -rf .git
 git init -q
 git config user.email "deploy@fanshu.dev"
 git config user.name "fanshu-deploy"
+git remote add origin https://github.com/gssvip/fanshu-writer.git
 git add -A
 git commit -m "deploy: $(date +'%Y-%m-%d %H:%M:%S')" -q || true
 # 本地分支为 master/main，推到远程 gh-pages 分支
