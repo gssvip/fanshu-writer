@@ -861,7 +861,7 @@ export default function WritePage() {
     executeAiCreate(lastUserMsg.content, prevContentForCtx);
   }
 
-  // 连续创作模式：SSE 流式批量生成 N 章，自动保存
+  // 连续创作模式：普通 POST 批量生成 N 章，自动保存
   async function batchCreate() {
     if (!bookId || batchCreating) return;
     if (batchCount < 1 || batchCount > 10) { alert('章数需在 1-10 之间'); return; }
@@ -874,50 +874,17 @@ export default function WritePage() {
         startChapterNum: progress.targetNum,
         chapterLangStyles,
       });
-      if (!resp.body) throw new Error('无响应流');
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      let doneCount = 0;
-      let lastContent = '';
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() || '';
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const evt = JSON.parse(line.slice(6));
-            if (evt.type === 'progress') {
-              setBatchProgress({ cur: evt.chapter_index, total: evt.total, done: doneCount });
-            } else if (evt.type === 'chapter_done') {
-              doneCount++;
-              setBatchProgress({ cur: evt.chapter.chapter_num, total: batchCount, done: doneCount });
-              lastContent = evt.content || '';
-              setAiGeneratedContent(lastContent);
-              // 若返回了 AI 标题，回填当前标题输入框（仅当标题为空或默认"第X章"时）
-              const st = evt.chapter?.suggested_title;
-              if (st) {
-                const cur = chapterEditTitle || '';
-                const isDefault = /^第[一二三四五六七八九十百零0-9]+章\s*$/.test(cur.trim()) || !cur.trim();
-                if (isDefault) setChapterEditTitle(st);
-              }
-            } else if (evt.type === 'error') {
-              setAiStreamError(`第${evt.chapter_index}章生成失败：${evt.error}`);
-            } else if (evt.type === 'batch_done') {
-              setBatchProgress({ cur: batchCount, total: batchCount, done: evt.count });
-              // 刷新章节列表
-              try {
-                const fresh = await api.listChapters(bookId);
-                setChapters(fresh);
-              } catch { /* ignore */ }
-              setAiChatHistory(prev => [...prev, { role: 'assistant', content: `✅ 连续创作完成，共生成 ${evt.count} 章并已自动保存。`, type: 'status' as const }]);
-            }
-          } catch { /* ignore parse error */ }
-        }
-      }
+      const data = await resp.json();
+      // 后端返回 JSON：{ chapters: [...], total: N }
+      const chapters = data?.chapters || [];
+      const total = data?.total || chapters.length;
+      setBatchProgress({ cur: total, total, done: total });
+      // 刷新章节列表
+      try {
+        const fresh = await api.listChapters(bookId);
+        setChapters(fresh);
+      } catch { /* ignore */ }
+      setAiChatHistory(prev => [...prev, { role: 'assistant', content: `✅ 批量生成完成，共生成 ${total} 章并已自动保存。`, type: 'status' as const }]);
     } catch (e: any) {
       setAiStreamError(e.message || '连续创作失败');
     } finally {
@@ -2764,34 +2731,29 @@ function ChapterPanel(props: {
                   </span>
                 )}
               </div>
-              {/* 审校评分制：0-100 分数仪表盘 + 5 维明细 */}
+              {/* 审校校验报告：折叠面板展示校验问题 */}
               {agentMeta.chapter_score && (() => {
                 const sc = agentMeta.chapter_score;
-                const gradeColor = sc.grade === 'A' ? '#27ae60' : sc.grade === 'B' ? '#2ecc71' : sc.grade === 'C' ? '#f39c12' : '#e74c3c';
-                const scoreColor = sc.score >= 90 ? '#27ae60' : sc.score >= 75 ? '#2ecc71' : sc.score >= 60 ? '#f39c12' : '#e74c3c';
-                const dims = [['一致性', 30], ['AI痕迹', 25], ['字数', 15], ['文风排版', 15], ['计划执行', 15]] as const;
+                if (!sc.has_issues || !sc.issues || sc.issues.length === 0) {
+                  return (
+                    <div style={{ marginTop: 6, padding: '6px 8px', background: 'var(--bg-secondary)', borderRadius: 4, borderLeft: '3px solid #27ae60', fontSize: 12 }}>
+                      ✅ 校验通过，未发现问题
+                    </div>
+                  );
+                }
                 return (
-                  <div style={{ marginTop: 6, padding: '6px 8px', background: 'var(--bg-secondary)', borderRadius: 4, borderLeft: `3px solid ${gradeColor}` }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-                      <span style={{ fontSize: 18, fontWeight: 700, color: scoreColor }}>{sc.score}<span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>/100</span></span>
-                      <span style={{ padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, color: '#fff', background: gradeColor }}>{sc.grade}级</span>
-                      {sc.auto_revise && <span style={{ color: '#e74c3c', fontSize: 11 }}>· 建议自动修订</span>}
+                  <details style={{ marginTop: 6, padding: '6px 8px', background: 'var(--bg-secondary)', borderRadius: 4, borderLeft: '3px solid #f39c12' }}>
+                    <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#f39c12' }}>
+                      ⚠️ 发现 {sc.issues.length} 个校验问题（点击展开）
+                    </summary>
+                    <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.6 }}>
+                      {sc.issues.map((iss: any, i: number) => (
+                        <div key={i} style={{ color: iss.severity === 'critical' ? '#e74c3c' : '#f39c12', marginBottom: 4 }}>
+                          {iss.severity === 'critical' ? '🔴' : ''} [{iss.type === 'ai_trace' ? 'AI痕迹' : '一致性'}] {iss.description}
+                        </div>
+                      ))}
                     </div>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 10 }}>
-                      {dims.map(([name, full]) => {
-                        const got = sc.breakdown?.[name] ?? 0;
-                        const ratio = got / full;
-                        return (
-                          <div key={name} style={{ minWidth: 70 }}>
-                            <div style={{ color: 'var(--text-secondary)' }}>{name} {got}/{full}</div>
-                            <div style={{ height: 4, background: 'var(--bg-tertiary)', borderRadius: 2, marginTop: 2 }}>
-                              <div style={{ width: `${ratio * 100}%`, height: '100%', background: ratio >= 0.9 ? '#27ae60' : ratio >= 0.6 ? '#f39c12' : '#e74c3c', borderRadius: 2 }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                  </details>
                 );
               })()}
               {/* P0-1：后写校验报告详情（可折叠） */}

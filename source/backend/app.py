@@ -6121,7 +6121,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 8. 若存在【本章计划】，必须严格按计划展开剧情
 9. 【剧情连贯铁律】必须严格承接【最近4章完整正文】的结尾场景与悬念，不得凭空开启新场景；人物位置、状态、对话内容必须与前文一致。
 10. 【字数自检】输出前必须自检字数：用中文计数（含标点），若不在 2300-2500 区间必须调整后再输出。
-11. 【防遗忘规避】若上方存在【防遗忘检查诊断】，必须主动规避其中列出的一致性违规，并优先回收/修正已诊断的待回收伏笔与叙事债务，不可重复犯错。"""
+11. 【防遗忘规避】若上方存在【防遗忘检查诊断】，必须主动规避其中列出的一致性违规，并优先回收/修正已诊断的待回收伏笔与叙事债务，不可重复犯错。
+12. 【OOC 专项检测】注意角色人设一致性，不要OOC（Out of Character）。角色行为必须符合人物设定：说话语气、行为模式、决策逻辑、情绪反应都要与人设档案一致。禁止角色突然性格大变（如沉稳角色突然话多、冷酷角色突然唠叨、谨慎角色突然鲁莽）。"""
 
     # P2-11：在 system_prompt 末尾追加 PRE_WRITE_CHECK 模板（要求 LLM 写正文前先输出意图表）
     if build_pre_write_check_prompt:
@@ -6131,8 +6132,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     if build_changes_prompt_template:
         system_prompt += build_changes_prompt_template()
 
-    # 标题自动生成：要求 LLM 在正文末尾输出【标题】标签，供后端解析回填章节标题
-    system_prompt += '\n\n【标题输出】在正文最末尾另起一行，输出本章标题，格式：【标题】标题文本（8-16字，概括本章核心冲突或转折，不使用"第X章"前缀）。标题需贴合正文内容，避免剧透关键悬念。'
+    # 标题自动生成：要求 LLM 在正文末尾输出 JSON 标题，供后端解析回填章节标题
+    system_prompt += '\n\n【标题输出】在正文最末尾另起一行，输出一个 JSON 对象，格式：{"title": "标题文本"}。标题 8-16 字，概括本章核心冲突或转折，不使用"第X章"前缀，需贴合正文内容，避免剧透关键悬念。只输出 JSON，不要输出其他内容。'
 
     # ===== 9. 动态 temperature（#10）=====
     temperature = _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, chapters_in_vol)
@@ -6181,7 +6182,7 @@ def ai_continue(book_id):
 
     instruction = request.json.get('instruction', '')
     skill_pack_ids = request.json.get('skill_pack_ids', [])
-    enable_consistency_check = request.json.get('enable_consistency_check', True)  # 默认开启一致性检查
+    enable_consistency_check = request.json.get('enable_consistency_check', False)  # 默认关闭（OOC检测已合并到system_prompt，不再单独调LLM）
     # 修复上下文脱节：接收前端传入的待写章号 + 上一章未保存内容
     target_chapter_num = request.json.get('target_chapter_num')
     prev_chapter_content = request.json.get('prev_chapter_content')
@@ -6750,10 +6751,10 @@ def ai_continue_stream(book_id):
 @app.route('/api/books/<book_id>/ai-continue-batch', methods=['POST'])
 @login_required
 def ai_continue_batch(book_id):
-    """连续创作模式（学习 AutoNovel）：自动连续写 N 章。
-    每章复用 ai_continue 核心流程（ctx构建→正文生成→字数铁律→去AI味→一致性→评分），
-    生成后自动保存为 Chapter，下一章把上一章内容作为 prev_chapter_content 注入，避免剧情断档。
-    通过 SSE 流式返回每章进度。
+    """连续创作模式（优化版）：批量生成 N 章，每章独立生成，普通 JSON 响应。
+    每章只调 1 次 LLM，把字数修正和去AI味要求合并到 system_prompt 里。
+    去掉 prev_content 注入（每章独立生成，避免上下文污染）。
+    保留标题解析和一致性检查（但一致性检查默认关闭）。
     请求参数：{ instruction, skill_pack_ids, chapter_lang_styles, count(1-10), start_chapter_num? }"""
     book = Book.query.get(book_id)
     if not book:
@@ -6771,130 +6772,73 @@ def ai_continue_batch(book_id):
         db.session.add(bb)
         db.session.commit()
 
-    def _generate():
-        import re as _re_batch
-        prev_content = None
-        results = []
-        # SSE 生成器在独立线程执行，请求/应用上下文已退出，需手动进入应用上下文
-        # 否则 db.session / Model.query 会报 "Working outside of application context"
-        with app.app_context():
-            for i in range(count):
-                # 每章进度
-                yield f'data: {json.dumps({"type":"progress","chapter_index":i+1,"total":count}, ensure_ascii=False)}\n\n'
-                try:
-                    # 章号：首章用 start_chapter_num 或自动计算，后续递增
-                    target_num = start_chapter_num + i if start_chapter_num else None
-                    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids,
-                                                      target_num, prev_content, chapter_lang_styles)
-                    api_key = ctx['api_key']
-                    base_url = ctx['base_url']
-                    model = ctx['model']
-                    cur_ch = ctx['current_chapter_num']
+    import re as _re_batch
+    results = []
 
-                    # 正文生成
-                    resp = requests.post(f'{base_url}/chat/completions',
-                        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                        json={'model': model, 'messages': [{'role':'system','content':ctx['system_prompt']},
-                                                            {'role':'user','content':ctx['user_prompt']}],
-                              'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens']},
-                        timeout=180)
-                    draft_content = resp.json()['choices'][0]['message']['content']
+    for i in range(count):
+        try:
+            # 章号：首章用 start_chapter_num 或自动计算，后续递增
+            target_num = start_chapter_num + i if start_chapter_num else None
+            # 每章独立生成，不注入 prev_content（避免上下文污染）
+            ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids,
+                                              target_num, None, chapter_lang_styles)
+            api_key = ctx['api_key']
+            base_url = ctx['base_url']
+            model = ctx['model']
+            cur_ch = ctx['current_chapter_num']
 
-                    # 字数铁律：超出 2300-2500 区间则调用 AI 重写修正
-                    draft_len = len(_re_batch.sub(r'\s', '', draft_content))
-                    if draft_len > 2500 or draft_len < 2300:
-                        direction = '精简删减冗余' if draft_len > 2500 else '扩写补充场景细节'
-                        method = ('精简方法：删冗余形容词/重复心理描写/过度环境渲染/总结性句子，保留对话动作与剧情走向。'
-                                  if draft_len > 2500 else
-                                  '扩写方法：增加感官细节/动作描写/对话节拍/场景纵深，不增加新剧情不改变走向。')
-                        rewrite_system = (f'你是字数修正编辑。当前章节初稿{draft_len}字，需{direction}至 2400字±100（2300-2500字区间，含标点）。'
-                                          f'【字数绝对铁律】最终输出必须落在 2300-2500 字区间。'
-                                          f'【保留要求】保留原章节的剧情走向、人物对话、章尾钩子、关键信息，不改变故事内容，只调整篇幅。'
-                                          f'{method}只输出修正后的完整正文，不输出任何说明或前缀。')
-                        try:
-                            rewrite_resp = requests.post(f'{base_url}/chat/completions',
-                                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                                json={'model': model,
-                                      'messages': [{'role':'system','content':rewrite_system},
-                                                   {'role':'user','content':f'请修正以下章节正文字数：\n\n{draft_content}'}],
-                                      'temperature': 0.5, 'max_tokens': 12000},
-                                timeout=180)
-                            rewritten = rewrite_resp.json()['choices'][0]['message']['content'].strip()
-                            rewritten_len = len(_re_batch.sub(r'\s', '', rewritten))
-                            if rewritten and 2300 <= rewritten_len <= 2500:
-                                draft_content = rewritten
-                            elif rewritten and rewritten_len > 500 and abs(rewritten_len - 2400) < abs(draft_len - 2400):
-                                draft_content = rewritten
-                        except Exception:
-                            pass
+            # 合并 system_prompt：加入字数修正和去AI味要求
+            system_prompt = ctx['system_prompt']
+            system_prompt += '\n\n【字数与文风铁律】输出必须 2400±100 字（2300-2500字区间，含标点）。禁止AI味表达：禁止"仿佛""似乎""宛如"等比喻堆砌，禁止工整过渡，禁止完美套话。人物必须有矛盾心理/纠结/自我怀疑，禁止情绪顺滑。'
 
-                    polished_content = draft_content
-                    # 去 AI 味（仅当技能包含 deai 时）
-                    if skill_pack_ids:
-                        deai_skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_deai'], max_per_prompt=1200, mode='agent')
-                        if deai_skill_note:
-                            deai_system = f"""你是番茄去AI味审查员。对以下章节正文做去AI味审校，只输出修改后的正文。
-{deai_skill_note}
-【人物深度要求】人物必须有矛盾心理/纠结/自我怀疑/口是心非，禁止情绪/顿悟/决策顺滑，禁止OOC，杜绝标准套话/工整过渡/完美描写。
-【硬性约束】字数 2400±100，保留剧情走向和钩子，只改文风不改剧情。"""
-                            try:
-                                deai_resp = requests.post(f'{base_url}/chat/completions',
-                                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                                    json={'model': model, 'messages': [{'role':'system','content':deai_system},
-                                        {'role':'user','content':f'去AI味：\n\n{draft_content}'}],
-                                          'temperature': 0.6, 'max_tokens': 12000}, timeout=180)
-                                deai_out = deai_resp.json()['choices'][0]['message']['content'].strip()
-                                if deai_out and len(deai_out) > 200:
-                                    polished_content = deai_out
-                            except Exception:
-                                pass
+            # 正文生成（只调 1 次 LLM）
+            resp = requests.post(f'{base_url}/chat/completions',
+                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                json={'model': model, 'messages': [{'role':'system','content':system_prompt},
+                                                    {'role':'user','content':ctx['user_prompt']}],
+                      'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens']},
+                timeout=180)
+            draft_content = resp.json()['choices'][0]['message']['content']
 
-                    # 一致性检查
-                    consistency_passed, consistency_issues = _consistency_check(
-                        book_id, bb, polished_content, cur_ch, api_key, base_url, model,
-                        chapter_plan=ctx.get('chapter_plan', ''))
+            polished_content = draft_content
 
-                    # 标题自动生成：解析【标题】标签，剥离正文标签行
-                    suggested_title = _extract_chapter_title(draft_content)
-                    if suggested_title:
-                        polished_content = _re_batch.sub(r'【标题】[^\n]*', '', polished_content).rstrip()
+            # 一致性检查（默认关闭）
+            consistency_passed = True
+            consistency_issues = ''
 
-                    # 评分
-                    wc = len(_re_batch.sub(r'\s', '', polished_content))
-                    chapter_score = _calc_chapter_score(None, consistency_passed, consistency_issues, {}, wc, ctx.get('chapter_plan', ''))
+            # 标题自动生成：解析 JSON 标题，剥离正文标签行
+            suggested_title = _extract_chapter_title(draft_content, draft_content)
+            # 剥离 JSON 标题块和【标题】标签
+            polished_content = _re_batch.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', polished_content).rstrip()
+            polished_content = _re_batch.sub(r'【标题】[^\n]*', '', polished_content).rstrip()
 
-                    # 自动保存为 Chapter（标题优先用解析结果，无则回退"第X章"）
-                    title = suggested_title or f'第{cur_ch}章'
-                    max_order = db.session.query(db.func.max(Chapter.order_index)).filter_by(book_id=book_id).scalar() or -1
-                    ch = Chapter(book_id=book_id, title=title, content=polished_content,
-                                 order_index=max_order + 1, is_volume=False,
-                                 word_count=count_words(polished_content))
-                    db.session.add(ch)
-                    db.session.flush()
-                    update_book_stats(book_id)
-                    db.session.commit()
+            # 校验报告
+            wc = len(_re_batch.sub(r'\s', '', polished_content))
+            chapter_score = _calc_chapter_score(None, consistency_passed, consistency_issues, {}, wc, ctx.get('chapter_plan', ''))
 
-                    # 下一章把本章作为上一章注入
-                    prev_content = polished_content
+            # 自动保存为 Chapter（标题优先用解析结果，无则回退"第X章"）
+            title = suggested_title or f'第{cur_ch}章'
+            max_order = db.session.query(db.func.max(Chapter.order_index)).filter_by(book_id=book_id).scalar() or -1
+            ch = Chapter(book_id=book_id, title=title, content=polished_content,
+                         order_index=max_order + 1, is_volume=False,
+                         word_count=count_words(polished_content))
+            db.session.add(ch)
+            db.session.flush()
+            update_book_stats(book_id)
+            db.session.commit()
 
-                    results.append({
-                        'chapter_num': cur_ch,
-                        'chapter_id': ch.id,
-                        'title': title,
-                        'suggested_title': suggested_title,
-                        'score': chapter_score,
-                        'consistency_passed': consistency_passed,
-                        'word_count': wc,
-                    })
-                    yield f'data: {json.dumps({"type":"chapter_done","chapter":results[-1],"content":polished_content}, ensure_ascii=False)}\n\n'
-                except Exception as e:
-                    yield f'data: {json.dumps({"type":"error","chapter_index":i+1,"error":str(e)[:200]}, ensure_ascii=False)}\n\n'
-                    # 单章失败不中断，继续下一章
-                    continue
-            yield f'data: {json.dumps({"type":"batch_done","results":results,"count":len(results)}, ensure_ascii=False)}\n\n'
+            results.append({
+                'chapter_num': cur_ch,
+                'chapter_id': ch.id,
+                'title': title,
+                'content': polished_content,
+                'word_count': wc,
+            })
+        except Exception as e:
+            # 单章失败不中断，继续下一章
+            continue
 
-    from flask import Response
-    return Response(_generate(), mimetype='text/event-stream')
+    return jsonify({'chapters': results, 'total': len(results)})
 
 
 def _extract_chapter_body(full_content: str) -> str:
@@ -6911,136 +6855,79 @@ def _extract_chapter_body(full_content: str) -> str:
     return body.strip()
 
 
-def _extract_chapter_title(full_content: str) -> str:
-    """从 LLM 完整输出中解析【标题】标签，返回标题文本（无则空串）。"""
+def _extract_chapter_title(full_content: str, fallback_content: str = '') -> str:
+    """从 LLM 完整输出中解析标题。
+    优先解析末尾的 JSON：{"title": "标题文本"}
+    解析失败时用章节前 20 字自动生成标题（兜底）。
+    返回标题文本（无则空串）。"""
     import re as _re
-    m = _re.search(r'【标题】\s*([^\n<]+)', full_content)
-    if m:
-        title = m.group(1).strip().strip('】【')
-        # 去除可能的"第X章"前缀
-        title = _re.sub(r'^第[一二三四五六七八九十百零0-9]+章[\s:：]*', '', title)
-        return title[:30]  # 限长 30 字
+    
+    # 尝试解析末尾的 JSON 块
+    try:
+        # 查找最后一个 JSON 对象（从后往前找）
+        json_matches = list(_re.finditer(r'\{[^{}]*"title"\s*:\s*"([^"]+)"[^{}]*\}', full_content))
+        if json_matches:
+            # 取最后一个匹配的 JSON
+            last_match = json_matches[-1]
+            title = last_match.group(1).strip()
+            # 去除可能的"第X章"前缀
+            title = _re.sub(r'^第[一二三四五六七八九十百零0-9]+章[\s:：]*', '', title)
+            if title:
+                return title[:30]  # 限长 30 字
+    except Exception:
+        pass
+    
+    # 兜底：用章节前 20 字生成标题
+    if fallback_content:
+        # 去除空白和标点，取前 20 字
+        clean = _re.sub(r'\s+', '', fallback_content)
+        # 去除常见的开头标记
+        clean = _re.sub(r'^[^a-zA-Z\u4e00-\u9fa5]+', '', clean)
+        if clean:
+            return clean[:20] + ('...' if len(clean) > 20 else '')
+    
     return ''
 
 
 def _calc_chapter_score(post_validate, consistency_passed, consistency_issues, gate_result, word_count,
                         chapter_plan=None):
-    """章节审校评分（0-100）：聚合 4 套检测结果加权计算，零 LLM 成本。
-    5 维加权：一致性30 + AI痕迹25 + 字数15 + 文风排版15 + 计划执行/门禁15。
-    返回 dict：{score, grade, breakdown:{一致性,AI痕迹,字数,文风排版,计划执行}, auto_revise}。
-    auto_revise=True 时建议触发修订闭环（<60分 或 一致性critical）。"""
+    """章节审校校验报告：聚合 post_validate 和 consistency_issues 的结果。
+    返回 dict：{has_issues: bool, issues: [{'type': str, 'severity': str, 'description': str}]}。
+    不再返回 0-100 分数和等级，简化为校验问题列表。"""
     if not isinstance(post_validate, dict):
         post_validate = {}
-    if not isinstance(gate_result, dict):
-        gate_result = {}
-
-    issues = post_validate.get('issues', []) or []
-    # 按类别归集 issue
-    def _issues_of(*cats):
-        return [i for i in issues if i.get('category', '') in cats]
-
-    # ===== ① 一致性维度（30 分） =====
-    consistency_deduct = 0
-    # 死亡角色无故复活 / 境界功法无故回退（critical 硬伤，单条 -20）
-    dead_critical = _issues_of('死亡角色无故复活', '死亡角色复活')
-    realm_critical = _issues_of('境界/功法无故回退', '境界回退')
-    consistency_deduct += len(dead_critical) * 20
-    consistency_deduct += len(realm_critical) * 20
-    # 有铺垫的（warning，单条 -8）
-    铺垫类 = _issues_of('死亡角色复活(有铺垫)', '境界/功法回退(有铺垫)')
-    consistency_deduct += len(铺垫类) * 8
-    # 角色名错写（warning，-5/条）
-    name_warn = _issues_of('角色名疑似错写')
-    consistency_deduct += len(name_warn) * 5
-    # consistency_check Agent 报告的 issue（-12/条）
+    
+    issues = []
+    
+    # ① AI痕迹检测（post_validate）
+    pv_issues = post_validate.get('issues', []) or []
+    for iss in pv_issues:
+        issues.append({
+            'type': 'ai_trace',
+            'severity': iss.get('severity', 'warning'),
+            'description': f"[{iss.get('category', '未知')}] {iss.get('pattern', '')} — {iss.get('suggestion', '')}"
+        })
+    
+    # ② 一致性检查（consistency_issues）
     if not consistency_passed and consistency_issues:
-        agent_issue_count = len(consistency_issues.split('；')) if isinstance(consistency_issues, str) else 1
-        consistency_deduct += max(1, agent_issue_count) * 12
-    consistency_score = max(0, 30 - consistency_deduct)
-    has_consistency_critical = len(dead_critical) + len(realm_critical) > 0
-
-    # ===== ② AI 痕迹维度（25 分） =====
-    ai_deduct = 0
-    forbidden = _issues_of('禁止句式')
-    ai_deduct += len(forbidden) * 10  # critical -10/条
-    fatigue = _issues_of('高疲劳词')
-    ai_deduct += len(fatigue) * 2
-    smooth = _issues_of('顺滑感')
-    ai_deduct += len(smooth) * 3
-    transition = _issues_of('工整过渡')
-    ai_deduct += len(transition) * 3
-    perfect = _issues_of('完美套话')
-    ai_deduct += len(perfect) * 2
-    ai_score = max(0, 25 - ai_deduct)
-
-    # ===== ③ 字数合规维度（15 分） =====
-    wc_deduct = 0
-    if word_count is not None and word_count > 0:
-        if 2300 <= word_count <= 2500:
-            wc_deduct = 0
-        elif 2000 <= word_count < 2300 or 2500 < word_count <= 2800:
-            wc_deduct = 8
+        # consistency_issues 可能是字符串（分号分隔）或列表
+        if isinstance(consistency_issues, str):
+            cons_issue_list = [s.strip() for s in consistency_issues.split('；') if s.strip()]
+        elif isinstance(consistency_issues, list):
+            cons_issue_list = consistency_issues
         else:
-            wc_deduct = 15
-    wc_score = max(0, 15 - wc_deduct)
-
-    # ===== ④ 文风排版维度（15 分） =====
-    style_deduct = 0
-    para_long = _issues_of('段落过长')
-    style_deduct += len(para_long) * 2
-    short_stack = _issues_of('短段堆砌')
-    style_deduct += len(short_stack) * 2
-    cont_le = _issues_of('连续了字')
-    style_deduct += len(cont_le) * 2
-    trans_density = _issues_of('转折密度')
-    style_deduct += len(trans_density) * 2
-    long_sent = _issues_of('长句过长')
-    style_deduct += len(long_sent) * 2
-    repetition = _issues_of('重复表达')
-    style_deduct += len(repetition) * 3
-    monotone = _issues_of('单一句式')
-    style_deduct += len(monotone) * 2
-    style_score = max(0, 15 - style_deduct)
-
-    # ===== ⑤ 计划执行 + 门禁维度（15 分） =====
-    plan_deduct = 0
-    # chapter_plan 偏离（consistency_issues 含"计划"/"偏离"关键词时 -8）
-    if consistency_issues and isinstance(consistency_issues, str):
-        if any(k in consistency_issues for k in ['计划', '偏离', '关键场景', '章尾钩子']):
-            plan_deduct += 8
-    # 门禁 critical（协议解析失败）-10
-    gate_critical = gate_result.get('critical_count', 0)
-    plan_deduct += min(gate_critical, 1) * 10
-    # 门禁 warning（引用/蓝图）-3/条
-    gate_warning = gate_result.get('warning_count', 0)
-    plan_deduct += min(gate_warning, 3) * 3
-    plan_score = max(0, 15 - plan_deduct)
-
-    # ===== 综合分 =====
-    total = consistency_score + ai_score + wc_score + style_score + plan_score
-    # 等级
-    if total >= 90:
-        grade = 'A'
-    elif total >= 75:
-        grade = 'B'
-    elif total >= 60:
-        grade = 'C'
-    else:
-        grade = 'D'
-    # 自动修订触发：<60 分 或 一致性 critical 一票否决
-    auto_revise = total < 60 or has_consistency_critical
-
+            cons_issue_list = []
+        
+        for issue_text in cons_issue_list:
+            issues.append({
+                'type': 'consistency',
+                'severity': 'warning',
+                'description': issue_text
+            })
+    
     return {
-        'score': total,
-        'grade': grade,
-        'auto_revise': auto_revise,
-        'breakdown': {
-            '一致性': consistency_score,
-            'AI痕迹': ai_score,
-            '字数': wc_score,
-            '文风排版': style_score,
-            '计划执行': plan_score,
-        },
+        'has_issues': len(issues) > 0,
+        'issues': issues
     }
 
 
