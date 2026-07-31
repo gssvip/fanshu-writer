@@ -2835,8 +2835,8 @@ function ChapterPanel(props: {
               </div>
             </div>
           )}
-          {/* 连续创作模式：批量生成 N 章（仅 write 模式 + 多Agent协同开启时） */}
-          {onBatchCreate && useAgent && aiCreateMode === 'write' && (
+          {/* 连续创作模式：批量生成 N 章（仅 write 模式，不依赖多Agent协同） */}
+          {onBatchCreate && aiCreateMode === 'write' && (
             <div className="batch-create-row" style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6, padding: '6px 8px', background: 'var(--bg-tertiary)', borderRadius: 6, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>📚 连续创作</span>
               <input type="number" min={1} max={10} value={batchCount ?? 3}
