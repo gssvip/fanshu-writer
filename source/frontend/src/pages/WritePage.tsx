@@ -261,7 +261,8 @@ export default function WritePage() {
   // 当前AI创作锚定的目标章节（自动识别）
   const [aiTargetChapterId, setAiTargetChapterId] = useState<string | null>(null);
   // P0-1: 多Agent协同开关（开启时调用 ai-continue 后端管线，走章节计划+正文+去AI味+一致性检查）
-  const [useAgentPipeline, setUseAgentPipeline] = useState(false);
+  // 默认开启：审校评分/标题自动生成/连续创作/OOC检测 等能力依赖此管线，开箱即用
+  const [useAgentPipeline, setUseAgentPipeline] = useState(true);
   const [agentMeta, setAgentMeta] = useState<any>(null); // 存放 aiContinue 返回的 chapter_plan/温度/卷信息等
   const [spotFixing, setSpotFixing] = useState(false); // P2-9：Spot-Fix 修订中
   const [spotFixMsg, setSpotFixMsg] = useState(''); // P2-9：修订结果提示
