@@ -2463,6 +2463,7 @@ function ChapterPanel(props: {
   } = props;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
+  const [langStyleExpanded, setLangStyleExpanded] = useState(false);
   const [expandedVolumes, setExpandedVolumes] = useState<Record<string, boolean>>({});
   const [renamingVolId, setRenamingVolId] = useState<string | null>(null);
   const [renameVolTitle, setRenameVolTitle] = useState('');
@@ -2807,32 +2808,52 @@ function ChapterPanel(props: {
               </label>
             </div>
           )}
-          {/* 本章语言风格（行文文风，最多3个叠加）—— 指导AI本章行文基调 */}
+          {/* 本章语言风格（行文文风，最多3个叠加）—— 指导AI本章行文基调（可折叠，手机端两行） */}
           {onToggleChapterLangStyle && (aiCreateMode === 'write' || aiCreateMode === 'continue') && (
-            <div className="lang-style-row" style={{ marginBottom: 6 }}>
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
-                🎨 本章语言风格（指导行文，可多选最多3个 · 已选 {(langStyles || []).length}/3）
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 92, overflowY: 'auto' }}>
-                {Object.entries(CHAPTER_LANG_STYLES).map(([k, s]) => {
-                  const sel = (langStyles || []).includes(k);
-                  const disabled = !sel && (langStyles || []).length >= 3;
-                  return (
-                    <button key={k} type="button"
-                      onClick={() => onToggleChapterLangStyle(k)}
-                      disabled={aiCreating || disabled}
-                      title={s.desc}
-                      style={{ padding: '3px 9px', fontSize: 12, borderRadius: 12,
-                        cursor: (aiCreating || disabled) ? 'not-allowed' : 'pointer',
-                        border: `1px solid ${sel ? 'var(--accent)' : 'var(--border-color)'}`,
-                        background: sel ? 'var(--accent)' : 'transparent',
-                        color: sel ? '#fff' : 'var(--text-primary)',
-                        opacity: (aiCreating || disabled) ? 0.4 : 1 }}>
-                      {s.label}
-                    </button>
-                  );
-                })}
-              </div>
+            <div className="lang-style-collapsible" style={{ marginBottom: 6, background: 'var(--bg-tertiary)', borderRadius: 6, overflow: 'hidden' }}>
+              <button
+                className="lang-style-toggle"
+                onClick={() => setLangStyleExpanded(v => !v)}
+                disabled={aiCreating}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '6px 10px',
+                  background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500,
+                  textAlign: 'left', border: 'none', cursor: aiCreating ? 'not-allowed' : 'pointer',
+                  opacity: aiCreating ? 0.5 : 1 }}>
+                <span style={{ fontSize: 10, flexShrink: 0, width: 12 }}>{langStyleExpanded ? '▼' : '▶'}</span>
+                <span>🎨 本章语言风格</span>
+                {(langStyles || []).length > 0 && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    minWidth: 20, height: 16, padding: '0 5px', borderRadius: 8,
+                    background: 'var(--accent)', color: '#fff', fontSize: 10, fontWeight: 700, marginLeft: 2 }}>
+                    {(langStyles || []).length}/3
+                  </span>
+                )}
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>
+                  {langStyleExpanded ? '收起' : '展开'}
+                </span>
+              </button>
+              {langStyleExpanded && (
+                <div className="lang-style-buttons" style={{ padding: '4px 10px 8px', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {Object.entries(CHAPTER_LANG_STYLES).map(([k, s]) => {
+                    const sel = (langStyles || []).includes(k);
+                    const disabled = !sel && (langStyles || []).length >= 3;
+                    return (
+                      <button key={k} type="button"
+                        onClick={() => onToggleChapterLangStyle(k)}
+                        disabled={aiCreating || disabled}
+                        title={s.desc}
+                        style={{ padding: '3px 9px', fontSize: 12, borderRadius: 12,
+                          cursor: (aiCreating || disabled) ? 'not-allowed' : 'pointer',
+                          border: `1px solid ${sel ? 'var(--accent)' : 'var(--border-color)'}`,
+                          background: sel ? 'var(--accent)' : 'transparent',
+                          color: sel ? '#fff' : 'var(--text-primary)',
+                          opacity: (aiCreating || disabled) ? 0.4 : 1 }}>
+                        {s.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
           {/* 连续创作模式：批量生成 N 章（仅 write 模式，不依赖多Agent协同） */}

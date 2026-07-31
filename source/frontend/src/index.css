@@ -1359,3 +1359,22 @@ textarea{resize:vertical;line-height:1.8}
 .graph-char-header-label{font-size:12px;font-weight:700;fill:var(--text-primary);text-anchor:middle}
 
 .dm-editor-panel .dm-report-meta{padding:6px 12px;font-size:11px;color:var(--text-muted);border-top:1px solid var(--border-color)}
+
+/* ===== 本章语言风格：手机端两行布局 ===== */
+@media(max-width:600px){
+  .lang-style-buttons{
+    display:grid !important;
+    grid-template-rows:repeat(2,auto);
+    grid-auto-flow:column;
+    grid-auto-columns:minmax(0,1fr);
+    gap:6px 4px;
+  }
+  .lang-style-buttons button{
+    padding:4px 2px !important;
+    font-size:11px !important;
+    width:100%;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+}
