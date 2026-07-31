@@ -20,13 +20,19 @@ cp -rf source/frontend/dist/assets/* assets/
 
 echo "=== 推送 main 分支（后端 + 静态文件 + 根目录前端）==="
 git add .
-git commit -m "deploy: $(date +'%Y-%m-%d %H:%M:%S')"
+git commit -m "deploy: $(date +'%Y-%m-%d %H:%M:%S')" || true
 git push origin main
 
 echo "=== 推送 gh-pages 分支（前端静态页面）==="
+# dist 被 .gitignore 忽略，需 init 独立临时仓库专推 gh-pages
+# 全局已配置 credential.helper=store，子仓库继承，无需再输 token
 cd /workspace/source/frontend/dist
-git add .
-git commit -m "deploy: $(date +'%Y-%m-%d %H:%M:%S')" || true
+rm -rf .git
+git init -q
+git config user.email "deploy@fanshu.dev"
+git config user.name "fanshu-deploy"
+git add -A
+git commit -m "deploy: $(date +'%Y-%m-%d %H:%M:%S')" -q || true
 git push -f origin gh-pages
 
 echo "=== 部署完成 ==="
