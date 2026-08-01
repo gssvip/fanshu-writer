@@ -1722,6 +1722,48 @@ def health_check():
     """超轻量健康检查端点，不查数据库，用于保活 ping"""
     return jsonify({'status': 'ok', 'time': datetime.now().isoformat()}), 200
 
+@app.route('/api/debug-static', methods=['GET'])
+def debug_static():
+    """调试端点：检查静态文件目录状态（部署后删除）"""
+    import os as _os
+    from pathlib import Path as _Path
+    info = {
+        'cwd': _os.getcwd(),
+        '__file__': str(_Path(__file__).resolve()),
+        'FRONTEND_DIST_env': _os.environ.get('FANSHU_FRONTEND_DIST', '(not set)'),
+        'FRONTEND_DIST_resolved': str(FRONTEND_DIST.resolve()),
+        'FRONTEND_DIST_exists': FRONTEND_DIST.exists(),
+        'FRONTEND_DIST_has_index': (FRONTEND_DIST / 'index.html').exists() if FRONTEND_DIST.exists() else False,
+        'FRONTEND_DIST_files': [],
+        'static_dir_path': str((_Path(__file__).parent / 'static').resolve()),
+        'static_dir_exists': (_Path(__file__).parent / 'static').exists(),
+        'static_dir_files': [],
+        'static_assets_exists': (_Path(__file__).parent / 'static' / 'assets').exists(),
+        'static_assets_files': [],
+        'static_version_json_exists': (_Path(__file__).parent / 'static' / 'version.json').exists(),
+    }
+    # 列出 FRONTEND_DIST 目录内容
+    if FRONTEND_DIST.exists():
+        try:
+            info['FRONTEND_DIST_files'] = [f.name for f in FRONTEND_DIST.iterdir()]
+        except Exception as e:
+            info['FRONTEND_DIST_files'] = f'Error: {e}'
+    # 列出 static 目录内容
+    static_dir = _Path(__file__).parent / 'static'
+    if static_dir.exists():
+        try:
+            info['static_dir_files'] = [f.name for f in static_dir.iterdir()]
+        except Exception as e:
+            info['static_dir_files'] = f'Error: {e}'
+    # 列出 static/assets 目录内容
+    assets_dir = static_dir / 'assets'
+    if assets_dir.exists():
+        try:
+            info['static_assets_files'] = [f.name for f in assets_dir.iterdir()]
+        except Exception as e:
+            info['static_assets_files'] = f'Error: {e}'
+    return jsonify(info), 200
+
 @app.route('/api/templates', methods=['GET'])
 def list_templates():
     templates = Template.query.order_by(Template.is_builtin.desc(), Template.created_at.desc()).all()
