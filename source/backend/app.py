@@ -6833,6 +6833,19 @@ def ai_continue_batch(book_id):
 
             # ★ 关键修复：统一剥离所有内部标签（pre_write_check / chapter_changes / 标题JSON / 【标题】行）
             # 这些是内部运行产物，绝不能展示给用户或落库（否则污染下一章前文上下文）
+            # 注意：先用原始 draft_content 解析 chapter_changes 回写 bb 状态，再剥离标签
+            if extract_changes and apply_chapter_changes:
+                try:
+                    _, changes = extract_changes(draft_content)
+                    if changes:
+                        apply_chapter_changes(
+                            bb, '', cur_ch,
+                            ctx.get('vol_index', 0), changes,
+                        )
+                        db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             polished_content = _extract_chapter_body(polished_content)
             # 额外剥离末尾的标题 JSON 块（_extract_chapter_body 未覆盖）
             polished_content = _re_batch.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', polished_content).rstrip()

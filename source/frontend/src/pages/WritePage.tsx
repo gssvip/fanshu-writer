@@ -649,31 +649,69 @@ export default function WritePage() {
       ? chapters.filter(c => !c.is_volume && !c.parent_id)
       : chapters.filter(c => c.parent_id === volId && !c.is_volume);
 
-    const confirmMsg = isOrphanDelete
-      ? `确定删除全部 ${children.length} 章未分卷章节？此操作不可撤销。`
-      : children.length > 0
-        ? `该卷下还有 ${children.length} 章，删除卷后这些章节将变为未分卷。确定删除？`
-        : '确定删除此卷？';
-
-    showConfirm(confirmMsg, async () => {
-      try {
-        if (isOrphanDelete) {
+    if (isOrphanDelete) {
+      const confirmMsg = `确定删除全部 ${children.length} 章未分卷章节？此操作不可撤销。`;
+      showConfirm(confirmMsg, async () => {
+        try {
           for (const ch of children) {
             await api.deleteChapter(bookId, ch.id);
           }
-        } else {
-          // 先清空子章节的 parent_id，使其变为未分卷（避免删除卷后章节变孤儿不可见）
+          const updated = await api.listChapters(bookId);
+          setChapters(updated);
+        } catch (e: any) {
+          alert('删除失败: ' + e.message);
+        }
+      });
+      return;
+    }
+
+    // 卷下有章节时，让用户选择删除方式
+    if (children.length > 0) {
+      const choice = window.confirm(
+        `该卷下有 ${children.length} 章正文。\n\n` +
+        `【确定】= 连同章节一起删除（整卷清空，不可撤销）\n` +
+        `【取消】= 仅删除卷，章节保留并移至未分卷`
+      );
+      if (choice) {
+        // 连章一起删
+        const inner = window.confirm(`⚠️ 确认连同 ${children.length} 章正文一起删除？此操作不可撤销！`);
+        if (!inner) return;
+        try {
+          // 先删卷下所有章节，再删卷本身
+          for (const ch of children) {
+            await api.deleteChapter(bookId, ch.id);
+          }
+          await api.deleteChapter(bookId, volId);
+          const updated = await api.listChapters(bookId);
+          setChapters(updated);
+        } catch (e: any) {
+          alert('删除失败: ' + e.message);
+        }
+      } else {
+        // 仅删卷，章节移至未分卷
+        try {
           for (const ch of children) {
             await api.updateChapter(bookId, ch.id, { parent_id: '' } as any);
           }
           await api.deleteChapter(bookId, volId);
+          const updated = await api.listChapters(bookId);
+          setChapters(updated);
+        } catch (e: any) {
+          alert('删除失败: ' + e.message);
         }
-        const updated = await api.listChapters(bookId);
-        setChapters(updated);
-      } catch (e: any) {
-        alert('删除失败: ' + e.message);
       }
-    });
+    } else {
+      // 空卷直接删
+      showConfirm('确定删除此空卷？', async () => {
+        try {
+          await api.deleteChapter(bookId, volId);
+          const updated = await api.listChapters(bookId);
+          setChapters(updated);
+        } catch (e: any) {
+          alert('删除失败: ' + e.message);
+        }
+      });
+    }
   }
 
   async function saveChapter() {
