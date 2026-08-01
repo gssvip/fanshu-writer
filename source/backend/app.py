@@ -5831,8 +5831,8 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
         return True, ''
 
 
-def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None, chapter_lang_styles=None):
-    """构建章节正文写作的完整上下文（被 ai_continue 和 ai_continue_stream 共用）。
+def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None, chapter_lang_styles=None, enable_structured_tags=True):
+    """构建章节正文写作的完整上下文（被 ai_continue / ai_continue_stream / ai_continue_batch 共用）。
     返回 dict，包含 system_prompt, user_prompt, temperature, max_tokens, chapter_plan, api 信息等。
 
     修复上下文脱节：
@@ -5840,6 +5840,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     - prev_chapter_content：上一章已生成但未保存的正文（重新生成/连续创作场景），
       会作为"最近一章"注入上下文，避免 AI 接不上刚写的内容。
     - chapter_lang_styles：本章语言风格（行文文风，最多3个），拼入 system_prompt 指导行文。
+    - enable_structured_tags：是否注入 <pre_write_check> / <chapter_changes> 标签模板。
+      流式模式传 False（避免内部标签实时显示给用户）；多Agent/连续模式传 True（内部处理后清洗）。
     """
     book = Book.query.get(book_id)
     config = AIConfig.query.first()
@@ -6136,11 +6138,12 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 12. 【OOC 专项检测】注意角色人设一致性，不要OOC（Out of Character）。角色行为必须符合人物设定：说话语气、行为模式、决策逻辑、情绪反应都要与人设档案一致。禁止角色突然性格大变（如沉稳角色突然话多、冷酷角色突然唠叨、谨慎角色突然鲁莽）。"""
 
     # P2-11：在 system_prompt 末尾追加 PRE_WRITE_CHECK 模板（要求 LLM 写正文前先输出意图表）
-    if build_pre_write_check_prompt:
+    # 流式模式不注入（enable_structured_tags=False），避免内部标签实时显示给用户
+    if enable_structured_tags and build_pre_write_check_prompt:
         system_prompt += build_pre_write_check_prompt(current_chapter_num, bb)
 
     # P1-6：在 system_prompt 末尾追加 CHANGES 输出模板（要求 LLM 输出结构化状态变更）
-    if build_changes_prompt_template:
+    if enable_structured_tags and build_changes_prompt_template:
         system_prompt += build_changes_prompt_template()
 
     # 标题自动生成：要求 LLM 在正文末尾输出 JSON 标题，供后端解析回填章节标题
@@ -6210,14 +6213,21 @@ def ai_continue(book_id):
         base_url = ctx['base_url']
         model = ctx['model']
 
-        # ===== 正文生成 =====
-        resp = requests.post(f'{base_url}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-            json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}],
-                  'temperature': temperature, 'max_tokens': max_tokens},
-            timeout=180)
-        result = resp.json()
-        draft_content = result['choices'][0]['message']['content']
+        # ===== 正文生成（含容错：LLM 异常时返回友好错误而非 500）=====
+        try:
+            resp = requests.post(f'{base_url}/chat/completions',
+                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}],
+                      'temperature': temperature, 'max_tokens': max_tokens},
+                timeout=180)
+            result = resp.json()
+            draft_content = result['choices'][0]['message']['content']
+        except requests.exceptions.Timeout:
+            return jsonify({'error': '正文生成超时（180秒），请检查网络或换用更快的模型后重试'}), 504
+        except (KeyError, IndexError) as e:
+            return jsonify({'error': f'LLM 返回格式异常：{str(e)}，请重试或检查 API 配置'}), 502
+        except Exception as e:
+            return jsonify({'error': f'正文生成失败：{str(e)}'}), 500
 
         # ===== 【字数铁律】初稿字数校验 + AI 重写修正（非物理截断，保证章节完整）=====
         # 统计中文字数（含标点）：去除空白后的字符数
@@ -6500,9 +6510,10 @@ def ai_continue(book_id):
 
         # ===== 标题自动生成：解析【标题】标签，剥离正文中的标签行 =====
         suggested_title = _extract_chapter_title(draft_content)
-        if suggested_title:
-            # 剥离 polished_content 末尾的【标题】标签行，保证正文干净
-            polished_content = re.sub(r'【标题】[^\n]*', '', polished_content).rstrip()
+        # ★ 统一清洗：无论 changes 是否解析成功，都剥离所有内部标签（pre_write_check / chapter_changes / 标题JSON / 【标题】行）
+        # 确保返回给前端的 content 是纯净正文，避免内部产物泄露给用户
+        polished_content = _extract_chapter_body(polished_content)
+        polished_content = re.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', polished_content).rstrip()
 
         return jsonify({
             'content': polished_content,
@@ -6644,7 +6655,7 @@ def ai_continue_stream(book_id):
     # 章节正文语言风格（行文文风，最多3个叠加）
     chapter_lang_styles = request.json.get('chapter_lang_styles', [])
 
-    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles)
+    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles, enable_structured_tags=False)
     api_key = ctx['api_key']
     base_url = ctx['base_url']
     model = ctx['model']
@@ -6819,13 +6830,35 @@ def ai_continue_batch(book_id):
 
             # 标题自动生成：解析 JSON 标题，剥离正文标签行
             suggested_title = _extract_chapter_title(draft_content, draft_content)
-            # 剥离 JSON 标题块和【标题】标签
+
+            # ★ 关键修复：统一剥离所有内部标签（pre_write_check / chapter_changes / 标题JSON / 【标题】行）
+            # 这些是内部运行产物，绝不能展示给用户或落库（否则污染下一章前文上下文）
+            polished_content = _extract_chapter_body(polished_content)
+            # 额外剥离末尾的标题 JSON 块（_extract_chapter_body 未覆盖）
             polished_content = _re_batch.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', polished_content).rstrip()
-            polished_content = _re_batch.sub(r'【标题】[^\n]*', '', polished_content).rstrip()
+
+            # ★ 修复问题二：连续模式也跑 post_validate（去AI味检测），与多agent模式对齐
+            post_validate = None
+            if validate_chapter_with_bible:
+                try:
+                    bible_ctx = {
+                        'character_profiles': bb.character_profiles or '',
+                        'chapter_changes_log': bb.chapter_changes_log or '',
+                        'key_rules': bb.key_rules or '',
+                        'worldbuilding': bb.worldbuilding or '',
+                        'inventory': bb.inventory or '',
+                        'locations': bb.locations or '',
+                        'foreshadowing': bb.foreshadowing or '',
+                    } if bb else None
+                    validation = validate_chapter_with_bible(polished_content, bible_ctx)
+                    if validation.issues:
+                        post_validate = validation.to_dict()
+                except Exception:
+                    pass
 
             # 校验报告
             wc = len(_re_batch.sub(r'\s', '', polished_content))
-            chapter_score = _calc_chapter_score(None, consistency_passed, consistency_issues, {}, wc, ctx.get('chapter_plan', ''))
+            chapter_score = _calc_chapter_score(post_validate, consistency_passed, consistency_issues, {}, wc, ctx.get('chapter_plan', ''))
 
             # 自动保存为 Chapter（标题优先用解析结果，无则回退"第X章"）
             title = suggested_title or f'第{cur_ch}章'
@@ -6848,6 +6881,14 @@ def ai_continue_batch(book_id):
         except Exception as e:
             # 单章失败不中断，继续下一章
             continue
+
+    # ★ 修复问题四：连续生成的章节按 50 章/卷自动归卷（复用现有 rebin 逻辑）
+    if results:
+        try:
+            resort_chapters_by_title(book_id, rebin_volumes=True)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
     return jsonify({'chapters': results, 'total': len(results)})
 
