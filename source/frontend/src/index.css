@@ -1378,3 +1378,138 @@ textarea{resize:vertical;line-height:1.8}
     text-overflow:ellipsis;
   }
 }
+
+/* ============================================================
+   手机端 AI 创作界面优化（6点全优化）
+   ============================================================ */
+
+/* P0-1：正文展开时全屏覆盖（手机端），避免限高 50vh 看不全 */
+@media (max-width: 600px) {
+  .ai-chat-msg-content.ai-chat-msg-expanded {
+    position: fixed !important;
+    top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+    max-height: 100vh !important;
+    z-index: 1000;
+    border-radius: 0 !important;
+    background: var(--bg-primary) !important;
+    padding: 16px !important;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* 展开态下的折叠按钮也要浮在顶层 */
+  .ai-chat-msg-expanded + .ai-chat-msg-toggle,
+  .ai-chat-msg-toggle:has(+ .ai-chat-msg-expanded) {
+    position: fixed !important;
+    bottom: 16px !important; left: 50% !important;
+    transform: translateX(-50%);
+    z-index: 1001;
+  }
+}
+
+/* P0-2：手机端压缩底部控制区，给正文留更多空间 */
+@media (max-width: 600px) {
+  .ai-chat-panel { padding: 8px 10px !important; gap: 6px !important; height: calc(100vh - 140px) !important; }
+  .ai-create-control-bar { padding-top: 6px !important; gap: 4px !important; }
+  .ai-prompt-vertical { padding: 8px !important; }
+  .ai-prompt-vertical .ai-prompt-input { min-height: 70px !important; max-height: 140px !important; font-size: 13px !important; }
+  .agent-pipeline-toggle { padding: 4px 8px !important; font-size: 11px !important; }
+  .ai-create-header { gap: 6px !important; }
+  .ai-chat-target { font-size: 11px !important; padding: 1px 6px !important; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ai-chat-msg-avatar { width: 26px !important; height: 26px !important; font-size: 14px !important; }
+  .ai-chat-msg-body { max-width: calc(100% - 36px) !important; }
+  .ai-chat-msg-content { font-size: 13px !important; padding: 8px 10px !important; line-height: 1.75 !important; }
+}
+
+/* P1-3：底部配置抽屉（手机端从底部滑出，不挤压正文区） */
+.ai-config-drawer-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1100;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s;
+}
+.ai-config-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+.ai-config-drawer {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 1101;
+  background: var(--bg-primary); border-top-left-radius: 14px; border-top-right-radius: 14px;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+  max-height: 75vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  transform: translateY(100%); transition: transform 0.25s ease-out;
+  padding: 12px 14px 18px;
+}
+.ai-config-drawer.open { transform: translateY(0); }
+.ai-config-drawer-handle {
+  width: 36px; height: 4px; background: var(--border-color); border-radius: 2px;
+  margin: 0 auto 10px;
+}
+.ai-config-drawer-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+.ai-config-drawer-close { background: transparent; border: none; font-size: 18px; color: var(--text-muted); cursor: pointer; padding: 0 4px; }
+.ai-config-trigger {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px;
+  font-size: 12px; color: var(--text-secondary); cursor: pointer; width: 100%;
+}
+.ai-config-trigger:active { opacity: 0.7; }
+.ai-config-trigger-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; margin-left: auto;
+}
+.ai-config-trigger-hint { font-size: 11px; color: var(--text-muted); }
+
+/* P1-3 wrapper：桌面端 display:contents 透明，手机端变 fixed 抽屉 */
+.ai-config-items-wrapper { display: contents; }
+.ai-config-drawer-header { display: none; }
+@media (max-width: 600px) {
+  .ai-config-items-wrapper.mobile { display: none; }
+  .ai-config-items-wrapper.mobile.drawer-open {
+    display: block;
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 1101;
+    background: var(--bg-primary); border-top-left-radius: 14px; border-top-right-radius: 14px;
+    max-height: 75vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 12px 14px 18px; box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+    animation: aiDrawerSlideUp 0.25s ease-out;
+  }
+  @keyframes aiDrawerSlideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .ai-config-drawer-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border-color);
+  }
+  .ai-config-drawer-header-title { font-size: 14px; font-weight: 700; }
+  .ai-config-drawer-header-close { background: transparent; border: none; font-size: 18px; color: var(--text-muted); cursor: pointer; padding: 0 4px; }
+}
+
+/* P2-5：流式生成全屏阅读模式 */
+.ai-fullscreen-stream {
+  position: fixed; inset: 0; z-index: 1200;
+  background: var(--bg-primary); display: flex; flex-direction: column;
+}
+.ai-fullscreen-stream-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px; border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary); flex-shrink: 0;
+}
+.ai-fullscreen-stream-title { font-size: 13px; font-weight: 600; color: var(--accent); display: flex; align-items: center; gap: 6px; }
+.ai-fullscreen-stream-body {
+  flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 16px; font-size: 15px; line-height: 1.9;
+}
+.ai-fullscreen-stream-body p { margin: 0 0 10px 0; }
+.ai-fullscreen-stream-footer {
+  padding: 10px 14px; border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary); flex-shrink: 0; display: flex; justify-content: center;
+}
+.ai-fullscreen-stop-btn {
+  padding: 8px 24px; font-size: 14px; border-radius: 20px;
+  background: var(--accent); color: #fff; border: none; cursor: pointer;
+}
+.ai-fullscreen-stop-btn:active { opacity: 0.8; }
+
+/* P2-6：连续创作进度浮层（顶部 toast，不占正文区空间） */
+.ai-batch-toast {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 1300; min-width: 260px; max-width: calc(100vw - 24px);
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  padding: 10px 14px; font-size: 12px;
+}
+.ai-batch-toast-progress { height: 3px; background: var(--bg-tertiary); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.ai-batch-toast-progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+.ai-batch-toast-msg { color: var(--text-secondary); margin-top: 4px; font-size: 11px; }

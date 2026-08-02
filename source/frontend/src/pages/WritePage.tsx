@@ -2569,6 +2569,26 @@ function ChapterPanel(props: {
   const [renamingVolId, setRenamingVolId] = useState<string | null>(null);
   const [renameVolTitle, setRenameVolTitle] = useState('');
   const selectedCount = selectedSkillPackIds.length;
+  // 手机端优化：配置抽屉开关、流式全屏阅读开关、agentMeta 折叠态
+  const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
+  const [streamFullscreen, setStreamFullscreen] = useState(false);
+  const [agentMetaExpanded, setAgentMetaExpanded] = useState(false);
+  // 手机端检测（SSR 安全：window 存在时检测一次，监听 resize 更新）
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 600);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setIsMobile(window.innerWidth < 600);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  // 流式生成时自动开启全屏阅读（手机端）
+  useEffect(() => {
+    if (isMobile && aiCreating && aiGeneratedContent.trim()) {
+      setStreamFullscreen(true);
+    } else if (!aiCreating) {
+      setStreamFullscreen(false);
+    }
+  }, [isMobile, aiCreating, aiGeneratedContent]);
 
   // 稳定回调（useCallback）：避免每次 ChapterPanel 重渲染时生成新函数引用，
   // 配合 VolumeGroup 的 memo，使折叠/展开某个卷时其他卷不重渲染。
@@ -2702,8 +2722,46 @@ function ChapterPanel(props: {
   if (aiCreateMode) {
     const hasResult = aiGeneratedContent.trim().length > 0;
     const streaming = aiCreating && hasResult;
+
+    // P2-5：手机端流式生成全屏阅读模式（独立渲染，覆盖整个面板）
+    if (isMobile && streamFullscreen && streaming) {
+      const streamParas = aiGeneratedContent.split(/\n+/).filter(p => p.trim());
+      return (
+        <div className="ai-fullscreen-stream">
+          <div className="ai-fullscreen-stream-header">
+            <div className="ai-fullscreen-stream-title">
+              <span className="loading-dot" /> 正在生成{chapterEditTitle ? `·${chapterEditTitle}` : ''}...
+            </div>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{aiGeneratedContent.length}字</span>
+          </div>
+          <div className="ai-fullscreen-stream-body" ref={el => { if (el) el.scrollTop = el.scrollHeight; }}>
+            {streamParas.map((para, pi) => (<p key={pi}>{para.trim()}</p>))}
+          </div>
+          <div className="ai-fullscreen-stream-footer">
+            <button
+              className="ai-fullscreen-stop-btn"
+              onClick={() => { onStopAiCreate(); setStreamFullscreen(false); }}
+            >⏹ 停止生成</button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="ai-create-panel ai-chat-panel">
+        {/* P2-6：连续创作进度顶部 toast 浮层（不占正文区空间） */}
+        {batchCreating && batchProgress && batchProgress.total > 0 && (
+          <div className="ai-batch-toast">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 600, color: 'var(--accent)' }}>📚 连续创作 {batchProgress.done}/{batchProgress.total}</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{Math.round((batchProgress.done / batchProgress.total) * 100)}%</span>
+            </div>
+            <div className="ai-batch-toast-progress">
+              <div className="ai-batch-toast-progress-bar" style={{ width: `${(batchProgress.done / batchProgress.total) * 100}%` }} />
+            </div>
+            {batchProgress.message && <div className="ai-batch-toast-msg">{batchProgress.message}</div>}
+          </div>
+        )}
         {/* 顶部：标题栏 */}
         <div className="ai-create-header">
           <div className="ai-create-header-left">
@@ -2798,8 +2856,27 @@ function ChapterPanel(props: {
           {aiStreamError && <div className="error-msg" style={{ marginTop: 8 }}>{aiStreamError}</div>}
 
           {/* P0-1: 多Agent协同管线元信息展示（生成结果） */}
+          {/* P1-4：默认折叠，只显示一行摘要，点击展开详情。手机端省 200-300px 空间 */}
           {onToggleAgentPipeline && aiCreateMode === 'write' && agentMeta && (
-            <div style={{ marginTop: 8, padding: '8px 10px', background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12 }}>
+            <details
+              open={agentMetaExpanded}
+              onToggle={e => setAgentMetaExpanded((e.target as HTMLDetailsElement).open)}
+              style={{ marginTop: 8, padding: '6px 10px', background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12 }}
+            >
+              <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--text-secondary)', lineHeight: 1.7, listStyle: 'none' }}>
+                <span style={{ fontSize: 10, marginRight: 4 }}>{agentMetaExpanded ? '▼' : '▶'}</span>
+                📍 第{agentMeta.current_chapter_num}章 · {agentMeta.vol_title || `第${agentMeta.vol_index}卷`}
+                {agentMeta.deai_status === 'success' && <span style={{ color: '#27ae60' }}> · ✅去AI味</span>}
+                {agentMeta.deai_status === 'failed' && <span style={{ color: '#e67e22' }} title={agentMeta.review_notes}> · ⚠️去AI味失败</span>}
+                {agentMeta.consistency_passed === false && <span style={{ color: '#e74c3c' }} title={agentMeta.consistency_issues}> · ❌一致性异常</span>}
+                {agentMeta.consistency_passed === true && <span style={{ color: '#27ae60' }}> · ✅一致性</span>}
+                {agentMeta.post_validate && agentMeta.post_validate.critical_count > 0 && (
+                  <span style={{ color: '#e74c3c' }} title={`AI痕迹检测：${agentMeta.post_validate.critical_count}个严重问题`}>{' · ⚠️AI痕迹'}({agentMeta.post_validate.critical_count})</span>
+                )}
+                {agentMeta.changes_applied && agentMeta.changes_applied.applied && <span style={{ color: '#27ae60' }}> · 📝已回写</span>}
+                {agentMeta.suggested_title && <span style={{ color: '#9b59b6' }}> · 🏷️{agentMeta.suggested_title}</span>}
+              </summary>
+              <div style={{ marginTop: 6 }}>
               {agentMeta.chapter_plan && (
                 <div style={{ marginBottom: 4, padding: '6px 8px', background: 'var(--bg-secondary)', borderRadius: 4, borderLeft: '3px solid var(--accent)' }}>
                   <b>📋 章节计划：</b>{agentMeta.chapter_plan.slice(0, 200)}{agentMeta.chapter_plan.length > 200 ? '...' : ''}
@@ -2894,11 +2971,40 @@ function ChapterPanel(props: {
                 </div>
               )}
             </div>
+            </details>
           )}
         </div>
 
         {/* 底部：控制区（多Agent开关+本章语言风格+技能包+输入框，固定在底部） */}
         <div className="ai-create-control-bar">
+          {/* P1-3：手机端配置抽屉触发按钮（4项配置收进抽屉，底部只留输入框） */}
+          {isMobile && (
+            <>
+              <button
+                className="ai-config-trigger"
+                onClick={() => setConfigDrawerOpen(true)}
+                disabled={aiCreating}
+              >
+                <span>⚙️</span>
+                <span>创作配置</span>
+                {(selectedCount + (langStyles?.length || 0) + (useAgent ? 1 : 0)) > 0 && (
+                  <span className="ai-config-trigger-badge">{selectedCount + (langStyles?.length || 0) + (useAgent ? 1 : 0)}</span>
+                )}
+                <span className="ai-config-trigger-hint">点击展开</span>
+              </button>
+              {configDrawerOpen && (
+                <div className="ai-config-drawer-backdrop open" onClick={() => setConfigDrawerOpen(false)} />
+              )}
+            </>
+          )}
+          {/* P1-3：4项配置 wrapper（桌面端 display:contents 透明，手机端 drawer-open 时变 fixed 抽屉） */}
+          <div className={`ai-config-items-wrapper ${isMobile ? 'mobile' : ''} ${isMobile && configDrawerOpen ? 'drawer-open' : ''}`}>
+            {isMobile && configDrawerOpen && (
+              <div className="ai-config-drawer-header">
+                <span className="ai-config-drawer-header-title">创作配置</span>
+                <button className="ai-config-drawer-header-close" onClick={() => setConfigDrawerOpen(false)}>✕</button>
+              </div>
+            )}
           {/* P0-1: 多Agent协同管线开关（紧邻协同技能包，两行相邻） */}
           {onToggleAgentPipeline && aiCreateMode === 'write' && (
             <div className="agent-pipeline-toggle">
@@ -2958,6 +3064,7 @@ function ChapterPanel(props: {
             </div>
           )}
           {/* 连续创作模式：批量生成 N 章（仅 write 模式，不依赖多Agent协同） */}
+          {/* P2-6：进度条移到顶部 toast 浮层，不占配置区空间 */}
           {onBatchCreate && aiCreateMode === 'write' && (
             <div className="batch-create-row" style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6, padding: '6px 8px', background: 'var(--bg-tertiary)', borderRadius: 6, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>📚 连续创作</span>
@@ -2967,18 +3074,8 @@ function ChapterPanel(props: {
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>章</span>
               <button className="btn-primary-sm" onClick={() => onBatchCreate?.()} disabled={!!batchCreating || aiCreating}
                 style={{ padding: '4px 10px', fontSize: 12 }}>
-                {batchCreating ? `⏳ 生成中 ${batchProgress?.done || 0}/${batchProgress?.total || batchCount}...` : '🚀 开始连续创作'}
+                {batchCreating ? `⏳ 生成中...` : '🚀 开始连续创作'}
               </button>
-              {batchCreating && batchProgress && batchProgress.total > 0 && (
-                <div style={{ flex: '1 1 100%', marginTop: 2 }}>
-                  <div style={{ height: 4, background: 'var(--bg-secondary)', borderRadius: 2 }}>
-                    <div style={{ width: `${(batchProgress.done / batchProgress.total) * 100}%`, height: '100%', background: 'var(--accent)', borderRadius: 2, transition: 'width 0.3s' }} />
-                  </div>
-                  {batchProgress.message && (
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{batchProgress.message}</div>
-                  )}
-                </div>
-              )}
             </div>
           )}
           {/* 技能包多选器（可折叠，紧凑模式） */}
@@ -3027,6 +3124,7 @@ function ChapterPanel(props: {
               )}
             </div>
           )}
+          </div>{/* end ai-config-items-wrapper */}
 
           {/* 用户提问输入区 */}
           <div className="ai-prompt-section ai-prompt-vertical">
