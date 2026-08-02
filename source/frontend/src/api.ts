@@ -373,7 +373,7 @@ export const api = {
       }),
     }, signal),
 
-  // 连续创作模式：SSE 流式批量生成 N 章，自动保存。返回原始 Response（含 body 流）
+  // 连续创作模式：普通 POST 批量生成 N 章，自动保存。返回原始 Response（含 body 流）
   aiContinueBatch: (bookId: string, instruction: string, skillPackIds: string[], count: number, opts?: { startChapterNum?: number; chapterLangStyles?: string[] }) => {
     const token = getToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -389,6 +389,29 @@ export const api = {
         chapter_lang_styles: opts?.chapterLangStyles || [],
       }),
     });
+  },
+
+  // 连续创作流式版（SSE）：解决 Render 同步请求超时（约100s）导致 Failed to fetch。
+  // 每章 LLM stream + 5s 心跳保持连接活跃，每章完成推送 chapter_done 事件。
+  // 返回原始 Response，调用方用 ReadableStream 解析 SSE 事件。
+  aiContinueBatchStream: (bookId: string, instruction: string, skillPackIds: string[], count: number, opts?: { startChapterNum?: number; chapterLangStyles?: string[] }, signal?: AbortSignal) => {
+    const token = getToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const cfg: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        instruction,
+        skill_pack_ids: skillPackIds || [],
+        count,
+        start_chapter_num: opts?.startChapterNum,
+        chapter_lang_styles: opts?.chapterLangStyles || [],
+      }),
+    };
+    if (signal) cfg.signal = signal;
+    // 不设 timeout：SSE 流式持续推送心跳，不会触发浏览器/Render 空闲超时
+    return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-continue-batch/stream`, cfg);
   },
 
   // P2-9：Spot-Fix 修订（按校验问题路由：local 类只修补问题段落，省 token）

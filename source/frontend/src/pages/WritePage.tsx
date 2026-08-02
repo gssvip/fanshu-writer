@@ -270,7 +270,7 @@ export default function WritePage() {
   // 连续创作模式：批量生成 N 章
   const [batchCount, setBatchCount] = useState(3);
   const [batchCreating, setBatchCreating] = useState(false);
-  const [batchProgress, setBatchProgress] = useState<{ cur: number; total: number; done: number }>({ cur: 0, total: 0, done: 0 });
+  const [batchProgress, setBatchProgress] = useState<{ cur: number; total: number; done: number; message?: string }>({ cur: 0, total: 0, done: 0 });
   // 本章语言风格（行文文风，最多3个叠加），注入 AI 指导本章行文
   const [chapterLangStyles, setChapterLangStyles] = useState<string[]>([]);
   const toggleChapterLangStyle = useCallback((key: string) => {
@@ -890,39 +890,98 @@ export default function WritePage() {
     executeAiCreate(lastUserMsg.content, prevContentForCtx);
   }
 
-  // 连续创作模式：普通 POST 批量生成 N 章，自动保存
+  // 连续创作模式：SSE 流式批量生成 N 章，自动保存。
+  // 改用流式接口解决 Render 同步请求超时（约100s）导致 Failed to fetch：
+  // 每章 LLM stream + 5s 心跳保持连接活跃，每章完成推送 chapter_done 事件。
   async function batchCreate() {
     if (!bookId || batchCreating) return;
     if (batchCount < 1 || batchCount > 10) { alert('章数需在 1-10 之间'); return; }
     setBatchCreating(true);
     setBatchProgress({ cur: 0, total: batchCount, done: 0 });
     setAiStreamError('');
+    // 用于用户主动停止
+    const abortCtrl = new AbortController();
+    aiAbortRef.current = abortCtrl;
+    aiStoppedRef.current = false;
+    let doneCount = 0;
+    let failedList: any[] = [];
     try {
       const progress = computeChapterProgress();
-      const resp = await api.aiContinueBatch(bookId, aiUserPrompt || (concept || ''), selectedSkillPackIds, batchCount, {
-        startChapterNum: progress.targetNum,
-        chapterLangStyles,
-      });
-      const data = await resp.json();
-      // 后端返回 JSON：{ chapters: [...], total: N, failed: [...], failed_count: N }
-      const chapters = data?.chapters || [];
-      const total = data?.total || chapters.length;
-      const failed = Array.isArray(data?.failed) ? data.failed : [];
-      setBatchProgress({ cur: total, total, done: total });
+      const resp = await api.aiContinueBatchStream(
+        bookId, aiUserPrompt || (concept || ''), selectedSkillPackIds, batchCount,
+        { startChapterNum: progress.targetNum, chapterLangStyles },
+        abortCtrl.signal,
+      );
+      if (!resp.ok || !resp.body) {
+        const errText = await resp.text().catch(() => '');
+        throw new Error(errText || `HTTP ${resp.status}`);
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      let curChapterNum = 0;
+      while (true) {
+        if (aiStoppedRef.current) { abortCtrl.abort(); break; }
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE 事件以 \n\n 分隔
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || ''; // 最后一段可能不完整，留到下次
+        for (const evt of events) {
+          if (!evt.startsWith('data: ')) continue;
+          const payload = evt.slice(6).trim();
+          if (payload === '[DONE]') continue;
+          try {
+            const data = JSON.parse(payload);
+            if (data.type === 'chapter_start') {
+              curChapterNum = data.chapter_num;
+              setBatchProgress(prev => ({ ...prev, cur: doneCount, message: `正在生成第${data.chapter_num}章...` }));
+            } else if (data.type === 'heartbeat') {
+              // 心跳：更新进度提示，保持 UI 活跃
+              setBatchProgress(prev => ({ ...prev, message: data.message || `正在生成第${data.chapter_num}章...` }));
+            } else if (data.type === 'chapter_done') {
+              doneCount++;
+              setBatchProgress({ cur: doneCount, total: batchCount, done: doneCount, message: `第${data.chapter.chapter_num}章已完成` });
+              setAiChatHistory(prev => [...prev, { role: 'assistant', content: `✅ 第${data.chapter.chapter_num}章《${data.chapter.title}》已生成（${data.chapter.word_count}字）并自动保存`, type: 'status' as const }]);
+            } else if (data.type === 'chapter_failed') {
+              failedList.push(data);
+              setAiChatHistory(prev => [...prev, { role: 'assistant', content: `❌ 第${data.chapter_num}章生成失败：${data.error || '未知错误'}`, type: 'status' as const }]);
+            } else if (data.type === 'batch_done') {
+              doneCount = data.total;
+              failedList = Array.isArray(data.failed) ? data.failed : [];
+              setBatchProgress({ cur: data.total, total: batchCount, done: data.total, message: '完成' });
+              break;
+            } else if (data.type === 'error') {
+              throw new Error(data.message || '生成失败');
+            }
+          } catch (parseErr: any) {
+            // 单事件解析失败不中断整体流程
+          }
+        }
+      }
       // 刷新章节列表
       try {
         const fresh = await api.listChapters(bookId);
         setChapters(fresh);
       } catch { /* ignore */ }
-      // Bug2 修复：展示失败章节信息，避免静默丢失
-      let statusMsg = `✅ 批量生成完成，共生成 ${total} 章并已自动保存。`;
-      if (failed.length > 0) {
-        const failList = failed.map((f: any) => `第${f.chapter_num}章（${f.error || '未知错误'}）`).join('；');
-        statusMsg = `⚠️ 批量生成完成：成功 ${total} 章，失败 ${failed.length} 章。失败章节：${failList}。失败章节未保存，可手动重试或检查 AI 配置。`;
+      // 展示汇总信息
+      let statusMsg = `✅ 批量生成完成，共生成 ${doneCount} 章并已自动保存。`;
+      if (failedList.length > 0) {
+        const failList = failedList.map((f: any) => `第${f.chapter_num}章（${f.error || '未知错误'}）`).join('；');
+        statusMsg = `⚠️ 批量生成完成：成功 ${doneCount} 章，失败 ${failedList.length} 章。失败章节：${failList}。失败章节未保存，可手动重试或检查 AI 配置。`;
+      } else if (aiStoppedRef.current) {
+        statusMsg = `⏹️ 已停止生成。成功 ${doneCount} 章已自动保存。`;
       }
       setAiChatHistory(prev => [...prev, { role: 'assistant', content: statusMsg, type: 'status' as const }]);
     } catch (e: any) {
-      setAiStreamError(e.message || '连续创作失败');
+      if (e.name === 'AbortError' || aiStoppedRef.current) {
+        setAiChatHistory(prev => [...prev, { role: 'assistant', content: `⏹️ 已停止生成。成功 ${doneCount} 章已自动保存。`, type: 'status' as const }]);
+      } else if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
+        setAiStreamError('连续创作连接失败，可能正在冷启动中。请稍等几秒后重试。');
+      } else {
+        setAiStreamError(e.message || '连续创作失败');
+      }
     } finally {
       setBatchCreating(false);
       setAiCreating(false);
@@ -2905,8 +2964,13 @@ function ChapterPanel(props: {
                 {batchCreating ? `⏳ 生成中 ${batchProgress?.done || 0}/${batchProgress?.total || batchCount}...` : '🚀 开始连续创作'}
               </button>
               {batchCreating && batchProgress && batchProgress.total > 0 && (
-                <div style={{ flex: '1 1 100%', height: 4, background: 'var(--bg-secondary)', borderRadius: 2, marginTop: 2 }}>
-                  <div style={{ width: `${(batchProgress.done / batchProgress.total) * 100}%`, height: '100%', background: 'var(--accent)', borderRadius: 2, transition: 'width 0.3s' }} />
+                <div style={{ flex: '1 1 100%', marginTop: 2 }}>
+                  <div style={{ height: 4, background: 'var(--bg-secondary)', borderRadius: 2 }}>
+                    <div style={{ width: `${(batchProgress.done / batchProgress.total) * 100}%`, height: '100%', background: 'var(--accent)', borderRadius: 2, transition: 'width 0.3s' }} />
+                  </div>
+                  {batchProgress.message && (
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{batchProgress.message}</div>
+                  )}
                 </div>
               )}
             </div>

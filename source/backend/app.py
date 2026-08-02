@@ -7010,6 +7010,216 @@ def ai_continue_batch(book_id):
     })
 
 
+@app.route('/api/books/<book_id>/ai-continue-batch/stream', methods=['POST'])
+@login_required
+def ai_continue_batch_stream(book_id):
+    """连续创作流式版（SSE）：解决 Render 同步请求超时（约100s）导致 Failed to fetch。
+    每章 LLM 调用改 stream 模式，逐 chunk 收集同时定期推送心跳，保持连接活跃；
+    每章完成推送完整章节内容，失败推送错误，全部完成推送结束事件。
+    事件类型：
+    - {type:'chapter_start', chapter_num}
+    - {type:'heartbeat', chapter_num, message} (生成期间每5s推送，防空闲超时)
+    - {type:'chapter_done', chapter:{chapter_num, chapter_id, title, content, word_count}}
+    - {type:'chapter_failed', chapter_num, error}
+    - {type:'batch_done', total, failed_count, failed:[...]}
+    - {type:'error', message} (致命错误，终止)
+    """
+    import time as _time
+
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': 'Not found'}), 404
+    data = request.get_json() or {}
+    instruction = data.get('instruction', '')
+    skill_pack_ids = data.get('skill_pack_ids', [])
+    chapter_lang_styles = data.get('chapter_lang_styles', [])
+    count = max(1, min(10, int(data.get('count', 3))))
+    start_chapter_num = data.get('start_chapter_num')
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        bb = BookBible(book_id=book_id)
+        db.session.add(bb)
+        db.session.commit()
+
+    def generate():
+        import re as _re_bs
+        results = []
+        failed = []
+        prev_polished = ''
+
+        for i in range(count):
+            try:
+                target_num = start_chapter_num + i if start_chapter_num else None
+                yield f'data: {json.dumps({"type": "chapter_start", "chapter_num": target_num or (i + 1)}, ensure_ascii=False)}\n\n'
+
+                ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids,
+                                                  target_num, prev_polished or None, chapter_lang_styles)
+                api_key = ctx['api_key']
+                base_url = ctx['base_url']
+                model = ctx['model']
+                cur_ch = ctx['current_chapter_num']
+
+                system_prompt = ctx['system_prompt']
+                system_prompt += '\n\n【字数与文风铁律】输出必须 2400±100 字（2300-2500字区间，含标点）。禁止AI味表达：禁止"仿佛""似乎""宛如"等比喻堆砌，禁止工整过渡，禁止完美套话。人物必须有矛盾心理/纠结/自我怀疑，禁止情绪顺滑。'
+
+                # LLM 流式调用：逐 chunk 收集，定期推送心跳保持连接活跃
+                full_parts = []
+                last_heartbeat = _time.time()
+                try:
+                    resp = requests.post(f'{base_url}/chat/completions',
+                        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                        json={'model': model, 'messages': [{'role':'system','content':system_prompt},
+                                                            {'role':'user','content':ctx['user_prompt']}],
+                              'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens'],
+                              'stream': True},
+                        stream=True, timeout=180)
+                except requests.exceptions.RequestException as re_err:
+                    try:
+                        app.logger.error(f'ai_continue_batch_stream 第{cur_ch}章 LLM 请求失败: {re_err}')
+                    except Exception:
+                        pass
+                    failed.append({'chapter_num': cur_ch, 'error': f'LLM 请求失败: {str(re_err)[:200]}'})
+                    yield f'data: {json.dumps({"type": "chapter_failed", "chapter_num": cur_ch, "error": f"LLM 请求失败"}, ensure_ascii=False)}\n\n'
+                    prev_polished = ''
+                    continue
+
+                if resp.status_code != 200:
+                    err_body = resp.text[:300] if hasattr(resp, 'text') else ''
+                    try:
+                        app.logger.error(f'ai_continue_batch_stream 第{cur_ch}章 LLM HTTP {resp.status_code}: {err_body}')
+                    except Exception:
+                        pass
+                    failed.append({'chapter_num': cur_ch, 'error': f'LLM HTTP {resp.status_code}'})
+                    yield f'data: {json.dumps({"type": "chapter_failed", "chapter_num": cur_ch, "error": f"LLM HTTP {resp.status_code}"}, ensure_ascii=False)}\n\n'
+                    prev_polished = ''
+                    continue
+
+                # 逐行读取流式响应，收集内容并定期推送心跳
+                for line in resp.iter_lines():
+                    if line:
+                        line = line.decode('utf-8')
+                        if line.startswith('data: '):
+                            chunk = line[6:]
+                            if chunk == '[DONE]':
+                                break
+                            try:
+                                chunk_data = json.loads(chunk)
+                                delta = chunk_data.get('choices', [{}])[0].get('delta', {}).get('content', '')
+                                if delta:
+                                    full_parts.append(delta)
+                            except Exception:
+                                pass
+                    # 每5秒推送一次心跳，避免 Render 空闲超时
+                    now = _time.time()
+                    if now - last_heartbeat > 5:
+                        yield f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在生成第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
+                        last_heartbeat = now
+
+                draft_content = ''.join(full_parts)
+                if not draft_content or not draft_content.strip():
+                    failed.append({'chapter_num': cur_ch, 'error': 'LLM 返回内容为空'})
+                    yield f'data: {json.dumps({"type": "chapter_failed", "chapter_num": cur_ch, "error": "LLM 返回内容为空"}, ensure_ascii=False)}\n\n'
+                    prev_polished = ''
+                    continue
+
+                polished_content = draft_content
+                suggested_title = _extract_chapter_title(draft_content, draft_content)
+
+                # 提取 chapter_changes（暂存，待 flush 后回写）
+                chapter_changes_data = None
+                if extract_changes:
+                    try:
+                        _, changes = extract_changes(draft_content)
+                        if changes:
+                            chapter_changes_data = changes
+                    except Exception:
+                        db.session.rollback()
+
+                polished_content = _extract_chapter_body(polished_content)
+                polished_content = _re_bs.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', polished_content).rstrip()
+
+                wc = count_words(polished_content)
+
+                # post_validate（去AI味检测）
+                post_validate = None
+                if validate_chapter_with_bible:
+                    try:
+                        bible_ctx = {
+                            'character_profiles': bb.character_profiles or '',
+                            'chapter_changes_log': bb.chapter_changes_log or '',
+                            'key_rules': bb.key_rules or '',
+                            'worldbuilding': bb.worldbuilding or '',
+                            'inventory': bb.inventory or '',
+                            'locations': bb.locations or '',
+                            'foreshadowing': bb.foreshadowing or '',
+                        } if bb else None
+                        validation = validate_chapter_with_bible(polished_content, bible_ctx)
+                        if validation.issues:
+                            post_validate = validation.to_dict()
+                    except Exception:
+                        pass
+
+                chapter_score = _calc_chapter_score(post_validate, True, '', {}, wc, ctx.get('chapter_plan', ''))
+
+                # 创建 Chapter 并 flush 拿 id
+                title = suggested_title or f'第{cur_ch}章'
+                max_order = db.session.query(db.func.max(Chapter.order_index)).filter_by(book_id=book_id).scalar() or -1
+                parent_id = ctx['vol_chapter'].id if ctx.get('vol_chapter') else ''
+                ch = Chapter(book_id=book_id, title=title, content=polished_content,
+                             order_index=max_order + 1, is_volume=False,
+                             parent_id=parent_id,
+                             word_count=wc)
+                db.session.add(ch)
+                db.session.flush()
+
+                # 用真实 ch.id 回写 chapter_changes
+                if chapter_changes_data and apply_chapter_changes:
+                    try:
+                        apply_chapter_changes(bb, ch.id, cur_ch, ctx.get('vol_index', 0), chapter_changes_data)
+                    except Exception:
+                        db.session.rollback()
+
+                update_book_stats(book_id)
+                db.session.commit()
+
+                # 每章后检查自动生成动态报告
+                try:
+                    _check_and_auto_generate_report(book_id)
+                except Exception:
+                    pass
+
+                chapter_info = {
+                    'chapter_num': cur_ch,
+                    'chapter_id': ch.id,
+                    'title': title,
+                    'content': polished_content,
+                    'word_count': wc,
+                }
+                results.append(chapter_info)
+                prev_polished = polished_content
+
+                # 推送章节完成事件
+                yield f'data: {json.dumps({"type": "chapter_done", "chapter": chapter_info}, ensure_ascii=False)}\n\n'
+
+            except Exception as e:
+                fail_num = start_chapter_num + i if start_chapter_num else i + 1
+                try:
+                    app.logger.error(f'ai_continue_batch_stream 第{fail_num}章生成失败: {e}', exc_info=True)
+                except Exception:
+                    pass
+                db.session.rollback()
+                failed.append({'chapter_num': fail_num, 'error': str(e)[:200]})
+                yield f'data: {json.dumps({"type": "chapter_failed", "chapter_num": fail_num, "error": str(e)[:200]}, ensure_ascii=False)}\n\n'
+                prev_polished = ''
+                continue
+
+        # 推送批处理完成事件
+        yield f'data: {json.dumps({"type": "batch_done", "total": len(results), "failed_count": len(failed), "failed": failed}, ensure_ascii=False)}\n\n'
+
+    return app.response_class(generate(), mimetype='text/event-stream')
+
+
 def _extract_chapter_body(full_content: str) -> str:
     """从 LLM 完整输出中剥离 PRE_WRITE_CHECK、chapter_changes、【标题】标签，只保留正文。
     P1-6 启用后 LLM 会输出结构化标签，校验器只检查正文部分。"""
