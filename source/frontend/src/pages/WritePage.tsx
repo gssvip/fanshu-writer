@@ -943,7 +943,13 @@ export default function WritePage() {
             } else if (data.type === 'chapter_done') {
               doneCount++;
               setBatchProgress({ cur: doneCount, total: batchCount, done: doneCount, message: `第${data.chapter.chapter_num}章已完成` });
-              setAiChatHistory(prev => [...prev, { role: 'assistant', content: `✅ 第${data.chapter.chapter_num}章《${data.chapter.title}》已生成（${data.chapter.word_count}字）并自动保存`, type: 'status' as const }]);
+              // 去AI味状态提示：success=已修正 / failed=修正失败回滚初稿 / skipped=未启用
+              const deaiTag = data.chapter.deai_status === 'success'
+                ? '·已去AI味'
+                : data.chapter.deai_status === 'failed'
+                  ? '·去AI味失败用初稿'
+                  : '';
+              setAiChatHistory(prev => [...prev, { role: 'assistant', content: `✅ 第${data.chapter.chapter_num}章《${data.chapter.title}》已生成（${data.chapter.word_count}字${deaiTag ? ' ' + deaiTag : ''}）并自动保存`, type: 'status' as const }]);
             } else if (data.type === 'chapter_failed') {
               failedList.push(data);
               setAiChatHistory(prev => [...prev, { role: 'assistant', content: `❌ 第${data.chapter_num}章生成失败：${data.error || '未知错误'}`, type: 'status' as const }]);

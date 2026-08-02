@@ -7150,6 +7150,58 @@ def ai_continue_batch_stream(book_id):
                 polished_content = _extract_chapter_body(polished_content)
                 polished_content = _re_bs.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', polished_content).rstrip()
 
+                # ===== 去AI味审校 Agent（选项A：批处理也跑去AI味修正，与单章模式对齐）=====
+                # 复用单章 ai_continue 的去AI味逻辑：选了含 tomato_deai 的技能包时再调一次 LLM 修正正文
+                # 字数校验通过→用修正版；字数异常/失败→回滚用初稿
+                deai_status = 'skipped'  # skipped / success / failed
+                if skill_pack_ids:
+                    deai_skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_deai'], max_per_prompt=1200, mode='agent')
+                    if deai_skill_note:
+                        # 推送心跳：去AI味审校中
+                        yield f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在去AI味审校第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
+                        deai_system = f"""你是番茄去AI味审查员。对以下刚写好的章节正文做去AI味审校，按规则修改后只输出修改后的正文。
+
+{deai_skill_note}
+
+【优先级铁律】人味>克制>流畅。删完AI味后读起来像机器人汇报→加口语碎片。太啰嗦→删修饰。磕磕绊绊→调句式。
+【必删清单】一股/一抹/不由得/不禁/随即/旋即/与此同时/颇为/甚为/极为/缓缓/淡淡/轻轻/微微/毫无疑问/毋庸置疑/不言而喻/深吸一口气/眼中闪过一丝/心中暗想/心念电转/若有所思/不知不觉间/转眼间/恍然大悟/面无表情/淡漠/漠然/眸子/嘴角微微上扬/如同/宛如/犹如/周身/周遭/气息/威压/那道身影/说话间/话音未落/当即/顿时/瞬时。
+【人味注入】加入不完美细节(结巴/重复/打断)/感官碎片/小动作微表情/语气词和断句/适当留白。
+【硬性约束】修改后字数仍须 2400±100，保留原章节的剧情走向和钩子，只改文风不改剧情。"""
+                        try:
+                            deai_resp = requests.post(f'{base_url}/chat/completions',
+                                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                                json={'model': model,
+                                      'messages': [{'role':'system','content':deai_system},
+                                                   {'role':'user','content':f'请审校以下章节正文：\n\n{polished_content}'}],
+                                      'temperature': 0.5, 'max_tokens': ctx['max_tokens']},
+                                timeout=180)
+                            if deai_resp.status_code == 200:
+                                deai_result = deai_resp.json()
+                                deai_polished = deai_result['choices'][0]['message']['content'].strip()
+                                # 剥离可能的内部标签（去AI味 LLM 偶尔会带上）
+                                deai_polished = _extract_chapter_body(deai_polished)
+                                deai_polished = _re_bs.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', deai_polished).rstrip()
+                                deai_wc = count_words(deai_polished)
+                                if deai_polished and 2300 <= deai_wc <= 2500:
+                                    polished_content = deai_polished
+                                    deai_status = 'success'
+                                elif deai_polished and deai_wc > 500:
+                                    deai_status = 'failed'  # 字数异常，回滚用初稿
+                                else:
+                                    deai_status = 'failed'  # 内容为空，回滚用初稿
+                            else:
+                                deai_status = 'failed'
+                                try:
+                                    app.logger.error(f'ai_continue_batch_stream 第{cur_ch}章 去AI味 HTTP {deai_resp.status_code}')
+                                except Exception:
+                                    pass
+                        except Exception as deai_err:
+                            deai_status = 'failed'
+                            try:
+                                app.logger.error(f'ai_continue_batch_stream 第{cur_ch}章 去AI味异常: {deai_err}')
+                            except Exception:
+                                pass
+
                 wc = count_words(polished_content)
 
                 # post_validate（去AI味检测）
@@ -7206,6 +7258,7 @@ def ai_continue_batch_stream(book_id):
                     'title': title,
                     'content': polished_content,
                     'word_count': wc,
+                    'deai_status': deai_status,  # skipped/success/failed，告知前端是否做过去AI味修正
                 }
                 results.append(chapter_info)
                 prev_polished = polished_content
