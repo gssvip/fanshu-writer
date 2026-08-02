@@ -7014,6 +7014,110 @@ def ai_continue_batch(book_id):
     })
 
 
+def _stream_llm_chunks_with_heartbeat(resp, chapter_num, last_heartbeat, heartbeat_interval=5):
+    """后台线程读取 LLM 流式响应，主生成器从队列消费，无数据时 yield 心跳。
+
+    修复 network error 根因：resp.iter_lines() 是阻塞调用，原实现把心跳检查放在
+    for 循环体内，LLM 一旦长时间不输出（首 token 延迟/思考阶段/网络抖动），
+    循环体不执行 → 心跳无法推送 → Render 代理判定空闲超时 → 断连 network error。
+
+    本函数用独立线程读取流，主流程 queue.get(timeout=3) 非阻塞消费：
+    - 收到数据 → 处理 delta，重置心跳计时
+    - 3s 无数据 → 检查是否到 5s 心跳间隔，是则 yield 心跳
+
+    yield 元素：('chunk', delta_str) 或 ('heartbeat',) 或 ('done',)
+    异常通过 ('error', exception) 返回。"""
+    import threading
+    import queue as _queue
+    import time as _t
+
+    chunk_q = _queue.Queue()
+    reader_err = [None]
+
+    def _reader():
+        try:
+            for line in resp.iter_lines():
+                if line:
+                    chunk_q.put(line.decode('utf-8', errors='replace'))
+        except Exception as e:
+            reader_err[0] = e
+        finally:
+            chunk_q.put(None)  # sentinel 表示流结束
+
+    reader_t = threading.Thread(target=_reader, daemon=True)
+    reader_t.start()
+
+    last_hb = last_heartbeat
+    while True:
+        try:
+            item = chunk_q.get(timeout=3)
+        except _queue.Empty:
+            now = _t.time()
+            if now - last_hb >= heartbeat_interval:
+                yield ('heartbeat',)
+                last_hb = now
+            continue
+
+        if item is None:
+            if reader_err[0]:
+                yield ('error', reader_err[0])
+            yield ('done',)
+            return
+
+        if item.startswith('data: '):
+            chunk = item[6:]
+            if chunk == '[DONE]':
+                yield ('done',)
+                return
+            try:
+                chunk_data = json.loads(chunk)
+                delta = chunk_data.get('choices', [{}])[0].get('delta', {}).get('content', '')
+                if delta:
+                    yield ('chunk', delta)
+                    last_hb = _t.time()
+            except Exception:
+                pass
+
+
+def _run_blocking_with_heartbeat(func, heartbeat_msg, heartbeat_interval=5):
+    """在后台线程运行阻塞函数 func，主生成器 yield 心跳保持 SSE 连接活跃。
+
+    用于包装非流式的 LLM 调用（如去AI味、动态报告生成）——这些调用阻塞数十秒，
+    期间无法 yield 任何数据，Render 代理空闲超时会断连。
+
+    用法（在 SSE 生成器内）：
+        result = yield from _run_blocking_with_heartbeat(
+            lambda: requests.post(...), '正在去AI味审校...')
+    """
+    import threading
+    import queue as _queue
+    import time as _t
+
+    result_q = _queue.Queue()
+
+    def _runner():
+        try:
+            result_q.put(('ok', func()))
+        except Exception as e:
+            result_q.put(('err', e))
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+
+    last_hb = _t.time()
+    while True:
+        try:
+            status, val = result_q.get(timeout=3)
+            if status == 'err':
+                raise val
+            return val
+        except _queue.Empty:
+            now = _t.time()
+            if now - last_hb >= heartbeat_interval:
+                yield heartbeat_msg
+                last_hb = now
+
+
 @app.route('/api/books/<book_id>/ai-continue-batch/stream', methods=['POST'])
 @login_required
 def ai_continue_batch_stream(book_id):
@@ -7106,26 +7210,23 @@ def ai_continue_batch_stream(book_id):
                     prev_polished = ''
                     continue
 
-                # 逐行读取流式响应，收集内容并定期推送心跳
-                for line in resp.iter_lines():
-                    if line:
-                        line = line.decode('utf-8')
-                        if line.startswith('data: '):
-                            chunk = line[6:]
-                            if chunk == '[DONE]':
-                                break
-                            try:
-                                chunk_data = json.loads(chunk)
-                                delta = chunk_data.get('choices', [{}])[0].get('delta', {}).get('content', '')
-                                if delta:
-                                    full_parts.append(delta)
-                            except Exception:
-                                pass
-                    # 每5秒推送一次心跳，避免 Render 空闲超时
-                    now = _time.time()
-                    if now - last_heartbeat > 5:
+                # 后台线程读取流式响应，主生成器从队列消费，无数据时 yield 心跳
+                # 修复 network error：iter_lines() 阻塞时心跳无法推送
+                for evt in _stream_llm_chunks_with_heartbeat(resp, cur_ch, last_heartbeat):
+                    if evt[0] == 'chunk':
+                        full_parts.append(evt[1])
+                        last_heartbeat = _time.time()
+                    elif evt[0] == 'heartbeat':
                         yield f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在生成第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
-                        last_heartbeat = now
+                        last_heartbeat = _time.time()
+                    elif evt[0] == 'error':
+                        raise evt[1]
+                    elif evt[0] == 'done':
+                        break
+                try:
+                    resp.close()
+                except Exception:
+                    pass
 
                 draft_content = ''.join(full_parts)
                 if not draft_content or not draft_content.strip():
@@ -7168,13 +7269,16 @@ def ai_continue_batch_stream(book_id):
 【人味注入】加入不完美细节(结巴/重复/打断)/感官碎片/小动作微表情/语气词和断句/适当留白。
 【硬性约束】修改后字数仍须 2400±100，保留原章节的剧情走向和钩子，只改文风不改剧情。"""
                         try:
-                            deai_resp = requests.post(f'{base_url}/chat/completions',
-                                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                                json={'model': model,
-                                      'messages': [{'role':'system','content':deai_system},
-                                                   {'role':'user','content':f'请审校以下章节正文：\n\n{polished_content}'}],
-                                      'temperature': 0.5, 'max_tokens': ctx['max_tokens']},
-                                timeout=180)
+                            deai_hb = f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在去AI味审校第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
+                            deai_resp = yield from _run_blocking_with_heartbeat(
+                                lambda: requests.post(f'{base_url}/chat/completions',
+                                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                                    json={'model': model,
+                                          'messages': [{'role':'system','content':deai_system},
+                                                       {'role':'user','content':f'请审校以下章节正文：\n\n{polished_content}'}],
+                                          'temperature': 0.5, 'max_tokens': ctx['max_tokens']},
+                                    timeout=180),
+                                deai_hb)
                             if deai_resp.status_code == 200:
                                 deai_result = deai_resp.json()
                                 deai_polished = deai_result['choices'][0]['message']['content'].strip()
@@ -7246,9 +7350,12 @@ def ai_continue_batch_stream(book_id):
                 update_book_stats(book_id)
                 db.session.commit()
 
-                # 每章后检查自动生成动态报告
+                # 每章后检查自动生成动态报告（可能触发 LLM 调用，用线程+心跳避免阻塞）
                 try:
-                    _check_and_auto_generate_report(book_id)
+                    report_hb = f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在更新动态报告..."}, ensure_ascii=False)}\n\n'
+                    yield from _run_blocking_with_heartbeat(
+                        lambda: _check_and_auto_generate_report(book_id),
+                        report_hb)
                 except Exception:
                     pass
 
