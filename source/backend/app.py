@@ -2689,15 +2689,9 @@ def ai_import_recognize(book_id):
     if err:
         return jsonify({'error': err}), 500
 
-    try:
-        analysis = json.loads(content)
-    except (json.JSONDecodeError, ValueError):
-        import re as _re_ir
-        m = _re_ir.search(r'\{[\s\S]*\}', content)
-        if m:
-            analysis = json.loads(m.group())
-        else:
-            return jsonify({'error': 'AI返回格式无法解析', 'raw': content[:300]}), 500
+    analysis, parse_err = _extract_json_from_llm(content, expect='object')
+    if analysis is None:
+        return jsonify({'error': 'AI返回格式无法解析', 'raw': content[:300], 'parse_error': parse_err}), 500
 
     # 字段映射：维度 -> bible字段
     dim_field_map = {
@@ -5820,15 +5814,15 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
             timeout=60)
         result = resp.json()
         content = result['choices'][0]['message']['content'].strip()
-        # 尝试解析 JSON
-        import re as _re_con
-        m = _re_con.search(r'\{[\s\S]*\}', content)
-        if m:
-            parsed = json.loads(m.group())
-            return bool(parsed.get('passed', True)), '; '.join(parsed.get('issues', []))
-        return True, ''
-    except Exception:
-        return True, ''
+        # 使用健壮解析函数替代贪婪正则
+        parsed, parse_err = _extract_json_from_llm(content, expect='object')
+        if parsed is None:
+            app.logger.error(f"一致性检查JSON解析失败: {parse_err}, 原始内容前500字: {content[:500]}")
+            return False, "一致性检查解析失败，请人工复核"
+        return bool(parsed.get('passed', True)), '; '.join(parsed.get('issues', []))
+    except Exception as e:
+        app.logger.error(f"一致性检查执行异常: {e}")
+        return False, "一致性检查执行异常，请人工复核"
 
 
 def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None, chapter_lang_styles=None, enable_structured_tags=True):
@@ -9362,16 +9356,10 @@ def ai_analyze_plot_volume(book_id):
             return jsonify({'error': f'AI返回异常: {str(result)[:300]}'}), 500
         content = result['choices'][0]['message']['content']
 
-        # JSON 解析容错：提取第一个 {...} 块
-        try:
-            analysis = json.loads(content)
-        except (json.JSONDecodeError, ValueError):
-            import re as _re_json2
-            m = _re_json2.search(r'\{[\s\S]*\}', content)
-            if m:
-                analysis = json.loads(m.group(0))
-            else:
-                return jsonify({'error': f'AI返回非JSON格式: {content[:200]}'}), 500
+        # JSON 解析容错：使用健壮解析函数提取对象
+        analysis, parse_err = _extract_json_from_llm(content, expect='object')
+        if analysis is None:
+            return jsonify({'error': f'AI返回非JSON格式: {content[:200]}', 'parse_error': parse_err}), 500
 
         # 存储到 timeline 字段（深度合并：保留人工编辑字段，更新 AI 识别字段）
         if not bb:
@@ -9931,15 +9919,9 @@ def ai_analyze_dynamic_volume(book_id):
     if err:
         return jsonify({'error': err}), 500
 
-    try:
-        analysis = json.loads(content)
-    except (json.JSONDecodeError, ValueError):
-        import re as _re_dv
-        m = _re_dv.search(r'\{[\s\S]*\}', content)
-        if m:
-            analysis = json.loads(m.group())
-        else:
-            return jsonify({'error': 'AI返回格式无法解析', 'raw': content[:300]}), 500
+    analysis, parse_err = _extract_json_from_llm(content, expect='object')
+    if analysis is None:
+        return jsonify({'error': 'AI返回格式无法解析', 'raw': content[:300], 'parse_error': parse_err}), 500
 
     entry = {
         'volume_id': volume_id,
