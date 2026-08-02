@@ -6997,6 +6997,90 @@ def _calc_chapter_score(post_validate, consistency_passed, consistency_issues, g
 
 
 # ==== LLM 调用辅助函数 ====
+def _extract_json_from_llm(content, expect='auto'):
+    """从 LLM 返回内容中健壮地提取 JSON 对象或数组。
+    处理常见情况：markdown代码块包裹、前后说明文字、多个JSON候选、尾随逗号等。
+    expect: 'object' 只接受 dict / 'array' 只接受 list / 'auto' 两者皆可。
+    返回 (parsed, error)。成功时 error 为 None。"""
+    if not content or not isinstance(content, str):
+        return None, 'LLM 返回为空'
+
+    import re
+
+    # 1. 去除 markdown 代码块标记（```json ... ``` 或 ``` ... ```）
+    cleaned = re.sub(r'```(?:json|JSON)?\s*', '', content)
+    cleaned = re.sub(r'```\s*$', '', cleaned).strip()
+
+    # 2. 直接尝试整体解析（LLM 有时严格只输出 JSON）
+    try:
+        parsed = json.loads(cleaned)
+        if expect == 'object' and isinstance(parsed, dict):
+            return parsed, None
+        if expect == 'array' and isinstance(parsed, list):
+            return parsed, None
+        if expect == 'auto' and isinstance(parsed, (dict, list)):
+            return parsed, None
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # 3. 遍历所有 {...} 候选（非贪婪，从后往前找最大的），逐个尝试解析
+    # 用栈匹配花括号，避免正则贪婪问题
+    candidates = []
+    # 对象候选 {...}
+    for m in re.finditer(r'\{', cleaned):
+        start = m.start()
+        depth = 0
+        for i in range(start, len(cleaned)):
+            if cleaned[i] == '{':
+                depth += 1
+            elif cleaned[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    candidates.append(cleaned[start:i+1])
+                    break
+    # 数组候选 [...]
+    for m in re.finditer(r'\[', cleaned):
+        start = m.start()
+        depth = 0
+        for i in range(start, len(cleaned)):
+            if cleaned[i] == '[':
+                depth += 1
+            elif cleaned[i] == ']':
+                depth -= 1
+                if depth == 0:
+                    candidates.append(cleaned[start:i+1])
+                    break
+
+    # 优先返回最长的候选（通常是完整的 JSON）
+    candidates.sort(key=len, reverse=True)
+    last_error = None
+    for cand in candidates:
+        try:
+            parsed = json.loads(cand)
+            if expect == 'object' and isinstance(parsed, dict):
+                return parsed, None
+            if expect == 'array' and isinstance(parsed, list):
+                return parsed, None
+            if expect == 'auto' and isinstance(parsed, (dict, list)):
+                return parsed, None
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = str(e)
+            # 尝试修复常见 JSON 瑕疵：尾随逗号
+            try:
+                fixed = re.sub(r',\s*([}\]])', r'\1', cand)
+                parsed = json.loads(fixed)
+                if expect == 'object' and isinstance(parsed, dict):
+                    return parsed, None
+                if expect == 'array' and isinstance(parsed, list):
+                    return parsed, None
+                if expect == 'auto' and isinstance(parsed, (dict, list)):
+                    return parsed, None
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+    return None, f'未找到有效JSON（最后错误: {last_error}），原始内容前300字: {content[:300]}'
+
+
 def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation'):
     """统一的 LLM 调用辅助函数，返回 (content, error)
     task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)"""
@@ -7467,19 +7551,15 @@ def ai_outline_volume(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=3000, temperature=0.7
+        max_tokens=6000, temperature=0.7
     )
     if err:
         return jsonify({'error': err}), 500
 
-    import re
-    json_match = re.search(r'\{[\s\S]*\}', content)
-    if not json_match:
-        return jsonify({'error': 'AI返回格式错误，无法解析JSON', 'raw': content[:500]}), 500
-    try:
-        volume_data = json.loads(json_match.group())
-    except Exception:
-        return jsonify({'error': 'JSON解析失败', 'raw': content[:500]}), 500
+    # 健壮 JSON 提取：处理 markdown 代码块、前后说明文字、尾随逗号等
+    volume_data, json_err = _extract_json_from_llm(content, expect='object')
+    if json_err:
+        return jsonify({'error': 'AI返回格式错误，无法解析JSON', 'raw': content[:500], 'detail': json_err}), 500
 
     volume_text = f"""【第{volume_index}卷：{volume_data.get('volume_title', volume_title)}】
 核心目标：{volume_data.get('core_goal', '')}
