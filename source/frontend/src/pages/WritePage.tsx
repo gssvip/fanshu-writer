@@ -2152,7 +2152,6 @@ function ConceptPanel(props: {
             autoFocus
           />
           <div className="ai-prompt-bottom-row">
-            <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
             <button className="btn-primary ai-prompt-submit" onClick={onExecuteConceptAi} disabled={conceptAiAssisting || !conceptAiPrompt.trim()}>
               {conceptAiAssisting ? '⏳ AI创作中...' : '🚀 发送'}
             </button>
@@ -3094,8 +3093,7 @@ function ChapterPanel(props: {
               disabled={aiCreating}
             />
             <div className="ai-prompt-bottom-row">
-              <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
-              {aiCreating && (
+                {aiCreating && (
                 <button
                   className="btn-ghost-sm"
                   onClick={onStopAiCreate}
@@ -3837,7 +3835,6 @@ function CharacterPanel(props: {
             autoFocus
           />
           <div className="ai-prompt-bottom-row">
-            <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
             <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>
               {aiAssisting ? '⏳ 创作中...' : '🚀 发送'}
             </button>
@@ -4751,7 +4748,6 @@ ${existingVols || '（暂无）'}
         <div className="ai-prompt-vertical">
           <textarea className="input bible-ai-prompt-input" rows={6} value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} onKeyDown={handlePromptKeyDown} placeholder="例如：生成三卷的剧情大纲，每卷包含主线和关键事件..." disabled={aiAssisting} autoFocus />
           <div className="ai-prompt-bottom-row">
-            <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
             <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? '⏳ 创作中...' : '🚀 发送'}</button>
           </div>
         </div>
@@ -5327,7 +5323,6 @@ function InventoryPanel(props: {
         <div className="ai-prompt-vertical">
           <textarea className="input bible-ai-prompt-input" rows={6} value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} onKeyDown={handlePromptKeyDown} placeholder="例如：生成三卷的物资库，每卷包含主角和主要势力的法宝、功法、境界..." disabled={aiAssisting} autoFocus />
           <div className="ai-prompt-bottom-row">
-            <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
             <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? '⏳ 创作中...' : '🚀 发送'}</button>
           </div>
         </div>
@@ -5564,7 +5559,6 @@ function BibleEditPanel(props: {
             autoFocus
           />
           <div className="ai-prompt-bottom-row">
-            <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
             <button className="btn-primary ai-prompt-submit" onClick={onExecuteAi} disabled={aiAssisting || !bibleAiPrompt.trim()}>
               {aiAssisting ? '⏳ 创作中...' : '🚀 发送'}
             </button>
@@ -5862,7 +5856,6 @@ function OutlineCombinedPanel(props: {
             autoFocus
           />
           <div className="ai-prompt-bottom-row">
-            <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
             <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>
               {aiAssisting ? '⏳ 创作中...' : '🚀 发送'}
             </button>
@@ -7024,7 +7017,6 @@ function ForeshadowingPanel(props: {
         <div className="ai-prompt-vertical">
           <textarea className="input bible-ai-prompt-input" rows={6} value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} onKeyDown={handlePromptKeyDown} placeholder="例如：设计贯穿全书的核心伏笔，埋设3个关键悬念..." disabled={aiAssisting} autoFocus />
           <div className="ai-prompt-bottom-row">
-            <span className="ai-prompt-hint">Enter 发送 · Shift+Enter 换行</span>
             <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? '⏳ 创作中...' : '🚀 发送'}</button>
           </div>
         </div>
