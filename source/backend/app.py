@@ -5872,7 +5872,7 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
         return False, "一致性检查执行异常，请人工复核"
 
 
-def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None, chapter_lang_styles=None, enable_structured_tags=True):
+def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None, chapter_lang_styles=None, enable_structured_tags=True, skip_chapter_plan=False):
     """构建章节正文写作的完整上下文（被 ai_continue / ai_continue_stream / ai_continue_batch 共用）。
     返回 dict，包含 system_prompt, user_prompt, temperature, max_tokens, chapter_plan, api 信息等。
 
@@ -5883,7 +5883,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     - chapter_lang_styles：本章语言风格（行文文风，最多3个），拼入 system_prompt 指导行文。
     - enable_structured_tags：是否注入 <pre_write_check> / <chapter_changes> 标签模板。
       流式模式传 False（避免内部标签实时显示给用户）；多Agent/连续模式传 True（内部处理后清洗）。
-    """
+    - skip_chapter_plan：跳过 chapter_plan Agent（批处理流式模式用，避免同步 LLM 调用阻塞 20-60s
+      期间生成器无法推送心跳，导致 Render 空闲超时 network error）。"""
     book = Book.query.get(book_id)
     config = AIConfig.query.first()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
@@ -6114,11 +6115,14 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 
     # ===== 5. 章节计划前置（#4：chapter_plan Agent）=====
     # 章节计划属"读数据→提炼→注入"的识别类任务，用识别模型（便宜快），正文生成本身仍用主模型
-    chapter_plan = _generate_chapter_plan(
-        book_id, bb, current_chapter_num, vol_chapter, vol_index,
-        memory_section, foreshadowing_section, skill_pack_ids,
-        api_key, base_url, recognition_model, max_tokens=600
-    )
+    # skip_chapter_plan=True 时跳过（批处理流式模式用，避免同步 LLM 调用阻塞导致心跳中断）
+    chapter_plan = ''
+    if not skip_chapter_plan:
+        chapter_plan = _generate_chapter_plan(
+            book_id, bb, current_chapter_num, vol_chapter, vol_index,
+            memory_section, foreshadowing_section, skill_pack_ids,
+            api_key, base_url, recognition_model, max_tokens=600
+        )
     plan_section = f'【本章计划】（由 chapter_plan Agent 生成，请严格遵循）\n{chapter_plan}' if chapter_plan else ''
 
     # ===== 6. 技能包提示词 =====
@@ -7051,14 +7055,21 @@ def ai_continue_batch_stream(book_id):
         for i in range(count):
             try:
                 target_num = start_chapter_num + i if start_chapter_num else None
-                yield f'data: {json.dumps({"type": "chapter_start", "chapter_num": target_num or (i + 1)}, ensure_ascii=False)}\n\n'
+                # 先推送 chapter_start（用预估章号），让 Render 立即收到首字节，
+                # 避免 _build_ai_continue_context 内 _generate_chapter_plan 调 LLM 阻塞 20-30s 期间无数据导致断开
+                yield f'data: {json.dumps({"type": "chapter_start", "chapter_num": target_num or (i + 1), "message": f"正在准备第{target_num or (i + 1)}章上下文..."}, ensure_ascii=False)}\n\n'
 
                 ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids,
-                                                  target_num, prev_polished or None, chapter_lang_styles)
+                                                  target_num, prev_polished or None, chapter_lang_styles,
+                                                  skip_chapter_plan=True)
                 api_key = ctx['api_key']
                 base_url = ctx['base_url']
                 model = ctx['model']
                 cur_ch = ctx['current_chapter_num']
+
+                # 章号可能与预估不同（后端基于 max(order_index)+1 重新计算），推送修正事件
+                if cur_ch != (target_num or (i + 1)):
+                    yield f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在生成第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
 
                 system_prompt = ctx['system_prompt']
                 system_prompt += '\n\n【字数与文风铁律】输出必须 2400±100 字（2300-2500字区间，含标点）。禁止AI味表达：禁止"仿佛""似乎""宛如"等比喻堆砌，禁止工整过渡，禁止完美套话。人物必须有矛盾心理/纠结/自我怀疑，禁止情绪顺滑。'
@@ -7217,7 +7228,11 @@ def ai_continue_batch_stream(book_id):
         # 推送批处理完成事件
         yield f'data: {json.dumps({"type": "batch_done", "total": len(results), "failed_count": len(failed), "failed": failed}, ensure_ascii=False)}\n\n'
 
-    return app.response_class(generate(), mimetype='text/event-stream')
+    # stream_with_context 保持请求/应用上下文，避免生成器在 yield 后恢复时
+    # 触发 "Working outside of application context"（批处理多章串行，循环内大量 DB 操作：
+    # Chapter.query / db.session.commit / update_book_stats / _check_and_auto_generate_report 等，
+    # 没有 stream_with_context 会在第一次 yield 后丢失上下文，后续 DB 操作报错导致连接异常断开 → network error）
+    return app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
 
 
 def _extract_chapter_body(full_content: str) -> str:
