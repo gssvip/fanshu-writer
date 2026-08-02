@@ -7088,16 +7088,21 @@ def _run_blocking_with_heartbeat(func, heartbeat_msg, heartbeat_interval=5):
     用法（在 SSE 生成器内）：
         result = yield from _run_blocking_with_heartbeat(
             lambda: requests.post(...), '正在去AI味审校...')
+
+    注意：后台线程会自动 push Flask app context，确保 func 内的 DB 操作
+    (db.session / Model.query) 不会因 'Working outside of application context' 报错。
     """
     import threading
     import queue as _queue
     import time as _t
 
     result_q = _queue.Queue()
+    _app = app  # 捕获 app 引用，后台线程需 push app context 才能 DB 操作
 
     def _runner():
         try:
-            result_q.put(('ok', func()))
+            with _app.app_context():
+                result_q.put(('ok', func()))
         except Exception as e:
             result_q.put(('err', e))
 
