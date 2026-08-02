@@ -7160,22 +7160,36 @@ def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation')
 
 def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500, mode='agent'):
     """从技能包提取指定 prompt_keys 的提示词（agent 协同模式：所有匹配 prompt 都注入）。
-    mode='agent'（默认）：第一个匹配 prompt 全量注入，其余匹配 prompt 摘要注入（取前 400 字），让 AI 看到完整 workflow 上下文。
+    mode='agent'（默认）：所有匹配 prompt 全量注入（不截断），确保禁词清单/行文铁律等关键内容完整传达给 AI。
     mode='single'：每包只取第一个匹配 prompt（兼容旧行为）。
     """
     if not skill_pack_ids:
         return ''
     try:
         packs = SkillPack.query.filter(SkillPack.id.in_(skill_pack_ids)).all()
-    except Exception:
+    except Exception as e:
+        # 隐患2修复：出错时记日志而非静默返回空串，便于排查"技能包未生效"问题
+        try:
+            app.logger.error(f'_get_skill_prompts 查询技能包失败(ids={skill_pack_ids}): {e}')
+        except Exception:
+            pass
         return ''
     if not packs:
+        # 用户选了技能包但查不到（可能被删除），记日志提示
+        try:
+            app.logger.warning(f'_get_skill_prompts 未找到匹配技能包(ids={skill_pack_ids})，可能已被删除')
+        except Exception:
+            pass
         return ''
     notes = []
     for pack in packs:
         try:
             prompts = json.loads(pack.prompts_json) if pack.prompts_json else {}
-        except Exception:
+        except Exception as e:
+            try:
+                app.logger.warning(f'_get_skill_prompts 技能包[{pack.name}] prompts_json 解析失败: {e}')
+            except Exception:
+                pass
             prompts = {}
         matched = [(k, prompts[k]) for k in prompt_keys if k in prompts and prompts[k]]
         if not matched:
@@ -7185,15 +7199,12 @@ def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500, mode='a
             p = matched[0][1][:max_per_prompt]
             notes.append(f'【{pack.name}】\n{p}')
         else:
-            # agent 模式：第一个全量，其余摘要
+            # agent 模式：所有匹配 prompt 全量注入（不截断摘要）
+            # 隐患1修复：原先只第一个全量、其余截到400字会丢失禁词清单等关键内容；
+            # 现 token 不再受限，全部全量注入，确保创作方法论完整传达
             parts = []
-            for idx, (k, p) in enumerate(matched):
-                if idx == 0:
-                    parts.append(f'[{k}]\n{p[:max_per_prompt]}')
-                else:
-                    # 辅助 prompt 取摘要（前 400 字 + 规则要点）
-                    summary = p[:400]
-                    parts.append(f'[{k}（摘要）]\n{summary}')
+            for k, p in matched:
+                parts.append(f'[{k}]\n{p}')
             notes.append(f'【{pack.name}】\n' + '\n'.join(parts))
     return '\n\n'.join(notes)
 
