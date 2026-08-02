@@ -580,7 +580,7 @@ export default function MinePage() {
               </div>
               <div className="form-field">
                 <label>最大Token ({aiConfig.max_tokens})</label>
-                <input className="input" type="range" min={1000} max={16000} step={500} value={aiConfig.max_tokens}
+                <input className="input" type="range" min={1000} max={64000} step={500} value={aiConfig.max_tokens}
                   onChange={e => setAIConfig((p: AIConfig) => ({ ...p, max_tokens: parseInt(e.target.value) }))} />
               </div>
             </div>

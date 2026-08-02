@@ -26,7 +26,7 @@ export default function Home() {
     setNf(prev => ({
       ...prev,
       book_type: newType,
-      total_volumes: prev.total_volumes === 0 ? range.default : Math.max(range.min, Math.min(range.max, prev.total_volumes)),
+      total_volumes: prev.total_volumes === 0 ? range.default : Math.max(range.min, prev.total_volumes),
       novel_styles: filterStylesByGenre(newType, prev.genre, prev.novel_styles),
     }));
   };

@@ -4732,7 +4732,7 @@ ${existingVols || '（暂无）'}
           <div className="volume-calc-form">
             <label className="volume-calc-label">输入卷数，按每卷50章×2400字（约12万字）自动生成分卷框架</label>
             <div className="volume-calc-input-row">
-              <input className="input" type="number" value={targetVolumeCount || ''} onChange={e => setTargetVolumeCount(parseInt(e.target.value) || 0)} placeholder="如：10（卷）" min={1} max={30} />
+              <input className="input" type="number" value={targetVolumeCount || ''} onChange={e => setTargetVolumeCount(parseInt(e.target.value) || 0)} placeholder="如：10（卷）" min={1} />
               <span className="volume-calc-unit">卷</span>
               <button className="btn-primary-sm" onClick={generateVolumeBreakdown}>生成分卷框架</button>
               <button className="btn-ghost-sm" onClick={() => setShowVolumeCalc(false)}>收起</button>
@@ -5657,12 +5657,12 @@ function OutlineCombinedPanel(props: {
   // 生成五幕式总纲（写入 plot_design）
   async function generateOutlineMaster() {
     if (!bookId) return;
-    // 弹出输入框让用户填写预计卷数
-    const input = window.prompt('请输入小说预计需要的卷数（1-50）：', '10');
+    // 弹出输入框让用户填写预计卷数（不设上限，由用户自行决定）
+    const input = window.prompt('请输入小说预计需要的卷数（≥1，不设上限）：', '10');
     if (input === null) return; // 用户取消
     const volumeCount = parseInt(input);
-    if (!volumeCount || volumeCount < 1 || volumeCount > 50) {
-      alert('卷数需为 1-50 之间的整数');
+    if (!volumeCount || volumeCount < 1) {
+      alert('卷数需为大于等于 1 的整数');
       return;
     }
     setOutlineWorkflowLoading('master');

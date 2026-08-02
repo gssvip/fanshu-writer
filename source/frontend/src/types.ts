@@ -3,7 +3,7 @@ export interface Book {
   book_type: string; synopsis: string; cover_path: string;
   template_id: string; word_count: number; chapter_count: number;
   status: string; target_words: number;
-  total_volumes: number;       // 总卷数（长篇5-30，短篇1-3）
+  total_volumes: number;       // 总卷数（用户自定义，不设上限）
   novel_styles: string[];      // 风格流派（最多3种叠加）
   created_at: string; updated_at: string;
   metadata: Record<string, any>;

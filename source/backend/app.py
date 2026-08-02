@@ -255,7 +255,7 @@ class Book(db.Model):
     chapter_count = db.Column(db.Integer, default=0)
     status = db.Column(db.String(20), default='draft')  # draft, writing, completed
     target_words = db.Column(db.Integer, default=0)
-    # 总卷数（长篇 5-30，短篇 1-3）：作为五幕总纲/剧情大纲生成的核心依据
+    # 总卷数（用户自定义，不设上限）：作为五幕总纲/剧情大纲生成的核心依据
     total_volumes = db.Column(db.Integer, default=10)
     # 小说风格流派（JSON 数组字符串，最多3种叠加）：爽文流/虐文流/系统流等
     novel_styles = db.Column(db.Text, default='[]')
@@ -1218,17 +1218,14 @@ def get_book(book_id):
 @login_required
 def create_book():
     data = request.json
-    # 总卷数：长篇默认10（范围5-30），短篇默认1（范围1-3）
+    # 总卷数：长篇默认10，短篇默认1。卷数不设上限，由用户自行决定（不钳制）
     book_type = data.get('book_type', 'novel')
     default_vols = 1 if book_type == 'short_story' else 10
     total_volumes = data.get('total_volumes') or default_vols
-    # 卷数范围校验：长篇 5-30，短篇 1-3
+    # 卷数校验：仅校验下限≥1，不设上限（用户填多少就是多少）
     try:
         total_volumes = int(total_volumes)
-        if book_type == 'short_story':
-            total_volumes = max(1, min(3, total_volumes))
-        else:
-            total_volumes = max(5, min(30, total_volumes))
+        total_volumes = max(1, total_volumes)
     except (ValueError, TypeError):
         total_volumes = default_vols
     # 风格流派：JSON 数组，最多3种
@@ -1283,10 +1280,7 @@ def update_book(book_id):
     if 'total_volumes' in data:
         try:
             tv = int(data['total_volumes'])
-            if book.book_type == 'short_story':
-                tv = max(1, min(3, tv))
-            else:
-                tv = max(5, min(30, tv))
+            tv = max(1, tv)  # 仅校验下限≥1，不设上限
             book.total_volumes = tv
         except (ValueError, TypeError):
             pass
@@ -5222,7 +5216,7 @@ def _sync_book_meta_to_bible(book, bb):
 
 
 def _get_total_volumes(bb, book=None):
-    """获取总卷数（优先 BookBible，回退 Book，默认10）。长篇5-30，短篇1-3。"""
+    """获取总卷数（优先 BookBible，回退 Book，默认10）。卷数不设上限，仅校验下限≥1。"""
     tv = None
     try:
         tv = getattr(bb, 'total_volumes', None)
@@ -5232,10 +5226,7 @@ def _get_total_volumes(bb, book=None):
         tv = getattr(book, 'total_volumes', None)
     if not tv:
         tv = 10
-    bt = getattr(book, 'book_type', None) or getattr(bb, 'book_type', 'novel')
-    if bt == 'short_story':
-        return max(1, min(3, int(tv)))
-    return max(5, min(30, int(tv)))
+    return max(1, int(tv))
 
 
 def _get_chapters_per_volume(bb, book=None):
