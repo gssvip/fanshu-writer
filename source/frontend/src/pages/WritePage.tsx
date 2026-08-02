@@ -904,16 +904,23 @@ export default function WritePage() {
         chapterLangStyles,
       });
       const data = await resp.json();
-      // 后端返回 JSON：{ chapters: [...], total: N }
+      // 后端返回 JSON：{ chapters: [...], total: N, failed: [...], failed_count: N }
       const chapters = data?.chapters || [];
       const total = data?.total || chapters.length;
+      const failed = Array.isArray(data?.failed) ? data.failed : [];
       setBatchProgress({ cur: total, total, done: total });
       // 刷新章节列表
       try {
         const fresh = await api.listChapters(bookId);
         setChapters(fresh);
       } catch { /* ignore */ }
-      setAiChatHistory(prev => [...prev, { role: 'assistant', content: `✅ 批量生成完成，共生成 ${total} 章并已自动保存。`, type: 'status' as const }]);
+      // Bug2 修复：展示失败章节信息，避免静默丢失
+      let statusMsg = `✅ 批量生成完成，共生成 ${total} 章并已自动保存。`;
+      if (failed.length > 0) {
+        const failList = failed.map((f: any) => `第${f.chapter_num}章（${f.error || '未知错误'}）`).join('；');
+        statusMsg = `⚠️ 批量生成完成：成功 ${total} 章，失败 ${failed.length} 章。失败章节：${failList}。失败章节未保存，可手动重试或检查 AI 配置。`;
+      }
+      setAiChatHistory(prev => [...prev, { role: 'assistant', content: statusMsg, type: 'status' as const }]);
     } catch (e: any) {
       setAiStreamError(e.message || '连续创作失败');
     } finally {

@@ -6837,14 +6837,16 @@ def ai_continue_batch(book_id):
 
     import re as _re_batch
     results = []
+    failed = []  # Bug2 修复：记录失败章节，避免静默吞错导致剧情断档
+    prev_polished = ''  # Bug5 修复：缓存上一章已生成正文，传递给下一章避免断档
 
     for i in range(count):
         try:
             # 章号：首章用 start_chapter_num 或自动计算，后续递增
             target_num = start_chapter_num + i if start_chapter_num else None
-            # 每章独立生成，不注入 prev_content（避免上下文污染）
+            # Bug5 修复：传递上一章已生成正文（数据库尚未保存或刚保存的场景都能承接剧情）
             ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids,
-                                              target_num, None, chapter_lang_styles)
+                                              target_num, prev_polished or None, chapter_lang_styles)
             api_key = ctx['api_key']
             base_url = ctx['base_url']
             model = ctx['model']
@@ -6854,14 +6856,45 @@ def ai_continue_batch(book_id):
             system_prompt = ctx['system_prompt']
             system_prompt += '\n\n【字数与文风铁律】输出必须 2400±100 字（2300-2500字区间，含标点）。禁止AI味表达：禁止"仿佛""似乎""宛如"等比喻堆砌，禁止工整过渡，禁止完美套话。人物必须有矛盾心理/纠结/自我怀疑，禁止情绪顺滑。'
 
-            # 正文生成（只调 1 次 LLM）
-            resp = requests.post(f'{base_url}/chat/completions',
-                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                json={'model': model, 'messages': [{'role':'system','content':system_prompt},
-                                                    {'role':'user','content':ctx['user_prompt']}],
-                      'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens']},
-                timeout=180)
-            draft_content = resp.json()['choices'][0]['message']['content']
+            # Bug3 修复：LLM 调用添加状态码与结构检查，避免 KeyError 静默失败
+            try:
+                resp = requests.post(f'{base_url}/chat/completions',
+                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    json={'model': model, 'messages': [{'role':'system','content':system_prompt},
+                                                        {'role':'user','content':ctx['user_prompt']}],
+                          'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens']},
+                    timeout=180)
+            except requests.exceptions.RequestException as re_err:
+                try:
+                    app.logger.error(f'ai_continue_batch 第{cur_ch}章 LLM 请求失败: {re_err}')
+                except Exception:
+                    pass
+                failed.append({'chapter_num': cur_ch, 'error': f'LLM 请求失败: {str(re_err)[:200]}'})
+                continue
+
+            if resp.status_code != 200:
+                err_body = resp.text[:300] if hasattr(resp, 'text') else ''
+                try:
+                    app.logger.error(f'ai_continue_batch 第{cur_ch}章 LLM 返回 HTTP {resp.status_code}: {err_body}')
+                except Exception:
+                    pass
+                failed.append({'chapter_num': cur_ch, 'error': f'LLM HTTP {resp.status_code}'})
+                continue
+
+            try:
+                resp_json = resp.json()
+                draft_content = resp_json['choices'][0]['message']['content']
+            except (ValueError, KeyError, IndexError, TypeError) as parse_err:
+                try:
+                    app.logger.error(f'ai_continue_batch 第{cur_ch}章 LLM 返回结构异常: {parse_err}, body={resp.text[:300]}')
+                except Exception:
+                    pass
+                failed.append({'chapter_num': cur_ch, 'error': 'LLM 返回结构异常'})
+                continue
+
+            if not draft_content or not draft_content.strip():
+                failed.append({'chapter_num': cur_ch, 'error': 'LLM 返回内容为空'})
+                continue
 
             polished_content = draft_content
 
@@ -6872,24 +6905,22 @@ def ai_continue_batch(book_id):
             # 标题自动生成：解析 JSON 标题，剥离正文标签行
             suggested_title = _extract_chapter_title(draft_content, draft_content)
 
-            # ★ 关键修复：统一剥离所有内部标签（pre_write_check / chapter_changes / 标题JSON / 【标题】行）
-            # 这些是内部运行产物，绝不能展示给用户或落库（否则污染下一章前文上下文）
-            # 注意：先用原始 draft_content 解析 chapter_changes 回写 bb 状态，再剥离标签
-            if extract_changes and apply_chapter_changes:
+            # Bug7 修复：先从 draft_content 提取 chapter_changes（暂存），等 Chapter flush 拿到 id 后再回写
+            chapter_changes_data = None
+            if extract_changes:
                 try:
                     _, changes = extract_changes(draft_content)
                     if changes:
-                        apply_chapter_changes(
-                            bb, '', cur_ch,
-                            ctx.get('vol_index', 0), changes,
-                        )
-                        db.session.commit()
+                        chapter_changes_data = changes
                 except Exception:
                     db.session.rollback()
 
             polished_content = _extract_chapter_body(polished_content)
             # 额外剥离末尾的标题 JSON 块（_extract_chapter_body 未覆盖）
             polished_content = _re_batch.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', polished_content).rstrip()
+
+            # Bug9 修复：统一使用 count_words 统计字数，避免前端展示与库不一致
+            wc = count_words(polished_content)
 
             # ★ 修复问题二：连续模式也跑 post_validate（去AI味检测），与多agent模式对齐
             post_validate = None
@@ -6911,19 +6942,38 @@ def ai_continue_batch(book_id):
                     pass
 
             # 校验报告
-            wc = len(_re_batch.sub(r'\s', '', polished_content))
             chapter_score = _calc_chapter_score(post_validate, consistency_passed, consistency_issues, {}, wc, ctx.get('chapter_plan', ''))
 
-            # 自动保存为 Chapter（标题优先用解析结果，无则回退"第X章"）
+            # Bug7 修复：先创建 Chapter 并 flush 拿到 ch.id，再回写 chapter_changes（chapter_id 不再为空串）
             title = suggested_title or f'第{cur_ch}章'
             max_order = db.session.query(db.func.max(Chapter.order_index)).filter_by(book_id=book_id).scalar() or -1
+            # Bug1 修复：归卷直接设置 parent_id（用 ctx 中的 vol_chapter），不依赖末尾 resort
+            parent_id = ctx['vol_chapter'].id if ctx.get('vol_chapter') else ''
             ch = Chapter(book_id=book_id, title=title, content=polished_content,
                          order_index=max_order + 1, is_volume=False,
-                         word_count=count_words(polished_content))
+                         parent_id=parent_id,
+                         word_count=wc)
             db.session.add(ch)
-            db.session.flush()
+            db.session.flush()  # 拿到 ch.id
+
+            # Bug7 修复：用真实 ch.id 回写 chapter_changes（不再传空串）
+            if chapter_changes_data and apply_chapter_changes:
+                try:
+                    apply_chapter_changes(
+                        bb, ch.id, cur_ch,
+                        ctx.get('vol_index', 0), chapter_changes_data,
+                    )
+                except Exception:
+                    db.session.rollback()
+
             update_book_stats(book_id)
             db.session.commit()
+
+            # Bug4 修复：每章保存后检查并自动生成动态报告（每5章触发），避免后续章节注入过时报告
+            try:
+                _check_and_auto_generate_report(book_id)
+            except Exception:
+                pass
 
             results.append({
                 'chapter_num': cur_ch,
@@ -6932,19 +6982,32 @@ def ai_continue_batch(book_id):
                 'content': polished_content,
                 'word_count': wc,
             })
+            # Bug5 修复：缓存本章正文供下一章承接
+            prev_polished = polished_content
         except Exception as e:
-            # 单章失败不中断，继续下一章
+            # Bug2 修复：单章失败记录日志与失败列表，避免静默吞错导致剧情断档
+            fail_num = start_chapter_num + i if start_chapter_num else i + 1
+            try:
+                app.logger.error(f'ai_continue_batch 第{fail_num}章生成失败: {e}', exc_info=True)
+            except Exception:
+                pass
+            db.session.rollback()
+            failed.append({'chapter_num': fail_num, 'error': str(e)[:200]})
+            # Bug5：失败时清空 prev_polished，避免把失败章当上一章注入
+            prev_polished = ''
             continue
 
-    # ★ 修复问题四：连续生成的章节按 50 章/卷自动归卷（复用现有 rebin 逻辑）
-    if results:
-        try:
-            resort_chapters_by_title(book_id, rebin_volumes=True)
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-
-    return jsonify({'chapters': results, 'total': len(results)})
+    # Bug1 修复：移除 resort_chapters_by_title(rebin_volumes=True)。
+    # 该调用按标题中的章节号重排 order_index，但批处理标题可能不含"第X章"前缀
+    # （_extract_chapter_title 会剥离前缀），混合排序时顺序错乱；
+    # 同时 rebin_volumes=True 会用"第X卷（第X-X章）"覆盖用户自定义卷名。
+    # 批处理章节已按 order_index=max+1 顺序保存，归卷在循环内通过 parent_id 完成。
+    return jsonify({
+        'chapters': results,
+        'total': len(results),
+        'failed': failed,
+        'failed_count': len(failed),
+    })
 
 
 def _extract_chapter_body(full_content: str) -> str:
