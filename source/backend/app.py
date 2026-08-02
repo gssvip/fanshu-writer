@@ -2677,7 +2677,7 @@ def ai_import_recognize(book_id):
   "inventory": "从内容识别的物品/功法/法宝（若无则留空）"
 }}"""
 
-    user_prompt = f'作品标题：{book.title}\n作品类型：{book.genre}\n\n【文件名/章节标题列表（共{len(titles)}项）】\n{titles_text}\n\n【内容样本】\n{samples_text or "（无内容样本）"}'
+    user_prompt = f'作品标题：{book.title}\n作品类型：{_get_genre_label(book)}\n\n【文件名/章节标题列表（共{len(titles)}项）】\n{titles_text}\n\n【内容样本】\n{samples_text or "（无内容样本）"}'
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
@@ -5193,6 +5193,31 @@ def _get_style_label(book_type, genre, style_key):
     return genre_map.get(style_key, style_key)
 
 
+# 题材中英文映射（与前端 constants.ts GENRES 保持一致）
+# 注入 prompt 时用中文标签，避免 AI 看到英文 key（如 fantasy）约束力弱
+GENRE_LABELS = {
+    'other': '其他', 'fantasy': '玄幻', 'xianxia': '仙侠', 'qihuan': '奇幻',
+    'wuxia': '武侠', 'urban': '都市', 'urban_business': '都市职场', 'urban_fantasy': '都市异能',
+    'history': '历史', 'military': '军事', 'game': '游戏', 'sports': '体育',
+    'scifi': '科幻', 'mystery': '悬疑', 'infinite': '诸天无限', 'light_novel': '轻小说',
+    'romance': '现代言情', 'ancient_romance': '古代言情', 'fantasy_romance': '幻想言情',
+    'danmei': '纯爱', 'acg': '二次元',
+}
+
+
+def _get_genre_label(book=None, bb=None):
+    """获取题材中文标签（用于 prompt 注入）。优先 book.genre，回退 bb.genre。
+    找不到映射时原样返回，确保不丢信息。"""
+    genre = ''
+    if book is not None:
+        genre = getattr(book, 'genre', '') or ''
+    if not genre and bb is not None:
+        genre = getattr(bb, 'genre', '') or ''
+    if not genre:
+        return '通用'
+    return GENRE_LABELS.get(genre, genre)
+
+
 def _sync_book_meta_to_bible(book, bb):
     """P0-3修复：把 book 的 total_volumes / novel_styles / genre / book_type 同步到 bible。
     在首次创建空 bible 或更新 book 时调用，确保各维度创作时能从 bible 读到权威元数据。
@@ -5274,18 +5299,21 @@ def _get_novel_styles_text(bb, book=None):
 
 
 def _build_core_params_block(bb, book):
-    """构建「核心创作参数」注入块：卷数+风格流派，作为所有维度创作与章节写作的核心依据。"""
+    """构建「核心创作参数」注入块：题材+卷数+风格流派，作为所有维度创作与章节写作的核心依据。
+    三大约束统一在此注入，确保用户选定项在下游真正生效。"""
     tv = _get_total_volumes(bb, book)
+    genre_label = _get_genre_label(book, bb)
     styles_text = _get_novel_styles_text(bb, book)
-    parts = [f'【核心创作参数·全书依据】',
-             f'总卷数：{tv} 卷（全书所有分卷/五幕总纲/剧情大纲严格按此卷数规划，不得偏离）']
     bt = getattr(book, 'book_type', 'novel') or 'novel'
+    parts = ['【核心创作参数·全书依据·不可偏离】',
+             f'题材：{genre_label}（人物设定、世界观、剧情走向、爽点类型须契合该题材的读者期待）',
+             f'总卷数：{tv} 卷（全书所有分卷/五幕总纲/剧情大纲严格按此卷数规划，不得多不得少）']
     if bt == 'novel':
         parts.append(f'预计总字数：约 {tv*12} 万字（每卷约12万字，约50章/卷）')
     else:
         parts.append(f'短篇结构：{tv} 个单元/幕')
     if styles_text:
-        parts.append(f'风格流派：{styles_text}（人物塑造、节奏、爽点设计须契合所选流派）')
+        parts.append(f'风格流派：{styles_text}（人物塑造、节奏、爽点设计、叙事手法须契合所选流派，这是硬约束）')
     return '\n'.join(parts)
 
 
@@ -5310,7 +5338,7 @@ CHAPTER_LANG_STYLES = {
 
 
 def _build_chapter_lang_style_prompt(style_keys):
-    """根据前端传入的语言风格 key 列表，拼装注入 system_prompt 的「本章语言风格」指导文本。
+    """根据前端传入的语言风格 key 列表，拼装注入 system_prompt 的「本章语言风格」铁律约束。
     返回空串表示未选择（AI 按默认通用风格行文）。"""
     if not style_keys:
         return ''
@@ -5327,7 +5355,10 @@ def _build_chapter_lang_style_prompt(style_keys):
             parts.append(f"- {item[0]}：{item[1]}")
     if not parts:
         return ''
-    return '【本章语言风格·行文指导】请按以下风格基调行文（可融合）：\n' + '\n'.join(parts)
+    return ('【本章语言风格·行文铁律】（用户为本章选定，必须严格遵循，不可偏离）\n'
+            + '本章正文必须按以下风格基调行文（多种风格可融合但都要体现）：\n'
+            + '\n'.join(parts)
+            + '\n（此为硬约束：用词、句式、节奏、修辞须符合上述风格，违反即为不合格章节）')
 
 
 def _build_master_upstream_ctx(dim, ctx):
@@ -7222,7 +7253,8 @@ def ai_outline_master(book_id):
 {skill_note}"""
 
     user_prompt = f"""书名：{book.title}
-题材：{book.genre}
+
+{_build_core_params_block(bb, book)}
 
 已有设定：
 {context}
@@ -7547,6 +7579,8 @@ def ai_outline_volume(book_id):
 
     user_prompt = f"""书名：{book.title}
 
+{_build_core_params_block(bb, book)}
+
 {f"【五幕式总纲】{chr(10)}{master_outline}" if has_master else "【五幕式总纲】（暂无，请基于下方已有剧情/卷大纲自行推演本卷情节节点，但必须符合五幕模型中「" + current_act + "」幕的定位）"}
 
 【已有剧情】（含已生成卷纲，本卷需与之衔接）
@@ -7685,6 +7719,8 @@ def ai_extract_volumes_from_outline(book_id):
 
     system_prompt = f"""你是番茄小说金番作者级别的剧情架构师。
 任务：根据五幕式总纲，一次性提取全部卷的【主线剧情】，输出为 JSON 数组。
+
+{_build_core_params_block(bb, book)}
 
 【重要】本次只构建各卷主线剧情，**不生成情节节点**（nodes 输出为空数组）。情节节点由用户后续手动点击「节点设计」逐卷生成。
 
@@ -8324,7 +8360,6 @@ def ai_master_create(book_id):
 任务：{info['prompt']}
 
 书名：{book.title}
-题材：{book.genre}
 
 {core_params_block}
 
@@ -8364,7 +8399,6 @@ def ai_master_create(book_id):
 任务：{info['prompt']}
 
 书名：{book.title}
-题材：{book.genre}
 
 {core_params_block}
 
@@ -8544,7 +8578,6 @@ def ai_master_create_stream(book_id):
 任务：{info['prompt']}
 
 书名：{book.title}
-题材：{book.genre}
 
 {core_params_block}
 
@@ -8567,7 +8600,6 @@ def ai_master_create_stream(book_id):
 任务：{info['prompt']}
 
 书名：{book.title}
-题材：{book.genre}
 
 {core_params_block}
 
@@ -8727,7 +8759,7 @@ def ai_brainstorm(book_id):
     else:
         task = dimension_prompts.get(dimension, dimension_prompts['worldview'])
 
-    system_prompt = f"""你是资深网文创意策划师，服务于番茄小说/起点中文网。用户正在创作一部{book.book_type}，题材为{book.genre}。
+    system_prompt = f"""你是资深网文创意策划师，服务于番茄小说/起点中文网。用户正在创作一部{book.book_type}，题材为{_get_genre_label(book)}。
 
 用户的一句话构思：{concept}
 
@@ -10329,7 +10361,7 @@ def ai_generate_dynamic_memory(book_id):
 5. 未涉及的字段保持原值或空值"""
 
     user_content = f"""作品标题：{book.title}
-题材：{book.genre or '通用'}
+题材：{_get_genre_label(book)}
 类型：{book.book_type or '小说'}
 
 构思：{bible.concept if bible else '无'}
@@ -10464,7 +10496,7 @@ def _generate_dynamic_report_content(book_id, chapter_start, chapter_end, skill_
 {skill_note}"""
 
     user_content = f"""作品：{book.title}
-题材：{book.genre or '通用'}
+题材：{_get_genre_label(book)}
 
 第{chapter_start}章到第{chapter_end}章内容：
 {chapters_content}
