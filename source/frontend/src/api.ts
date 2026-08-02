@@ -314,64 +314,73 @@ export const api = {
     request<ReviewResult>(`/books/${bookId}/review`, { method: 'POST', body: JSON.stringify({ scope, content }) }),
 
   // AI Continue（14项优化版）：返回正文+审校状态+章节计划+一致性检查结果等
-  aiContinue: (bookId: string, instruction: string, skillPackIds?: string[], enableConsistencyCheck?: boolean, signal?: AbortSignal, opts?: { targetChapterNum?: number; prevChapterContent?: string; chapterLangStyles?: string[] }) =>
-    request<{
-      content: string;
-      draft?: string | null;
-      review_notes: string;
-      deai_status: 'skipped' | 'success' | 'failed';
-      chapter_plan: string;
-      current_chapter_num: number;
-      vol_index: number;
-      vol_title: string;
-      temperature: number;
-      consistency_passed: boolean;
-      consistency_issues: string;
-      // P0-1 + P1-6/7 新增字段
-      post_validate?: {
-        passed: boolean;
-        score: number;
-        issue_count: number;
-        critical_count: number;
-        warning_count: number;
-        issues: Array<{ severity: string; category: string; pattern: string; count: number; position: string; suggestion: string }>;
-        stats: Record<string, any>;
-      } | null;
-      changes_applied?: {
-        applied: boolean;
-        fields_updated: string[];
-        errors: string[];
-      } | null;
-      // P2-10 新增
-      gate_result?: {
-        passed: boolean;
-        critical_count: number;
-        warning_count: number;
-        issues: Array<{ gate: string; severity: string; message: string }>;
-      } | null;
-      // 审校评分制：0-100 分 + 等级 + 5 维明细 + auto_revise
-      chapter_score?: {
-        score: number;
-        grade: 'A' | 'B' | 'C' | 'D';
-        auto_revise: boolean;
-        breakdown: Record<string, number>;
-      } | null;
-      // 标题自动生成：AI 解析的章节标题
-      suggested_title?: string;
-    }>(`/books/${bookId}/ai-continue`, {
-      method: 'POST',
-      body: JSON.stringify({
-        instruction,
-        skill_pack_ids: skillPackIds || [],
-        enable_consistency_check: enableConsistencyCheck !== false,
-        // 修复上下文脱节：前端传入待写章号 + 上一章未保存内容（若已生成未保存），
-        // 让后端用准确的章号、并把未保存内容作为"最近一章"注入上下文，避免剧情断档。
-        target_chapter_num: opts?.targetChapterNum,
-        prev_chapter_content: opts?.prevChapterContent,
-        // 章节正文语言风格（行文文风，最多3个叠加），注入 AI 指导本章行文
-        chapter_lang_styles: opts?.chapterLangStyles || [],
-      }),
-    }, signal),
+  // 注意：不走 fetchWithRetry（60s 超时），Agent 管线（章节计划→正文→去AI味→一致性检查）
+  // 总耗时 80-180s，60s 超时必然触发 abort → "请求已取消"。改用直接 fetch + 300s 长超时保护。
+  aiContinue: async (bookId: string, instruction: string, skillPackIds?: string[], enableConsistencyCheck?: boolean, signal?: AbortSignal, opts?: { targetChapterNum?: number; prevChapterContent?: string; chapterLangStyles?: string[] }): Promise<{
+    content: string;
+    draft?: string | null;
+    review_notes: string;
+    deai_status: 'skipped' | 'success' | 'failed';
+    chapter_plan: string;
+    current_chapter_num: number;
+    vol_index: number;
+    vol_title: string;
+    temperature: number;
+    consistency_passed: boolean;
+    consistency_issues: string;
+    post_validate?: {
+      passed: boolean;
+      score: number;
+      issue_count: number;
+      critical_count: number;
+      warning_count: number;
+      issues: Array<{ severity: string; category: string; pattern: string; count: number; position: string; suggestion: string }>;
+      stats: Record<string, any>;
+    } | null;
+    changes_applied?: { applied: boolean; fields_updated: string[]; errors: string[]; } | null;
+    gate_result?: { passed: boolean; critical_count: number; warning_count: number; issues: Array<{ gate: string; severity: string; message: string }>; } | null;
+    chapter_score?: { score: number; grade: 'A' | 'B' | 'C' | 'D'; auto_revise: boolean; breakdown: Record<string, number>; } | null;
+    suggested_title?: string;
+  }> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    // 300s 超时保护（防永久挂起），远大于 Agent 管线最大耗时
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300000);
+    const onExternalAbort = () => controller.abort();
+    if (signal) signal.addEventListener('abort', onExternalAbort);
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/books/${bookId}/ai-continue`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          instruction,
+          skill_pack_ids: skillPackIds || [],
+          enable_consistency_check: enableConsistencyCheck !== false,
+          target_chapter_num: opts?.targetChapterNum,
+          prev_chapter_content: opts?.prevChapterContent,
+          chapter_lang_styles: opts?.chapterLangStyles || [],
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      return res.json();
+    } catch (e: any) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (e.name === 'AbortError') throw new Error('请求超时，Agent管线处理时间过长，请稍后重试');
+      if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
+        throw new Error('无法连接到服务器，可能正在冷启动中。请稍等几秒后重试');
+      }
+      throw e;
+    } finally {
+      clearTimeout(timeoutId);
+      if (signal) signal.removeEventListener('abort', onExternalAbort);
+    }
+  },
 
   // 连续创作模式：普通 POST 批量生成 N 章，自动保存。返回原始 Response（含 body 流）
   aiContinueBatch: (bookId: string, instruction: string, skillPackIds: string[], count: number, opts?: { startChapterNum?: number; chapterLangStyles?: string[] }) => {

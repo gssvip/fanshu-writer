@@ -1062,10 +1062,16 @@ export default function WritePage() {
           }
         }
       } catch (e: any) {
-        if (signal.aborted || aiStoppedRef.current) return;
-        setAiStreamError(e.message || 'Agent管线调用失败，请检查AI配置');
+        // 不因 signal.aborted 跳过错误提示和状态重置：
+        // fetchWithRetry 内部超时 abort 时 signal.aborted=false 但仍抛"请求已取消"，
+        // 如果 return 会跳过 finally 的 setAiCreating(false) → 界面卡死无法再点发送
+        if (!aiStoppedRef.current) {
+          setAiStreamError(e.message || 'Agent管线调用失败，请检查AI配置');
+        }
       } finally {
-        if (!signal.aborted) setAiCreating(false);
+        // 无条件重置 aiCreating，防止任何异常路径导致界面卡死
+        // （stopAiCreate 也会设 false，重复设无副作用）
+        setAiCreating(false);
       }
       return;
     }
@@ -1349,12 +1355,13 @@ ${chapterEditContent}`;
         setAiChatHistory(prev => [...prev, { role: 'assistant', content: fullContent, chapterTitle: chapterEditTitle, type: 'content' }]);
       }
     } catch (e: any) {
-      if (signal.aborted || aiStoppedRef.current) return;
-      setAiStreamError(e.message || 'AI创作失败，请检查AI配置');
+      // 同 Agent 管线分支：不因 signal.aborted 跳过状态重置，防止界面卡死
+      if (!aiStoppedRef.current) {
+        setAiStreamError(e.message || 'AI创作失败，请检查AI配置');
+      }
     }
-    if (!aiAbortRef.current?.signal.aborted) {
-      setAiCreating(false);
-    }
+    // 无条件重置 aiCreating，防止任何异常路径导致界面卡死
+    setAiCreating(false);
   }
 
   // 停止 AI 创作：流式时中断 fetch/reader；非流式分支仅退出等待态（后端可能继续运行）
