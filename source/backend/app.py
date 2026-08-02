@@ -571,7 +571,10 @@ class BookBible(db.Model):
             'foreshadowing_graph': self.foreshadowing_graph or '',
             'outline_hierarchy': self.outline_hierarchy or '',
             'chapter_changes_log': self.chapter_changes_log or '',
-            'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None
+            'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None,
+            # P1-2修复：补 total_volumes / novel_styles，让前端可见 bible 权威值
+            'total_volumes': self.total_volumes if self.total_volumes else 10,
+            'novel_styles': self.novel_styles or '[]'
         }
 
 
@@ -5196,6 +5199,28 @@ def _get_style_label(book_type, genre, style_key):
     return genre_map.get(style_key, style_key)
 
 
+def _sync_book_meta_to_bible(book, bb):
+    """P0-3修复：把 book 的 total_volumes / novel_styles / genre / book_type 同步到 bible。
+    在首次创建空 bible 或更新 book 时调用，确保各维度创作时能从 bible 读到权威元数据。
+    仅在 book 有值且 bible 字段为空/默认时回填，不覆盖用户已设置的值。"""
+    if not book or not bb:
+        return
+    try:
+        if getattr(book, 'total_volumes', None) and (not bb.total_volumes or bb.total_volumes == 10):
+            bb.total_volumes = book.total_volumes
+    except Exception:
+        pass
+    try:
+        book_styles = getattr(book, 'novel_styles', None)
+        if book_styles:
+            bb_styles = getattr(bb, 'novel_styles', None)
+            # 仅在 bible 风格为空或默认空数组时回填
+            if not bb_styles or bb_styles in ('', '[]', 'null'):
+                bb.novel_styles = book_styles
+    except Exception:
+        pass
+
+
 def _get_total_volumes(bb, book=None):
     """获取总卷数（优先 BookBible，回退 Book，默认10）。长篇5-30，短篇1-3。"""
     tv = None
@@ -7077,7 +7102,8 @@ def _extract_json_from_llm(content, expect='auto'):
 
 def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation'):
     """统一的 LLM 调用辅助函数，返回 (content, error)
-    task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)"""
+    task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)
+    max_tokens 语义：None → 用 cfg.max_tokens；0 → 不限制（不下发该字段，用模型自身默认上限）；正整数 → 显式限定。"""
     cfg = AIConfig.query.first()
     if not cfg or not cfg.api_key:
         return None, '请先配置 AI 模型 API Key'
@@ -7090,9 +7116,15 @@ def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation')
             'model': model,
             'messages': messages,
             'temperature': temperature if temperature is not None else cfg.temperature,
-            'max_tokens': max_tokens if max_tokens else cfg.max_tokens,
             'stream': False
         }
+        # max_tokens：0 表示不限制（不下发），None 用配置默认值，正整数显式限定
+        if max_tokens == 0:
+            pass  # 不下发，让模型用自身默认输出上限
+        elif max_tokens:
+            payload['max_tokens'] = max_tokens
+        else:
+            payload['max_tokens'] = cfg.max_tokens
         resp = requests.post(f'{base}/chat/completions',
             headers={'Authorization': f'Bearer {cfg.api_key}', 'Content-Type': 'application/json'},
             json=payload, timeout=180)
@@ -7208,7 +7240,7 @@ def ai_outline_master(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=4000, temperature=0.7
+        max_tokens=0, temperature=0.7
     )
     if err:
         return jsonify({'error': err}), 500
@@ -7443,7 +7475,9 @@ def ai_outline_volume(book_id):
 
     # ===== 【P1弊端7修复】五幕模型对齐：确定本卷对应的幕 =====
     act_mapping = {1: '立身', 2: '立足', 3: '立势', 4: '立威', 5: '立命'}
-    total_volumes = len(existing_volumes_for_ctx) + 1
+    # P1-1修复：total_volumes 必须用全书规划卷数（book.total_volumes），
+    # 而非已生成卷数+1，否则五幕比例映射分母错误，导致本卷被错配到错误的幕
+    total_volumes = _get_total_volumes(bb, book)
     # 简单映射：5卷对应5幕；卷数不固定时按比例分配
     if total_volumes <= 5:
         current_act = act_mapping.get(volume_index, '立身')
@@ -7545,7 +7579,7 @@ def ai_outline_volume(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=6000, temperature=0.7
+        max_tokens=0, temperature=0.7
     )
     if err:
         return jsonify({'error': err}), 500
@@ -7705,7 +7739,7 @@ def ai_extract_volumes_from_outline(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=12000, temperature=0.7
+        max_tokens=0, temperature=0.7
     )
     if err:
         return jsonify({'error': err}), 500
@@ -7900,7 +7934,7 @@ def ai_reverse_generate_outline(book_id):
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=2500, temperature=0.6
+        max_tokens=0, temperature=0.6
     )
     if err:
         return jsonify({'error': err}), 500
@@ -8109,7 +8143,7 @@ def ai_import_plot_outline(book_id):
 
         content, err = _call_llm(
             [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-            max_tokens=10000, temperature=0.2
+            max_tokens=0, temperature=0.2
         )
         if err:
             return jsonify({'error': err}), 500
@@ -8226,6 +8260,9 @@ def ai_master_create(book_id):
         bb = BookBible(book_id=book_id)
         db.session.add(bb)
         db.session.commit()
+    # P0-3修复：首次创建 bible 时同步 book 的 total_volumes/novel_styles，
+    # 否则首次总创作时风格流派注入为空、卷数约束失效
+    _sync_book_meta_to_bible(book, bb)
 
     data = request.json or {}
     skill_pack_ids = data.get('skill_pack_ids', [])
@@ -8348,10 +8385,10 @@ def ai_master_create(book_id):
 直接输出{info['label']}内容（严格按任务要求的格式铁律输出）。确保与上游维度衔接一致。"""
             user_prompt = instruction or f'请为这本小说生成{info["label"]}，与已确认的上游维度保持一致，并严格按输出格式铁律输出。'
 
-        max_tokens = 8000 if is_timeline_dim else 2500
+        # P0-1修复：各维度创作不限制输出 token，避免 timeline 等大维度 JSON 被截断导致"只能生成几卷"
         content, err = _call_llm(
             [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-            max_tokens=max_tokens, temperature=0.7
+            max_tokens=0, temperature=0.7
         )
         if err:
             results.append({'dimension': dim, 'label': info['label'], 'field': info['field'], 'error': err})
@@ -8435,6 +8472,8 @@ def ai_master_create_stream(book_id):
         bb = BookBible(book_id=book_id)
         db.session.add(bb)
         db.session.commit()
+    # P0-3修复：首次创建 bible 时同步 book 的 total_volumes/novel_styles
+    _sync_book_meta_to_bible(book, bb)
 
     data = request.json or {}
     skill_pack_ids = data.get('skill_pack_ids', [])
@@ -8549,7 +8588,8 @@ def ai_master_create_stream(book_id):
 直接输出{info['label']}内容（严格按任务要求的格式铁律输出）。确保与上游维度衔接一致。"""
                     user_prompt = instruction or f'请为这本小说生成{info["label"]}，与已确认的上游维度保持一致，并严格按输出格式铁律输出。'
 
-                max_tokens = 8000 if is_timeline_dim else 2500
+                # P0-1修复：流式维度创作不限制输出 token，避免大维度 JSON 被截断
+                # （不下发 max_tokens 字段，让模型用自身默认输出上限）
 
                 # 流式调用 LLM
                 base = base_url.rstrip('/')
@@ -8561,7 +8601,6 @@ def ai_master_create_stream(book_id):
                           'messages': [{'role': 'system', 'content': system_prompt},
                                        {'role': 'user', 'content': user_prompt}],
                           'temperature': 0.7,
-                          'max_tokens': max_tokens,
                           'stream': True},
                     stream=True, timeout=180)
                 full_content = ''

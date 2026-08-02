@@ -742,23 +742,14 @@ export default function WritePage() {
           async () => {
             try {
               const result = await api.aiOutlineVolume(bookId, nextVolume, `第${nextVolume}卷`, selectedSkillPackIds, CHAPTERS_PER_VOLUME);
-              // 把返回的 timeline 合并到剧情维度
-              let mergedTimeline = result.timeline;
-              try {
-                const parsedNew = JSON.parse(result.timeline);
-                if (Array.isArray(parsedNew) && bible?.timeline) {
-                  const parsedOld = JSON.parse(bible.timeline);
-                  if (Array.isArray(parsedOld)) {
-                    parsedNew.forEach((t, i) => {
-                      const idx = (nextVolume - 1) + i;
-                      parsedOld[idx] = t;
-                    });
-                    mergedTimeline = JSON.stringify(parsedOld.filter(Boolean), null, 2);
-                  }
-                }
-              } catch { /* ignore，使用原始 timeline */ }
-              const updatedBible = await api.updateBible(bookId, { timeline: mergedTimeline } as any);
-              setBible(updatedBible);
+              // P0-2修复：后端 result.timeline 已是完整合并后的全卷数组（按 volume_index upsert），
+              // 后端 result.bible 也已正确落库。直接用后端返回的 bible，不再前端手动错位合并。
+              if (result.bible) {
+                setBible(result.bible);
+              } else {
+                const updatedBible = await api.updateBible(bookId, { timeline: result.timeline } as any);
+                setBible(updatedBible);
+              }
               alert(`第${nextVolume}卷大纲已生成并填入剧情`);
             } catch (e: any) {
               alert(`第${nextVolume}卷大纲生成失败: ${e.message}`);
