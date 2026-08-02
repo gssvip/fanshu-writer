@@ -4,7 +4,7 @@ import { api } from '../api';
 import type { Book, BookBible, BrainstormResult, BrainstormSuggestion, Chapter, SkillPack, DynamicReport, AISession } from '../types';
 import AiCreateModal from './AiCreateModal';
 import EntityRegistryModal from './EntityRegistryModal';
-import { CHAPTER_LANG_STYLES, buildChapterLangStylePrompt } from '../constants';
+import { CHAPTER_LANG_STYLES } from '../constants';
 
 // 两行 Tab 布局：上下各 5 个维度
 const TAB_ROW_1 = [
@@ -1052,13 +1052,17 @@ export default function WritePage() {
           chapter_score: result.chapter_score,
           // 标题自动生成：AI 解析的标题
           suggested_title: result.suggested_title,
+          // formatted_title: 后端统一格式化的标题（第X章 标题），优先使用
         });
         // 标题自动生成：若 AI 返回了标题且当前标题为空或为默认"第X章"，自动回填
-        if (result.suggested_title) {
+        // 统一使用 formatted_title（第X章 标题 格式），与连续创作模式一致
+        const finalTitle = (result as any).formatted_title || result.suggested_title;
+        if (finalTitle) {
           const cur = chapterEditTitle || '';
+          // 当前标题为空或纯"第X章"格式（无标题文本）时才覆盖
           const isDefault = /^第[一二三四五六七八九十百零0-9]+章\s*$/.test(cur.trim()) || !cur.trim();
           if (isDefault) {
-            setChapterEditTitle(result.suggested_title);
+            setChapterEditTitle(finalTitle);
           }
         }
       } catch (e: any) {
@@ -1077,198 +1081,105 @@ export default function WritePage() {
     }
 
     try {
-      const contextConcept = concept || bible?.concept || book?.synopsis || '暂无构思';
+      // ===== write/continue 模式：统一走后端 /ai-continue/stream =====
+      // 与多Agent同步/连续创作模式共用 _build_ai_continue_context，确保上下文注入一致
+      if (aiCreateMode === 'write' || aiCreateMode === 'continue') {
+        const progress = computeChapterProgress();
+        const targetChapterNum = progress.targetNum;
+        const prevChapterContent = prevGenerated.trim().length > 200 ? prevGenerated : undefined;
 
-      // ===== 丰富上下文注入（对齐 Agent 管线水平，保证前后文连贯）=====
-      // 1) 前4章完整正文（紧邻当前章节，保证即时衔接；每章超长取尾部1500字保护token）
-      const prevRealChapters = chapters
-        .filter(c => !c.is_volume && c.order_index < activeChapter.order_index)
-        .slice()
-        .sort((a, b) => a.order_index - b.order_index)
-        .slice(-4);
-      const prevChaptersText = prevRealChapters.length > 0
-        ? prevRealChapters.map(c => `【${c.title}】\n${(c.content || '').slice(-1500) || '（空）'}`).join('\n\n')
-        : '（本章为开篇，无前文）';
-
-      // 2) 最近10份动态文件（防遗忘记忆；后端已改为返回10份）
-      let dynamicMemoryText = '';
-      try {
-        const dmCtx = await api.getDynamicReportContext(bookId);
-        dynamicMemoryText = (dmCtx.context_text || '').slice(0, 8000);
-      } catch { /* 无动态报告忽略 */ }
-
-      // 2.5) 最近防遗忘检查诊断（精简），让自建上下文模式也规避已诊断问题
-      let afDiagBrief = '';
-      try {
-        const afRaw = (bible as any)?.anti_forget_reports;
-        if (afRaw) {
-          const afList = JSON.parse(afRaw);
-          if (Array.isArray(afList) && afList.length > 0) {
-            const recent = afList.slice(-2);
-            const lines: string[] = [];
-            for (const r of recent) {
-              const rp = r?.report || {};
-              const vs = Array.isArray(rp.violations) ? rp.violations.slice(0, 5) : [];
-              for (const v of vs) {
-                const msg = typeof v === 'string' ? v : (v?.issue || v?.message || v?.desc || '');
-                if (msg) lines.push(`- ${msg.slice(0, 120)}`);
-              }
-              const ps = Array.isArray(rp.pending_foreshadowing) ? rp.pending_foreshadowing.slice(0, 3) : [];
-              for (const p of ps) {
-                const msg = typeof p === 'string' ? p : (p?.desc || p?.title || '');
-                if (msg) lines.push(`- 待回收伏笔：${msg.slice(0, 100)}`);
-              }
-            }
-            if (lines.length > 0) afDiagBrief = lines.join('\n');
-          }
+        const response = await api.aiContinueStream(bookId, currentPrompt, selectedSkillPackIds,
+          { targetChapterNum, prevChapterContent, chapterLangStyles }, signal);
+        if (signal.aborted) return;
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({ error: '请求失败' }));
+          throw new Error(err.error || `HTTP ${response.status}`);
         }
-      } catch { /* ignore */ }
 
-      // 3) 前一卷 + 本卷剧情大纲（从 bible.timeline 解析卷纲）
-      let volumeOutlineText = '';
-      let prevVol: any = null, currVol: any = null;
-      try {
-        if (bible?.timeline && bible.timeline.trim().startsWith('[')) {
-          const arr = JSON.parse(bible.timeline);
-          if (Array.isArray(arr)) {
-            const vidx = (v: any) => {
-              const raw = v?.volume_index ?? (() => { const m = String(v?.volume || v?.volume_id || '').match(/\d+/); return m ? parseInt(m[0]) : 0; })();
-              return parseInt(raw) || 0;
-            };
-            const sorted = arr.filter((v: any) => v && typeof v === 'object').sort((a: any, b: any) => vidx(a) - vidx(b));
-            // 用当前章在全书的序号定位所属卷（按 nodes 章号范围，无则按卷序均分）
-            const currChNum = activeChapter.order_index + 1;
-            for (let i = 0; i < sorted.length; i++) {
-              const nodes: any[] = sorted[i].nodes || [];
-              let maxCh = 0;
-              for (const n of nodes) {
-                const nums = String(n.chapters || '').match(/\d+/g);
-                if (nums) maxCh = Math.max(maxCh, ...nums.map(Number));
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('无法读取流');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullContent = '';
+
+        while (true) {
+          if (signal.aborted) {
+            try { reader.cancel(); } catch { /* ignore */ }
+            break;
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const chunk = line.slice(6).trim();
+            if (chunk === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(chunk);
+              if (parsed.error) throw new Error(parsed.error);
+              // meta 事件：章号/卷信息/计划
+              if (parsed.meta) {
+                setAgentMeta({
+                  chapter_plan: parsed.chapter_plan || '',
+                  temperature: parsed.temperature || 0,
+                  vol_title: parsed.vol_title || '',
+                  vol_index: parsed.vol_index || 0,
+                  current_chapter_num: parsed.current_chapter_num || 0,
+                });
+                continue;
               }
-              const volEnd = maxCh || ((i + 1) * 50);
-              if (currChNum <= volEnd || i === sorted.length - 1) {
-                currVol = sorted[i];
-                if (i > 0) prevVol = sorted[i - 1];
-                break;
-              }
-            }
-            const fmtVol = (v: any, role: string) => {
-              if (!v) return '';
-              const parts = [`▼ [${role}] 第${vidx(v)}卷「${v.volume || v.volume_title || ''}」`];
-              if (v.main_plot || v.core_goal) parts.push(`  主线：${(v.main_plot || v.core_goal || '').slice(0, 300)}`);
-              if (v.core_conflict) parts.push(`  核心冲突：${String(v.core_conflict).slice(0, 150)}`);
-              const ns: any[] = v.nodes || [];
-              if (ns.length) {
-                parts.push('  情节节点：');
-                for (const n of ns.slice(0, 6)) {
-                  parts.push(`    · [${n.type || 'M'}] ${n.chapters || ''} ${n.title || ''}：${String(n.summary || '').slice(0, 80)}`);
+              // suggested_title 事件：格式化标题
+              if (parsed.suggested_title !== undefined || parsed.formatted_title !== undefined) {
+                const streamTitle = parsed.formatted_title || parsed.suggested_title || '';
+                if (streamTitle) {
+                  const cur = chapterEditTitle || '';
+                  const isDefault = /^第[一二三四五六七八九十百零0-9]+章\s*$/.test(cur.trim()) || !cur.trim();
+                  if (isDefault) setChapterEditTitle(streamTitle);
+                  setAgentMeta((prev: any) => ({ ...prev, suggested_title: parsed.suggested_title || '' }));
                 }
+                continue;
               }
-              if (v.ending_hook || v.ending) parts.push(`  卷尾钩子：${String(v.ending_hook || v.ending || '').slice(0, 150)}`);
-              return parts.join('\n');
-            };
-            volumeOutlineText = [fmtVol(prevVol, '上一卷回顾'), fmtVol(currVol, '本卷进行')].filter(Boolean).join('\n\n');
+              // post_validate 事件
+              if (parsed.post_validate) {
+                setAgentMeta((prev: any) => ({ ...prev, post_validate: parsed.post_validate }));
+                continue;
+              }
+              // LLM chunk：拼接正文
+              const delta = parsed.choices?.[0]?.delta?.content || '';
+              if (delta) {
+                fullContent += delta;
+                setAiGeneratedContent(fullContent);
+              }
+            } catch (e: any) {
+              if (e.message && !e.message.includes('JSON')) {
+                setAiStreamError(e.message);
+              }
+            }
           }
         }
-      } catch { /* timeline 解析失败忽略 */ }
-      if (!volumeOutlineText && bible?.plot_design) {
-        volumeOutlineText = `【总纲】${bible.plot_design.slice(0, 800)}`;
-      }
-
-      // 4) 人物及关系（拉取人物列表 + 关系图谱 + 人物档案）
-      let charactersText = bible?.character_profiles?.slice(0, 1000) || '';
-      try {
-        const chars = await api.listCharacters(bookId);
-        if (Array.isArray(chars) && chars.length > 0) {
-          const charLines = chars.slice(0, 12).map(c =>
-            `· ${c.name}（${c.role || ''}）：${(c.description || '').slice(0, 80)}；性格：${(c.personality || '').slice(0, 60)}`
-          ).join('\n');
-          charactersText += `\n【出场人物】\n${charLines}`;
+        if (fullContent.trim()) {
+          setAiChatHistory(prev => [...prev, { role: 'assistant', content: fullContent, chapterTitle: chapterEditTitle, type: 'content' }]);
         }
-      } catch { /* 忽略 */ }
-      const relationText = bible?.relation_graph?.slice(0, 800) || '';
-
-      // 5) 物资库 / 6) 伏笔 / 7) 地图（含本卷按卷维度）
-      const inventoryText = bible?.inventory?.slice(0, 600) || '';
-      let foreshadowingText = bible?.foreshadowing?.slice(0, 600) || '';
-      let locationsText = bible?.locations?.slice(0, 600) || '';
-      // 本卷按卷维度补充
-      const sliceVolField = (field: string, limit: number) => {
-        try {
-          if (!currVol || !currVol[field]) return '';
-          const val = typeof currVol[field] === 'string' ? currVol[field] : JSON.stringify(currVol[field]);
-          return String(val).slice(0, limit);
-        } catch { return ''; }
-      };
-      const fv = sliceVolField('foreshadowing_volumes', 400) || sliceVolField('foreshadow', 400);
-      if (fv) foreshadowingText += `\n【本卷伏笔】${fv}`;
-      const lv = sliceVolField('locations_volumes', 400) || sliceVolField('locations', 400);
-      if (lv) locationsText += `\n【本卷地点】${lv}`;
-
-      // 提取已勾选技能包的提示词（合并多个）
-      const skillKeys = CHAPTER_SKILL_KEYS[aiCreateMode] || [];
-      const skillPrompt = extractSkillPrompt(selectedSkillPacks, skillKeys);
-      const skillNote = selectedSkillPacks.length > 0 ? `\n\n【已加载技能包：${selectedSkillPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
-
-      // 读者期待感（信息差三态）创作技巧
-      const suspenseGuide = `\n【读者期待感·信息差三态技法】
-1. 读者知道、主角不知道：让读者先获得关键信息（如反派阴谋、物品真相、他人企图），主角蒙在鼓里仍推进行动，制造"何时揭穿"的悬念与紧张感。
-2. 主角知道、读者不知道：主角掌握秘密（如底牌、真实身份、已识破伪装）但向读者隐瞒，制造"主角为何如此行动"的悬念，适当时机揭晓带来爽感。
-3. 主角和读者都不知道：突发未知危机/谜团，双方同步摸索，制造纯粹的悬念与好奇。
-每章至少运用一种信息差，章末留下钩子（悬念/反转/新谜团），让读者产生"必须看下一章"的冲动。`;
-
-      // 拼装前文记忆段
-      const memorySection = `【前4章正文（即时衔接）】\n${prevChaptersText}\n\n【动态记忆（最近10份防遗忘报告）】\n${dynamicMemoryText || '（暂无）'}${afDiagBrief ? '\n\n【防遗忘检查诊断（须规避）】\n' + afDiagBrief : ''}`;
-
-      // 本章语言风格块（行文文风，最多3个叠加），注入 write/continue 模式指导行文
-      const langStyleBlock = buildChapterLangStylePrompt(chapterLangStyles);
-
-      let systemContent = '';
-      let userContent = '';
-
-      if (aiCreateMode === 'write') {
-        systemContent = `你是番茄小说金番级网文作家，擅长${book?.genre || '通用'}题材。请根据用户的创作要求和故事设定，创作章节正文。要求：对话自然口语化，避免说教和AI味，节奏紧凑，场景感强，章末必留悬念。【字数铁律】正文字数严格控制在2400±100字（2300-2500字），不得超出此范围。${suspenseGuide}${skillNote}${langStyleBlock ? '\n' + langStyleBlock : ''}`;
-        userContent = `作品：${book?.title}
-构思：${contextConcept}
-世界观：${bible?.worldbuilding?.slice(0, 500) || '无'}
-核心规则：${bible?.key_rules?.slice(0, 400) || '无'}
-
-【剧情大纲（上一卷+本卷）】
-${volumeOutlineText || '无'}
-
-【人物与关系】
-${charactersText || '无'}
-${relationText ? '关系图谱：' + relationText : ''}
-
-【物资库】${inventoryText || '无'}
-【伏笔】${foreshadowingText || '无'}
-【地图】${locationsText || '无'}
-
-${memorySection}
-
-当前章节：${chapterEditTitle}
-已有内容：${chapterEditContent.slice(-400) || '（空白）'}
-
-用户创作要求：${currentPrompt}${prevGenerated ? `\n\n【上一版生成内容（请基于此修改调整，不要推翻重写）】\n${prevGenerated}` : ''}`;
-      } else if (aiCreateMode === 'continue') {
-        systemContent = `你是专业网文作家，擅长${book?.genre || '通用'}题材。请根据用户的续写要求和已有内容继续创作，保持风格一致，自然衔接。要求：对话自然，避免说教，节奏紧凑。【字数铁律】续写后本章总字数严格控制在2400±100字（2300-2500字），不得超出此范围，请按已有字数酌情增补。${suspenseGuide}${skillNote}${langStyleBlock ? '\n' + langStyleBlock : ''}`;
-        userContent = `作品：${book?.title}
-构思：${contextConcept}
-
-【剧情大纲（上一卷+本卷）】
-${volumeOutlineText || '无'}
-
-【人物与关系】
-${charactersText || '无'}
-
-${memorySection}
-
-当前章节：${chapterEditTitle}
-已有内容：${chapterEditContent.slice(-800) || '（空白，请开篇）'}
-
-用户续写要求：${currentPrompt}${prevGenerated ? `\n\n【上一版生成内容（请基于此修改调整，不要推翻重写）】\n${prevGenerated}` : ''}`;
       } else {
-        // polish 模式：注入防遗忘诊断（精简），让润色规避已诊断问题
+        // ===== polish 模式：走通用 /ai/chat/stream（润色不需要章节上下文构建）=====
+        // 人物及关系
+        let charactersText = bible?.character_profiles?.slice(0, 1000) || '';
+        try {
+          const chars = await api.listCharacters(bookId);
+          if (Array.isArray(chars) && chars.length > 0) {
+            const charLines = chars.slice(0, 12).map(c =>
+              `· ${c.name}（${c.role || ''}）：${(c.description || '').slice(0, 80)}；性格：${(c.personality || '').slice(0, 60)}`
+            ).join('\n');
+            charactersText += `\n【出场人物】\n${charLines}`;
+          }
+        } catch { /* 忽略 */ }
+
+        let foreshadowingText = bible?.foreshadowing?.slice(0, 600) || '';
+
+        // 防遗忘诊断（精简）
         let afBrief = '';
         try {
           const afRaw = (bible as any)?.anti_forget_reports;
@@ -1289,8 +1200,14 @@ ${memorySection}
             }
           }
         } catch { /* ignore */ }
-        systemContent = `你是专业网文编辑。请根据用户的润色要求对内容进行优化，保持原意不变，提升文采和节奏感，增强场景感与信息差悬念。直接输出润色后的全文。${skillNote}`;
-        userContent = `章节：${chapterEditTitle}
+
+        // 技能包
+        const skillKeys = CHAPTER_SKILL_KEYS[aiCreateMode] || [];
+        const skillPrompt = extractSkillPrompt(selectedSkillPacks, skillKeys);
+        const skillNote = selectedSkillPacks.length > 0 ? `\n\n【已加载技能包：${selectedSkillPacks.map(p => p.name).join('、')}】${skillPrompt ? '\n\n技能指导：\n' + skillPrompt : ''}` : '';
+
+        const systemContent = `你是专业网文编辑。请根据用户的润色要求对内容进行优化，保持原意不变，提升文采和节奏感，增强场景感与信息差悬念。直接输出润色后的全文。${skillNote}`;
+        const userContent = `章节：${chapterEditTitle}
 
 【人物与关系】${charactersText ? '\n' + charactersText : '无'}
 【伏笔】${foreshadowingText || '无'}${afBrief}
@@ -1299,60 +1216,59 @@ ${memorySection}
 
 原文：
 ${chapterEditContent}`;
-      }
 
-      const messages = [
-        { role: 'system', content: systemContent },
-        { role: 'user', content: userContent },
-      ];
+        const messages = [
+          { role: 'system', content: systemContent },
+          { role: 'user', content: userContent },
+        ];
 
-      const response = await api.aiChatStream(messages, signal);
-      if (signal.aborted) return;
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: '请求失败' }));
-        throw new Error(err.error || `HTTP ${response.status}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('无法读取流');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let fullContent = '';
-
-      while (true) {
-        if (signal.aborted) {
-          try { reader.cancel(); } catch { /* ignore */ }
-          break;
+        const response = await api.aiChatStream(messages, signal);
+        if (signal.aborted) return;
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({ error: '请求失败' }));
+          throw new Error(err.error || `HTTP ${response.status}`);
         }
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const chunk = line.slice(6).trim();
-            if (chunk === '[DONE]') break;
-            try {
-              const parsed = JSON.parse(chunk);
-              if (parsed.error) throw new Error(parsed.error);
-              const delta = parsed.choices?.[0]?.delta?.content || '';
-              if (delta) {
-                fullContent += delta;
-                setAiGeneratedContent(fullContent);
-              }
-            } catch (e: any) {
-              if (e.message && !e.message.includes('JSON')) {
-                setAiStreamError(e.message);
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('无法读取流');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullContent = '';
+
+        while (true) {
+          if (signal.aborted) {
+            try { reader.cancel(); } catch { /* ignore */ }
+            break;
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const chunk = line.slice(6).trim();
+              if (chunk === '[DONE]') break;
+              try {
+                const parsed = JSON.parse(chunk);
+                if (parsed.error) throw new Error(parsed.error);
+                const delta = parsed.choices?.[0]?.delta?.content || '';
+                if (delta) {
+                  fullContent += delta;
+                  setAiGeneratedContent(fullContent);
+                }
+              } catch (e: any) {
+                if (e.message && !e.message.includes('JSON')) {
+                  setAiStreamError(e.message);
+                }
               }
             }
           }
         }
-      }
-      // 流式结束后将AI回复加入聊天历史
-      if (fullContent.trim()) {
-        setAiChatHistory(prev => [...prev, { role: 'assistant', content: fullContent, chapterTitle: chapterEditTitle, type: 'content' }]);
+        if (fullContent.trim()) {
+          setAiChatHistory(prev => [...prev, { role: 'assistant', content: fullContent, chapterTitle: chapterEditTitle, type: 'content' }]);
+        }
       }
     } catch (e: any) {
       // 同 Agent 管线分支：不因 signal.aborted 跳过状态重置，防止界面卡死

@@ -6555,6 +6555,8 @@ def ai_continue(book_id):
 
         # ===== 标题自动生成：解析【标题】标签，剥离正文中的标签行 =====
         suggested_title = _extract_chapter_title(draft_content)
+        # 统一标题格式：第X章 标题文本（与连续创作模式一致，混用模式时格式统一）
+        formatted_title = _format_chapter_title(ctx['current_chapter_num'], suggested_title)
         # ★ 统一清洗：无论 changes 是否解析成功，都剥离所有内部标签（pre_write_check / chapter_changes / 标题JSON / 【标题】行）
         # 确保返回给前端的 content 是纯净正文，避免内部产物泄露给用户
         polished_content = _extract_chapter_body(polished_content)
@@ -6582,7 +6584,8 @@ def ai_continue(book_id):
             # 审校评分制新增
             'chapter_score': chapter_score,  # 0-100 评分 + 等级 + 5维明细 + auto_revise
             # 标题自动生成新增
-            'suggested_title': suggested_title,
+            'suggested_title': suggested_title,  # 纯标题文本（如"小镇少年"）
+            'formatted_title': formatted_title,  # 统一格式标题（如"第1章 小镇少年"），前端直接使用
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -6718,12 +6721,16 @@ def ai_continue_stream(book_id):
             }
             yield f'data: {json.dumps(meta, ensure_ascii=False)}\n\n'
 
+            # 统一注入字数与文风铁律（与连续创作流式模式一致，确保三种模式输出标准统一）
+            system_prompt = ctx['system_prompt']
+            system_prompt += '\n\n【字数与文风铁律】输出必须 2400±100 字（2300-2500字区间，含标点）。禁止AI味表达：禁止"仿佛""似乎""宛如"等比喻堆砌，禁止工整过渡，禁止完美套话。人物必须有矛盾心理/纠结/自我怀疑，禁止情绪顺滑。'
+
             # 流式生成正文初稿，同时收集完整内容用于后写校验（P0-1）
             full_content_parts = []
             resp = requests.post(f'{base_url}/chat/completions',
                 headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
                 json={'model': model,
-                      'messages': [{'role': 'system', 'content': ctx['system_prompt']},
+                      'messages': [{'role': 'system', 'content': system_prompt},
                                    {'role': 'user', 'content': ctx['user_prompt']}],
                       'temperature': ctx['temperature'],
                       'max_tokens': ctx['max_tokens'],
@@ -6801,12 +6808,14 @@ def ai_continue_stream(book_id):
                     pass
 
             # ===== 标题自动生成：解析【标题】标签并推送给前端 =====
+            # 统一推送格式化后的标题（第X章 标题），与多Agent同步/连续创作模式一致
             if full_content_parts:
                 try:
                     full_content_for_title = ''.join(full_content_parts)
                     suggested_title = _extract_chapter_title(full_content_for_title)
-                    if suggested_title:
-                        yield f'data: {json.dumps({"suggested_title": suggested_title}, ensure_ascii=False)}\n\n'
+                    formatted_title = _format_chapter_title(ctx['current_chapter_num'], suggested_title)
+                    # 同时推送纯标题和格式化标题，前端优先用 formatted_title
+                    yield f'data: {json.dumps({"suggested_title": suggested_title, "formatted_title": formatted_title}, ensure_ascii=False)}\n\n'
                 except Exception:
                     pass
         except Exception as e:
@@ -6949,7 +6958,8 @@ def ai_continue_batch(book_id):
             chapter_score = _calc_chapter_score(post_validate, consistency_passed, consistency_issues, {}, wc, ctx.get('chapter_plan', ''))
 
             # Bug7 修复：先创建 Chapter 并 flush 拿到 ch.id，再回写 chapter_changes（chapter_id 不再为空串）
-            title = suggested_title or f'第{cur_ch}章'
+            # 统一标题格式：第X章 标题文本（与多Agent同步/流式模式一致）
+            title = _format_chapter_title(cur_ch, suggested_title)
             max_order = db.session.query(db.func.max(Chapter.order_index)).filter_by(book_id=book_id).scalar() or -1
             # Bug1 修复：归卷直接设置 parent_id（用 ctx 中的 vol_chapter），不依赖末尾 resort
             parent_id = ctx['vol_chapter'].id if ctx.get('vol_chapter') else ''
@@ -7335,7 +7345,8 @@ def ai_continue_batch_stream(book_id):
                 chapter_score = _calc_chapter_score(post_validate, True, '', {}, wc, ctx.get('chapter_plan', ''))
 
                 # 创建 Chapter 并 flush 拿 id
-                title = suggested_title or f'第{cur_ch}章'
+                # 统一标题格式：第X章 标题文本（与多Agent同步/连续同步模式一致）
+                title = _format_chapter_title(cur_ch, suggested_title)
                 max_order = db.session.query(db.func.max(Chapter.order_index)).filter_by(book_id=book_id).scalar() or -1
                 parent_id = ctx['vol_chapter'].id if ctx.get('vol_chapter') else ''
                 ch = Chapter(book_id=book_id, title=title, content=polished_content,
@@ -7420,6 +7431,29 @@ def _extract_chapter_body(full_content: str) -> str:
     # 剥离 【标题】... 标签行（标题自动生成产物）
     body = _re.sub(r'【标题】[^\n]*', '', body)
     return body.strip()
+
+
+def _format_chapter_title(chapter_num, suggested_title):
+    """统一章节标题格式：第X章 标题文本
+
+    三种创作模式（多Agent同步 / 流式 / 连续创作流式）统一使用此函数格式化标题，
+    确保所有章节标题格式一致，混用模式时不会出现格式混乱。
+
+    规则：
+    - 有 suggested_title：格式为「第{章号}章 {标题}」
+    - 无 suggested_title：格式为「第{章号}章」
+    - suggested_title 已含「第X章」前缀时去重，避免「第1章 第1章 xxx」
+    """
+    import re as _re
+    prefix = f'第{chapter_num}章'
+    if not suggested_title or not suggested_title.strip():
+        return prefix
+    title = suggested_title.strip()
+    # 去除标题中可能自带的「第X章」前缀（LLM 偶尔会带上）
+    title = _re.sub(r'^第[一二三四五六七八九十百零0-9]+章[\s:：]*', '', title).strip()
+    if not title:
+        return prefix
+    return f'{prefix} {title}'
 
 
 def _extract_chapter_title(full_content: str, fallback_content: str = '') -> str:

@@ -453,11 +453,12 @@ export const api = {
     ),
 
   // AI Continue 流式版（#8：SSE 推送初稿）。返回原始 Response，前端用 ReadableStream 解析
-  aiContinueStream: (bookId: string, instruction: string, skillPackIds?: string[], opts?: { targetChapterNum?: number; prevChapterContent?: string; chapterLangStyles?: string[] }) => {
+  // 统一走后端 _build_ai_continue_context，与多Agent同步/连续创作模式注入相同上下文
+  aiContinueStream: (bookId: string, instruction: string, skillPackIds?: string[], opts?: { targetChapterNum?: number; prevChapterContent?: string; chapterLangStyles?: string[] }, signal?: AbortSignal) => {
     const token = getToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-continue/stream`, {
+    const cfg: RequestInit = {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -467,7 +468,9 @@ export const api = {
         prev_chapter_content: opts?.prevChapterContent,
         chapter_lang_styles: opts?.chapterLangStyles || [],
       }),
-    });
+    };
+    if (signal) cfg.signal = signal;
+    return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-continue/stream`, cfg);
   },
 
   // AI Analyze Book
