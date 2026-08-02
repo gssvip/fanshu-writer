@@ -919,7 +919,6 @@ export default function WritePage() {
       const reader = resp.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
-      let curChapterNum = 0;
       while (true) {
         if (aiStoppedRef.current) { abortCtrl.abort(); break; }
         const { value, done } = await reader.read();
@@ -935,7 +934,6 @@ export default function WritePage() {
           try {
             const data = JSON.parse(payload);
             if (data.type === 'chapter_start') {
-              curChapterNum = data.chapter_num;
               setBatchProgress(prev => ({ ...prev, cur: doneCount, message: `正在生成第${data.chapter_num}章...` }));
             } else if (data.type === 'heartbeat') {
               // 心跳：更新进度提示，保持 UI 活跃
@@ -2547,7 +2545,7 @@ function ChapterPanel(props: {
   batchCount?: number;
   onBatchCountChange?: (v: number) => void;
   batchCreating?: boolean;
-  batchProgress?: { cur: number; total: number; done: number };
+  batchProgress?: { cur: number; total: number; done: number; message?: string };
   onBatchCreate?: () => void;
 }) {
   const { chapters, activeChapter, chapterEditing, chapterEditTitle, chapterEditContent, chapterSaving,
