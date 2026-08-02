@@ -7285,7 +7285,15 @@ def ai_continue_batch_stream(book_id):
     # 触发 "Working outside of application context"（批处理多章串行，循环内大量 DB 操作：
     # Chapter.query / db.session.commit / update_book_stats / _check_and_auto_generate_report 等，
     # 没有 stream_with_context 会在第一次 yield 后丢失上下文，后续 DB 操作报错导致连接异常断开 → network error）
-    return app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
+    # 响应头修复：Cloudflare/Render 代理默认缓冲响应体，SSE 流会被缓冲导致浏览器长时间收不到数据 → network error
+    # - Cache-Control: no-cache 禁止缓存
+    # - X-Accel-Buffering: no 禁止 Nginx/代理缓冲
+    # - Connection: keep-alive 保持长连接
+    resp = app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['X-Accel-Buffering'] = 'no'
+    resp.headers['Connection'] = 'keep-alive'
+    return resp
 
 
 def _extract_chapter_body(full_content: str) -> str:
@@ -9057,7 +9065,12 @@ def ai_master_create_stream(book_id):
 
     # stream_with_context 保持请求/应用上下文，避免生成器在 yield 后恢复时
     # 触发 "Working outside of application context"（DB 落库需要上下文）
-    return app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
+    # 响应头修复：禁止 Cloudflare/Render 代理缓冲 SSE 流（同 ai_continue_batch_stream）
+    resp = app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['X-Accel-Buffering'] = 'no'
+    resp.headers['Connection'] = 'keep-alive'
+    return resp
 
 
 # ==== AI 共创 / 头脑风暴 ====
@@ -11705,4 +11718,6 @@ if __name__ == '__main__':
     init_db()
     # Render 等云平台通过 PORT 环境变量指定端口，本地默认 5000
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # threaded=True 必须：SSE 流式端点（ai_continue_batch_stream / ai_continue_stream）会长时间占用
+    # 工作线程。单线程模式下（默认），SSE 连接期间所有其他请求（health/列表/保存等）会被阻塞。
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
