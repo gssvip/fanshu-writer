@@ -141,11 +141,14 @@ def run_all_gates(content: str, bb, chapter_num: int) -> Dict:
 
 def build_pre_write_check_prompt(chapter_num: int, bb, dag_hooks: str = '') -> str:
     """构建 PRE_WRITE_CHECK 模板（注入章节 prompt 顶部）。
-    要求 LLM 写正文前先输出 13 行意图表，对齐上下文。"""
+    要求 LLM 先写正文，正文后再输出 13 行意图表，避免检查报告出现在正文前面影响阅读感。"""
     return f"""
 
-【写章前·PRE_WRITE_CHECK】（P2-11）
-开始写正文前，必须先输出 <pre_write_check> 表格（13行），再写正文：
+【写章后·PRE_WRITE_CHECK】（P2-11）
+本章输出顺序铁律：① 先写正文 → ② 正文结束后空一行，输出 <pre_write_check> 表格（13行） → ③ 最后输出 <chapter_changes> JSON。
+禁止在正文前面输出任何检查报告/表格/分析，正文必须是输出的第一部分。
+
+正文写完后，空一行，输出 <pre_write_check> 表格：
 
 <pre_write_check>
 | 检查项 | 本章记录 |
@@ -163,4 +166,4 @@ def build_pre_write_check_prompt(chapter_num: int, bb, dag_hooks: str = '') -> s
 | 字数预算 | （2300-2500字）|
 </pre_write_check>
 
-写完表格后，空一行，开始写正文。正文写完后，输出 <chapter_changes> JSON。"""
+表格后再输出 <chapter_changes> JSON。"""

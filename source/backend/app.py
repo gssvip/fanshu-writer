@@ -6883,7 +6883,7 @@ def ai_continue_batch(book_id):
                 except Exception:
                     pass
                 failed.append({'chapter_num': cur_ch, 'error': f'LLM 请求失败: {str(re_err)[:200]}'})
-                continue
+                break  # 【铁律】失败即停，避免后续章节无意义空跑
 
             if resp.status_code != 200:
                 err_body = resp.text[:300] if hasattr(resp, 'text') else ''
@@ -6892,7 +6892,7 @@ def ai_continue_batch(book_id):
                 except Exception:
                     pass
                 failed.append({'chapter_num': cur_ch, 'error': f'LLM HTTP {resp.status_code}'})
-                continue
+                break  # 【铁律】失败即停
 
             try:
                 resp_json = resp.json()
@@ -6903,11 +6903,11 @@ def ai_continue_batch(book_id):
                 except Exception:
                     pass
                 failed.append({'chapter_num': cur_ch, 'error': 'LLM 返回结构异常'})
-                continue
+                break  # 【铁律】失败即停
 
             if not draft_content or not draft_content.strip():
                 failed.append({'chapter_num': cur_ch, 'error': 'LLM 返回内容为空'})
-                continue
+                break  # 【铁律】内容为空即停，避免后续章节无上下文可衔接
 
             polished_content = draft_content
 
@@ -7009,7 +7009,7 @@ def ai_continue_batch(book_id):
             failed.append({'chapter_num': fail_num, 'error': str(e)[:200]})
             # Bug5：失败时清空 prev_polished，避免把失败章当上一章注入
             prev_polished = ''
-            continue
+            break  # 【铁律】异常即停，避免错误级联放大
 
     # Bug1 修复：移除 resort_chapters_by_title(rebin_volumes=True)。
     # 该调用按标题中的章节号重排 order_index，但批处理标题可能不含"第X章"前缀
@@ -7211,8 +7211,9 @@ def ai_continue_batch_stream(book_id):
                         pass
                     failed.append({'chapter_num': cur_ch, 'error': f'LLM 请求失败: {str(re_err)[:200]}'})
                     yield f'data: {json.dumps({"type": "chapter_failed", "chapter_num": cur_ch, "error": f"LLM 请求失败"}, ensure_ascii=False)}\n\n'
-                    prev_polished = ''
-                    continue
+                    # 【铁律】前面章节失败，后续章节自动停止，避免连续生成无意义空章节
+                    yield f'data: {json.dumps({"type": "batch_stopped", "reason": f"第{cur_ch}章 LLM 请求失败，后续章节已自动停止", "failed_chapter": cur_ch}, ensure_ascii=False)}\n\n'
+                    break
 
                 if resp.status_code != 200:
                     err_body = resp.text[:300] if hasattr(resp, 'text') else ''
@@ -7222,8 +7223,9 @@ def ai_continue_batch_stream(book_id):
                         pass
                     failed.append({'chapter_num': cur_ch, 'error': f'LLM HTTP {resp.status_code}'})
                     yield f'data: {json.dumps({"type": "chapter_failed", "chapter_num": cur_ch, "error": f"LLM HTTP {resp.status_code}"}, ensure_ascii=False)}\n\n'
-                    prev_polished = ''
-                    continue
+                    # 【铁律】前面章节失败，后续章节自动停止
+                    yield f'data: {json.dumps({"type": "batch_stopped", "reason": f"第{cur_ch}章 LLM 返回 HTTP {resp.status_code}，后续章节已自动停止", "failed_chapter": cur_ch}, ensure_ascii=False)}\n\n'
+                    break
 
                 # 后台线程读取流式响应，主生成器从队列消费，无数据时 yield 心跳
                 # 修复 network error：iter_lines() 阻塞时心跳无法推送
@@ -7247,8 +7249,9 @@ def ai_continue_batch_stream(book_id):
                 if not draft_content or not draft_content.strip():
                     failed.append({'chapter_num': cur_ch, 'error': 'LLM 返回内容为空'})
                     yield f'data: {json.dumps({"type": "chapter_failed", "chapter_num": cur_ch, "error": "LLM 返回内容为空"}, ensure_ascii=False)}\n\n'
-                    prev_polished = ''
-                    continue
+                    # 【铁律】LLM 返回内容为空，后续章节自动停止（空章节无上下文可衔接，继续生成只会产出更多空内容）
+                    yield f'data: {json.dumps({"type": "batch_stopped", "reason": f"第{cur_ch}章 LLM 返回内容为空，后续章节已自动停止", "failed_chapter": cur_ch}, ensure_ascii=False)}\n\n'
+                    break
 
                 polished_content = draft_content
                 suggested_title = _extract_chapter_title(draft_content, draft_content)
@@ -7398,8 +7401,10 @@ def ai_continue_batch_stream(book_id):
                 db.session.rollback()
                 failed.append({'chapter_num': fail_num, 'error': str(e)[:200]})
                 yield f'data: {json.dumps({"type": "chapter_failed", "chapter_num": fail_num, "error": str(e)[:200]}, ensure_ascii=False)}\n\n'
+                # 【铁律】章节生成异常，后续章节自动停止，避免错误级联放大
+                yield f'data: {json.dumps({"type": "batch_stopped", "reason": f"第{fail_num}章生成异常：{str(e)[:100]}，后续章节已自动停止", "failed_chapter": fail_num}, ensure_ascii=False)}\n\n'
                 prev_polished = ''
-                continue
+                break
 
         # 推送批处理完成事件
         yield f'data: {json.dumps({"type": "batch_done", "total": len(results), "failed_count": len(failed), "failed": failed}, ensure_ascii=False)}\n\n'

@@ -75,6 +75,27 @@ const CHAPTER_SKILL_KEYS: Record<string, string[]> = {
   polish: ['polish', 'de_ai_check', 'minimal_rewrite', 'humanize', 'final_check', 'tomato_deai', 'forbidden_words', 'rhythm_check', 'deslop', 'draft_rewrite', 'fidelity_check', 'final_polish', 'anti_ai_audit', 'reviser', 'style_analyzer', 'protect_rewrite', 'fidelity_read', 'residual_read'],
 };
 
+// 实时清洗 LLM 流式输出中的内部标签，确保用户看到的正文始终纯净
+// 后端要求 LLM 先写正文再输出 <pre_write_check>/<chapter_changes> 标签，
+// 但流式显示时标签仍会实时出现，需要前端实时剥离
+function stripInternalTags(content: string): string {
+  let s = content;
+  // 剥离完整的 <pre_write_check>...</pre_write_check> 块
+  s = s.replace(/<pre_write_check>[\s\S]*?<\/pre_write_check>/gi, '');
+  // 剥离未闭合的 <pre_write_check> 标签（流式传输中可能只有开始标签）
+  s = s.replace(/<pre_write_check>[^<]*$/gi, '');
+  s = s.replace(/<pre_write_check>/gi, '');
+  // 同理处理 <chapter_changes>
+  s = s.replace(/<chapter_changes>[\s\S]*?<\/chapter_changes>/gi, '');
+  s = s.replace(/<chapter_changes>[^<]*$/gi, '');
+  s = s.replace(/<chapter_changes>/gi, '');
+  // 剥离 【标题】 行
+  s = s.replace(/【标题】[^\n]*/g, '');
+  // 剥离孤立的标题 JSON 块
+  s = s.replace(/\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}/g, '');
+  return s.trim();
+}
+
 // 从多个技能包中提取匹配的提示词（合并）
 // 优化：每个prompt最多1500字符，最多取前3个技能包，总长度不超过5000字符（防token爆炸）
 function extractSkillPrompt(packs: SkillPack[], keys: string[]): string {
@@ -951,6 +972,10 @@ export default function WritePage() {
             } else if (data.type === 'chapter_failed') {
               failedList.push(data);
               setAiChatHistory(prev => [...prev, { role: 'assistant', content: `❌ 第${data.chapter_num}章生成失败：${data.error || '未知错误'}`, type: 'status' as const }]);
+            } else if (data.type === 'batch_stopped') {
+              // 【铁律】前面章节失败，后端已自动停止后续章节
+              setAiChatHistory(prev => [...prev, { role: 'assistant', content: `⏹️ ${data.reason || '前面章节失败，后续章节已自动停止'}`, type: 'status' as const }]);
+              setBatchProgress(prev => ({ ...prev, message: data.reason || '已停止' }));
             } else if (data.type === 'batch_done') {
               doneCount = data.total;
               failedList = Array.isArray(data.failed) ? data.failed : [];
@@ -1151,7 +1176,8 @@ export default function WritePage() {
               const delta = parsed.choices?.[0]?.delta?.content || '';
               if (delta) {
                 fullContent += delta;
-                setAiGeneratedContent(fullContent);
+                // 实时清洗内部标签（pre_write_check/chapter_changes等），确保用户看到纯净正文
+                setAiGeneratedContent(stripInternalTags(fullContent));
               }
             } catch (e: any) {
               if (e.message && !e.message.includes('JSON')) {
@@ -1256,7 +1282,7 @@ ${chapterEditContent}`;
                 const delta = parsed.choices?.[0]?.delta?.content || '';
                 if (delta) {
                   fullContent += delta;
-                  setAiGeneratedContent(fullContent);
+                  setAiGeneratedContent(stripInternalTags(fullContent));
                 }
               } catch (e: any) {
                 if (e.message && !e.message.includes('JSON')) {
