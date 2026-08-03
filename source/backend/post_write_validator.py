@@ -128,6 +128,9 @@ def validate_chapter(content: str) -> ValidationResult:
     # 13. 标准文风禁词扫描（critical，对接 STANDARD_WRITING_STYLE_PROMPT 禁词清单）
     _check_style_forbidden_words(text, result)
 
+    # 14. 上帝视角/剧透式叙述/伏笔明写检测（critical，对接视角与信息控制铁律）
+    _check_god_view_and_foreshadow_leak(text, result)
+
     return result
 
 
@@ -930,6 +933,112 @@ def _check_style_forbidden_words(text: str, result: ValidationResult):
             position=f'出现 {cnt} 次',
             suggestion=f'「{word}」在标准文风禁词清单中，禁止使用。请用动作/物象/对白替代。',
         ))
+
+
+# ===== 视角与信息控制铁律：确定性检测 =====
+# 对接 STANDARD_WRITING_STYLE_PROMPT 中的「视角与信息控制铁律」小节
+# 检测上帝视角、剧透式叙述、上帝点评、伏笔明写、伏笔过载等违规
+
+# 上帝视角/剧透式叙述触发词（命中即 critical）
+_GOD_VIEW_PATTERNS = [
+    # 剧透式预告（"他不知道此时…""这个决定将改变命运"）
+    (r'他(?:不知道|不知道的是|不知道的是|未曾料到|没想到|不曾想到)[^。！？]{0,40}(?:将|会|日后|后来|最终|必将|注定)[^。！？]{0,20}(?:改变|决定|成为|遭遇|面临)', '剧透式叙述'),
+    (r'此(?:时|刻)的他还不知道', '剧透式叙述'),
+    (r'(?:他|她|它)(?:不知道|未曾察觉|不曾发觉)[^。！？]{0,30}(?:此时|此刻|与此同时|远在|另一边)[^。！？]{0,30}', '上帝视角·跨场景全知'),
+    # 上帝点评（作者跳出来升华）
+    (r'命运(?:就是|就是如此|便是|总是)(?:如此|这样|奇妙|神奇|弄人|无常)', '上帝点评·命运升华'),
+    (r'冥冥之中(?:自有|似有|仿佛有)(?:天意|定数|安排|注定)', '上帝点评·冥冥天意'),
+    (r'历史的车轮(?:滚滚|无情|缓缓)(?:向前|转动|碾过)', '上帝点评·历史车轮'),
+    (r'(?:也许|或许)(?:这就是|这便是)(?:命运|天意|宿命|缘分)(?:的安排|的捉弄|的玩笑|吧)', '上帝点评·宿命论'),
+    # 上帝视角·跨场景全知（"与此同时，另一边"）
+    (r'与此同时[，,]?\s*(?:另一边|在千里之外|在远|在(?:他|她)看不到的)', '上帝视角·跨场景全知'),
+    (r'(?:就在|正当)(?:此时|此刻|同一时间)[，,]?\s*(?:另一边|在千里之外|在远|在(?:他|她)不知道的)', '上帝视角·跨场景全知'),
+    # 全知式心理入侵（"其实他不知道，对方心里在想…"）
+    (r'(?:其实|实际上)(?:他|她)(?:不知道|不知道的是|不知道的是)[^。！？]{0,20}(?:心里|内心|心中)(?:想|盘算|计较)', '上帝视角·心理入侵'),
+]
+
+# 伏笔明写触发词（命中即 critical）
+_FORESHADOW_LEAK_PATTERNS = [
+    (r'这(?:是|里是|里就是|里是一处|里是一个)(?:一个|一处)?伏笔', '伏笔明写'),
+    (r'此处(?:埋(?:下|设)|埋线|埋伏笔|是伏笔|是一处伏笔)', '伏笔明写'),
+    (r'(?:后面|日后|之后|将来)(?:会)?回收(?:这个|这条|此)?伏笔', '伏笔明写'),
+    (r'(?:这里|此处)(?:是|算是|就是)(?:为|为后面)?(?:埋|埋设|埋下)(?:的)?(?:伏笔|暗线|铺垫)', '伏笔明写'),
+    (r'(?:埋下|设下)(?:一个|一处|一条)?伏笔[^。！？]{0,15}(?:后面|日后|之后)(?:会|将|将会)?(?:回收|揭晓|兑现)', '伏笔明写'),
+    (r'这(?:个|条|处)(?:伏笔|暗线|铺垫)(?:将会|将在|将在后面|日后)(?:回收|揭晓|兑现|揭开)', '伏笔明写'),
+    (r'此处(?:是|为)(?:一处|一个)?(?:伏笔|暗线|铺垫)', '伏笔明写'),
+]
+
+# 视角频繁切换检测（同段内出现3个以上不同人名+心理动词）
+_PSYCH_VERBS = ['心想', '心中暗想', '内心', '心里想', '暗自', '心念', '思绪', '心中', '心想', '暗道']
+_VIEW_SWITCH_PATTERN = re.compile(r'(?:(?:他|她|它)(?:心想|心中暗想|心里想|暗自|心念|暗道|内心|心中|思绪))')
+
+
+def _check_god_view_and_foreshadow_leak(text: str, result: ValidationResult):
+    """视角与信息控制铁律检测（critical 级）。
+    检测上帝视角、剧透式叙述、上帝点评、伏笔明写、伏笔过载、视角频繁切换。
+    对接 STANDARD_WRITING_STYLE_PROMPT 中的「视角与信息控制铁律」小节。"""
+    if not text or len(text) < 20:
+        return
+
+    # 1. 上帝视角/剧透式叙述/上帝点评 模式匹配
+    for pattern, category in _GOD_VIEW_PATTERNS:
+        try:
+            matches = re.findall(pattern, text)
+            if matches:
+                result.add(ValidationIssue(
+                    severity='critical',
+                    category=category,
+                    pattern=pattern[:40],
+                    count=len(matches),
+                    position=f'共 {len(matches)} 处',
+                    suggestion=f'命中{category}：违反视角锁定铁律。删除预告/升华/跨场景全知语句，只写视角人物能感知的内容。',
+                ))
+        except re.error:
+            continue
+
+    # 2. 伏笔明写检测
+    for pattern, category in _FORESHADOW_LEAK_PATTERNS:
+        try:
+            matches = re.findall(pattern, text)
+            if matches:
+                result.add(ValidationIssue(
+                    severity='critical',
+                    category=category,
+                    pattern=pattern[:40],
+                    count=len(matches),
+                    position=f'共 {len(matches)} 处',
+                    suggestion=f'命中{category}：伏笔必须隐性埋设，伪装成日常细节/闲笔/环境描写。删除"这是伏笔/此处埋线/后面回收"等明示语句。',
+                ))
+        except re.error:
+            continue
+
+    # 3. 伏笔过载检测：单章"伏笔/暗线/铺垫"关键词出现超过3次（warning）
+    foreshadow_keywords = ['伏笔', '暗线', '铺垫', '埋线', '暗棋', '后手']
+    fs_count = sum(text.count(w) for w in foreshadow_keywords)
+    if fs_count > 3:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='伏笔过载',
+            pattern='伏笔/暗线关键词总和',
+            count=fs_count,
+            position=f'全章出现 {fs_count} 次',
+            suggestion=f'本章伏笔/暗线/铺垫关键词出现 {fs_count} 次（建议≤3）。单章最多埋1-2处暗线，禁止一股脑集中铺设，分散到不同章节。',
+        ))
+
+    # 4. 视角频繁切换检测：同段内出现3个以上"他/她心想"类心理动词（warning）
+    paragraphs = re.split(r'\n\s*\n', text)
+    for i, p in enumerate(paragraphs):
+        psych_matches = _VIEW_SWITCH_PATTERN.findall(p)
+        if len(psych_matches) >= 3:
+            result.add(ValidationIssue(
+                severity='warning',
+                category='视角频繁切换',
+                pattern='同段心理动词',
+                count=len(psych_matches),
+                position=f'第{i+1}段',
+                suggestion=f'第{i+1}段内出现 {len(psych_matches)} 处不同人物心理描写，视角频繁切换。单段应锁定1个视角人物，切换视角请用分场（空行+地点/人物标头）明确分隔。',
+            ))
+            break  # 只报第一处，避免刷屏
 
 
 # ===== 借鉴 PlotPilot：文风指纹漂移检测（统计特征简化版） =====
