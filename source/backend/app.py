@@ -1408,6 +1408,11 @@ def create_chapter(book_id):
                 auto_report = result['report']
         except Exception:
             pass  # 自动生成失败不影响章节创建
+        # 【P0-3】每 20 章自动触发防遗忘检查（daemon 线程，不阻塞）
+        try:
+            _maybe_auto_trigger_anti_forget_check(book_id)
+        except Exception:
+            pass
 
     resp = ch.to_dict(include_content=True)
     if auto_report:
@@ -1445,6 +1450,11 @@ def update_chapter(book_id, chapter_id):
             result = _check_and_auto_generate_report(book_id)
             if result and 'report' in result:
                 auto_report = result['report']
+        except Exception:
+            pass
+        # 【P0-3】每 20 章自动触发防遗忘检查（daemon 线程，不阻塞）
+        try:
+            _maybe_auto_trigger_anti_forget_check(book_id)
         except Exception:
             pass
 
@@ -2748,6 +2758,69 @@ def ai_import_recognize(book_id):
         'filled': filled,
         'bible': bb.to_dict()
     })
+
+
+def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
+    """【P0-3】防遗忘报告自动触发：每 20 章自动跑一次防遗忘检查。
+    在 create_chapter / update_chapter / ai_continue_batch / ai_continue_batch_stream 章节落库后调用。
+    - 条件：本书非卷章数为 20 的倍数（且 >0）；本书已有 BookBible；已配置 AI API Key。
+    - 执行：在 daemon 线程中跑（防遗忘检查会调 LLM，30-60s），不阻塞主响应。
+    - 失败：捕获所有异常，不影响主创作流程。
+    """
+    try:
+        # 计算章号：优先用传入的 chapter_num，否则用实际章数
+        if not chapter_num:
+            chapter_num = Chapter.query.filter_by(book_id=book_id, is_volume=False).count()
+        if not chapter_num or chapter_num % 20 != 0:
+            return None
+        book = Book.query.get(book_id)
+        if not book:
+            return None
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+        if not bb:
+            return None
+        config = AIConfig.query.first()
+        if not config or not config.api_key:
+            return None
+
+        import threading
+
+        def _bg_run():
+            with app.app_context():
+                try:
+                    # 取该书作者的有效 auth token（绕过 login_required 装饰器）
+                    now = datetime.now(timezone.utc)
+                    at = AuthToken.query.filter(
+                        AuthToken.user_id == book.user_id,
+                        AuthToken.expires_at > now
+                    ).first()
+                    if not at:
+                        return
+                    # 用 test_request_context 模拟请求体调用 route
+                    with app.test_request_context(
+                        f'/api/books/{book_id}/ai-anti-forget-check',
+                        method='POST',
+                        json={'scope': 'reports', 'volume_ids': [], 'skill_pack_ids': []},
+                        headers={'Authorization': f'Bearer {at.token}'}
+                    ):
+                        ai_anti_forget_check(book_id)
+                    try:
+                        app.logger.info(f'[auto] 防遗忘检查自动触发完成：第{chapter_num}章')
+                    except Exception:
+                        pass
+                except Exception as e:
+                    try:
+                        app.logger.error(f'[auto] 防遗忘自动触发失败：{str(e)[:200]}')
+                    except Exception:
+                        pass
+
+        threading.Thread(target=_bg_run, daemon=True).start()
+    except Exception as e:
+        try:
+            app.logger.error(f'[auto] 防遗忘触发启动失败：{str(e)[:200]}')
+        except Exception:
+            pass
+    return None
 
 
 @app.route('/api/books/<book_id>/ai-anti-forget-check', methods=['POST'])
@@ -6714,6 +6787,8 @@ def ai_continue(book_id):
         # P2 扩展：注入 bb 上下文，启用死亡角色复活/境界回退/角色名错写硬伤检测
         # P3 补全：bible_ctx 覆盖全维度，启用境界表动态解析（依赖 key_rules/worldbuilding）、
         # 地点/物资一致性参照（inventory/locations）
+        # 【P0修复】原 elif 分支导致文风漂移检测为死代码，现合并到同一分支：
+        # 先跑 validate_chapter_with_bible，再追加文风漂移检测（若基准可用）
         post_validate = None
         if validate_chapter_with_bible:
             try:
@@ -6728,6 +6803,20 @@ def ai_continue(book_id):
                     'foreshadowing': bb.foreshadowing or '',
                 } if bb else None
                 validation = validate_chapter_with_bible(body_for_check, bible_ctx)
+                # 【P0修复】追加文风漂移检测：计算前5章基准，检测当前章是否漂移
+                try:
+                    style_baseline = _compute_style_baseline(book_id, ctx['current_chapter_num'])
+                    if validate_chapter_with_drift and style_baseline:
+                        drift_validation = validate_chapter_with_drift(body_for_check, style_baseline)
+                        # 合并漂移检测的 issues 到主 validation
+                        for issue in drift_validation.issues:
+                            validation.issues.append(issue)
+                            validation.score = max(0, validation.score - (5 if issue.severity == 'warning' else 20))
+                        # 把漂移统计写入 stats
+                        if drift_validation.stats.get('style_drift'):
+                            validation.stats['style_drift'] = drift_validation.stats['style_drift']
+                except Exception:
+                    pass  # 漂移检测失败不影响主校验
                 if validation.issues:
                     post_validate = validation.to_dict()
             except Exception:
@@ -6735,12 +6824,7 @@ def ai_continue(book_id):
         elif validate_chapter:
             try:
                 body_for_check = _extract_chapter_body(polished_content)
-                # 借鉴 PlotPilot 文风漂移检测：传入前5章文风基准
-                style_baseline = _compute_style_baseline(book_id, ctx['current_chapter_num'])
-                if validate_chapter_with_drift and style_baseline:
-                    validation = validate_chapter_with_drift(body_for_check, style_baseline)
-                else:
-                    validation = validate_chapter(body_for_check)
+                validation = validate_chapter(body_for_check)
                 if validation.issues:
                     post_validate = validation.to_dict()
             except Exception:
@@ -7269,6 +7353,18 @@ def ai_continue_batch(book_id):
                         'foreshadowing': bb.foreshadowing or '',
                     } if bb else None
                     validation = validate_chapter_with_bible(polished_content, bible_ctx)
+                    # 【P0修复】追加文风漂移检测：与多Agent同步/单章模式一致，避免死代码
+                    try:
+                        style_baseline = _compute_style_baseline(book_id, cur_ch)
+                        if validate_chapter_with_drift and style_baseline:
+                            drift_validation = validate_chapter_with_drift(polished_content, style_baseline)
+                            for issue in drift_validation.issues:
+                                validation.issues.append(issue)
+                                validation.score = max(0, validation.score - (5 if issue.severity == 'warning' else 20))
+                            if drift_validation.stats.get('style_drift'):
+                                validation.stats['style_drift'] = drift_validation.stats['style_drift']
+                    except Exception:
+                        pass
                     if validation.issues:
                         post_validate = validation.to_dict()
                 except Exception:
@@ -7306,6 +7402,11 @@ def ai_continue_batch(book_id):
             # Bug4 修复：每章保存后检查并自动生成动态报告（每5章触发），避免后续章节注入过时报告
             try:
                 _check_and_auto_generate_report(book_id)
+            except Exception:
+                pass
+            # 【P0-3】每 20 章自动触发防遗忘检查（daemon 线程，不阻塞批处理）
+            try:
+                _maybe_auto_trigger_anti_forget_check(book_id, cur_ch)
             except Exception:
                 pass
 
@@ -7663,6 +7764,18 @@ def ai_continue_batch_stream(book_id):
                             'foreshadowing': bb.foreshadowing or '',
                         } if bb else None
                         validation = validate_chapter_with_bible(polished_content, bible_ctx)
+                        # 【P0修复】追加文风漂移检测：与多Agent同步/连续同步模式一致，避免死代码
+                        try:
+                            style_baseline = _compute_style_baseline(book_id, cur_ch)
+                            if validate_chapter_with_drift and style_baseline:
+                                drift_validation = validate_chapter_with_drift(polished_content, style_baseline)
+                                for issue in drift_validation.issues:
+                                    validation.issues.append(issue)
+                                    validation.score = max(0, validation.score - (5 if issue.severity == 'warning' else 20))
+                                if drift_validation.stats.get('style_drift'):
+                                    validation.stats['style_drift'] = drift_validation.stats['style_drift']
+                        except Exception:
+                            pass
                         if validation.issues:
                             post_validate = validation.to_dict()
                     except Exception:
@@ -7698,6 +7811,11 @@ def ai_continue_batch_stream(book_id):
                     yield from _run_blocking_with_heartbeat(
                         lambda: _check_and_auto_generate_report(book_id),
                         report_hb)
+                except Exception:
+                    pass
+                # 【P0-3】每 20 章自动触发防遗忘检查（daemon 线程，不阻塞 SSE 流）
+                try:
+                    _maybe_auto_trigger_anti_forget_check(book_id, cur_ch)
                 except Exception:
                     pass
 
@@ -8160,7 +8278,14 @@ def ai_outline_master(book_id):
         db.session.commit()
 
     data = request.json or {}
-    skill_pack_ids = data.get('skill_pack_ids', [])
+    # 【P1-5修复】总纲生成属于总创作阶段：从 book.master_skill_ids 读取（构思类）
+    try:
+        _split_legacy_skill_ids_to_categories(book)
+    except Exception:
+        pass
+    skill_pack_ids = _resolve_skill_ids_by_category(book, 'master')
+    if not skill_pack_ids:
+        skill_pack_ids = data.get('skill_pack_ids', [])
     total_chapters = data.get('total_chapters', 300)
     chapters_per_volume = data.get('chapters_per_volume', 50)
     # 支持用户直接指定卷数（优先于 total_chapters // chapters_per_volume）
@@ -8348,7 +8473,14 @@ def ai_outline_volume(book_id):
     has_master = bool(bb.plot_design and bb.plot_design.strip())
 
     data = request.json or {}
-    skill_pack_ids = data.get('skill_pack_ids', [])
+    # 【P1-5修复】分卷大纲属于总创作阶段：从 book.master_skill_ids 读取（构思类）
+    try:
+        _split_legacy_skill_ids_to_categories(book)
+    except Exception:
+        pass
+    skill_pack_ids = _resolve_skill_ids_by_category(book, 'master')
+    if not skill_pack_ids:
+        skill_pack_ids = data.get('skill_pack_ids', [])
     volume_index = data.get('volume_index', 1)
     volume_title = data.get('volume_title', f'第{volume_index}卷')
     chapters_per_volume = data.get('chapters_per_volume', 50)
@@ -9240,7 +9372,15 @@ def ai_master_create(book_id):
     _sync_book_meta_to_bible(book, bb)
 
     data = request.json or {}
-    skill_pack_ids = data.get('skill_pack_ids', [])
+    # 【P1-5修复】总创作技能包注入：从 book.master_skill_ids 读取（构思类），不再用请求参数
+    # 老数据兼容：若 book 三类字段全空，先尝试迁移老的 skill_pack_ids，仍空则回退到请求参数
+    try:
+        _split_legacy_skill_ids_to_categories(book)
+    except Exception:
+        pass
+    skill_pack_ids = _resolve_skill_ids_by_category(book, 'master')
+    if not skill_pack_ids:
+        skill_pack_ids = data.get('skill_pack_ids', [])
     dimensions = data.get('dimensions', ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design'])
     instruction = data.get('instruction', '')
     # 本轮会话已生成但未确认的内容（跨维度实时互通）
@@ -9449,7 +9589,15 @@ def ai_master_create_stream(book_id):
     _sync_book_meta_to_bible(book, bb)
 
     data = request.json or {}
-    skill_pack_ids = data.get('skill_pack_ids', [])
+    # 【P1-5修复】总创作技能包注入：从 book.master_skill_ids 读取（构思类），不再用请求参数
+    # 老数据兼容：若 book 三类字段全空，先尝试迁移老的 skill_pack_ids，仍空则回退到请求参数
+    try:
+        _split_legacy_skill_ids_to_categories(book)
+    except Exception:
+        pass
+    skill_pack_ids = _resolve_skill_ids_by_category(book, 'master')
+    if not skill_pack_ids:
+        skill_pack_ids = data.get('skill_pack_ids', [])
     dimensions = data.get('dimensions', ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design'])
     instruction = data.get('instruction', '')
     # 本轮会话已生成但尚未"确认填入"的维度内容（前端传入，用于跨维度实时互通）

@@ -145,13 +145,32 @@ def apply_chapter_changes(
             summary['errors'].append(f'foreshadowing_graph: {str(e)[:100]}')
 
     # 2. dynamic_volumes delta merge
+    # 【P0修复】原代码用 dv_list[volume_index] 数组下标，但 volume_index 是 1-based，
+    # 导致 off-by-one（第1卷访问下标1而非0），单卷时条件不满足整段跳过。
+    # 同时 _merge_changes_to_dv 写入 dv_entry 顶层字段，但读取端只读 dv_entry['data']。
+    # 修复：按 volume_index 字段查找条目，写入 dv_entry['data'] 子字段。
     try:
         dv_list = json.loads(bb.dynamic_volumes) if bb.dynamic_volumes else []
-        if isinstance(dv_list, list) and 0 <= volume_index < len(dv_list):
-            dv_entry = dv_list[volume_index]
-            _merge_changes_to_dv(dv_entry, changes, chapter_num)
-            bb.dynamic_volumes = json.dumps(dv_list, ensure_ascii=False)
-            summary['fields_updated'].append('dynamic_volumes')
+        if isinstance(dv_list, list) and dv_list:
+            # 按 volume_index 字段查找（兼容 1-based 和 0-based）
+            dv_entry = None
+            for entry in dv_list:
+                if not isinstance(entry, dict):
+                    continue
+                entry_vi = entry.get('volume_index')
+                if entry_vi == volume_index or entry_vi == volume_index - 1:
+                    dv_entry = entry
+                    break
+            # 兜底：若按 volume_index 没找到，按数组位置取（volume_index-1，兼容1-based）
+            if not dv_entry and 0 < volume_index <= len(dv_list):
+                dv_entry = dv_list[volume_index - 1]
+            # 再兜底：取第一条
+            if not dv_entry:
+                dv_entry = dv_list[0]
+            if dv_entry:
+                _merge_changes_to_dv(dv_entry, changes, chapter_num)
+                bb.dynamic_volumes = json.dumps(dv_list, ensure_ascii=False)
+                summary['fields_updated'].append('dynamic_volumes')
     except Exception as e:
         summary['errors'].append(f'dynamic_volumes: {str(e)[:100]}')
 
@@ -323,11 +342,23 @@ def remove_chapter_changes(bb, chapter_num: int) -> bool:
 
 
 def _merge_changes_to_dv(dv_entry: Dict, changes: Dict, chapter_num: int):
-    """将 12 类变更 delta merge 到 dynamic_volumes 条目的对应字段。"""
+    """将 12 类变更 delta merge 到 dynamic_volumes 条目的对应字段。
+    【P0修复】写入 dv_entry['data'] 子字段（与读取端 _inject_volume_dimensions 对齐），
+    兼容旧结构（无 data 字段时回退到顶层）。"""
+    # 定位写入目标：优先 data 子字段，无则用顶层
+    target = dv_entry.get('data')
+    if not isinstance(target, dict):
+        # 旧结构无 data 字段，创建一个，并把顶层已有字段迁入
+        target = {}
+        for k in ['characters', 'events', 'timeline', 'locations', 'factions', 'foreshadowing', 'realms', 'relationships']:
+            if k in dv_entry:
+                target[k] = dv_entry[k]
+        dv_entry['data'] = target
+
     # 角色状态变化 → characters
     char_changes = changes.get('CharacterStateChanges', [])
     if char_changes:
-        existing = dv_entry.get('characters', '')
+        existing = target.get('characters', '')
         new_chars = []
         for c in char_changes:
             name = c.get('CharacterId', '')
@@ -336,46 +367,70 @@ def _merge_changes_to_dv(dv_entry: Dict, changes: Dict, chapter_num: int):
             if name:
                 new_chars.append(f'{name}：{level}（{key_event}）' if level or key_event else name)
         if new_chars:
-            dv_entry['characters'] = (existing + '；' + '；'.join(new_chars)) if existing else '；'.join(new_chars)
+            target['characters'] = (existing + '；' + '；'.join(new_chars)) if existing else '；'.join(new_chars)
 
     # 冲突推进 → events
     conflicts = changes.get('ConflictProgress', [])
     if conflicts:
-        existing = dv_entry.get('events', '')
+        existing = target.get('events', '')
         new_events = [f'冲突推进：{c.get("ConflictId", "")} - {c.get("Event", "")}' for c in conflicts if c.get('ConflictId')]
         if new_events:
-            dv_entry['events'] = (existing + '；' + '；'.join(new_events)) if existing else '；'.join(new_events)
+            target['events'] = (existing + '；' + '；'.join(new_events)) if existing else '；'.join(new_events)
 
     # 时间推进 → timeline
     time_prog = changes.get('TimeProgression', {})
     if isinstance(time_prog, dict) and time_prog:
-        existing = dv_entry.get('timeline', '')
+        existing = target.get('timeline', '')
         new_time = f'第{chapter_num}章：{time_prog.get("KeyTimeEvent", "")}'
-        dv_entry['timeline'] = (existing + '；' + new_time) if existing else new_time
+        target['timeline'] = (existing + '；' + new_time) if existing else new_time
 
     # 角色移动 → locations
     movements = changes.get('CharacterMovements', [])
     if movements:
-        existing = dv_entry.get('locations', '')
+        existing = target.get('locations', '')
         new_moves = [f'{m.get("CharacterId", "")}→{m.get("ToLocationName", "")}' for m in movements if m.get('CharacterId')]
         if new_moves:
-            dv_entry['locations'] = (existing + '；' + '；'.join(new_moves)) if existing else '；'.join(new_moves)
+            target['locations'] = (existing + '；' + '；'.join(new_moves)) if existing else '；'.join(new_moves)
 
-    # 物品流转 → 更新到 characters 或单独记录
+    # 物品流转 → 更新到 events
     items = changes.get('ItemTransfers', [])
     if items:
-        existing = dv_entry.get('events', '')
+        existing = target.get('events', '')
         new_items = [f'物品流转：{i.get("ItemName", "")} {i.get("FromHolder", "")}→{i.get("ToHolder", "")}' for i in items if i.get('ItemName')]
         if new_items:
-            dv_entry['events'] = (existing + '；' + '；'.join(new_items)) if existing else '；'.join(new_items)
+            target['events'] = (existing + '；' + '；'.join(new_items)) if existing else '；'.join(new_items)
 
     # 势力变化 → factions
     faction_changes = changes.get('FactionStateChanges', [])
     if faction_changes:
-        existing = dv_entry.get('factions', '')
+        existing = target.get('factions', '')
         new_factions = [f'{f.get("FactionId", "")}：{f.get("NewStatus", "")}' for f in faction_changes if f.get('FactionId')]
         if new_factions:
-            dv_entry['factions'] = (existing + '；' + '；'.join(new_factions)) if existing else '；'.join(new_factions)
+            target['factions'] = (existing + '；' + '；'.join(new_factions)) if existing else '；'.join(new_factions)
+
+    # 新情节点 → events（补全原缺失的3类）
+    new_points = changes.get('NewPlotPoints', [])
+    if new_points:
+        existing = target.get('events', '')
+        new_pp = [f'新情节：{p.get("Context", "")[:50]}' for p in new_points if p.get('Context')]
+        if new_pp:
+            target['events'] = (existing + '；' + '；'.join(new_pp)) if existing else '；'.join(new_pp)
+
+    # 秘密揭露 → events
+    secrets = changes.get('SecretRevealChanges', [])
+    if secrets:
+        existing = target.get('events', '')
+        new_sec = [f'秘密揭露：{s.get("SecretId", "")}' for s in secrets if s.get('SecretId')]
+        if new_sec:
+            target['events'] = (existing + '；' + '；'.join(new_sec)) if existing else '；'.join(new_sec)
+
+    # 截止日期约束 → events
+    deadlines = changes.get('DeadlineConstraintChanges', [])
+    if deadlines:
+        existing = target.get('events', '')
+        new_dl = [f'截止约束：{d.get("DeadlineId", "")} - {d.get("Description", "")[:30]}' for d in deadlines if d.get('DeadlineId')]
+        if new_dl:
+            target['events'] = (existing + '；' + '；'.join(new_dl)) if existing else '；'.join(new_dl)
 
 
 def build_changes_prompt_template() -> str:
