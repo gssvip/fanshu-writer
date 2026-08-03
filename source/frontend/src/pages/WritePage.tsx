@@ -2519,6 +2519,8 @@ function ChapterPanel(props: {
   const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
   const [streamFullscreen, setStreamFullscreen] = useState(false);
   const [agentMetaExpanded, setAgentMetaExpanded] = useState(false);
+  // 正文查看全屏模式（点击"展开全文"时弹出，电脑端+手机端统一生效）
+  const [viewingContent, setViewingContent] = useState<{ content: string; title: string } | null>(null);
   // 手机端检测（SSR 安全：window 存在时检测一次，监听 resize 更新）
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 600);
   useEffect(() => {
@@ -2527,14 +2529,14 @@ function ChapterPanel(props: {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  // 流式生成时自动开启全屏阅读（手机端）
+  // 流式生成时自动开启全屏阅读（手机端+电脑端统一生效）
   useEffect(() => {
-    if (isMobile && aiCreating && aiGeneratedContent.trim()) {
+    if (aiCreating && aiGeneratedContent.trim()) {
       setStreamFullscreen(true);
     } else if (!aiCreating) {
       setStreamFullscreen(false);
     }
-  }, [isMobile, aiCreating, aiGeneratedContent]);
+  }, [aiCreating, aiGeneratedContent]);
 
   // 稳定回调（useCallback）：避免每次 ChapterPanel 重渲染时生成新函数引用，
   // 配合 VolumeGroup 的 memo，使折叠/展开某个卷时其他卷不重渲染。
@@ -2669,8 +2671,8 @@ function ChapterPanel(props: {
     const hasResult = aiGeneratedContent.trim().length > 0;
     const streaming = aiCreating && hasResult;
 
-    // P2-5：手机端流式生成全屏阅读模式（独立渲染，覆盖整个面板）
-    if (isMobile && streamFullscreen && streaming) {
+    // P2-5：流式生成全屏阅读模式（电脑端+手机端统一生效，覆盖整个面板）
+    if (streamFullscreen && streaming) {
       const streamParas = aiGeneratedContent.split(/\n+/).filter(p => p.trim());
       return (
         <div className="ai-fullscreen-stream">
@@ -2688,6 +2690,30 @@ function ChapterPanel(props: {
               className="ai-fullscreen-stop-btn"
               onClick={() => { onStopAiCreate(); setStreamFullscreen(false); }}
             >⏹ 停止生成</button>
+          </div>
+        </div>
+      );
+    }
+
+    // 正文查看全屏模式（点击"展开全文"弹出，电脑端+手机端统一生效）
+    if (viewingContent) {
+      const viewParas = viewingContent.content.split(/\n+/).filter(p => p.trim());
+      return (
+        <div className="ai-fullscreen-stream ai-fullscreen-view">
+          <div className="ai-fullscreen-stream-header">
+            <div className="ai-fullscreen-stream-title">
+              📖 {viewingContent.title || '正文阅读'}
+            </div>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{viewingContent.content.length}字</span>
+          </div>
+          <div className="ai-fullscreen-stream-body">
+            {viewParas.map((para, pi) => (<p key={pi}>{para.trim()}</p>))}
+          </div>
+          <div className="ai-fullscreen-stream-footer">
+            <button
+              className="ai-fullscreen-stop-btn"
+              onClick={() => setViewingContent(null)}
+            >✕ 关闭阅读</button>
           </div>
         </div>
       );
@@ -2754,7 +2780,7 @@ function ChapterPanel(props: {
               <div className="ai-chat-msg-avatar">{msg.role === 'user' ? '👤' : '🤖'}</div>
               <div className="ai-chat-msg-body">
                 {msg.chapterTitle && <div className="ai-chat-msg-chapter">📍 {msg.chapterTitle}</div>}
-                {/* 折叠时隐藏正文，只保留章名+展开按钮；展开时显示全文（长内容限高可滚动阅览） */}
+                {/* 折叠时隐藏正文，只保留章名+全屏查看按钮；展开时原位显示全文 */}
                 {!collapsed && (
                   <div className={`ai-chat-msg-content${showToggle ? ' ai-chat-msg-expanded' : ''}`}>
                     {paras.map((para, pi) => (
@@ -2765,10 +2791,18 @@ function ChapterPanel(props: {
                 {showToggle && (
                   <button
                     className="ai-chat-msg-toggle"
-                    onClick={() => onToggleChatMsgCollapse(i)}
-                    title={collapsed ? '展开全文' : '收起正文'}
+                    onClick={() => {
+                      if (collapsed) {
+                        // 折叠态：点击弹出全屏阅读模式
+                        setViewingContent({ content: msg.content, title: msg.chapterTitle || '' });
+                      } else {
+                        // 展开态：点击收起
+                        onToggleChatMsgCollapse(i);
+                      }
+                    }}
+                    title={collapsed ? '全屏查看正文' : '收起正文'}
                   >
-                    {collapsed ? `展开全文（${msg.content.length}字）` : '收起'}
+                    {collapsed ? `📖 全屏阅读（${msg.content.length}字）` : '收起'}
                   </button>
                 )}
               </div>

@@ -1481,6 +1481,25 @@ textarea{resize:vertical;line-height:1.8}
   position: fixed; inset: 0; z-index: 1200;
   background: var(--bg-primary); display: flex; flex-direction: column;
 }
+/* 电脑端：全屏阅读层居中卡片化（半透明遮罩 + 最大宽度，避免大屏撑满不适） */
+@media (min-width: 601px) {
+  .ai-fullscreen-stream {
+    background: rgba(0, 0, 0, 0.35);
+    align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .ai-fullscreen-stream > .ai-fullscreen-stream-header,
+  .ai-fullscreen-stream > .ai-fullscreen-stream-body,
+  .ai-fullscreen-stream > .ai-fullscreen-stream-footer {
+    width: 100%; max-width: 880px; box-sizing: border-box;
+  }
+  .ai-fullscreen-stream > .ai-fullscreen-stream-header { border-radius: 14px 14px 0 0; }
+  .ai-fullscreen-stream > .ai-fullscreen-stream-footer { border-radius: 0 0 14px 14px; }
+  .ai-fullscreen-stream > .ai-fullscreen-stream-body {
+    background: var(--bg-primary); max-height: calc(100vh - 160px);
+    border-left: 1px solid var(--border-color); border-right: 1px solid var(--border-color);
+  }
+}
 .ai-fullscreen-stream-header {
   display: flex; justify-content: space-between; align-items: center;
   padding: 10px 14px; border-bottom: 1px solid var(--border-color);
