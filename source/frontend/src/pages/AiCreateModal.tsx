@@ -140,6 +140,7 @@ export default function AiCreateModal({
   const [instruction, setInstruction] = useState('');
   const [modification, setModification] = useState(''); // 修改意见
   const [outputs, setOutputs] = useState<Record<string, string>>({});
+  const [warnings, setWarnings] = useState<Record<string, string>>({}); // 【P2-8】维度级警告
   const [currentDim, setCurrentDim] = useState<string>(''); // 当前流式生成中的维度
   const [phase, setPhase] = useState<Phase>('input');
   const [error, setError] = useState('');
@@ -347,6 +348,14 @@ export default function AiCreateModal({
                 continue;
               }
               if (parsed.dim && parsed.done) {
+                // 【P2-8】维度完成信号附带 warning（timeline卷数错位/DAG构建失败等）
+                if (parsed.warning) {
+                  setWarnings(prev => {
+                    const next = { ...prev };
+                    next[parsed.dim] = parsed.warning;
+                    return next;
+                  });
+                }
                 continue;
               }
               if (parsed.error) {
@@ -653,11 +662,16 @@ export default function AiCreateModal({
                       style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isCollapsed ? 0 : 8, cursor: canCollapse ? 'pointer' : 'default', userSelect: 'none' }}
                       onClick={() => canCollapse && setCollapsedDims(prev => ({ ...prev, [dim]: !prev[dim] }))}
                     >
-                      <div style={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         {canCollapse && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{isCollapsed ? '▶' : '▼'}</span>}
                         {dimMeta?.icon || '📝'} {DIM_LABEL[dim] || dim}
                         {isCurrent && <span style={{ color: 'var(--accent)', marginLeft: 4, fontSize: 11 }}>⏳ 生成中…</span>}
                         {hasContent && <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>{content.length} 字</span>}
+                        {warnings[dim] && (
+                          <span style={{ color: '#e67e22', fontSize: 11, fontWeight: 400, marginLeft: 4 }} title={warnings[dim]}>
+                            ⚠️ {warnings[dim].slice(0, 40)}{warnings[dim].length > 40 ? '…' : ''}
+                          </span>
+                        )}
                       </div>
                       {phase === 'done' && hasContent && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={e => e.stopPropagation()}>

@@ -344,7 +344,10 @@ def remove_chapter_changes(bb, chapter_num: int) -> bool:
 def _merge_changes_to_dv(dv_entry: Dict, changes: Dict, chapter_num: int):
     """将 12 类变更 delta merge 到 dynamic_volumes 条目的对应字段。
     【P0修复】写入 dv_entry['data'] 子字段（与读取端 _inject_volume_dimensions 对齐），
-    兼容旧结构（无 data 字段时回退到顶层）。"""
+    兼容旧结构（无 data 字段时回退到顶层）。
+    【P1-5修复】改为结构化数组存储：data['changelog'] 按章追加结构化记录，
+    避免文本无限膨胀；同时保留 data['characters'/'events'/...] 摘要字段（滚动保留最近内容），
+    读取端 _inject_volume_dimensions 优先读摘要，回退到 changelog 渲染。"""
     # 定位写入目标：优先 data 子字段，无则用顶层
     target = dv_entry.get('data')
     if not isinstance(target, dict):
@@ -355,10 +358,36 @@ def _merge_changes_to_dv(dv_entry: Dict, changes: Dict, chapter_num: int):
                 target[k] = dv_entry[k]
         dv_entry['data'] = target
 
+    # 【P1-5】结构化 changelog：每章一条记录，按章号去重，保留最近 50 章
+    changelog = target.get('changelog')
+    if not isinstance(changelog, list):
+        changelog = []
+        # 迁移旧的文本字段到 changelog（若旧字段有内容）
+        for k in ['characters', 'events', 'timeline', 'locations', 'factions']:
+            old_val = target.get(k, '')
+            if old_val and isinstance(old_val, str) and old_val.strip():
+                changelog.append({'chapter': 0, 'field': k, 'text': old_val[:500]})
+
+    # 构建本章的结构化 delta 记录
+    chapter_record = {'chapter': chapter_num, 'fields': {}}
+
+    def _append_field(field_name: str, items: list):
+        """追加到本章记录的 fields，并更新摘要（滚动保留最近30条）"""
+        if not items:
+            return
+        chapter_record['fields'][field_name] = items
+        # 摘要字段：滚动保留，避免膨胀
+        existing = target.get(field_name, '')
+        new_text = '；'.join(items)
+        combined = (existing + '；' + new_text) if existing else new_text
+        # 摘要上限 800 字，超出截断保留尾部（最新内容）
+        if len(combined) > 800:
+            combined = combined[-800:]
+        target[field_name] = combined
+
     # 角色状态变化 → characters
     char_changes = changes.get('CharacterStateChanges', [])
     if char_changes:
-        existing = target.get('characters', '')
         new_chars = []
         for c in char_changes:
             name = c.get('CharacterId', '')
@@ -366,71 +395,65 @@ def _merge_changes_to_dv(dv_entry: Dict, changes: Dict, chapter_num: int):
             key_event = c.get('KeyEvent', '')
             if name:
                 new_chars.append(f'{name}：{level}（{key_event}）' if level or key_event else name)
-        if new_chars:
-            target['characters'] = (existing + '；' + '；'.join(new_chars)) if existing else '；'.join(new_chars)
+        _append_field('characters', new_chars)
 
     # 冲突推进 → events
     conflicts = changes.get('ConflictProgress', [])
     if conflicts:
-        existing = target.get('events', '')
         new_events = [f'冲突推进：{c.get("ConflictId", "")} - {c.get("Event", "")}' for c in conflicts if c.get('ConflictId')]
-        if new_events:
-            target['events'] = (existing + '；' + '；'.join(new_events)) if existing else '；'.join(new_events)
+        _append_field('events', new_events)
 
     # 时间推进 → timeline
     time_prog = changes.get('TimeProgression', {})
     if isinstance(time_prog, dict) and time_prog:
-        existing = target.get('timeline', '')
         new_time = f'第{chapter_num}章：{time_prog.get("KeyTimeEvent", "")}'
-        target['timeline'] = (existing + '；' + new_time) if existing else new_time
+        _append_field('timeline', [new_time])
 
     # 角色移动 → locations
     movements = changes.get('CharacterMovements', [])
     if movements:
-        existing = target.get('locations', '')
         new_moves = [f'{m.get("CharacterId", "")}→{m.get("ToLocationName", "")}' for m in movements if m.get('CharacterId')]
-        if new_moves:
-            target['locations'] = (existing + '；' + '；'.join(new_moves)) if existing else '；'.join(new_moves)
+        _append_field('locations', new_moves)
 
-    # 物品流转 → 更新到 events
+    # 物品流转 → events
     items = changes.get('ItemTransfers', [])
     if items:
-        existing = target.get('events', '')
         new_items = [f'物品流转：{i.get("ItemName", "")} {i.get("FromHolder", "")}→{i.get("ToHolder", "")}' for i in items if i.get('ItemName')]
-        if new_items:
-            target['events'] = (existing + '；' + '；'.join(new_items)) if existing else '；'.join(new_items)
+        _append_field('events', new_items)
 
     # 势力变化 → factions
     faction_changes = changes.get('FactionStateChanges', [])
     if faction_changes:
-        existing = target.get('factions', '')
         new_factions = [f'{f.get("FactionId", "")}：{f.get("NewStatus", "")}' for f in faction_changes if f.get('FactionId')]
-        if new_factions:
-            target['factions'] = (existing + '；' + '；'.join(new_factions)) if existing else '；'.join(new_factions)
+        _append_field('factions', new_factions)
 
-    # 新情节点 → events（补全原缺失的3类）
+    # 新情节点 → events
     new_points = changes.get('NewPlotPoints', [])
     if new_points:
-        existing = target.get('events', '')
         new_pp = [f'新情节：{p.get("Context", "")[:50]}' for p in new_points if p.get('Context')]
-        if new_pp:
-            target['events'] = (existing + '；' + '；'.join(new_pp)) if existing else '；'.join(new_pp)
+        _append_field('events', new_pp)
 
     # 秘密揭露 → events
     secrets = changes.get('SecretRevealChanges', [])
     if secrets:
-        existing = target.get('events', '')
         new_sec = [f'秘密揭露：{s.get("SecretId", "")}' for s in secrets if s.get('SecretId')]
-        if new_sec:
-            target['events'] = (existing + '；' + '；'.join(new_sec)) if existing else '；'.join(new_sec)
+        _append_field('events', new_sec)
 
     # 截止日期约束 → events
     deadlines = changes.get('DeadlineConstraintChanges', [])
     if deadlines:
-        existing = target.get('events', '')
         new_dl = [f'截止约束：{d.get("DeadlineId", "")} - {d.get("Description", "")[:30]}' for d in deadlines if d.get('DeadlineId')]
-        if new_dl:
-            target['events'] = (existing + '；' + '；'.join(new_dl)) if existing else '；'.join(new_dl)
+        _append_field('events', new_dl)
+
+    # 追加本章记录到 changelog（去重：同章号覆盖）
+    if chapter_record['fields']:
+        changelog = [r for r in changelog if r.get('chapter') != chapter_num]
+        changelog.append(chapter_record)
+        # 保留最近 50 章
+        if len(changelog) > 50:
+            changelog.sort(key=lambda r: r.get('chapter', 0))
+            changelog = changelog[-50:]
+        target['changelog'] = changelog
 
 
 def build_changes_prompt_template() -> str:

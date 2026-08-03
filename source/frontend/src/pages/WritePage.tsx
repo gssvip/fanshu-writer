@@ -1249,6 +1249,23 @@ export default function WritePage() {
                 setAgentMeta((prev: any) => ({ ...prev, post_validate: parsed.post_validate }));
                 continue;
               }
+              // 【P1-4】changes_applied 事件：章级变更回写摘要
+              if (parsed.changes_applied) {
+                setAgentMeta((prev: any) => ({ ...prev, changes_applied: parsed.changes_applied }));
+                continue;
+              }
+              // 【P1-4】deai_start 事件：去AI味开始（流式模式补充）
+              if (parsed.type === 'deai_start') {
+                setAgentMeta((prev: any) => ({ ...prev, deai_status: 'running' }));
+                continue;
+              }
+              // 【P1-4】deai_result 事件：去AI味完成，用修订后正文替换初稿
+              if (parsed.type === 'deai_result' && parsed.content) {
+                fullContent = parsed.content;
+                setAiGeneratedContent(stripInternalTags(fullContent));
+                setAgentMeta((prev: any) => ({ ...prev, deai_status: 'success' }));
+                continue;
+              }
               // LLM chunk：拼接正文
               const delta = parsed.choices?.[0]?.delta?.content || '';
               if (delta) {

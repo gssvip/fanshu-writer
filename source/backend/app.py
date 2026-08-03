@@ -5247,20 +5247,50 @@ MASTER_DIM_MAP = {
 
 
 def _build_master_ctx(bb, session_outputs=None):
-    """构建维度创作的上下文字典：本轮已生成内容(session_outputs)优先，回退 bible 已有内容。"""
+    """构建维度创作的上下文字典：本轮已生成内容(session_outputs)优先，回退 bible 已有内容。
+    【P2-7修复】session_outputs 纯空白字符串视为无效，回退到 bb 已落库值。"""
     session_outputs = session_outputs or {}
+
+    def _pick(dim, bb_field):
+        v = session_outputs.get(dim)
+        # 纯空白字符串视为无效，避免误判上游已完成
+        if v and isinstance(v, str) and v.strip():
+            return v
+        return bb_field or ''
     return {
-        'concept': session_outputs.get('concept') or bb.concept or '',
-        'key_rules': session_outputs.get('key_rules') or bb.key_rules or '',
-        'worldbuilding': session_outputs.get('worldbuilding') or bb.worldbuilding or '',
-        'character_profiles': session_outputs.get('character_profiles') or bb.character_profiles or '',
-        'plot_design': session_outputs.get('plot_design') or bb.plot_design or '',
-        'timeline': session_outputs.get('timeline') or bb.timeline or '',
-        'foreshadowing': session_outputs.get('foreshadowing') or bb.foreshadowing or '',
-        'locations': session_outputs.get('locations') or bb.locations or '',
-        'inventory': session_outputs.get('inventory') or bb.inventory or '',
-        'dynamic_volumes': session_outputs.get('dynamic_volumes') or bb.dynamic_volumes or '',
+        'concept': _pick('concept', bb.concept),
+        'key_rules': _pick('key_rules', bb.key_rules),
+        'worldbuilding': _pick('worldbuilding', bb.worldbuilding),
+        'character_profiles': _pick('character_profiles', bb.character_profiles),
+        'plot_design': _pick('plot_design', bb.plot_design),
+        'timeline': _pick('timeline', bb.timeline),
+        'foreshadowing': _pick('foreshadowing', bb.foreshadowing),
+        'locations': _pick('locations', bb.locations),
+        'inventory': _pick('inventory', bb.inventory),
+        'dynamic_volumes': _pick('dynamic_volumes', bb.dynamic_volumes),
     }
+
+
+def _validate_and_align_timeline_volumes(parsed_tl, total_volumes):
+    """【P0-1修复】timeline 卷数校验与对齐：解析成功后强制对齐 total_volumes。
+    - 卷数匹配：直接返回
+    - 卷数过多：截断到 total_volumes，标记 warning
+    - 卷数过少：不补全（无法凭空生成卷内容），标记 warning
+    返回 (aligned_list, warning_msg or None)。
+    """
+    if not isinstance(parsed_tl, list) or not parsed_tl:
+        return parsed_tl, None
+    if not total_volumes or total_volumes < 1:
+        return parsed_tl, None
+    actual = len(parsed_tl)
+    if actual == total_volumes:
+        return parsed_tl, None
+    if actual > total_volumes:
+        # 卷数过多：截断
+        aligned = parsed_tl[:total_volumes]
+        return aligned, f'timeline生成了{actual}卷，超过设定的{total_volumes}卷，已自动截断到{total_volumes}卷'
+    # 卷数过少：不补全，仅警告
+    return parsed_tl, f'timeline仅生成{actual}卷，少于设定的{total_volumes}卷，下游dynamic_volumes/分卷大纲可能卷数错位，建议重新生成timeline维度'
 
 
 # 网文风格流派标签库（基于2025中国网络文学蓝皮书与起点三江榜趋势）
@@ -5748,6 +5778,49 @@ def _build_master_storyline_ctx(book_id, bb):
             for r in reports:
                 rp_lines.append(f'- {r["title"]}（{r["chapter_start"]}-{r["chapter_end"]}章）：{r["content"][:300]}')
             parts.append('【动态报告摘要】（已写剧情的阶段性归纳）\n' + '\n'.join(rp_lines))
+    except Exception:
+        pass
+
+    # 【P1-6修复】2.5 dynamic_volumes 当前状态摘要（已写章节实际境界/物品/势力，维度创作须承接）
+    try:
+        if bb.dynamic_volumes:
+            dv_list = json.loads(bb.dynamic_volumes)
+            if isinstance(dv_list, list) and dv_list:
+                dv_lines = []
+                for dv_entry in dv_list[:6]:  # 最多展示前6卷
+                    if not isinstance(dv_entry, dict):
+                        continue
+                    vol_title = dv_entry.get('volume') or f'第{dv_entry.get("volume_index", "?")}卷'
+                    data_obj = dv_entry.get('data') if isinstance(dv_entry.get('data'), dict) else dv_entry
+                    # 优先取摘要字段，回退到 changelog 渲染
+                    chars = (data_obj or {}).get('characters', '') if isinstance(data_obj, dict) else ''
+                    events = (data_obj or {}).get('events', '') if isinstance(data_obj, dict) else ''
+                    realms = (data_obj or {}).get('realms', '') if isinstance(data_obj, dict) else ''
+                    # 若摘要为空，从 changelog 渲染最近5章
+                    if (not chars and not events) and isinstance(data_obj, dict) and isinstance(data_obj.get('changelog'), list):
+                        cl = data_obj['changelog']
+                        cl_sorted = sorted(cl, key=lambda r: r.get('chapter', 0))[-5:]
+                        cl_segs = []
+                        for rec in cl_sorted:
+                            ch = rec.get('chapter', 0)
+                            fields = rec.get('fields', {})
+                            for fname, items in fields.items():
+                                if items:
+                                    cl_segs.append(f'第{ch}章{fname}: {"；".join(items)[:60]}')
+                        if cl_segs:
+                            dv_lines.append(f'- {vol_title}：{"；".join(cl_segs)[:300]}')
+                    else:
+                        segs = []
+                        if chars:
+                            segs.append(f'人物:{chars[:100]}')
+                        if events:
+                            segs.append(f'事件:{events[:100]}')
+                        if realms:
+                            segs.append(f'境界:{realms[:80]}')
+                        if segs:
+                            dv_lines.append(f'- {vol_title}：{"；".join(segs)[:300]}')
+                if dv_lines:
+                    parts.append('【已写章节动态状态】（每卷人物境界/关键事件/势力实际状态，新维度创作须承接不可矛盾）\n' + '\n'.join(dv_lines))
     except Exception:
         pass
 
@@ -7107,7 +7180,7 @@ def ai_continue_stream(book_id):
     # 章节正文语言风格（行文文风，最多3个叠加）
     chapter_lang_styles = request.json.get('chapter_lang_styles', [])
 
-    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles, enable_structured_tags=False)
+    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles, enable_structured_tags=True)
     api_key = ctx['api_key']
     base_url = ctx['base_url']
     model = ctx['model']
@@ -7221,6 +7294,34 @@ def ai_continue_stream(book_id):
                     yield f'data: {json.dumps({"suggested_title": suggested_title, "formatted_title": formatted_title}, ensure_ascii=False)}\n\n'
                 except Exception:
                     pass
+
+            # 【P1-4修复】流式模式补去AI味 Agent（与多Agent/批处理模式对齐）
+            # 仅当有 review 类技能包时触发，零技能包则跳过（与多Agent模式一致）
+            try:
+                review_skill_ids = _resolve_skill_ids_by_category(book, 'review') if book else []
+                if review_skill_ids and full_content_parts:
+                    full_content_for_deai = ''.join(full_content_parts)
+                    body_for_deai = _extract_chapter_body(full_content_for_deai)
+                    if body_for_deai and len(body_for_deai) > 200:
+                        deai_skill_note = _get_skill_prompts_by_category(review_skill_ids, 'review', ['deai', 'consistency_check'])
+                        if deai_skill_note:
+                            deai_sys = ('你是去AI味审校专家。按以下技能包要求，对章节正文做最小改动修订，'
+                                       '只调整AI痕迹和文风问题，不改变剧情、人物、设定。\n\n'
+                                       f'{deai_skill_note}\n\n'
+                                       '【输出】直接输出修订后的完整正文（含标题行），不要任何解释。')
+                            deai_user = f'原文：\n{body_for_deai[:6000]}'
+                            yield f'data: {json.dumps({"type": "deai_start"}, ensure_ascii=False)}\n\n'
+                            deai_content, deai_err = _call_llm(
+                                [{'role': 'system', 'content': deai_sys}, {'role': 'user', 'content': deai_user}],
+                                max_tokens=0, temperature=0.5
+                            )
+                            if not deai_err and deai_content and deai_content.strip():
+                                # 剥离标题行，提取正文
+                                deai_body = _extract_chapter_body(deai_content)
+                                if deai_body and len(deai_body) > 200:
+                                    yield f'data: {json.dumps({"type": "deai_result", "content": deai_body}, ensure_ascii=False)}\n\n'
+            except Exception:
+                pass  # 去AI味失败不阻断流式生成
         except Exception as e:
             yield f'data: {{"error": "{str(e)[:200]}"}}\n\n'
 
@@ -7399,6 +7500,14 @@ def ai_continue_batch(book_id):
             update_book_stats(book_id)
             db.session.commit()
 
+            # 【P1-4修复】连续创作模式补落地门禁（与多Agent模式对齐，仅 warning 不阻断）
+            gate_result_batch = None
+            if run_all_gates:
+                try:
+                    gate_result_batch = run_all_gates(polished_content, bb, cur_ch)
+                except Exception:
+                    pass
+
             # Bug4 修复：每章保存后检查并自动生成动态报告（每5章触发），避免后续章节注入过时报告
             try:
                 _check_and_auto_generate_report(book_id)
@@ -7410,13 +7519,16 @@ def ai_continue_batch(book_id):
             except Exception:
                 pass
 
-            results.append({
+            result_entry = {
                 'chapter_num': cur_ch,
                 'chapter_id': ch.id,
                 'title': title,
                 'content': polished_content,
                 'word_count': wc,
-            })
+            }
+            if gate_result_batch and not gate_result_batch.get('passed'):
+                result_entry['gate_warning'] = gate_result_batch
+            results.append(result_entry)
             # Bug5 修复：缓存本章正文供下一章承接
             prev_polished = polished_content
         except Exception as e:
@@ -7805,6 +7917,14 @@ def ai_continue_batch_stream(book_id):
                 update_book_stats(book_id)
                 db.session.commit()
 
+                # 【P1-4修复】批处理流式补落地门禁（与多Agent模式对齐，仅 warning 不阻断）
+                gate_result_bstream = None
+                if run_all_gates:
+                    try:
+                        gate_result_bstream = run_all_gates(polished_content, bb, cur_ch)
+                    except Exception:
+                        pass
+
                 # 每章后检查自动生成动态报告（可能触发 LLM 调用，用线程+心跳避免阻塞）
                 try:
                     report_hb = f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在更新动态报告..."}, ensure_ascii=False)}\n\n'
@@ -7827,6 +7947,8 @@ def ai_continue_batch_stream(book_id):
                     'word_count': wc,
                     'deai_status': deai_status,  # skipped/success/failed，告知前端是否做过去AI味修正
                 }
+                if gate_result_bstream and not gate_result_bstream.get('passed'):
+                    chapter_info['gate_warning'] = gate_result_bstream
                 results.append(chapter_info)
                 prev_polished = polished_content
 
@@ -9507,6 +9629,7 @@ def ai_master_create(book_id):
             results.append({'dimension': dim, 'label': info['label'], 'field': info['field'], 'error': err})
         else:
             # timeline 维度：校验 JSON 格式，失败则保留原文但标记警告
+            timeline_warning = None
             if is_timeline_dim:
                 import re as _re_mc
                 cleaned_mc = content.strip()
@@ -9530,9 +9653,22 @@ def ai_master_create(book_id):
                         except (json.JSONDecodeError, ValueError):
                             parsed_tl_mc = None
                 if isinstance(parsed_tl_mc, list) and parsed_tl_mc:
+                    # 【P0-1修复】卷数校验与对齐：强制对齐 total_volumes
+                    try:
+                        tv_for_check = _get_total_volumes(bb, book)
+                        parsed_tl_mc, timeline_warning = _validate_and_align_timeline_volumes(parsed_tl_mc, tv_for_check)
+                    except Exception:
+                        pass
                     content = json.dumps(parsed_tl_mc, ensure_ascii=False, indent=2)
                 # 若解析失败，content 保留原文（纯文本），_get_volume_outline 会走纯文本回退分支
-            results.append({'dimension': dim, 'label': info['label'], 'field': info['field'], 'content': content})
+                # 【P2-8修复】timeline 解析失败主动告警
+                if not isinstance(parsed_tl_mc, list) or not parsed_tl_mc:
+                    timeline_warning = 'timeline维度JSON解析失败，已保留原文，但outline_hierarchy/dynamic_volumes可能受影响'
+            result_entry = {'dimension': dim, 'label': info['label'], 'field': info['field'], 'content': content}
+            if timeline_warning:
+                result_entry['warning'] = timeline_warning
+            # 【P0-2修复】foreshadowing DAG 构建失败告警
+            foreshadowing_warning = None
             # 关键：本轮产出回流到 ctx，供下一轮维度作为上游上下文
             ctx[dim] = content
             # P1-9: 直接落库，避免前端未回流导致协同结果丢失
@@ -9544,8 +9680,13 @@ def ai_master_create(book_id):
                     errors = graph.validate()
                     if not errors:
                         bb.foreshadowing_graph = json.dumps(graph.to_dict(), ensure_ascii=False)
-                except Exception:
-                    pass  # DAG 构建失败不影响文本落库
+                    else:
+                        foreshadowing_warning = f'伏笔DAG校验失败：{"；".join(errors)[:150]}，DAG未更新但文本字段已落库'
+                except Exception as dag_e:
+                    foreshadowing_warning = f'伏笔DAG构建异常：{str(dag_e)[:150]}，DAG未更新但文本字段已落库。建议检查伏笔格式（## 伏笔N：标题）'
+            if foreshadowing_warning:
+                result_entry['warning'] = (result_entry.get('warning') or '') + ('；' if result_entry.get('warning') else '') + foreshadowing_warning
+            results.append(result_entry)
             # P1-4：timeline 维度生成后自动构建四级大纲层级
             if dim == 'timeline' and build_outline_hierarchy:
                 try:
@@ -9741,12 +9882,14 @@ def ai_master_create_stream(book_id):
 
                 # 维度完成信号
                 # timeline 维度：校验 JSON
+                timeline_warning_stream = None
                 if is_timeline_dim and full_content:
                     import re as _re_s
                     cleaned = full_content.strip()
                     fence = _re_s.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
                     if fence:
                         cleaned = fence.group(1).strip()
+                    parsed_tl = None
                     try:
                         parsed_tl = json.loads(cleaned)
                         if isinstance(parsed_tl, dict):
@@ -9755,9 +9898,21 @@ def ai_master_create_stream(book_id):
                                     parsed_tl = parsed_tl[k]
                                     break
                         if isinstance(parsed_tl, list) and parsed_tl:
+                            # 【P0-1修复】卷数校验与对齐
+                            try:
+                                tv_for_check_s = _get_total_volumes(bb, book)
+                                parsed_tl, timeline_warning_stream = _validate_and_align_timeline_volumes(parsed_tl, tv_for_check_s)
+                            except Exception:
+                                pass
                             full_content = json.dumps(parsed_tl, ensure_ascii=False, indent=2)
-                    except:
+                    except Exception:
                         pass
+                    # 【P2-8修复】timeline 解析失败主动告警
+                    if not isinstance(parsed_tl, list) or not parsed_tl:
+                        timeline_warning_stream = 'timeline维度JSON解析失败，已保留原文，但outline_hierarchy/dynamic_volumes可能受影响'
+
+                # 【P0-2修复】foreshadowing DAG 构建失败告警
+                foreshadowing_warning_stream = None
 
                 # 回流到 ctx 供下一维度使用
                 ctx[dim] = full_content
@@ -9772,8 +9927,10 @@ def ai_master_create_stream(book_id):
                             errors = graph.validate()
                             if not errors:
                                 bb.foreshadowing_graph = json.dumps(graph.to_dict(), ensure_ascii=False)
-                        except Exception:
-                            pass  # DAG 构建失败不影响文本落库
+                            else:
+                                foreshadowing_warning_stream = f'伏笔DAG校验失败：{"；".join(errors)[:150]}，DAG未更新但文本字段已落库'
+                        except Exception as dag_e_s:
+                            foreshadowing_warning_stream = f'伏笔DAG构建异常：{str(dag_e_s)[:150]}，DAG未更新但文本字段已落库。建议检查伏笔格式（## 伏笔N：标题）'
                     # P1-4：timeline 维度生成后自动构建四级大纲层级
                     if dim == 'timeline' and build_outline_hierarchy:
                         try:
@@ -9786,7 +9943,16 @@ def ai_master_create_stream(book_id):
                 except Exception:
                     db.session.rollback()
 
-                yield f'data: {json.dumps({"dim": dim, "done": True}, ensure_ascii=False)}\n\n'
+                # 【P2-8修复】维度完成信号附带 warning（前端可 toast 提示）
+                done_signal = {"dim": dim, "done": True}
+                warnings_list = []
+                if timeline_warning_stream:
+                    warnings_list.append(timeline_warning_stream)
+                if foreshadowing_warning_stream:
+                    warnings_list.append(foreshadowing_warning_stream)
+                if warnings_list:
+                    done_signal['warning'] = '；'.join(warnings_list)
+                yield f'data: {json.dumps(done_signal, ensure_ascii=False)}\n\n'
 
             # P3-11：所有维度生成完成后统一提交事务（事务性落库）
             try:
