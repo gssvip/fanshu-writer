@@ -34,6 +34,8 @@ export default function ToolsPage() {
   const [skillGenreFilter, setSkillGenreFilter] = useState('');
   const [skillTypeFilter, setSkillTypeFilter] = useState('');
   const [selectedPack, setSelectedPack] = useState<SkillPack | null>(null);
+  // 【三类无污染】技能包市场分组折叠状态（默认全展开）
+  const [skillGroupCollapsed, setSkillGroupCollapsed] = useState<Record<string, boolean>>({});
 
   // 自定义技能编辑器
   const [showSkillEditor, setShowSkillEditor] = useState(false);
@@ -598,11 +600,23 @@ export default function ToolsPage() {
             const reviewPacks = skillPacks.filter(p => p.category === 'review');
             const renderGroup = (title: string, packs: SkillPack[], hint: string, color: string) => packs.length === 0 ? null : (
               <div key={title} className="skill-category-group" style={{ borderLeft: `3px solid ${color}`, paddingLeft: 12, marginBottom: 16 }}>
-                <h4 style={{ margin: '0 0 8px 0', fontSize: 14, color: 'var(--text-primary)' }}>
-                  {title} <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>({packs.length})</span>
-                </h4>
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 8px 0' }}>{hint}</p>
-                <div className="skill-grid">{packs.map(renderSkillCard)}</div>
+                <button
+                  type="button"
+                  className="skill-category-toggle"
+                  onClick={() => setSkillGroupCollapsed(prev => ({ ...prev, [title]: !prev[title] }))}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 6, width: '100%', textAlign: 'left' }}
+                >
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', transition: 'transform 0.2s', transform: skillGroupCollapsed[title] ? 'rotate(-90deg)' : 'rotate(0deg)' }}>▼</span>
+                  <h4 style={{ margin: 0, fontSize: 14, color: 'var(--text-primary)', flex: 1 }}>
+                    {title} <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>({packs.length})</span>
+                  </h4>
+                </button>
+                {!skillGroupCollapsed[title] && (
+                  <>
+                    <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '4px 0 8px 18px' }}>{hint}</p>
+                    <div className="skill-grid" style={{ marginLeft: 18 }}>{packs.map(renderSkillCard)}</div>
+                  </>
+                )}
               </div>
             );
             return (
