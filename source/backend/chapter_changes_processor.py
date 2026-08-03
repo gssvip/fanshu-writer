@@ -204,7 +204,105 @@ def apply_chapter_changes(
         summary['errors'].append(f'chapter_changes_log: {str(e)[:100]}')
 
     summary['applied'] = bool(summary['fields_updated'])
+
+    # 借鉴 PlotPilot 知识图谱：从章节正文提取关系三元组，追加到 relation_graph
+    # 输入：chapter_id 关联的正文（由调用方通过 bb 上下文获取，此处简化为从 changes 提取人物关系）
+    try:
+        _extract_and_store_knowledge_triples(bb, changes, chapter_num)
+        summary['fields_updated'].append('relation_graph')
+    except Exception as e:
+        summary['errors'].append(f'relation_graph: {str(e)[:100]}')
+
     return summary
+
+
+# ===== 借鉴 PlotPilot 知识图谱：关系三元组提取 =====
+
+# 关系动词模式（主体-关系-客体）
+_RELATION_PATTERNS = [
+    # "A是B的师父/父亲/..." -> (A, 师父, B)
+    (re.compile(r'([\u4e00-\u9fa5]{2,4})是([\u4e00-\u9fa5]{2,4})的(师父|师傅|父亲|母亲|师兄|师姐|师弟|师妹|徒弟|儿子|女儿|妻子|丈夫|情人|朋友|敌人|对手|上司|下属)'), '亲属师徒'),
+    # "A拜B为师" -> (A, 拜师, B)
+    (re.compile(r'([\u4e00-\u9fa5]{2,4})拜([\u4e00-\u9fa5]{2,4})为师'), '拜师'),
+    # "A杀了B" -> (A, 击杀, B)
+    (re.compile(r'([\u4e00-\u9fa5]{2,4})(杀了|击杀|斩杀|击毙)([\u4e00-\u9fa5]{2,4})'), '击杀'),
+    # "A救了B" -> (A, 救助, B)
+    (re.compile(r'([\u4e00-\u9fa5]{2,4})(救了|救下|出手救)([\u4e00-\u9fa5]{2,4})'), '救助'),
+    # "A背叛B" -> (A, 背叛, B)
+    (re.compile(r'([\u4e00-\u9fa5]{2,4})背叛(了)?([\u4e00-\u9fa5]{2,4})'), '背叛'),
+    # "A与B结盟/合作" -> (A, 结盟, B)
+    (re.compile(r'([\u4e00-\u9fa5]{2,4})(与|和)([\u4e00-\u9fa5]{2,4})(结盟|联手|合作|结为同盟)'), '结盟'),
+]
+# 停用词（避免误提取）
+_STOP_NAMES = {'他们', '她们', '众人', '大家', '对方', '自己', '我们', '你们', '他们', '有人', '那人', '此人', '一人', '这是', '那是', '什么'}
+
+
+def _extract_and_store_knowledge_triples(bb, changes: Dict, chapter_num: int):
+    """从 CHANGES 中的角色状态/冲突变化提取关系三元组，存入 bb.relation_graph。
+    三元组格式：(主体, 关系, 客体, 章节, 来源)
+    relation_graph 存为 JSON 数组，去重后最多保留 500 条。"""
+    triples = []
+    # 1. 从 CharacterStateChanges 提取境界/状态变化（人物自身属性）
+    for c in changes.get('CharacterStateChanges', []):
+        name = c.get('CharacterId', '') or c.get('Name', '')
+        level = c.get('NewLevel', '')
+        key_event = c.get('KeyEvent', '')
+        if name and name not in _STOP_NAMES and level:
+            triples.append({'subject': name, 'relation': '境界', 'object': level, 'chapter': chapter_num, 'source': 'changes'})
+        if name and name not in _STOP_NAMES and key_event:
+            triples.append({'subject': name, 'relation': '关键事件', 'object': key_event[:50], 'chapter': chapter_num, 'source': 'changes'})
+    # 2. 从 ConflictProgress 提取对抗关系
+    for conf in changes.get('ConflictProgress', []):
+        parties = conf.get('Parties', '') or conf.get('Participants', '')
+        desc = conf.get('Description', '') or conf.get('Conflict', '')
+        if parties and desc:
+            # parties 可能是 "A vs B" 或 "A、B"
+            import re as _re_tri
+            vs_parts = _re_tri.split(r'[vs、，,]', parties)
+            vs_parts = [p.strip() for p in vs_parts if p.strip() and p.strip() not in _STOP_NAMES]
+            if len(vs_parts) >= 2:
+                triples.append({'subject': vs_parts[0], 'relation': '对抗', 'object': vs_parts[1], 'chapter': chapter_num, 'source': 'conflict', 'detail': desc[:50]})
+    # 3. 从 PledgeConstraintChanges 提取誓言/约束关系
+    for pledge in changes.get('PledgeConstraintChanges', []):
+        who = pledge.get('CharacterId', '') or pledge.get('Who', '')
+        target = pledge.get('Target', '') or pledge.get('To', '')
+        pledge_text = pledge.get('Pledge', '') or pledge.get('Constraint', '')
+        if who and target and who not in _STOP_NAMES and target not in _STOP_NAMES:
+            triples.append({'subject': who, 'relation': '誓言', 'object': target, 'chapter': chapter_num, 'source': 'pledge', 'detail': pledge_text[:50]})
+
+    if not triples:
+        return
+
+    # 合并到现有 relation_graph（JSON 数组格式）
+    existing = []
+    try:
+        raw = bb.relation_graph or ''
+        # 兼容旧版文本格式：若非 JSON 数组则跳过保留原文
+        if raw.strip().startswith('['):
+            existing = json.loads(raw)
+        elif raw.strip():
+            # 旧版文本格式，转为一条"历史关系"记录保留
+            existing = [{'subject': '历史关系', 'relation': '文本', 'object': raw[:200], 'chapter': 0, 'source': 'legacy'}]
+    except Exception:
+        existing = []
+
+    # 去重：相同 (subject, relation, object) 视为重复，只保留最新章节
+    seen_keys = set()
+    for t in existing:
+        key = (t.get('subject', ''), t.get('relation', ''), t.get('object', ''))
+        seen_keys.add(key)
+    for t in triples:
+        key = (t['subject'], t['relation'], t['object'])
+        if key not in seen_keys:
+            existing.append(t)
+            seen_keys.add(key)
+
+    # 最多保留 500 条，超出淘汰最旧
+    if len(existing) > 500:
+        existing.sort(key=lambda x: x.get('chapter', 0))
+        existing = existing[-500:]
+
+    bb.relation_graph = json.dumps(existing, ensure_ascii=False)
 
 
 def remove_chapter_changes(bb, chapter_num: int) -> bool:

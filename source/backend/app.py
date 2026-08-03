@@ -20,12 +20,14 @@ from werkzeug.utils import secure_filename
 
 # P0-1：确定性后写校验器（零 LLM 成本，章节生成后检测 AI 痕迹）
 try:
-    from post_write_validator import validate_chapter, validate_chapter_with_bible, get_repair_hints
+    from post_write_validator import validate_chapter, validate_chapter_with_bible, get_repair_hints, validate_chapter_with_drift, compute_style_fingerprint
 except ImportError:
     # 静默降级：模块缺失时不阻断主流程
     validate_chapter = None
     validate_chapter_with_bible = None
     get_repair_hints = None
+    validate_chapter_with_drift = None
+    compute_style_fingerprint = None
 
 # P0-2：伏笔 DAG 管理器
 try:
@@ -546,6 +548,8 @@ class BookBible(db.Model):
     outline_hierarchy = db.Column(db.Text, default='')
     # P1-6：章级变更日志（JSON 数组，每章的 12 类 CHANGES delta，支持重写回滚）
     chapter_changes_log = db.Column(db.Text, default='')
+    # 借鉴 PlotPilot 检查点快照：每5章自动备份 BookBible+DynamicMemory 关键字段，支持回滚
+    state_snapshots = db.Column(db.Text, default='')
     # 总卷数 + 风格流派（与 Book 表同步，创作时从 bible 直接读取注入各维度）
     total_volumes = db.Column(db.Integer, default=10)
     novel_styles = db.Column(db.Text, default='[]')
@@ -572,6 +576,7 @@ class BookBible(db.Model):
             'foreshadowing_graph': self.foreshadowing_graph or '',
             'outline_hierarchy': self.outline_hierarchy or '',
             'chapter_changes_log': self.chapter_changes_log or '',
+            'state_snapshots': self.state_snapshots or '',
             'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None,
             # P1-2修复：补 total_volumes / novel_styles，让前端可见 bible 权威值
             'total_volumes': self.total_volumes if self.total_volumes else 10,
@@ -4779,6 +4784,46 @@ def _extract_appearing_characters(recent_chapters, bb=None):
     return names
 
 
+def _compute_style_baseline(book_id, current_chapter_num, sample_count=5):
+    """计算前 N 章的文风指纹基准（借鉴 PlotPilot 文风指纹漂移检测）。
+    取当前章之前最近 sample_count 章的正文，计算文风指纹平均值作为基准。
+    返回基准指纹 dict 或 None（章节数不足时）。"""
+    if not compute_style_fingerprint or current_chapter_num <= 2:
+        return None
+    try:
+        # 取前 N 章正文（排除当前章和分卷占位）
+        prev_chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).filter(
+            Chapter.order_index < current_chapter_num,
+            Chapter.order_index >= max(1, current_chapter_num - sample_count)
+        ).order_by(Chapter.order_index.desc()).limit(sample_count).all()
+        if not prev_chapters:
+            return None
+        fingerprints = []
+        for ch in prev_chapters:
+            content = ch.content or ''
+            # 提取正文（剥离 chapter_changes 等标签）
+            body = re.sub(r'<chapter_changes>[\s\S]*?</chapter_changes>', '', content, flags=re.IGNORECASE)
+            body = re.sub(r'<pre_write_check>[\s\S]*?</pre_write_check>', '', body, flags=re.IGNORECASE)
+            body = body.strip()
+            if len(body) < 100:
+                continue
+            fp = compute_style_fingerprint(body)
+            if fp:
+                fingerprints.append(fp)
+        if len(fingerprints) < 2:
+            return None  # 样本不足
+        # 计算各特征平均值
+        keys = ['avg_sent_len', 'short_sent_ratio', 'long_sent_ratio', 'dialog_ratio', 'punct_density', 'adj_density', 'verb_density']
+        baseline = {}
+        for key in keys:
+            vals = [fp.get(key, 0) for fp in fingerprints if key in fp]
+            if vals:
+                baseline[key] = round(sum(vals) / len(vals), 4)
+        return baseline if baseline else None
+    except Exception:
+        return None
+
+
 def _recall_related_chapters(book_id, appearing_chars, current_chapter_num, max_chapters=6):
     """轻量RAG：基于出场角色召回相关历史章节摘要，补充前4章完整正文窗口的盲区。
     策略：扫描所有历史章节（排除最近4章，避免与即时层重复）的 summary，
@@ -6099,6 +6144,48 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 【相关历史章节召回】（基于本章出场角色智能召回，补充前4章窗口盲区，角色历史经历须与此一致）：
 {chr(10).join(rc_lines)}
 """
+    # 借鉴 PlotPilot 语义检索：TF-IDF 语义召回，补充字符匹配的盲区（捕捉同义词/语义关联）
+    # 仅当字符召回不足 6 条时启用，避免重复
+    if len(recalled_chapters) < 6:
+        try:
+            from semantic_retriever import recall_semantic_chapters
+            # 构造 query：出场角色 + 当前章 content_focus
+            semantic_query = ' '.join(appearing_chars) if appearing_chars else ''
+            if hasattr(bb, 'outline_hierarchy') and bb.outline_hierarchy:
+                try:
+                    hier = json.loads(bb.outline_hierarchy)
+                    for ch_plan in hier.get('chapters', []):
+                        if ch_plan.get('chapter_num') == current_chapter_num:
+                            semantic_query += ' ' + (ch_plan.get('content_focus') or '')
+                            break
+                except Exception:
+                    pass
+            if semantic_query:
+                def _provider():
+                    chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).filter(
+                        Chapter.order_index < current_chapter_num
+                    ).order_by(Chapter.order_index.desc()).limit(300).all()
+                    return [{'chapter_num': c.order_index, 'title': c.title or '', 'summary': (getattr(c, 'summary', '') or '')} for c in chs]
+                semantic_results = recall_semantic_chapters(
+                    book_id, semantic_query, current_chapter_num,
+                    exclude_recent=4, max_chapters=6 - len(recalled_chapters),
+                    chapters_provider=_provider,
+                )
+                # 去重：排除已召回的章号
+                existing_nums = {rc['chapter_num'] for rc in recalled_chapters}
+                for sr in semantic_results:
+                    if sr['chapter_num'] not in existing_nums:
+                        recalled_chapters.append(sr)
+                        existing_nums.add(sr['chapter_num'])
+                # 重新渲染 recall_section
+                if recalled_chapters:
+                    rc_lines = [f'- 第{rc["chapter_num"]}章《{rc["title"]}》：{rc["summary"]}' for rc in recalled_chapters]
+                    recall_section = f"""
+【相关历史章节召回】（基于本章出场角色+语义检索召回，补充前4章窗口盲区，角色历史经历须与此一致）：
+{chr(10).join(rc_lines)}
+"""
+        except Exception:
+            pass  # 语义检索失败不影响主流程
 
     memory_section = f"""【前文动态报告】（最近10份动态文件摘要，防长线遗忘）：
 {report_context}{historical_section}{recall_section}
@@ -6495,7 +6582,12 @@ def ai_continue(book_id):
         elif validate_chapter:
             try:
                 body_for_check = _extract_chapter_body(polished_content)
-                validation = validate_chapter(body_for_check)
+                # 借鉴 PlotPilot 文风漂移检测：传入前5章文风基准
+                style_baseline = _compute_style_baseline(book_id, ctx['current_chapter_num'])
+                if validate_chapter_with_drift and style_baseline:
+                    validation = validate_chapter_with_drift(body_for_check, style_baseline)
+                else:
+                    validation = validate_chapter(body_for_check)
                 if validation.issues:
                     post_validate = validation.to_dict()
             except Exception:
@@ -11177,7 +11269,64 @@ def _check_and_auto_generate_report(book_id):
     )
     db.session.add(report)
     db.session.commit()
+
+    # 借鉴 PlotPilot 检查点快照：每5章自动备份 BookBible + DynamicMemory 关键状态
+    # 用户可回滚到某章节点重新创作，避免"写崩了无法恢复"
+    try:
+        _create_state_snapshot(book_id, current_end)
+    except Exception as snap_err:
+        try:
+            app.logger.warning(f'快照创建失败（不影响主流程）: {snap_err}')
+        except Exception:
+            pass
+
     return {'report': report.to_dict()}
+
+
+def _create_state_snapshot(book_id, chapter_end):
+    """创建叙事状态检查点快照（借鉴 PlotPilot checkpoint）。
+    备份 BookBible 关键字段 + DynamicMemory 5文件，存入 bb.state_snapshots。
+    每个快照含：snapshot_id / chapter_end / created_at / bible_fields / dynamic_memory。
+    最多保留 20 个快照（超出按时间淘汰最旧的）。"""
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return
+    # 备份 BookBible 关键叙事字段（不含快照自身，避免递归膨胀）
+    bible_fields = {}
+    for field in ['worldbuilding', 'character_profiles', 'timeline', 'foreshadowing',
+                  'style_guide', 'key_rules', 'locations', 'concept', 'plot_design',
+                  'relation_graph', 'inventory', 'character_volumes', 'dynamic_volumes',
+                  'foreshadowing_volumes', 'locations_volumes', 'foreshadowing_graph',
+                  'outline_hierarchy', 'chapter_changes_log']:
+        bible_fields[field] = getattr(bb, field, '') or ''
+    # 备份 DynamicMemory 5文件
+    dm_data = {}
+    try:
+        dm = DynamicMemory.query.filter_by(book_id=book_id).first()
+        if dm:
+            for key in ['narrative_engine', 'foreshadowing_tracker', 'character_ecosystem',
+                         'ability_world', 'health_dashboard']:
+                dm_data[key] = getattr(dm, key, '') or ''
+    except Exception:
+        pass
+    snapshot = {
+        'snapshot_id': str(uuid.uuid4())[:8],
+        'chapter_end': chapter_end,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'bible_fields': bible_fields,
+        'dynamic_memory': dm_data,
+    }
+    existing = []
+    try:
+        existing = json.loads(bb.state_snapshots or '[]') if bb.state_snapshots else []
+    except Exception:
+        existing = []
+    existing.append(snapshot)
+    # 最多保留 20 个，淘汰最旧
+    if len(existing) > 20:
+        existing = existing[-20:]
+    bb.state_snapshots = json.dumps(existing, ensure_ascii=False)
+    db.session.commit()
 
 
 @app.route('/api/books/<book_id>/dynamic-reports', methods=['GET'])
@@ -11877,6 +12026,8 @@ def init_db():
         _add_column('book_bible', 'outline_hierarchy TEXT')
         # Migration P1-6: 章级变更日志
         _add_column('book_bible', 'chapter_changes_log TEXT')
+        # Migration: 检查点快照（借鉴 PlotPilot，每5章自动备份叙事状态）
+        _add_column('book_bible', 'state_snapshots TEXT')
         # Migration: 总卷数 + 风格流派（Book 与 BookBible 双写）
         _add_column('books', 'total_volumes INTEGER DEFAULT 10')
         _add_column('books', "novel_styles TEXT DEFAULT '[]'")

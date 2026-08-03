@@ -122,6 +122,12 @@ def validate_chapter(content: str) -> ValidationResult:
     _check_repetition(text, result)
     _check_monotone_syntax(text, result)
 
+    # 12. 张力评分（借鉴 PlotPilot 张力心电图，量化叙事节奏）
+    _check_tension_score(text, result)
+
+    # 13. 标准文风禁词扫描（critical，对接 STANDARD_WRITING_STYLE_PROMPT 禁词清单）
+    _check_style_forbidden_words(text, result)
+
     return result
 
 
@@ -815,4 +821,209 @@ def validate_chapter_with_bible(content: str, bible: Optional[Dict] = None) -> V
         kept_ids = set(id(i) for i in hard_issues[:8])
         result.issues = [i for i in result.issues if i.category not in hard_categories or id(i) in kept_ids]
 
+    return result
+
+
+# ===== 借鉴 PlotPilot：张力评分 + 标准文风禁词扫描 =====
+
+# 张力相关词库（用于量化叙事节奏，借鉴 PlotPilot 张力心电图）
+_TENSION_HIGH_WORDS = [
+    '冲', '杀', '战', '敌', '危', '险', '怒', '吼', '惊', '惧', '死', '伤', '血', '剑', '刀',
+    '逃', '追', '拦', '挡', '攻', '守', '破', '裂', '爆', '震', '撞', '摔', '砸', '抢',
+    '质问', '逼', '威胁', '陷阱', '阴谋', '背叛', '偷袭', '围攻', '绝境', '危机', '冲突',
+]
+_TENSION_LOW_WORDS = [
+    '歇', '睡', '坐', '茶', '饭', '笑', '闲', '漫步', '回想', '沉思', '独坐', '静',
+    '风景', '阳光', '微风', '平静', '安宁', '闲聊', '寒暄',
+]
+# 对话密度相关
+_DIALOGUE_PATTERN = re.compile(r'[""「」『』].*?[""「」『』]')
+# 短句标点（。！？）
+_SENTENCE_END_PATTERN = re.compile(r'[。！？]')
+
+
+def _check_tension_score(text: str, result: ValidationResult):
+    """张力评分（借鉴 PlotPilot 张力心电图）。
+    基于冲突词密度、对话密度、短句密度综合评分 0-100。
+    低于 30 触发 warning（节奏过平），高于 90 触发 info（节奏过紧）。
+    评分写入 stats 供前端展示张力曲线。"""
+    if not text or len(text) < 100:
+        return
+
+    char_count = len(text)
+    # 冲突词密度
+    high_count = sum(text.count(w) for w in _TENSION_HIGH_WORDS)
+    low_count = sum(text.count(w) for w in _TENSION_LOW_WORDS)
+    # 对话密度（引号包裹的文本占比）
+    dialog_matches = _DIALOGUE_PATTERN.findall(text)
+    dialog_chars = sum(len(m) for m in dialog_matches)
+    dialog_ratio = dialog_chars / char_count if char_count else 0
+    # 短句密度（句号/问号/感叹号分割，短句占比）
+    sentences = [s.strip() for s in _SENTENCE_END_PATTERN.split(text) if s.strip()]
+    short_sentences = sum(1 for s in sentences if len(s) <= 20)
+    short_ratio = short_sentences / len(sentences) if sentences else 0
+
+    # 综合评分：冲突词权重 40% + 对话密度 30% + 短句节奏 30%
+    high_score = min(40, high_count * 2)  # 每5个冲突词得10分，上限40
+    dialog_score = min(30, dialog_ratio * 100)  # 对话占比30%得满分
+    rhythm_score = min(30, short_ratio * 50)  # 短句占比60%得满分
+    tension = int(high_score + dialog_score + rhythm_score)
+
+    result.stats['tension_score'] = tension
+    result.stats['tension_high_words'] = high_count
+    result.stats['tension_low_words'] = low_count
+    result.stats['dialog_ratio'] = round(dialog_ratio, 2)
+    result.stats['short_sentence_ratio'] = round(short_ratio, 2)
+
+    if tension < 30:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='张力过低',
+            pattern='张力评分',
+            count=tension,
+            position=f'张力 {tension}/100',
+            suggestion=f'本章张力过低（{tension}分），冲突词{high_count}个、对话占比{int(dialog_ratio*100)}%。建议增加冲突/对抗/悬念，避免纯叙述堆砌。',
+        ))
+    elif tension > 90:
+        result.add(ValidationIssue(
+            severity='info',
+            category='张力过高',
+            pattern='张力评分',
+            count=tension,
+            position=f'张力 {tension}/100',
+            suggestion='本章张力过高，全程紧绷易疲劳。建议插入喘息段（对话/景物/回忆）调节节奏。',
+        ))
+
+
+# 标准文风禁词清单（与 app.py STANDARD_WRITING_STYLE_PROMPT 保持一致）
+_STYLE_FORBIDDEN_WORDS = [
+    '一股', '一抹', '不由得', '不禁', '随即', '旋即', '与此同时', '颇为', '甚为', '极为',
+    '毫无疑问', '毋庸置疑', '不言而喻', '深吸一口气', '眼中闪过一丝', '心中暗想',
+    '心念电转', '若有所思', '不知不觉间', '转眼间', '恍然大悟', '面无表情',
+    '淡漠', '漠然', '眸子', '嘴角微微上扬', '如同', '宛如', '犹如', '周身', '周遭',
+    '气息', '威压', '那道身影', '说话间', '话音未落', '当即', '顿时', '瞬时',
+    '因此', '然而', '显而易见', '由此可见', '总而言之', '综上所述',
+    '震惊', '复杂', '激动',
+]
+
+
+def _check_style_forbidden_words(text: str, result: ValidationResult):
+    """标准文风禁词扫描（critical 级，对接 STANDARD_WRITING_STYLE_PROMPT 禁词清单）。
+    命中即报 critical，强制作者规避 AI 常用词和书面化表达。"""
+    if not text:
+        return
+    hits = {}
+    for word in _STYLE_FORBIDDEN_WORDS:
+        cnt = text.count(word)
+        if cnt > 0:
+            hits[word] = cnt
+    if not hits:
+        return
+    # 按命中次数排序，取前 10 个展示
+    sorted_hits = sorted(hits.items(), key=lambda x: -x[1])[:10]
+    for word, cnt in sorted_hits:
+        result.add(ValidationIssue(
+            severity='critical',
+            category='文风禁词',
+            pattern=word,
+            count=cnt,
+            position=f'出现 {cnt} 次',
+            suggestion=f'「{word}」在标准文风禁词清单中，禁止使用。请用动作/物象/对白替代。',
+        ))
+
+
+# ===== 借鉴 PlotPilot：文风指纹漂移检测（统计特征简化版） =====
+
+def compute_style_fingerprint(text: str) -> Dict[str, float]:
+    """计算文本的文风指纹（统计特征向量）。
+    特征：平均句长、短句占比、对话占比、形容词密度、动作动词密度、标点密度。
+    用于跨章节对比文风是否漂移。"""
+    if not text or len(text) < 100:
+        return {}
+    char_count = len(text)
+    # 句子分割
+    sentences = [s.strip() for s in _SENTENCE_END_PATTERN.split(text) if s.strip()]
+    sent_count = len(sentences) or 1
+    sent_lengths = [len(s) for s in sentences]
+    avg_sent_len = sum(sent_lengths) / sent_count
+    short_sent_ratio = sum(1 for l in sent_lengths if l <= 20) / sent_count
+    long_sent_ratio = sum(1 for l in sent_lengths if l > 70) / sent_count
+    # 对话占比
+    dialog_matches = _DIALOGUE_PATTERN.findall(text)
+    dialog_chars = sum(len(m) for m in dialog_matches)
+    dialog_ratio = dialog_chars / char_count
+    # 标点密度（，。！？；：）
+    punct_count = sum(text.count(p) for p in '，。！？；：')
+    punct_density = punct_count / char_count
+    # 形容词密度（简化：常见形容词后缀）
+    adj_patterns = ['的', '地', '美丽', '英俊', '强大', '神秘', '古老', '深邃', '明亮', '黑暗']
+    adj_count = sum(text.count(a) for a in adj_patterns)
+    adj_density = adj_count / char_count
+    # 动作动词密度
+    verb_count = sum(text.count(v) for v in _TENSION_HIGH_WORDS[:20])  # 复用张力词库前20个
+    verb_density = verb_count / char_count
+    return {
+        'avg_sent_len': round(avg_sent_len, 1),
+        'short_sent_ratio': round(short_sent_ratio, 3),
+        'long_sent_ratio': round(long_sent_ratio, 3),
+        'dialog_ratio': round(dialog_ratio, 3),
+        'punct_density': round(punct_density, 3),
+        'adj_density': round(adj_density, 4),
+        'verb_density': round(verb_density, 4),
+    }
+
+
+def detect_style_drift(current_fp: Dict[str, float], baseline_fp: Dict[str, float]) -> Optional[Dict]:
+    """检测当前章文风指纹是否偏离基准（前几章平均指纹）。
+    返回漂移报告 dict 或 None（无显著漂移）。
+    阈值：任一特征偏差超过 30% 视为漂移。"""
+    if not current_fp or not baseline_fp:
+        return None
+    drifts = []
+    for key in ['avg_sent_len', 'short_sent_ratio', 'dialog_ratio', 'punct_density', 'adj_density', 'verb_density']:
+        cur = current_fp.get(key, 0)
+        base = baseline_fp.get(key, 0)
+        if base == 0:
+            continue
+        diff_ratio = abs(cur - base) / base
+        if diff_ratio > 0.3:  # 偏差超 30%
+            drifts.append({
+                'feature': key,
+                'baseline': base,
+                'current': cur,
+                'drift_ratio': round(diff_ratio, 2),
+            })
+    if not drifts:
+        return None
+    return {
+        'drifted': True,
+        'drift_count': len(drifts),
+        'drifts': drifts,
+        'suggestion': f'文风漂移检测：{len(drifts)} 项特征偏离基准（{"、".join(d["feature"] for d in drifts[:3])}），建议检查是否切换了叙述视角或语气。',
+    }
+
+
+def validate_chapter_with_drift(content: str, baseline_fp: Optional[Dict[str, float]] = None) -> ValidationResult:
+    """带文风漂移检测的章节校验（扩展入口）。
+    baseline_fp: 前几章的文风指纹基准（由 app.py 计算并传入）。
+    若提供基准且检测到漂移，追加 warning。"""
+    result = validate_chapter(content)
+    if not content or not baseline_fp:
+        return result
+    try:
+        current_fp = compute_style_fingerprint(content)
+        result.stats['style_fingerprint'] = current_fp
+        drift = detect_style_drift(current_fp, baseline_fp)
+        if drift:
+            result.stats['style_drift'] = drift
+            result.add(ValidationIssue(
+                severity='warning',
+                category='文风漂移',
+                pattern='文风指纹',
+                count=drift['drift_count'],
+                position=f'{drift["drift_count"]} 项特征偏离',
+                suggestion=drift['suggestion'],
+            ))
+    except Exception:
+        pass
     return result
