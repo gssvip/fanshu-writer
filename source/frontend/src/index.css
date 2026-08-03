@@ -1234,6 +1234,18 @@ textarea{resize:vertical;line-height:1.8}
 .skill-pack-collapsible .skill-pack-checkbox-list{padding:0 10px 8px}
 .skill-pack-collapsible .skill-pack-info-list{padding:0 10px 8px;margin-bottom:0}
 
+/* 【三类无污染】分组技能包选择器：构思/文风/审查三组分区展示 */
+.skill-pack-grouped{display:flex;flex-direction:column;gap:8px;max-height:none;overflow-y:auto;padding:8px 10px}
+.skill-pack-group{background:var(--bg-secondary);border-radius:var(--radius-sm);padding:6px 8px;border-left:3px solid var(--border-color)}
+.skill-pack-group:nth-child(1){border-left-color:#4a90d9}  /* 构思类-蓝 */
+.skill-pack-group:nth-child(2){border-left-color:#d97706}  /* 文风类-橙 */
+.skill-pack-group:nth-child(3){border-left-color:#059669}  /* 审查类-绿 */
+.skill-pack-group-header{font-size:12px;font-weight:600;color:var(--text-primary);margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.skill-pack-group-hint{font-size:10px;color:var(--text-muted);font-weight:400}
+.skill-pack-group-items{display:flex;flex-wrap:wrap;gap:5px}
+.skill-pack-group-items .skill-pack-checkbox-item{font-size:11px;padding:4px 8px}
+.skill-pack-collapsible .skill-pack-grouped{padding:0 10px 8px}
+
 .btn-primary-sm{padding:6px 14px;font-size:13px;font-weight:600;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer}
 .btn-primary-sm:hover{background:var(--accent-hover)}
 .btn-primary-sm:disabled{opacity:0.5;cursor:not-allowed}

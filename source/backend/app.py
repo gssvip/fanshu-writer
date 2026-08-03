@@ -262,6 +262,11 @@ class Book(db.Model):
     total_volumes = db.Column(db.Integer, default=10)
     # 小说风格流派（JSON 数组字符串，最多3种叠加）：爽文流/虐文流/系统流等
     novel_styles = db.Column(db.Text, default='[]')
+    # 技能包三类划分：构思类/文风类/审查类 各自独立的 ID 列表（JSON 数组字符串）
+    # 三类在各创作阶段无污染隔离：构思类→大纲/规划，文风类→正文生成，审查类→去AI味/一致性
+    master_skill_ids = db.Column(db.Text, default='[]')  # 构思类技能包
+    style_skill_ids = db.Column(db.Text, default='[]')   # 文风类技能包（通常选1个）
+    review_skill_ids = db.Column(db.Text, default='[]')  # 审查类技能包
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     metadata_json = db.Column(db.Text, default='{}')
@@ -280,6 +285,9 @@ class Book(db.Model):
             'status': self.status, 'target_words': self.target_words,
             'total_volumes': self.total_volumes if self.total_volumes else 10,
             'novel_styles': json.loads(self.novel_styles or '[]'),
+            'master_skill_ids': json.loads(self.master_skill_ids or '[]'),
+            'style_skill_ids': json.loads(self.style_skill_ids or '[]'),
+            'review_skill_ids': json.loads(self.review_skill_ids or '[]'),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'metadata': json.loads(self.metadata_json or '{}')
@@ -598,6 +606,12 @@ class SkillPack(db.Model):
     icon = db.Column(db.String(10), default='📦')
     github_source = db.Column(db.String(500), default='')  # GitHub 仓库地址，用于拉取更新
     github_synced_at = db.Column(db.DateTime, nullable=True)  # 上次同步时间
+    # 技能包三类划分：master=构思类 / style=文风类 / review=审查类
+    category = db.Column(db.String(20), default='master')
+    # 文风类专属：题材目标（fantasy/urban/mystery/history...），构思/审查类为空
+    genre_target = db.Column(db.String(50), default='')
+    # 同类多包时的注入优先级（数字小的先注入），默认100
+    priority = db.Column(db.Integer, default=100)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     def to_dict(self):
@@ -609,6 +623,9 @@ class SkillPack(db.Model):
             'prompts': json.loads(self.prompts_json or '{}'),
             'is_builtin': self.is_builtin, 'icon': self.icon,
             'github_source': self.github_source or '',
+            'category': self.category or 'master',
+            'genre_target': self.genre_target or '',
+            'priority': self.priority if self.priority is not None else 100,
             'github_synced_at': self.github_synced_at.isoformat() if self.github_synced_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
@@ -2641,7 +2658,8 @@ def ai_import_recognize(book_id):
     samples_text = '\n\n'.join(samples)[:4000]
 
     # P2-10: 修复幽灵key——'character_design'/'world_setting' 不是真实prompt_key，替换为内置存在的key
-    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'master_outline', 'tomato_character', 'tomato_setting'], mode='agent')
+    # 【三类无污染】AI总创作属于构思阶段：只注入构思类（master）技能包
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['lock_facts', 'master_outline', 'tomato_character', 'tomato_setting'], mode='agent')
 
     # 识别哪些维度为空（仅填充空维度，避免覆盖已有内容）
     dim_status = {
@@ -2855,10 +2873,11 @@ def ai_anti_forget_check(book_id):
                 except (json.JSONDecodeError, ValueError):
                     dyn_ctx += f'【{fk}】\n{v[:600]}\n\n'
 
-    skill_note = _get_skill_prompts(
-        skill_pack_ids,
+    # 【三类无污染】一致性检查属于审查阶段：只注入审查类（review）技能包
+    skill_note = _get_skill_prompts_by_category(
+        skill_pack_ids, 'review',
         ['consistency_check', 'lock_facts', 'narrative_debt', 'foreshadow_register', 'character_cognition'],
-        max_per_prompt=1200, mode='agent'
+        mode='agent'
     )
 
     # 构建维度全景上下文
@@ -4030,6 +4049,74 @@ SEED_SKILL_PACKS = [
          'anti_ai_audit': '你是反AI散文审计师。写完场景后跑一遍9种LLM模式检测：\n【模式1灵魂丢失(最重要)】散文没有AI模式但没有声音依然是死的。信号：每句长度结构一样/无观点只中性报道/不承认不确定/无幽默无锋芒无个性/像百科全书叙述者。注入灵魂：给POV角色观点别报道事实让他们反应；变化节奏短促有力混慢悠长句；让一点混乱进来跑题旁白半成型想法是人的。\n【模式2 AI词汇】必删：profound/deeply/vibrant/pivotal/crucial/key/landscape(抽象)/testament to/embodiment of/highlight/underscore/showcase/intricate/complex(泛用)/tapestry(永远不用)/delve/navigate(抽象)/foster/cultivate(抽象)/realm(叙述填充)/seemed to/appeared to。规则：评价性形容词删掉后不丢信息就删。\n【模式3现在分词堆叠】每个-ing从句给句子加假深度。每句最多1个-ing分词短语，2个警告，3个全删。\n【模式4三段式Rule of Three】LLM强行凑三组。例外：第三元素是惊喜/反转/颠覆前两者才有效。\n【模式5破折号过度】用于真正打断/突兀中断/强调旁白，不作通用标点。每页最多1-2个，超过换逗号句号冒号括号。永远不堆叠。\n【模式6制造断奏戏剧】一句短促强调有力，三四句连发虚假。每5-6段动作最多1句短冲击句。\n【模式7优雅变体】LLM轮换同义词避重复。在小说里刻意重复是风格工具，强制变体是信号。重复专有名对读者是正常且安心的。\n【模式8格言公式】LLM把普通断言变可复用格言。"Silence is the language of fear"→"The silence after that night tasted different."\n【模式9意义膨胀】不要加句子解释读者刚读的内容有多重要。"What happened next would change their lives forever"→写出场景让读者自己判断。\n【审计流程】1)数-ing分词每段超2个删 2)搜—每页超2个替换最弱 3)搜三联第三元素惊喜吗不是删一个 4)搜AI词汇换具体 5)搜3+连续短句合并变化 6)搜格言删或具体化 7)问它有脉搏吗POV角色有具体意外反应还是只有预期反应。',
          'chapter_structure': '你是Martin风格章节结构师。每章按模板构建：\n【开篇1-3段】in medias res或接近处；确立情绪与场景；引入本章赌注。开篇类型：in medias res/潜在张力(暴风前平静)/隐含问题/迷失感。\n【主体】交替场景/反思；闪回只在感官触发驱动时使用(气味/词/画面唤起记忆)；POV角色想要某物——并遇到障碍。每段是一个张力单位不是话题单位，每段必须推进信息/情感/疑虑。测试：每段开头到结尾有什么变化？没变化就是废段。\n【收尾】情况改变(不一定变好)；钩子：开放问题/揭示/新威胁。收尾类型：开放问题/揭示/状态改变/安静的恐惧。\n【叙事声音】永远第三人称有限视角(除非明确选择其他)。叙述者只看到POV角色看到的，同场景内不切视角。叙述者非全知也非中性：一切经POV角色个性/偏见/历史过滤——战士与德鲁伊对战斗描述不同。POV纪律：POV角色不知道的读者不知道，POV角色误读的读者一同误读。\n【时态】主线叙事→叙事现在时(即时感)；闪回记忆→简单过去时(斜体视觉对比)；状态描写习惯背景→过去进行时或简单过去时。\n【对话】必须推进故事或塑造角色否则删。用said中性标签不用exclaimed/hissed/barked。用对话周围动作显示谁在说话比标签更好。沉默是对话的一部分。潜台词——角色没说的往往比说的更重要。自然主义=打断/不完整句/deflect。\n【场景描写】通过POV角色感官描写不客观照相。初见vs熟见不同。一两个精确细节胜过十个泛泛的。',
      }, ensure_ascii=False)},
+
+    # ==== 官方题材文风包（style 类）：各题材正文文风锚定，与「玄幻小说文风」配套 ====
+    # 三类无污染：仅注入正文生成阶段（_get_skill_prompts_by_category 'style'），不污染大纲/审查阶段
+
+    {'name': '都市异能文风', 'description': '都市异能正文文风：现代口语+爽快节奏+异能展示与日常切换，番茄都市异能专用文风锚定',
+     'genre': 'urban_fantasy', 'book_type': 'novel', 'icon': '⚡',
+     'category': 'style', 'genre_target': 'urban_fantasy', 'priority': 20,
+     'stage_keys': json.dumps(['draft'], ensure_ascii=False),
+     'workflow': json.dumps([
+         {'step': 1, 'name': '文风锚定', 'desc': '都市异能7维文风：现代口语+爽快节奏', 'prompt_key': 'style_anchor'},
+         {'step': 2, 'name': '正文写作', 'desc': '按文风铁律生成正文，现代场景与异能切换自然', 'prompt_key': 'genre_style'},
+     ], ensure_ascii=False),
+     'prompts': json.dumps({
+         'style_anchor': '你是都市异能文风锚定师。生成7维文风速查表：1)整体风格(现代/口语化/爽快) 2)长短句比例(短句30%-50%每句1-20字，中句30%-40%每句20-35字，长句≤20%每句35-70字) 3)对话占比(单章30%-60%，现代口语+网络用语适度) 4)叙述规则(异能展示服务剧情，不堆设定) 5)信息推进(对话+动作双驱动，异能效果靠画面感) 6)章法(开头进事件，结尾留悬念或打脸) 7)禁用(古风词汇/文绉绉表达/大段心理独白)。',
+         'genre_style': '你是都市异能小说写手。严格遵循以下文风铁律：\n【核心风格】现代、口语、爽快。短句密集，节奏明快。对白推动剧情，异能展示靠画面。少抒情，少堆形容词，少大段心理。用动作、对话和异能效果表达情绪。\n【长短句比例】短句30%-50%(1-20字)用于对话/动作/反应；中句30%-40%(20-35字)用于交代背景/异能规则；长句≤20%(35-70字)只用于复杂异能场面。超70字必须拆开。\n【对话占比】单章30%-60%。现代口语，适度网络用语("卧槽/牛逼/拉倒/得了吧")，但不过度。每轮对白推进一个信息点。\n【叙述规则】异能展示服务剧情不堆设定。日常场景与异能场景切换自然，靠"事件触发"过渡而非旁白解释。人物情绪用动作体现(攥拳/咬牙/后退一步)。\n【章法】开头尽快进入事件(冲突/异能触发/对话)。中段用对白和动作推进。结尾落在新危机/新异能觉醒/新反派登场。不用空泛总结收尾。\n【禁用倾向】古风词汇(汝/尔/且慢/此乃)；文绉绉表达(不禁/缓缓/淡淡)；大段心理独白；连续堆形容词；总结性升华句子。\n【都市感】场景要有现代感(地铁/写字楼/便利店/夜市)，异能要融入日常(隐于市/打工异能者/异能事务所)。\n输出2400字±100正文。',
+     }, ensure_ascii=False)},
+
+    {'name': '悬疑文风', 'description': '悬疑正文文风：冷峻克制+信息差控制+伏笔精密埋设，盐选/起点悬疑专用文风锚定',
+     'genre': 'mystery', 'book_type': 'novel', 'icon': '🔍',
+     'category': 'style', 'genre_target': 'mystery', 'priority': 20,
+     'stage_keys': json.dumps(['draft'], ensure_ascii=False),
+     'workflow': json.dumps([
+         {'step': 1, 'name': '文风锚定', 'desc': '悬疑7维文风：冷峻+信息差+伏笔', 'prompt_key': 'style_anchor'},
+         {'step': 2, 'name': '正文写作', 'desc': '按文风铁律生成正文，信息释放有节奏', 'prompt_key': 'genre_style'},
+     ], ensure_ascii=False),
+     'prompts': json.dumps({
+         'style_anchor': '你是悬疑文风锚定师。生成7维文风速查表：1)整体风格(冷峻/克制/留白) 2)长短句比例(短句40%-50%制造紧张感，中句30%-40%交代线索，长句≤10%只用于复杂推理) 3)对话占比(单章40%-70%，对话即信息博弈) 4)叙述规则(只给必要细节，留白制造悬念) 5)信息推进(每章释放1-2条线索，埋1-2个伏笔) 6)章法(开头进事件，结尾留钩子或反转) 7)禁用(情绪直述/全知视角剧透/大段心理分析)。',
+         'genre_style': '你是悬疑小说写手。严格遵循以下文风铁律：\n【核心风格】冷峻、克制、留白。短句密集制造紧张感。对话是信息博弈。叙述只给必要细节，留白制造悬念。少抒情，少心理分析，少全知剧透。\n【长短句比例】短句40%-50%(1-20字)用于关键反应/疑问/动作；中句30%-40%(20-35字)用于交代线索/询问；长句≤10%(35-70字)只用于复杂推理链。超70字必须拆开。\n【对话占比】单章40%-70%。对话即博弈，每句话都可能藏线索或误导。每轮对白只释放一个信息点。沉默和停顿是对话的一部分。\n【叙述规则】只给必要细节，不堆氛围。线索靠角色发现而非旁白点明。情绪用动作体现(手指敲桌/目光停留/后仰)。场景描写先给位置，再给关键物，再进入行动。\n【信息释放】每章释放1-2条线索，埋1-2个伏笔。线索释放有节奏，不一次性倾泻。伏笔埋设自然(角色顺口提及/物件特写/异常反应)。\n【章法】开头进入事件(发现/询问/冲突)。中段用对话和发现推进。结尾落在反转/新线索/新疑问。不用总结收尾。\n【禁用倾向】情绪直述(震惊/恐惧/复杂)；全知视角剧透；大段心理分析；连续堆形容词；总结性升华句子；"仿佛/宛如/不由得"等AI味词。\n【悬疑感】靠信息缺口、角色反常、物件异常制造悬念，不靠氛围渲染。\n输出2400字±100正文。',
+     }, ensure_ascii=False)},
+
+    {'name': '历史文风', 'description': '历史正文文风：半文半白+权谋对话+史感节奏，起点历史/架空历史专用文风锚定',
+     'genre': 'history', 'book_type': 'novel', 'icon': '🏯',
+     'category': 'style', 'genre_target': 'history', 'priority': 20,
+     'stage_keys': json.dumps(['draft'], ensure_ascii=False),
+     'workflow': json.dumps([
+         {'step': 1, 'name': '文风锚定', 'desc': '历史7维文风：半文半白+权谋对话', 'prompt_key': 'style_anchor'},
+         {'step': 2, 'name': '正文写作', 'desc': '按文风铁律生成正文，史感与可读性平衡', 'prompt_key': 'genre_style'},
+     ], ensure_ascii=False),
+     'prompts': json.dumps({
+         'style_anchor': '你是历史文风锚定师。生成7维文风速查表：1)整体风格(沉稳/厚重/半文半白) 2)长短句比例(短句20%-30%用于决策/判断，中句40%-50%用于谋略交代，长句20%-30%用于场面/礼制说明) 3)对话占比(单章40%-60%，对话即权谋博弈) 4)叙述规则(礼制/称谓/官制准确，不堆史料) 5)信息推进(对话+事件双驱动) 6)章法(开头进事件，结尾留变数) 7)禁用(现代网络用语/白话直述/大段史料科普)。',
+         'genre_style': '你是历史小说写手。严格遵循以下文风铁律：\n【核心风格】沉稳、厚重、半文半白。句式有古韵但可读。对话即权谋博弈。叙述克制，礼制准确。少现代白话，少抒情堆砌，少大段史料科普。\n【长短句比例】短句20%-30%(1-20字)用于决策/判断/反应；中句40%-50%(20-35字)用于谋略交代/对话；长句20%-30%(35-70字)只用于场面/礼制/诏令说明。超70字必须拆开。\n【对话占比】单章40%-60%。对话即博弈，每句藏机锋。称谓准确(陛下/大人/卿/某)。每轮对白推进一个信息点。沉默和留白是权谋的一部分。\n【叙述规则】礼制/称谓/官制准确(查证后再写)。不堆史料，史料融入对话和事件。情绪用动作体现(拂袖/按剑/敛目/顿首)。场面描写先给方位，再给人物位次，再进入行动。\n【信息推进】每章推进一项(朝局/战局/人物命运)。谋略靠对话和事件展开，不靠旁白解释。\n【章法】开头进入事件(朝会/军报/密谈)。中段用对话和行动推进。结尾落在变数/反转/新危机。不用总结收尾。\n【禁用倾向】现代网络用语(卧槽/牛逼/拉倒)；白话直述(他很高兴/她很生气)；大段史料科普；连续堆形容词；总结性升华句子。\n【史感】半文半白(用"乃/遂/因/故/且"适度)，但保持可读性。称谓/官制/礼制必须准确。\n输出2400字±100正文。',
+     }, ensure_ascii=False)},
+
+    {'name': '科幻文风', 'description': '科幻正文文风：冷静硬朗+技术细节+设定融入叙事，番茄科幻/硬科幻专用文风锚定',
+     'genre': 'scifi', 'book_type': 'novel', 'icon': '🚀',
+     'category': 'style', 'genre_target': 'scifi', 'priority': 20,
+     'stage_keys': json.dumps(['draft'], ensure_ascii=False),
+     'workflow': json.dumps([
+         {'step': 1, 'name': '文风锚定', 'desc': '科幻7维文风：冷静+技术+设定融入', 'prompt_key': 'style_anchor'},
+         {'step': 2, 'name': '正文写作', 'desc': '按文风铁律生成正文，技术不堆砌', 'prompt_key': 'genre_style'},
+     ], ensure_ascii=False),
+     'prompts': json.dumps({
+         'style_anchor': '你是科幻文风锚定师。生成7维文风速查表：1)整体风格(冷静/硬朗/技术感) 2)长短句比例(短句25%-40%用于反应/判断，中句40%-50%用于技术交代，长句≤20%只用于复杂设定) 3)对话占比(单章30%-50%，对话推进剧情) 4)叙述规则(设定融入叙事不堆砌) 5)信息推进(对话+事件+技术展示三驱动) 6)章法(开头进事件，结尾留新发现/新危机) 7)禁用(古风词汇/抒情堆砌/大段技术科普)。',
+         'genre_style': '你是科幻小说写手。严格遵循以下文风铁律：\n【核心风格】冷静、硬朗、技术感。短句密集，节奏明快。对话推动剧情，技术融入叙事。少抒情，少堆形容词，少大段技术科普。\n【长短句比例】短句25%-40%(1-20字)用于反应/判断/动作；中句40%-50%(20-35字)用于技术交代/对话；长句≤20%(35-70字)只用于复杂设定说明。超70字必须拆开。\n【对话占比】单章30%-50%。对话推进剧情，技术细节靠对话和操作展示。每轮对白推进一个信息点。\n【叙述规则】设定融入叙事，不堆砌技术名词。技术细节靠角色操作和效果展示(而非旁白科普)。情绪用动作体现(盯着屏幕/手指悬在按钮上/后退一步)。\n【信息推进】每章推进一项(技术突破/危机/发现)。设定靠事件展开，不靠旁白解释。\n【章法】开头进入事件(警报/发现/操作)。中段用对话和行动推进。结尾落在新发现/新危机/技术反转。不用总结收尾。\n【禁用倾向】古风词汇；抒情堆砌；大段技术科普；连续堆形容词；总结性升华句子；"仿佛/宛如/不由得"等AI味词。\n【科幻感】技术细节要有依据(物理/生物/计算)，融入日常操作。场景有未来感但不堆砌术语。\n输出2400字±100正文。',
+     }, ensure_ascii=False)},
+
+    {'name': '言情文风', 'description': '言情正文文风：细腻克制+情感拉扯+对白潜台词，女频言情/甜宠专用文风锚定',
+     'genre': 'romance', 'book_type': 'novel', 'icon': '💕',
+     'category': 'style', 'genre_target': 'romance', 'priority': 20,
+     'stage_keys': json.dumps(['draft'], ensure_ascii=False),
+     'workflow': json.dumps([
+         {'step': 1, 'name': '文风锚定', 'desc': '言情7维文风：细腻+潜台词+情感拉扯', 'prompt_key': 'style_anchor'},
+         {'step': 2, 'name': '正文写作', 'desc': '按文风铁律生成正文，情感靠细节传递', 'prompt_key': 'genre_style'},
+     ], ensure_ascii=False),
+     'prompts': json.dumps({
+         'style_anchor': '你是言情文风锚定师。生成7维文风速查表：1)整体风格(细腻/克制/留白) 2)长短句比例(短句30%-45%用于反应/对话，中句35%-45%用于情感描写，长句≤20%只用于复杂心理) 3)对话占比(单章40%-65%，对话即情感博弈) 4)叙述规则(情感靠细节传递不直述) 5)信息推进(对话+微表情+小动作三驱动) 6)章法(开头进场景，结尾留情感钩子) 7)禁用(情绪直述/工业糖精/大段心理分析)。',
+         'genre_style': '你是言情小说写手。严格遵循以下文风铁律：\n【核心风格】细腻、克制、留白。短句密集，情感靠细节。对话即情感博弈，潜台词丰富。少直述情绪，少工业糖精，少大段心理分析。\n【长短句比例】短句30%-45%(1-20字)用于反应/对话/微表情；中句35%-45%(20-35字)用于情感描写/场景；长句≤20%(35-70字)只用于复杂心理。超70字必须拆开。\n【对话占比】单章40%-65%。对话即博弈，每句藏潜台词。沉默和停顿是情感的一部分。每轮对白推进一个情感信息点。\n【叙述规则】情感靠细节传递(手指蜷缩/目光闪躲/嘴角抿紧)，不直述(他很难过/她很心动)。情绪用微表情和小动作体现。场景描写先给氛围，再给人物位置，再进入互动。\n【信息推进】每章推进一项情感(靠近/疏远/误会/心动)。情感靠事件和细节展开，不靠旁白解释。\n【章法】开头进入场景(相遇/冲突/独处)。中段用对话和互动推进。结尾落在情感钩子(误会/心动/疏远/反转)。不用总结收尾。\n【禁用倾向】情绪直述(他很爱她/她心动了)；工业糖精(强行甜/无脑宠)；大段心理分析；连续堆形容词；总结性升华句子；"仿佛/宛如/不由得"等AI味词。\n【言情感】情感拉扯靠潜台词和细节，不靠直球表白。甜度与虐度配比自然。\n输出2400字±100正文。',
+     }, ensure_ascii=False)},
 ]
 
 def seed_skill_packs():
@@ -4044,7 +4131,33 @@ def seed_skill_packs():
             db.session.delete(pack)
             del existing_packs[name]
             removed = True
+    # 【三类无污染】内置包分类映射表：name -> (category, genre_target, priority)
+    # category: master=构思类（大纲/规划/设定） / style=文风类（题材正文风格） / review=审查类（去AI味/一致性）
+    # genre_target: 文风类专属题材标签（fantasy/urban_fantasy/mystery/history/scifi/romance/military/light_novel...）
+    # priority: 同类多包时的注入优先级（数字小的先注入），默认100
+    _CATEGORY_MAP = {
+        # ===== 文风类（style）：题材正文风格锚定，按 priority 排序注入正文阶段 =====
+        '玄幻小说文风':      ('style', 'fantasy',        10),  # 玄幻文风，最高优先
+        # ===== 审查类（review）：去AI味/一致性/审校 =====
+        '去AI味儿改稿心法':  ('review', '',  10),
+        'AI责编精审套装':    ('review', '',  20),
+        'hum去 AI 味':       ('review', '',  30),
+        '说人话':            ('review', '',  40),
+        # ===== 构思类（master）：大纲/规划/设定/全流程方法论（默认） =====
+        # 其余全部归 master，priority 默认100
+    }
     for sp in SEED_SKILL_PACKS:
+        # 三类无污染：每个内置包都必须有 category（默认 master 兼容老配置）
+        # 优先使用 _CATEGORY_MAP 覆盖，否则用 sp 自带字段，否则默认 master
+        if sp['name'] in _CATEGORY_MAP:
+            cat, gt, pri = _CATEGORY_MAP[sp['name']]
+            sp_category = cat
+            sp_genre_target = gt
+            sp_priority = pri
+        else:
+            sp_category = sp.get('category', 'master')
+            sp_genre_target = sp.get('genre_target', '')
+            sp_priority = sp.get('priority', 100)
         if sp['name'] in existing_packs:
             # 更新已存在内置技能包的提示词（同步字数等变更）
             pack = existing_packs[sp['name']]
@@ -4058,13 +4171,20 @@ def seed_skill_packs():
             if gh and pack.github_source != gh:
                 pack.github_source = gh
                 updated = True
+            # 【三类无污染】同步 category / genre_target / priority 字段（强制覆盖，确保旧数据迁移）
+            if (pack.category or 'master') != sp_category or (pack.genre_target or '') != sp_genre_target or (pack.priority if pack.priority is not None else 100) != sp_priority:
+                pack.category = sp_category
+                pack.genre_target = sp_genre_target
+                pack.priority = sp_priority
+                updated = True
             continue
         pack = SkillPack(
             name=sp['name'], description=sp['description'], genre=sp['genre'],
             book_type=sp['book_type'], stage_keys_json=sp['stage_keys'],
             workflow_json=sp['workflow'], prompts_json=sp['prompts'],
             is_builtin=True, icon=sp.get('icon', '📦'),
-            github_source=sp.get('github_source', '')
+            github_source=sp.get('github_source', ''),
+            category=sp_category, genre_target=sp_genre_target, priority=sp_priority,
         )
         db.session.add(pack)
         added = True
@@ -5788,7 +5908,8 @@ def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_in
     """章节计划前置（chapter_plan Agent）：在写正文前生成 200 字以内的本章三段式计划。
     【P0弊端5修复】注入当前卷纲的 nodes 列表，让章纲对齐卷纲节点节奏。
     返回计划文本，失败时返回空串（不阻塞正文生成）。"""
-    plan_skill_note = _get_skill_prompts(skill_pack_ids, ['chapter_plan'], max_per_prompt=800, mode='single')
+    # 【三类无污染】chapter_plan 前置规划属于构思阶段：只注入构思类（master）技能包
+    plan_skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['chapter_plan'], mode='single')
     vol_label = f'第{vol_index}卷「{vol_chapter.title}」' if vol_chapter else '当前卷'
 
     # ===== 【P0弊端5修复】提取当前卷纲 nodes，定位本章对应的节点 =====
@@ -6283,7 +6404,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     plan_section = f'【本章计划】（由 chapter_plan Agent 生成，请严格遵循）\n{chapter_plan}' if chapter_plan else ''
 
     # ===== 6. 技能包提示词 =====
-    skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_chapter', 'tomato_deai', 'tomato_diagnosis', 'write_chapter', 'draft_writing', 'chapter_plan'])
+    # 【三类无污染】正文生成阶段：只注入文风类（style）技能包，不注入构思/审查类
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'style')
 
     # ===== 7. 智能默认指令（#11）=====
     smart_instruction = _build_smart_instruction(instruction, last_chapter, current_chapter_num)
@@ -6485,7 +6607,8 @@ def ai_continue(book_id):
         review_notes = review_notes_prefix
         deai_status = 'skipped'  # skipped / success / failed
         if skill_pack_ids:
-            deai_skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_deai'], max_per_prompt=1200, mode='agent')
+            # 【三类无污染】去AI味属于审查阶段：只注入审查类（review）技能包
+            deai_skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'review', ['tomato_deai', 'de_ai_flavor', 'polish'], mode='agent')
             if deai_skill_note:
                 deai_system = f"""你是番茄去AI味审查员。对以下刚写好的章节正文做去AI味审校，按规则修改后只输出修改后的正文。
 
@@ -7443,7 +7566,8 @@ def ai_continue_batch_stream(book_id):
                 # 字数校验通过→用修正版；字数异常/失败→回滚用初稿
                 deai_status = 'skipped'  # skipped / success / failed
                 if skill_pack_ids:
-                    deai_skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_deai'], max_per_prompt=1200, mode='agent')
+                    # 【三类无污染】去AI味属于审查阶段：只注入审查类（review）技能包
+                    deai_skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'review', ['tomato_deai', 'de_ai_flavor', 'polish'], mode='agent')
                     if deai_skill_note:
                         # 推送心跳：去AI味审校中
                         yield f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在去AI味审校第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
@@ -7878,6 +8002,120 @@ def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500, mode='a
     return '\n\n'.join(notes)
 
 
+def _get_skill_prompts_by_category(skill_pack_ids, category, prompt_keys=None, mode='agent'):
+    """按类别过滤技能包后提取提示词（三类无污染隔离的核心调度函数）。
+    - category='master': 只查构思类，注入大纲/规划阶段
+    - category='style': 只查文风类，注入正文生成阶段（按 priority 排序）
+    - category='review': 只查审查类，注入审校阶段（去AI味/一致性）
+    prompt_keys: 可选，指定提取哪些 key；不指定则提取该包全部 prompts。
+    老技能包无 category 字段时默认按 'master' 处理（兼容）。"""
+    if not skill_pack_ids:
+        return ''
+    try:
+        packs = SkillPack.query.filter(SkillPack.id.in_(skill_pack_ids)).all()
+    except Exception as e:
+        try:
+            app.logger.error(f'_get_skill_prompts_by_category 查询失败(ids={skill_pack_ids}, cat={category}): {e}')
+        except Exception:
+            pass
+        return ''
+    # 按 category 过滤（老包无 category 视为 master）
+    filtered = [p for p in packs if (p.category or 'master') == category]
+    if not filtered:
+        return ''
+    # 文风类按 priority 排序（数字小的先注入）
+    if category == 'style':
+        filtered.sort(key=lambda p: p.priority if p.priority is not None else 100)
+    notes = []
+    for pack in filtered:
+        try:
+            prompts = json.loads(pack.prompts_json) if pack.prompts_json else {}
+        except Exception:
+            continue
+        if not prompts:
+            continue
+        # 若指定 prompt_keys 则按 key 过滤，否则取全部
+        if prompt_keys:
+            matched = [(k, prompts[k]) for k in prompt_keys if k in prompts and prompts[k]]
+        else:
+            matched = [(k, v) for k, v in prompts.items() if v]
+        if not matched:
+            continue
+        if mode == 'single':
+            p = matched[0][1][:1500]
+            notes.append(f'【{pack.name}】\n{p}')
+        else:
+            parts = [f'[{k}]\n{p}' for k, p in matched]
+            notes.append(f'【{pack.name}】\n' + '\n'.join(parts))
+    return '\n\n'.join(notes)
+
+
+def _resolve_skill_ids_by_category(book, category):
+    """从 Book 表的三类字段中取出对应类别的技能包ID列表。
+    - category='master' -> book.master_skill_ids
+    - category='style'   -> book.style_skill_ids
+    - category='review'  -> book.review_skill_ids
+    兼容老数据：若三类字段全空，回退到老的 skill_pack_ids（在 metadata 或请求参数中）。"""
+    if not book:
+        return []
+    field_map = {'master': 'master_skill_ids', 'style': 'style_skill_ids', 'review': 'review_skill_ids'}
+    field_name = field_map.get(category, 'master_skill_ids')
+    raw = getattr(book, field_name, None) or '[]'
+    try:
+        ids = json.loads(raw) if isinstance(raw, str) else raw
+        if isinstance(ids, list) and ids:
+            return ids
+    except Exception:
+        pass
+    return []
+
+
+def _split_legacy_skill_ids_to_categories(book):
+    """老数据迁移：将老的 skill_pack_ids 按 category 自动分流到3个新字段。
+    在 book 首次访问时触发（若3个新字段全空且老字段有值）。
+    幂等：已分流过则跳过。"""
+    if not book:
+        return
+    # 检查是否已分流过（任一新字段非空即视为已分流）
+    try:
+        m = json.loads(book.master_skill_ids or '[]') if book.master_skill_ids else []
+        s = json.loads(book.style_skill_ids or '[]') if book.style_skill_ids else []
+        r = json.loads(book.review_skill_ids or '[]') if book.review_skill_ids else []
+        if m or s or r:
+            return  # 已分流
+    except Exception:
+        return
+    # 从 metadata 取老的 skill_pack_ids
+    try:
+        meta = json.loads(book.metadata_json or '{}') if book.metadata_json else {}
+    except Exception:
+        meta = {}
+    legacy_ids = meta.get('skill_pack_ids', [])
+    if not legacy_ids:
+        return
+    # 查询每个包的 category 分流
+    try:
+        packs = SkillPack.query.filter(SkillPack.id.in_(legacy_ids)).all()
+    except Exception:
+        return
+    master_ids, style_ids, review_ids = [], [], []
+    for p in packs:
+        cat = p.category or 'master'
+        if cat == 'style':
+            style_ids.append(p.id)
+        elif cat == 'review':
+            review_ids.append(p.id)
+        else:
+            master_ids.append(p.id)
+    book.master_skill_ids = json.dumps(master_ids, ensure_ascii=False)
+    book.style_skill_ids = json.dumps(style_ids, ensure_ascii=False)
+    book.review_skill_ids = json.dumps(review_ids, ensure_ascii=False)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
 # ==== 大纲工作流：五幕式总纲 + 卷纲滚动生成 ====
 @app.route('/api/books/<book_id>/ai-outline-master', methods=['POST'])
 def ai_outline_master(book_id):
@@ -7902,7 +8140,7 @@ def ai_outline_master(book_id):
     # 反推总章数供 prompt 使用
     total_chapters = max(volume_count * chapters_per_volume, total_chapters)
 
-    skill_note = _get_skill_prompts(skill_pack_ids, ['master_outline', 'tomato_outline', 'volume_breakdown'])
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['master_outline', 'tomato_outline', 'volume_breakdown'])
 
     context_parts = []
     if bb.concept:
@@ -8085,7 +8323,7 @@ def ai_outline_volume(book_id):
     volume_title = data.get('volume_title', f'第{volume_index}卷')
     chapters_per_volume = data.get('chapters_per_volume', 50)
 
-    skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'])
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['volume_breakdown', 'chapter_plan', 'tomato_outline'])
 
     chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
 
@@ -8367,7 +8605,7 @@ def ai_extract_volumes_from_outline(book_id):
     skill_pack_ids = data.get('skill_pack_ids', [])
     volume_count = data.get('volume_count')  # 可选，不传则让AI自行决定
 
-    skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
 
     # 卷数：优先前端传入（来自 book.total_volumes），回退 book.total_volumes，再回退让AI自行决定
     if not volume_count:
@@ -8581,7 +8819,7 @@ def ai_reverse_generate_outline(book_id):
 
     data = request.json or {}
     skill_pack_ids = data.get('skill_pack_ids', [])
-    skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'tomato_outline'], mode='agent')
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['volume_breakdown', 'tomato_outline'], mode='agent')
 
     # 整理各卷剧情摘要
     vol_summaries = []
@@ -8778,7 +9016,7 @@ def ai_import_plot_outline(book_id):
 
     # ===== 第二步：正则匹配失败或卷数<1，调用 AI 智能拆卷（改进版） =====
     if len(volumes) < 1:
-        skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
+        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
         # 上下文增强：注入总纲、规则、已有卷、世界观、人物
         ctx_parts = []
         if bb.plot_design:
@@ -9006,7 +9244,7 @@ def ai_master_create(book_id):
     results = []
     for dim in ordered_dims:
         info = DIM_MAP[dim]
-        skill_note = _get_skill_prompts(skill_pack_ids, info['keys'], mode='agent')
+        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', info['keys'], mode='agent')
         # 【P1修复】格式整合铁律：技能包内容是创作方法论，输出必须严格按平台维度的格式骨架
         # 即使技能包自带独立格式要求（如CDL档案/五不妥协原则），模型也要按平台格式整合映射
         format_integration_note = ''
@@ -9229,7 +9467,7 @@ def ai_master_create_stream(book_id):
                 # 推送维度开始信号
                 yield f'data: {json.dumps({"dim": dim, "label": info["label"], "start": True}, ensure_ascii=False)}\n\n'
 
-                skill_note = _get_skill_prompts(skill_pack_ids, info['keys'], mode='agent')
+                skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', info['keys'], mode='agent')
                 format_integration_note = ''
                 if skill_note:
                     format_integration_note = '\n\n【格式整合铁律·必读】上方「技能包内容」是创作方法论（指导原则），不是输出格式模板。必须严格按下方任务的「输出格式」骨架输出，技能包的要求整合映射到对应字段。'
@@ -9423,7 +9661,7 @@ def ai_brainstorm(book_id):
         existing_context = bb.generated_summary[:2000]
 
     # 注入技能包提示词（brainstorm 相关）
-    skill_note = _get_skill_prompts(skill_pack_ids, ['tomato_plan', 'one_line_concept', 'brainstorm', 'master_outline'])
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['tomato_plan', 'one_line_concept', 'brainstorm', 'master_outline'])
 
     dimension_prompts = {
         'concept': '构思扩展：为这个构思设计3个不同方向的创意方案。每个方案包含：核心卖点、目标读者、主线冲突、独特亮点。每个方案100-200字。',
@@ -10013,7 +10251,7 @@ def ai_analyze_plot_volume(book_id):
     extra_ctx = '\n\n'.join(ctx_parts[-5:])  # 最多 5 块上下文，避免超长
 
     # 技能包提示
-    skill_note = _get_skill_prompts(skill_pack_ids, ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
 
     if not volume_chapters and not extra_ctx:
         return jsonify({'error': '该卷没有章节内容，也没有可参考的设定'}), 400
@@ -10371,7 +10609,7 @@ def ai_analyze_character_volume(book_id):
             pass
     extra_ctx = '\n\n'.join(ctx_parts)
 
-    skill_note = _get_skill_prompts(skill_pack_ids, ['character_cognition', 'tomato_character'], mode='agent')
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['character_cognition', 'tomato_character'], mode='agent')
 
     vol_label = volume_title or '全部章节'
     system_prompt = f"""你是专业的小说分析师。请从以下「{vol_label}」的章节内容中，识别本卷出现的所有重要角色（出现2次以上或有台词的角色）。
@@ -10492,7 +10730,7 @@ def ai_analyze_inventory_volume(book_id):
             pass
     extra_ctx = '\n\n'.join(ctx_parts)
 
-    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'tomato_setting'], mode='agent')
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['lock_facts', 'tomato_setting'], mode='agent')
 
     vol_label = volume_title or '全部章节'
     system_prompt = f"""你是专业的小说世界观分析师。请从以下「{vol_label}」的章节内容中，识别本卷出现的所有势力及角色拥有的物资。
@@ -10631,7 +10869,7 @@ def ai_analyze_dynamic_volume(book_id):
         ctx_parts.append(f'【核心规则】\n{bb.key_rules[:600]}')
     extra_ctx = '\n\n'.join(ctx_parts)
 
-    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'narrative_debt', 'foreshadow_register'], mode='agent')
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['lock_facts', 'narrative_debt', 'foreshadow_register'], mode='agent')
 
     vol_label = volume_title or '全部章节'
     system_prompt = f"""你是专业的小说防遗忘系统分析师。请从以下「{vol_label}」的章节内容及已有动态报告中，生成本卷的动态分类摘要。
@@ -10730,7 +10968,7 @@ def ai_analyze_foreshadowing_volume(book_id):
         ctx_parts.append(f'【核心规则】\n{bb.key_rules[:400]}')
     extra_ctx = '\n\n'.join(ctx_parts)
 
-    skill_note = _get_skill_prompts(skill_pack_ids, ['foreshadow_register', 'narrative_debt'], mode='agent')
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['foreshadow_register', 'narrative_debt'], mode='agent')
 
     vol_label = volume_title or '全部章节'
     system_prompt = f"""你是专业的小说伏笔分析师。请从以下「{vol_label}」的章节内容中，识别本卷埋设的伏笔、回收的伏笔、以及尚未回收的悬念。
@@ -10834,7 +11072,7 @@ def ai_analyze_locations_volume(book_id):
     extra_ctx = '\n\n'.join(ctx_parts)
 
     # P2-10: 'world_setting' 是幽灵key，替换为 'tomato_setting'
-    skill_note = _get_skill_prompts(skill_pack_ids, ['lock_facts', 'tomato_setting'], mode='agent')
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['lock_facts', 'tomato_setting'], mode='agent')
 
     vol_label = volume_title or '全部章节'
     system_prompt = f"""你是专业的小说地图分析师。请从以下「{vol_label}」的章节内容中，识别本卷涉及的所有地点、场景、地理信息。
@@ -11139,7 +11377,7 @@ def _generate_dynamic_report_content(book_id, chapter_start, chapter_end, skill_
     # P0-2: 注入技能包提示词（narrative_debt/foreshadow_register 用于动态摘要生成）
     skill_note = ''
     if skill_pack_ids:
-        skill_note = _get_skill_prompts(skill_pack_ids, ['narrative_debt', 'foreshadow_register', 'lock_facts'], max_per_prompt=1000, mode='agent')
+        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['narrative_debt', 'foreshadow_register', 'lock_facts'], mode='agent')
 
     # 拼接章节内容（每章截取前800字，控制总量）
     chapters_text = []
@@ -12028,6 +12266,14 @@ def init_db():
         _add_column('book_bible', 'chapter_changes_log TEXT')
         # Migration: 检查点快照（借鉴 PlotPilot，每5章自动备份叙事状态）
         _add_column('book_bible', 'state_snapshots TEXT')
+        # Migration: 技能包三类划分（master/style/review）+ 题材目标 + 优先级
+        _add_column('skill_packs', "category VARCHAR(20) DEFAULT 'master'")
+        _add_column('skill_packs', "genre_target VARCHAR(50) DEFAULT ''")
+        _add_column('skill_packs', 'priority INTEGER DEFAULT 100')
+        # Migration: Book 表技能包三类字段（构思/文风/审查 无污染隔离）
+        _add_column('books', "master_skill_ids TEXT DEFAULT '[]'")
+        _add_column('books', "style_skill_ids TEXT DEFAULT '[]'")
+        _add_column('books', "review_skill_ids TEXT DEFAULT '[]'")
         # Migration: 总卷数 + 风格流派（Book 与 BookBible 双写）
         _add_column('books', 'total_volumes INTEGER DEFAULT 10')
         _add_column('books', "novel_styles TEXT DEFAULT '[]'")

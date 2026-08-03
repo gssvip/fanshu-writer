@@ -129,6 +129,45 @@ interface MapRegion {
   isCurrent?: boolean;
 }
 
+// 【三类无污染】分组技能包选择器：按 master/style/review 三类分组渲染
+// 各子面板共用，确保每个创作阶段只注入对应类别的技能包
+function SkillPackGroupedList({
+  skillPacks, selectedSkillPackIds, onToggleSkillPack, disabled,
+}: {
+  skillPacks: SkillPack[];
+  selectedSkillPackIds: string[];
+  onToggleSkillPack: (id: string) => void;
+  disabled?: boolean;
+}) {
+  const masterPacks = skillPacks.filter(p => (p.category || 'master') === 'master');
+  const stylePacks = skillPacks.filter(p => p.category === 'style');
+  const reviewPacks = skillPacks.filter(p => p.category === 'review');
+  const renderGroup = (label: string, packs: SkillPack[], hint: string) => {
+    if (packs.length === 0) return null;
+    return (
+      <div className="skill-pack-group">
+        <div className="skill-pack-group-header">{label}<span className="skill-pack-group-hint">{hint}</span></div>
+        <div className="skill-pack-group-items">
+          {packs.map(p => (
+            <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
+              <input type="checkbox" checked={selectedSkillPackIds.includes(p.id)} onChange={() => onToggleSkillPack(p.id)} disabled={disabled} />
+              <span className="skill-pack-checkbox-icon">{p.icon}</span>
+              <span className="skill-pack-checkbox-name">{p.name}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div className="skill-pack-checkbox-list skill-pack-grouped">
+      {renderGroup('构思类', masterPacks, '大纲/规划/设定阶段')}
+      {renderGroup('文风类', stylePacks, '正文生成阶段（选1个）')}
+      {renderGroup('审查类', reviewPacks, '去AI味/一致性检查阶段')}
+    </div>
+  );
+}
+
 export default function WritePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -172,13 +211,35 @@ export default function WritePage() {
   // 各维度AI识别（单维度）
   const [dimAnalyzing, setDimAnalyzing] = useState(false);
 
-  // 技能包（多选）
+  // 技能包（多选）—— 【三类无污染】按 category 分三组存储，分别持久化到 Book 表三字段
   const [skillPacks, setSkillPacks] = useState<SkillPack[]>([]);
-  const [selectedSkillPackIds, setSelectedSkillPackIds] = useState<string[]>([]);
+  const [masterSkillPackIds, setMasterSkillPackIds] = useState<string[]>([]);
+  const [styleSkillPackIds, setStyleSkillPackIds] = useState<string[]>([]);
+  const [reviewSkillPackIds, setReviewSkillPackIds] = useState<string[]>([]);
+  // 派生：合并三组ID（供子组件/后端API使用，后端 _get_skill_prompts_by_category 会按 category 过滤）
+  const selectedSkillPackIds = useMemo(
+    () => Array.from(new Set([...masterSkillPackIds, ...styleSkillPackIds, ...reviewSkillPackIds])),
+    [masterSkillPackIds, styleSkillPackIds, reviewSkillPackIds]
+  );
   const selectedSkillPacks = useMemo(() => skillPacks.filter(p => selectedSkillPackIds.includes(p.id)), [skillPacks, selectedSkillPackIds]);
+
+  // 切换技能包勾选：按 pack.category 分流到对应组，并持久化到 Book 表对应字段
   const toggleSkillPack = useCallback((id: string) => {
-    setSelectedSkillPackIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  }, []);
+    const pack = skillPacks.find(p => p.id === id);
+    if (!pack) return;
+    const cat = pack.category || 'master';
+    const setterMap = { master: setMasterSkillPackIds, style: setStyleSkillPackIds, review: setReviewSkillPackIds } as const;
+    const setter = setterMap[cat];
+    setter(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      // 持久化到 Book 表对应字段（best-effort，失败不阻断）
+      if (bookId) {
+        const fieldMap = { master: 'master_skill_ids', style: 'style_skill_ids', review: 'review_skill_ids' } as const;
+        api.updateBook(bookId, { [fieldMap[cat]]: next } as any).catch(() => {});
+      }
+      return next;
+    });
+  }, [skillPacks, bookId]);
 
   // 全屏 AI 创作弹窗（统一入口：总览全局创作 + 各维度单独创作）
   const [aiCreateModalState, setAiCreateModalState] = useState<{ mode: 'global' | 'single'; dimension?: string } | null>(null);
@@ -319,6 +380,10 @@ export default function WritePage() {
     api.getBook(bookId).then(b => {
       setBook(b);
       setLoading(false);
+      // 【三类无污染】从 Book 表三字段加载已选技能包（兼容老数据：若三字段全空则置空，等用户重新勾选）
+      setMasterSkillPackIds(b.master_skill_ids || []);
+      setStyleSkillPackIds(b.style_skill_ids || []);
+      setReviewSkillPackIds(b.review_skill_ids || []);
       // 加载所有技能包供用户勾选
       api.listSkillPacks().then(all => {
         setSkillPacks(all);
@@ -2113,15 +2178,12 @@ function ConceptPanel(props: {
             </button>
             {skillExpanded && (
               <>
-                <div className="skill-pack-checkbox-list">
-                  {skillPacks.map(p => (
-                    <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
-                      <input type="checkbox" checked={selectedSkillPackIds.includes(p.id)} onChange={() => onToggleSkillPack(p.id)} disabled={conceptAiAssisting} />
-                      <span className="skill-pack-checkbox-icon">{p.icon}</span>
-                      <span className="skill-pack-checkbox-name">{p.name}</span>
-                    </label>
-                  ))}
-                </div>
+                <SkillPackGroupedList
+                  skillPacks={skillPacks}
+                  selectedSkillPackIds={selectedSkillPackIds}
+                  onToggleSkillPack={onToggleSkillPack}
+                  disabled={conceptAiAssisting}
+                />
                 {selectedSkillPacks.length > 0 && (
                   <div className="skill-pack-info-list">
                     {selectedSkillPacks.map(pack => (
@@ -3073,20 +3135,12 @@ function ChapterPanel(props: {
               </button>
               {skillExpanded && (
                 <>
-                  <div className="skill-pack-checkbox-list">
-                    {skillPacks.map(p => (
-                      <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
-                        <input
-                          type="checkbox"
-                          checked={selectedSkillPackIds.includes(p.id)}
-                          onChange={() => onToggleSkillPack(p.id)}
-                          disabled={aiCreating}
-                        />
-                        <span className="skill-pack-checkbox-icon">{p.icon}</span>
-                        <span className="skill-pack-checkbox-name">{p.name}</span>
-                      </label>
-                    ))}
-                  </div>
+                  <SkillPackGroupedList
+                    skillPacks={skillPacks}
+                    selectedSkillPackIds={selectedSkillPackIds}
+                    onToggleSkillPack={onToggleSkillPack}
+                    disabled={aiCreating}
+                  />
                   {selectedSkillPacks.length > 0 && (
                     <div className="skill-pack-info-list">
                       {selectedSkillPacks.map(pack => (
@@ -3845,15 +3899,12 @@ function CharacterPanel(props: {
               <span className="skill-pack-toggle-hint">{skillExpanded ? '收起' : '展开'}</span>
             </button>
             {skillExpanded && (
-              <div className="skill-pack-checkbox-list">
-                {skillPacks.map(p => (
-                  <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
-                    <input type="checkbox" checked={selectedSkillPackIds.includes(p.id)} onChange={() => onToggleSkillPack(p.id)} disabled={aiAssisting} />
-                    <span className="skill-pack-checkbox-icon">{p.icon}</span>
-                    <span className="skill-pack-checkbox-name">{p.name}</span>
-                  </label>
-                ))}
-              </div>
+              <SkillPackGroupedList
+                skillPacks={skillPacks}
+                selectedSkillPackIds={selectedSkillPackIds}
+                onToggleSkillPack={onToggleSkillPack}
+                disabled={aiAssisting}
+              />
             )}
           </div>
         )}
@@ -4767,15 +4818,12 @@ ${existingVols || '（暂无）'}
               {selectedSkillPackIds.length > 0 && <span className="skill-pack-toggle-badge">{selectedSkillPackIds.length}</span>}
             </button>
             {skillExpanded && (
-              <div className="skill-pack-checkbox-list">
-                {skillPacks.map(p => (
-                  <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
-                    <input type="checkbox" checked={selectedSkillPackIds.includes(p.id)} onChange={() => onToggleSkillPack(p.id)} disabled={aiAssisting} />
-                    <span className="skill-pack-checkbox-icon">{p.icon}</span>
-                    <span className="skill-pack-checkbox-name">{p.name}</span>
-                  </label>
-                ))}
-              </div>
+              <SkillPackGroupedList
+                skillPacks={skillPacks}
+                selectedSkillPackIds={selectedSkillPackIds}
+                onToggleSkillPack={onToggleSkillPack}
+                disabled={aiAssisting}
+              />
             )}
           </div>
         )}
@@ -5342,15 +5390,12 @@ function InventoryPanel(props: {
               {selectedSkillPackIds.length > 0 && <span className="skill-pack-toggle-badge">{selectedSkillPackIds.length}</span>}
             </button>
             {skillExpanded && (
-              <div className="skill-pack-checkbox-list">
-                {skillPacks.map(p => (
-                  <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
-                    <input type="checkbox" checked={selectedSkillPackIds.includes(p.id)} onChange={() => onToggleSkillPack(p.id)} disabled={aiAssisting} />
-                    <span className="skill-pack-checkbox-icon">{p.icon}</span>
-                    <span className="skill-pack-checkbox-name">{p.name}</span>
-                  </label>
-                ))}
-              </div>
+              <SkillPackGroupedList
+                skillPacks={skillPacks}
+                selectedSkillPackIds={selectedSkillPackIds}
+                onToggleSkillPack={onToggleSkillPack}
+                disabled={aiAssisting}
+              />
             )}
           </div>
         )}
@@ -5529,20 +5574,12 @@ function BibleEditPanel(props: {
       </button>
       {skillExpanded && (
         <>
-          <div className="skill-pack-checkbox-list">
-            {skillPacks.map(p => (
-              <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
-                <input
-                  type="checkbox"
-                  checked={selectedSkillPackIds.includes(p.id)}
-                  onChange={() => onToggleSkillPack(p.id)}
-                  disabled={aiAssisting}
-                />
-                <span className="skill-pack-checkbox-icon">{p.icon}</span>
-                <span className="skill-pack-checkbox-name">{p.name}</span>
-              </label>
-            ))}
-          </div>
+          <SkillPackGroupedList
+            skillPacks={skillPacks}
+            selectedSkillPackIds={selectedSkillPackIds}
+            onToggleSkillPack={onToggleSkillPack}
+            disabled={aiAssisting}
+          />
           {selectedSkillPacks.length > 0 && (
             <div className="skill-pack-info-list">
               {selectedSkillPacks.map(pack => (
@@ -5851,15 +5888,12 @@ function OutlineCombinedPanel(props: {
             </button>
             {skillExpanded && (
               <>
-                <div className="skill-pack-checkbox-list">
-                  {skillPacks.map(p => (
-                    <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
-                      <input type="checkbox" checked={selectedSkillPackIds.includes(p.id)} onChange={() => onToggleSkillPack(p.id)} disabled={aiAssisting} />
-                      <span className="skill-pack-checkbox-icon">{p.icon}</span>
-                      <span className="skill-pack-checkbox-name">{p.name}</span>
-                    </label>
-                  ))}
-                </div>
+                <SkillPackGroupedList
+                  skillPacks={skillPacks}
+                  selectedSkillPackIds={selectedSkillPackIds}
+                  onToggleSkillPack={onToggleSkillPack}
+                  disabled={aiAssisting}
+                />
                 {selectedSkillPacks.length > 0 && (
                   <div className="skill-pack-info-list">
                     {selectedSkillPacks.map(pack => (
@@ -7036,15 +7070,12 @@ function ForeshadowingPanel(props: {
               {selectedSkillPackIds.length > 0 && <span className="skill-pack-toggle-badge">{selectedSkillPackIds.length}</span>}
             </button>
             {skillExpanded && (
-              <div className="skill-pack-checkbox-list">
-                {skillPacks.map(p => (
-                  <label key={p.id} className={`skill-pack-checkbox-item ${selectedSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
-                    <input type="checkbox" checked={selectedSkillPackIds.includes(p.id)} onChange={() => {}} disabled={aiAssisting} />
-                    <span className="skill-pack-checkbox-icon">{p.icon}</span>
-                    <span className="skill-pack-checkbox-name">{p.name}</span>
-                  </label>
-                ))}
-              </div>
+              <SkillPackGroupedList
+                skillPacks={skillPacks}
+                selectedSkillPackIds={selectedSkillPackIds}
+                onToggleSkillPack={() => {}}
+                disabled={aiAssisting}
+              />
             )}
           </div>
         )}

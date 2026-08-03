@@ -5,6 +5,10 @@ export interface Book {
   status: string; target_words: number;
   total_volumes: number;       // 总卷数（用户自定义，不设上限）
   novel_styles: string[];      // 风格流派（最多3种叠加）
+  // 【三类无污染】三类技能包分别存储，各阶段只读对应类别
+  master_skill_ids: string[];  // 构思类技能包（大纲/规划/设定阶段）
+  style_skill_ids: string[];   // 文风类技能包（正文生成阶段，通常选1个）
+  review_skill_ids: string[];  // 审查类技能包（去AI味/一致性检查阶段）
   created_at: string; updated_at: string;
   metadata: Record<string, any>;
 }
@@ -112,6 +116,10 @@ export interface SkillPack {
   prompts: Record<string, string>;
   is_builtin: boolean; icon: string;
   github_source?: string; github_synced_at?: string | null;
+  // 【三类无污染】技能包分类：master=构思类 / style=文风类 / review=审查类
+  category: 'master' | 'style' | 'review';
+  genre_target?: string;  // 文风类专属题材标签（fantasy/urban_fantasy/mystery/history/scifi/romance...）
+  priority?: number;      // 同类多包时的注入优先级（数字小的先注入），默认100
   created_at: string;
 }
 
