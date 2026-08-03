@@ -577,8 +577,8 @@ export default function AiCreateModal({
                 autoFocus
               />
 
-              {/* 协同技能包（可折叠多选） */}
-              {skillPacks.length > 0 && (
+              {/* 协同技能包（可折叠多选）—— AI总创作只注入构思类（master）技能包 */}
+              {skillPacks.filter(p => (p.category || 'master') === 'master').length > 0 && (
                 <div className="skill-pack-collapsible" style={{ marginTop: 12 }}>
                   <button
                     type="button"
@@ -586,14 +586,14 @@ export default function AiCreateModal({
                     onClick={() => setSkillExpanded(v => !v)}
                   >
                     <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-                    <span>📦 协同技能包</span>
+                    <span>📦 协同技能包（构思类）</span>
                     {selectedPacks.length > 0 && <span className="skill-pack-toggle-badge">{selectedPacks.length}</span>}
                     <span className="skill-pack-toggle-hint">{skillExpanded ? '收起' : '展开'}</span>
                   </button>
                   {skillExpanded && (
                     <>
                       <div className="skill-pack-checkbox-list">
-                        {skillPacks.map(p => (
+                        {skillPacks.filter(p => (p.category || 'master') === 'master').map(p => (
                           <label key={p.id} className={`skill-pack-checkbox-item ${localSkillPackIds.includes(p.id) ? 'checked' : ''}`}>
                             <input
                               type="checkbox"

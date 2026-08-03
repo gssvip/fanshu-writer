@@ -15,6 +15,9 @@ interface SkillEditorState {
   description: string;
   workflow: WorkflowStep[];
   prompts: Record<string, string>;
+  // 【三类无污染】技能包分类：master=构思类 / style=文风类 / review=审查类
+  category: 'master' | 'style' | 'review';
+  genre_target?: string;  // 文风类专属题材标签
 }
 
 export default function ToolsPage() {
@@ -110,6 +113,8 @@ export default function ToolsPage() {
       description: pack.description || '',
       workflow: pack.workflow?.length ? pack.workflow : [{ step: 1, name: '', desc: '', prompt_key: '' }],
       prompts: pack.prompts || {},
+      category: (pack.category || 'master') as 'master' | 'style' | 'review',
+      genre_target: pack.genre_target || '',
     });
     setSkillError('');
     setShowSkillEditor(true);
@@ -133,6 +138,8 @@ export default function ToolsPage() {
         description: skillEditor.description,
         workflow: skillEditor.workflow.filter(w => w.name.trim()),
         prompts: skillEditor.prompts,
+        category: skillEditor.category,  // 【三类无污染】保存分类
+        genre_target: skillEditor.category === 'style' ? (skillEditor.genre_target || skillEditor.genre) : '',  // 文风类自动关联题材
       };
       if (skillEditor.id) {
         await api.updateSkillPack(skillEditor.id, payload);
@@ -535,8 +542,9 @@ export default function ToolsPage() {
               <option value="short_story">短篇</option>
             </select>
           </div>
-          <div className="skill-grid">
-            {skillPacks.map(pack => (
+          {/* 【三类无污染】技能包市场按三类分组展示 */}
+          {(() => {
+            const renderSkillCard = (pack: SkillPack) => (
               <div key={pack.id} className={`skill-card ${selectedPack?.id === pack.id ? 'selected' : ''}`} onClick={() => setSelectedPack(pack)}>
                 <div className="skill-card-header">
                   <span className="skill-card-icon">{pack.icon}</span>
@@ -584,8 +592,27 @@ export default function ToolsPage() {
                   ))}
                 </div>
               </div>
-            ))}
-          </div>
+            );
+            const masterPacks = skillPacks.filter(p => (p.category || 'master') === 'master');
+            const stylePacks = skillPacks.filter(p => p.category === 'style');
+            const reviewPacks = skillPacks.filter(p => p.category === 'review');
+            const renderGroup = (title: string, packs: SkillPack[], hint: string, color: string) => packs.length === 0 ? null : (
+              <div key={title} className="skill-category-group" style={{ borderLeft: `3px solid ${color}`, paddingLeft: 12, marginBottom: 16 }}>
+                <h4 style={{ margin: '0 0 8px 0', fontSize: 14, color: 'var(--text-primary)' }}>
+                  {title} <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>({packs.length})</span>
+                </h4>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 8px 0' }}>{hint}</p>
+                <div className="skill-grid">{packs.map(renderSkillCard)}</div>
+              </div>
+            );
+            return (
+              <>
+                {renderGroup('构思类', masterPacks, '大纲/规划/设定/总创作阶段注入，提供创作方法论', '#4a90d9')}
+                {renderGroup('文风类', stylePacks, '正文生成阶段注入，按题材锚定句式/节奏/用词风格', '#d97706')}
+                {renderGroup('审查类', reviewPacks, '去AI味/一致性检查阶段注入，规范审校规则', '#059669')}
+              </>
+            );
+          })()}
           {selectedPack && (
             <div className="skill-apply-bar">
               <span>将 "{selectedPack.name}" 应用到当前作品</span>
@@ -635,6 +662,21 @@ export default function ToolsPage() {
                       <option value="short_story">短篇</option>
                     </select>
                   </div>
+                </div>
+
+                {/* 【三类无污染】技能包分类选择：决定该包在哪个创作阶段注入 */}
+                <div className="form-field">
+                  <label>技能包分类 *</label>
+                  <select className="input" value={skillEditor.category} onChange={e => setSkillEditor(prev => ({ ...prev, category: e.target.value as 'master' | 'style' | 'review' }))}>
+                    <option value="master">构思类（大纲/规划/设定阶段注入）</option>
+                    <option value="style">文风类（正文生成阶段注入，按题材锚定文风）</option>
+                    <option value="review">审查类（去AI味/一致性检查阶段注入）</option>
+                  </select>
+                  <p className="text-muted" style={{fontSize:11, marginTop:4}}>
+                    {skillEditor.category === 'master' && '构思类：在大纲/规划/设定/总创作时注入，提供创作方法论'}
+                    {skillEditor.category === 'style' && '文风类：仅在正文生成时注入，锚定特定题材的句式/节奏/用词风格'}
+                    {skillEditor.category === 'review' && '审查类：在去AI味/一致性检查时注入，规范审校规则'}
+                  </p>
                 </div>
 
                 <div className="form-field">
@@ -857,6 +899,8 @@ function emptySkillEditor(): SkillEditorState {
     description: '',
     workflow: [{ step: 1, name: '', desc: '', prompt_key: '' }],
     prompts: {},
+    category: 'master',  // 默认构思类
+    genre_target: '',
   };
 }
 

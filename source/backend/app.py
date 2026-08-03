@@ -4320,7 +4320,11 @@ def create_skill_pack():
         workflow_json=json.dumps(data.get('workflow', []), ensure_ascii=False),
         prompts_json=json.dumps(data.get('prompts', {}), ensure_ascii=False),
         is_builtin=False,
-        icon=data.get('icon', '📦')
+        icon=data.get('icon', '📦'),
+        # 【三类无污染】自定义技能包也支持分类
+        category=data.get('category', 'master'),
+        genre_target=data.get('genre_target', ''),
+        priority=data.get('priority', 100),
     )
     db.session.add(pack)
     db.session.commit()
@@ -4337,6 +4341,13 @@ def update_skill_pack(pack_id):
     for field in ['name', 'description', 'genre', 'book_type', 'icon']:
         if field in data:
             setattr(pack, field, data[field])
+    # 【三类无污染】支持修改分类字段
+    if 'category' in data:
+        pack.category = data['category'] or 'master'
+    if 'genre_target' in data:
+        pack.genre_target = data['genre_target'] or ''
+    if 'priority' in data:
+        pack.priority = data['priority'] if data['priority'] is not None else 100
     if 'stage_keys' in data:
         pack.stage_keys_json = json.dumps(data['stage_keys'], ensure_ascii=False)
     if 'workflow' in data:
@@ -4373,7 +4384,11 @@ def clone_skill_pack(pack_id):
         workflow_json=pack.workflow_json,
         prompts_json=pack.prompts_json,
         is_builtin=False,
-        icon=pack.icon
+        icon=pack.icon,
+        # 【三类无污染】克隆时继承源包分类
+        category=pack.category or 'master',
+        genre_target=pack.genre_target or '',
+        priority=pack.priority if pack.priority is not None else 100,
     )
     db.session.add(new_pack)
     db.session.commit()

@@ -131,17 +131,29 @@ interface MapRegion {
 
 // 【三类无污染】分组技能包选择器：按 master/style/review 三类分组渲染
 // 各子面板共用，确保每个创作阶段只注入对应类别的技能包
+// onlyCategory: 只显示指定类别（'master'|'style'|'review'），不传则显示全部三类
+// excludeCategory: 排除指定类别（与 onlyCategory 互斥，onlyCategory 优先）
 function SkillPackGroupedList({
   skillPacks, selectedSkillPackIds, onToggleSkillPack, disabled,
+  onlyCategory, excludeCategory,
 }: {
   skillPacks: SkillPack[];
   selectedSkillPackIds: string[];
   onToggleSkillPack: (id: string) => void;
   disabled?: boolean;
+  onlyCategory?: 'master' | 'style' | 'review';
+  excludeCategory?: 'master' | 'style' | 'review';
 }) {
-  const masterPacks = skillPacks.filter(p => (p.category || 'master') === 'master');
-  const stylePacks = skillPacks.filter(p => p.category === 'style');
-  const reviewPacks = skillPacks.filter(p => p.category === 'review');
+  // 按 category 过滤：onlyCategory 优先于 excludeCategory
+  const filterFn = (p: SkillPack) => {
+    const cat = p.category || 'master';
+    if (onlyCategory) return cat === onlyCategory;
+    if (excludeCategory) return cat !== excludeCategory;
+    return true;
+  };
+  const masterPacks = skillPacks.filter(p => (p.category || 'master') === 'master').filter(filterFn);
+  const stylePacks = skillPacks.filter(p => p.category === 'style').filter(filterFn);
+  const reviewPacks = skillPacks.filter(p => p.category === 'review').filter(filterFn);
   const renderGroup = (label: string, packs: SkillPack[], hint: string) => {
     if (packs.length === 0) return null;
     return (
@@ -3140,6 +3152,7 @@ function ChapterPanel(props: {
                     selectedSkillPackIds={selectedSkillPackIds}
                     onToggleSkillPack={onToggleSkillPack}
                     disabled={aiCreating}
+                    excludeCategory="master"
                   />
                   {selectedSkillPacks.length > 0 && (
                     <div className="skill-pack-info-list">
