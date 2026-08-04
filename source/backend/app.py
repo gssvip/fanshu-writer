@@ -766,6 +766,61 @@ def count_words(text):
     return cn_chars + en_words + numbers
 
 
+def _count_cn_chars(s):
+    """统计中文字符数（含标点），去除空白。四模式字数校验统一用此函数。"""
+    if not s:
+        return 0
+    return len(re.sub(r'\s', '', s))
+
+
+def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chapter_num=0):
+    """【字数铁律】公共字数修正函数：初稿字数不在 2300-2500 区间时调 AI 重写。
+    四种创作模式（多Agent/流式/连续/连续流式）统一调用此函数。
+    返回 (修正后内容, 备注)。
+    备注：空串表示未触发修正或修正成功无异常；非空串表示修正过程的备注信息。"""
+    if not content or not content.strip():
+        return content, ''
+
+    draft_len = _count_cn_chars(content)
+    if 2300 <= draft_len <= 2500:
+        return content, ''  # 字数达标，无需修正
+
+    if draft_len < 200:
+        # 过短可能是生成失败，不浪费 token 重写
+        return content, f'[字数铁律] 初稿仅{draft_len}字，疑似生成失败，未触发重写'
+
+    direction = '精简删减冗余' if draft_len > 2500 else '扩写补充场景细节'
+    method = ('精简方法：删冗余形容词/重复心理描写/过度环境渲染/总结性句子，保留对话动作与剧情走向。'
+              if draft_len > 2500 else
+              '扩写方法：增加感官细节/动作描写/对话节拍/场景纵深，不增加新剧情不改变走向。')
+    rewrite_system = f"""你是字数修正编辑。当前章节初稿{draft_len}字，需{direction}至 2400字±100（2300-2500字区间，含标点）。
+
+【字数绝对铁律】最终输出必须落在 2300-2500 字区间，这是不可违反的硬约束，优先级高于一切。
+【保留要求】保留原章节的剧情走向、人物对话、章尾钩子、关键信息，不改变故事内容，只调整篇幅。
+{method}
+只输出修正后的完整正文，不输出任何说明或前缀。"""
+    try:
+        rewrite_resp = requests.post(f'{base_url}/chat/completions',
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            json={'model': model,
+                  'messages': [{'role': 'system', 'content': rewrite_system},
+                               {'role': 'user', 'content': f'请修正以下章节正文字数：\n\n{content}'}],
+                  'temperature': 0.5, 'max_tokens': max_tokens},
+            timeout=180)
+        rewrite_result = rewrite_resp.json()
+        rewritten = rewrite_result['choices'][0]['message']['content'].strip()
+        rewritten_len = _count_cn_chars(rewritten)
+        if rewritten and 2300 <= rewritten_len <= 2500:
+            return rewritten, f'[字数铁律] 初稿{draft_len}字，AI修正至{rewritten_len}字。'
+        elif rewritten and rewritten_len > 500:
+            if abs(rewritten_len - 2400) < abs(draft_len - 2400):
+                return rewritten, f'[字数铁律] 初稿{draft_len}字，AI修正后{rewritten_len}字仍偏离，已采纳更接近目标版本。'
+            return content, f'[字数铁律] 初稿{draft_len}字，AI修正后{rewritten_len}字仍偏离，保留初稿。'
+        return content, f'[字数铁律] 初稿{draft_len}字，AI修正返回异常，保留初稿。'
+    except Exception as e:
+        return content, f'[字数铁律] 初稿{draft_len}字，AI修正异常：{str(e)[:80]}，保留初稿。'
+
+
 _CN_DIGITS = {'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'零':0,'〇':0}
 _CN_UNITS = {'十':10,'百':100,'千':1000,'万':10000,'亿':100000000}
 # 全角数字 → 半角
@@ -6735,48 +6790,9 @@ def ai_continue(book_id):
             return jsonify({'error': f'正文生成失败：{str(e)}'}), 500
 
         # ===== 【字数铁律】初稿字数校验 + AI 重写修正（非物理截断，保证章节完整）=====
-        # 统计中文字数（含标点）：去除空白后的字符数
-        def _count_cn_chars(s):
-            return len(re.sub(r'\s', '', s))
-        draft_len = _count_cn_chars(draft_content)
-        review_notes_prefix = ''
-        if draft_len > 2500 or draft_len < 2300:
-            # 字数不达标：调用 AI 重写至 2400±100，保留剧情完整性（不物理截断）
-            direction = '精简删减冗余' if draft_len > 2500 else '扩写补充场景细节'
-            method = ('精简方法：删冗余形容词/重复心理描写/过度环境渲染/总结性句子，保留对话动作与剧情走向。'
-                      if draft_len > 2500 else
-                      '扩写方法：增加感官细节/动作描写/对话节拍/场景纵深，不增加新剧情不改变走向。')
-            rewrite_system = f"""你是字数修正编辑。当前章节初稿{draft_len}字，需{direction}至 2400字±100（2300-2500字区间，含标点）。
-
-【字数绝对铁律】最终输出必须落在 2300-2500 字区间，这是不可违反的硬约束，优先级高于一切。
-【保留要求】保留原章节的剧情走向、人物对话、章尾钩子、关键信息，不改变故事内容，只调整篇幅。
-{method}
-只输出修正后的完整正文，不输出任何说明或前缀。"""
-            try:
-                rewrite_resp = requests.post(f'{base_url}/chat/completions',
-                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                    json={'model': model,
-                          'messages': [{'role':'system','content':rewrite_system},
-                                       {'role':'user','content':f'请修正以下章节正文字数：\n\n{draft_content}'}],
-                          'temperature': 0.5, 'max_tokens': 12000},
-                    timeout=180)
-                rewrite_result = rewrite_resp.json()
-                rewritten = rewrite_result['choices'][0]['message']['content'].strip()
-                rewritten_len = _count_cn_chars(rewritten)
-                if rewritten and 2300 <= rewritten_len <= 2500:
-                    review_notes_prefix = f'[字数铁律] 初稿{draft_len}字，AI修正至{rewritten_len}字。'
-                    draft_content = rewritten
-                elif rewritten and rewritten_len > 500:
-                    # AI 修正后仍不达标，但比初稿更接近目标则采纳更优者，保留章节完整性
-                    if abs(rewritten_len - 2400) < abs(draft_len - 2400):
-                        draft_content = rewritten
-                        review_notes_prefix = f'[字数铁律] 初稿{draft_len}字，AI修正后{rewritten_len}字仍偏离，已采纳更接近目标版本。'
-                    else:
-                        review_notes_prefix = f'[字数铁律] 初稿{draft_len}字，AI修正后{rewritten_len}字仍偏离，保留初稿。'
-                else:
-                    review_notes_prefix = f'[字数铁律] 初稿{draft_len}字，AI修正返回异常，保留初稿。'
-            except Exception as e:
-                review_notes_prefix = f'[字数铁律] 初稿{draft_len}字，AI修正异常：{str(e)[:80]}，保留初稿。'
+        # 【修复】改用公共函数 _ensure_word_count，与流式/连续/连续流式模式统一
+        draft_content, review_notes_prefix = _ensure_word_count(
+            draft_content, api_key, base_url, model, max_tokens, ctx['current_chapter_num'])
 
         # ===== 去 AI 味审校 Agent（#6：容错+可观测）=====
         polished_content = draft_content
@@ -7220,15 +7236,26 @@ def ai_continue_stream(book_id):
                         if chunk == '[DONE]':
                             yield 'data: [DONE]\n\n'
                             break
-                        # 收集内容用于后写校验
+                        # 收集内容用于后写校验 + 统一格式转发前端
                         try:
                             chunk_data = json.loads(chunk)
-                            delta = chunk_data.get('choices', [{}])[0].get('delta', {}).get('content', '')
+                            # 兼容多种供应商格式：标准OpenAI / 简化delta / 直接content
+                            delta = ''
+                            try:
+                                choices = chunk_data.get('choices') or []
+                                if choices:
+                                    delta = (choices[0].get('delta') or {}).get('content', '') or \
+                                            (choices[0].get('message') or {}).get('content', '')
+                            except Exception:
+                                pass
+                            if not delta:
+                                delta = chunk_data.get('content') or chunk_data.get('text') or ''
                             if delta:
                                 full_content_parts.append(delta)
+                                # 统一为标准 OpenAI 格式转发，确保前端能正确解析
+                                yield f'data: {json.dumps({"choices": [{"delta": {"content": delta}}]}, ensure_ascii=False)}\n\n'
                         except Exception:
-                            pass
-                        yield f'data: {chunk}\n\n'
+                            pass  # 非 JSON 行跳过
 
             # ===== P1-6 + P1-7：CHANGES 解析 + delta 回写（流结束后）=====
             # 解析 LLM 输出的 12 类变更声明，delta patch 到 dynamic_volumes/foreshadowing_graph
@@ -7255,6 +7282,25 @@ def ai_continue_stream(book_id):
                 except Exception as ce:
                     # 回写失败不阻断章节生成
                     pass
+
+            # 【修复】流式模式补字数修正：与多Agent/连续模式统一，初稿字数不在2300-2500时AI重写
+            # 在流结束后执行，推送心跳告知前端正在修正字数
+            if full_content_parts:
+                try:
+                    raw_content = ''.join(full_content_parts)
+                    body_for_wc = _extract_chapter_body(raw_content)
+                    draft_wc = _count_cn_chars(body_for_wc)
+                    if draft_wc < 2300 or draft_wc > 2500:
+                        yield f'data: {json.dumps({"type": "heartbeat", "message": f"正在修正字数（初稿{draft_wc}字）..."}, ensure_ascii=False)}\n\n'
+                        corrected, wc_note = _ensure_word_count(
+                            body_for_wc, api_key, base_url, model, ctx['max_tokens'], ctx['current_chapter_num'])
+                        if corrected and corrected.strip() and _count_cn_chars(corrected) != draft_wc:
+                            # 推送修正后的完整正文给前端（替换初稿）
+                            yield f'data: {json.dumps({"type": "word_count_corrected", "content": corrected, "note": wc_note}, ensure_ascii=False)}\n\n'
+                            # 更新 full_content_parts 供后续去AI味/校验使用
+                            full_content_parts = [corrected]
+                except Exception:
+                    pass  # 字数修正失败不阻断流式生成
 
             # ===== P0-1：确定性后写校验（流结束后，零 LLM 成本）=====
             # 推送校验报告给前端，critical 级问题提示作者可一键修订
@@ -7436,6 +7482,13 @@ def ai_continue_batch(book_id):
             polished_content = _extract_chapter_body(polished_content)
             # 额外剥离末尾的标题 JSON 块（_extract_chapter_body 未覆盖）
             polished_content = _re_batch.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', polished_content).rstrip()
+
+            # 【修复】batch模式补字数修正：与多Agent模式统一，初稿字数不在2300-2500时AI重写
+            try:
+                polished_content, wc_note = _ensure_word_count(
+                    polished_content, api_key, base_url, model, ctx['max_tokens'], cur_ch)
+            except Exception:
+                wc_note = ''
 
             # Bug9 修复：统一使用 count_words 统计字数，避免前端展示与库不一致
             wc = count_words(polished_content)
@@ -7859,6 +7912,13 @@ def ai_continue_batch_stream(book_id):
                                 app.logger.error(f'ai_continue_batch_stream 第{cur_ch}章 去AI味异常: {deai_err}')
                             except Exception:
                                 pass
+
+                # 【修复】batch_stream模式补字数修正：与多Agent模式统一
+                try:
+                    polished_content, wc_note_bs = _ensure_word_count(
+                        polished_content, api_key, base_url, model, ctx['max_tokens'], cur_ch)
+                except Exception:
+                    wc_note_bs = ''
 
                 wc = count_words(polished_content)
 

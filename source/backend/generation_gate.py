@@ -17,23 +17,36 @@ from typing import Dict, List, Tuple
 
 def gate_protocol_check(content: str) -> Dict:
     """门禁1：协议解析检查。
-    检查 LLM 是否按格式输出（CHANGES 标签是否完整、正文是否非空）。"""
+    检查 LLM 是否按格式输出（CHANGES 标签是否完整、正文是否非空）。
+    【修复】先剥离所有内部标签（pre_write_check/chapter_changes/【标题】）再检查字数，
+    避免标签内容被计入导致误判；阈值从500改为1500（标准是2400±100，过短才critical）。"""
     issues = []
-    if not content or len(content.strip()) < 500:
+    if not content or not content.strip():
         issues.append({'gate': 'protocol', 'severity': 'critical',
-                       'message': '正文过短（<500字），可能生成失败'})
+                       'message': '正文为空，可能生成失败'})
         return {'passed': False, 'issues': issues}
 
+    # 先剥离所有内部标签，得到纯正文
+    body = re.sub(r'<chapter_changes>[\s\S]*?</chapter_changes>', '', content, flags=re.IGNORECASE)
+    body = re.sub(r'<pre_write_check>[\s\S]*?</pre_write_check>', '', body, flags=re.IGNORECASE)
+    body = re.sub(r'【标题】[^\n]*', '', body)
+    # 剥离末尾的标题 JSON 块
+    body = re.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', body).strip()
+
+    # 统计纯正文字数（中文字符数）
+    cn_chars = len(re.findall(r'[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]', body))
+    if cn_chars < 1500:
+        issues.append({'gate': 'protocol', 'severity': 'critical',
+                       'message': f'正文过短（{cn_chars}字<1500字），可能生成失败'})
+    elif cn_chars < 2000:
+        issues.append({'gate': 'protocol', 'severity': 'warning',
+                       'message': f'正文偏短（{cn_chars}字，标准2400±100），建议检查'})
+
     # 检查是否有残留的 prompt 标签（LLM 误把指令当输出）
-    leaked_tags = re.findall(r'<(?:pre_write_check|chapter_changes|system|user|assistant)>', content)
+    leaked_tags = re.findall(r'<(?:system|user|assistant)>', content)
     if leaked_tags:
-        # chapter_changes 标签是正常的（P1-6 产物），只在正文中间出现残留才算问题
-        # 这里只检查是否把标签当正文（即标签外无实质内容）
-        body = re.sub(r'<chapter_changes>[\s\S]*?</chapter_changes>', '', content)
-        body = re.sub(r'<pre_write_check>[\s\S]*?</pre_write_check>', '', body)
-        if len(body.strip()) < 500:
-            issues.append({'gate': 'protocol', 'severity': 'critical',
-                           'message': '正文被标签覆盖，实际内容过少'})
+        issues.append({'gate': 'protocol', 'severity': 'warning',
+                       'message': '正文残留 prompt 标签，可能 LLM 误输出指令'})
 
     # 检查是否有 CHANGES 标签（P1-6 启用后应有）
     has_changes = bool(re.search(r'<chapter_changes>', content, re.IGNORECASE))

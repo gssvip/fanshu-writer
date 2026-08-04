@@ -1266,6 +1266,20 @@ export default function WritePage() {
                 setAgentMeta((prev: any) => ({ ...prev, deai_status: 'success' }));
                 continue;
               }
+              // 【修复】word_count_corrected 事件：字数修正完成，用修正后正文替换初稿
+              if (parsed.type === 'word_count_corrected' && parsed.content) {
+                fullContent = parsed.content;
+                setAiGeneratedContent(stripInternalTags(fullContent));
+                if (parsed.note) {
+                  setAgentMeta((prev: any) => ({ ...prev, word_count_note: parsed.note }));
+                }
+                continue;
+              }
+              // heartbeat 事件：进度提示
+              if (parsed.type === 'heartbeat' && parsed.message) {
+                setAgentMeta((prev: any) => ({ ...prev, heartbeat: parsed.message }));
+                continue;
+              }
               // LLM chunk：拼接正文
               const delta = parsed.choices?.[0]?.delta?.content || '';
               if (delta) {
