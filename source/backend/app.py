@@ -6774,20 +6774,48 @@ def ai_continue(book_id):
         model = ctx['model']
 
         # ===== 正文生成（含容错：LLM 异常时返回友好错误而非 500）=====
-        try:
-            resp = requests.post(f'{base_url}/chat/completions',
-                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}],
-                      'temperature': temperature, 'max_tokens': max_tokens},
-                timeout=180)
-            result = resp.json()
-            draft_content = result['choices'][0]['message']['content']
-        except requests.exceptions.Timeout:
-            return jsonify({'error': '正文生成超时（180秒），请检查网络或换用更快的模型后重试'}), 504
-        except (KeyError, IndexError) as e:
-            return jsonify({'error': f'LLM 返回格式异常：{str(e)}，请重试或检查 API 配置'}), 502
-        except Exception as e:
-            return jsonify({'error': f'正文生成失败：{str(e)}'}), 500
+        # 【修复】LLM 返回空内容时自动重试1次，仍空则报错返回，不继续后续流程
+        draft_content = ''
+        llm_error = None
+        for _attempt in range(2):  # 最多2次（1次正常 + 1次重试）
+            try:
+                resp = requests.post(f'{base_url}/chat/completions',
+                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}],
+                          'temperature': temperature, 'max_tokens': max_tokens},
+                    timeout=180)
+                result = resp.json()
+                draft_content = result['choices'][0]['message']['content'] or ''
+                # 检查 LLM 返回的错误信息
+                if result.get('error'):
+                    llm_error = result['error'].get('message', str(result['error']))[:200]
+                    draft_content = ''
+                    continue
+                if draft_content.strip():
+                    llm_error = None
+                    break  # 成功获取非空内容
+                # 空内容：可能是 max_tokens 过大或 finish_reason=length 截断
+                finish_reason = result.get('choices', [{}])[0].get('finish_reason', '')
+                if finish_reason == 'length':
+                    llm_error = 'LLM 输出被 max_tokens 截断（finish_reason=length），请减小 max_tokens 或换用支持更长输出的模型'
+                else:
+                    llm_error = f'LLM 返回空内容（finish_reason={finish_reason}），可能是模型异常或请求被拒绝'
+            except requests.exceptions.Timeout:
+                return jsonify({'error': '正文生成超时（180秒），请检查网络或换用更快的模型后重试'}), 504
+            except (KeyError, IndexError) as e:
+                llm_error = f'LLM 返回格式异常：{str(e)}，请重试或检查 API 配置'
+            except Exception as e:
+                llm_error = f'正文生成失败：{str(e)}'
+        if not draft_content or not draft_content.strip():
+            return jsonify({'error': llm_error or 'LLM 返回空内容，请重试'}), 502
+
+        # 【修复】额外校验：剥离内部标签后是否仍有正文
+        # 防止 LLM 只输出 <pre_write_check>/<chapter_changes> 标签而无正文，导致后续 _extract_chapter_body 后变空、
+        # 落地门禁误报"正文为空"（这是用户反馈的关键问题）
+        _pre_check_body = _extract_chapter_body(draft_content)
+        _pre_check_body = re.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', _pre_check_body).strip()
+        if not _pre_check_body:
+            return jsonify({'error': 'LLM 仅输出结构标签（pre_write_check/chapter_changes），无正文内容，请重试'}), 502
 
         # ===== 【字数铁律】初稿字数校验 + AI 重写修正（非物理截断，保证章节完整）=====
         # 【修复】改用公共函数 _ensure_word_count，与流式/连续/连续流式模式统一
@@ -6920,15 +6948,9 @@ def ai_continue(book_id):
                 pass
 
         # ===== P2-10：落地门禁（3道，章节落库前拦截）=====
-        gate_result = None
-        if run_all_gates:
-            try:
-                gate_result = run_all_gates(polished_content, bb, ctx['current_chapter_num'])
-                if not gate_result.get('passed'):
-                    # 门禁未通过只做 warning，不阻断返回（避免误杀）
-                    pass
-            except Exception:
-                pass
+        # 【修复】门禁移到 _extract_chapter_body 之后调用，确保传入的是纯正文（已剥离标签）
+        # 原代码在7075行 _extract_chapter_body 之前调用门禁，导致标签内容被计入字数误判
+        gate_result = None  # 延迟到 _extract_chapter_body 之后再调用
 
         # ===== P1-5：审计-修订闭环（draft→校验→修订→再校验，best snapshot 持久化）=====
         # 仅当后写校验发现问题且分数不达标时触发，最多2轮，best snapshot 取最高分版本
@@ -7054,6 +7076,16 @@ def ai_continue(book_id):
         # 确保返回给前端的 content 是纯净正文，避免内部产物泄露给用户
         polished_content = _extract_chapter_body(polished_content)
         polished_content = re.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', polished_content).rstrip()
+
+        # 【修复】落地门禁在 _extract_chapter_body 之后调用，传入纯正文
+        # 防御性检查：去AI味/字数修正后若 polished_content 变空，跳过门禁调用避免误报"正文为空"
+        if run_all_gates and polished_content and polished_content.strip():
+            try:
+                gate_result = run_all_gates(polished_content, bb, ctx['current_chapter_num'])
+                if not gate_result.get('passed'):
+                    pass  # 门禁未通过只做 warning，不阻断返回
+            except Exception:
+                pass
 
         return jsonify({
             'content': polished_content,
@@ -7460,6 +7492,14 @@ def ai_continue_batch(book_id):
                 failed.append({'chapter_num': cur_ch, 'error': 'LLM 返回内容为空'})
                 break  # 【铁律】内容为空即停，避免后续章节无上下文可衔接
 
+            # 【修复】额外校验：剥离内部标签后是否仍有正文（防止 LLM 只输出标签而无正文，
+            # 后续 _extract_chapter_body 后变空，门禁误报"正文为空"）
+            _pre_check_body = _extract_chapter_body(draft_content)
+            _pre_check_body = _re_batch.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', _pre_check_body).strip()
+            if not _pre_check_body:
+                failed.append({'chapter_num': cur_ch, 'error': 'LLM 仅输出结构标签（pre_write_check/chapter_changes），无正文内容'})
+                break  # 【铁律】失败即停
+
             polished_content = draft_content
 
             # 一致性检查（默认关闭）
@@ -7554,8 +7594,9 @@ def ai_continue_batch(book_id):
             db.session.commit()
 
             # 【P1-4修复】连续创作模式补落地门禁（与多Agent模式对齐，仅 warning 不阻断）
+            # 防御性检查：polished_content 为空时跳过门禁，避免误报"正文为空"
             gate_result_batch = None
-            if run_all_gates:
+            if run_all_gates and polished_content and polished_content.strip():
                 try:
                     gate_result_batch = run_all_gates(polished_content, bb, cur_ch)
                 except Exception:
@@ -7841,6 +7882,17 @@ def ai_continue_batch_stream(book_id):
                     yield f'data: {json.dumps({"type": "batch_stopped", "reason": f"第{cur_ch}章 LLM 返回内容为空，后续章节已自动停止", "failed_chapter": cur_ch}, ensure_ascii=False)}\n\n'
                     break
 
+                # 【修复】额外校验：剥离内部标签后是否仍有正文（防止 LLM 只输出标签而无正文，
+                # 后续 _extract_chapter_body 后变空，门禁误报"正文为空"）
+                _pre_check_body = _extract_chapter_body(draft_content)
+                _pre_check_body = _re_bs.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', _pre_check_body).strip()
+                if not _pre_check_body:
+                    err_msg = 'LLM 仅输出结构标签（pre_write_check/chapter_changes），无正文内容'
+                    failed.append({'chapter_num': cur_ch, 'error': err_msg})
+                    yield f'data: {json.dumps({"type": "chapter_failed", "chapter_num": cur_ch, "error": err_msg}, ensure_ascii=False)}\n\n'
+                    yield f'data: {json.dumps({"type": "batch_stopped", "reason": f"第{cur_ch}章 {err_msg}，后续章节已自动停止", "failed_chapter": cur_ch}, ensure_ascii=False)}\n\n'
+                    break
+
                 polished_content = draft_content
                 suggested_title = _extract_chapter_title(draft_content, draft_content)
 
@@ -7978,8 +8030,9 @@ def ai_continue_batch_stream(book_id):
                 db.session.commit()
 
                 # 【P1-4修复】批处理流式补落地门禁（与多Agent模式对齐，仅 warning 不阻断）
+                # 防御性检查：polished_content 为空时跳过门禁，避免误报"正文为空"
                 gate_result_bstream = None
-                if run_all_gates:
+                if run_all_gates and polished_content and polished_content.strip():
                     try:
                         gate_result_bstream = run_all_gates(polished_content, bb, cur_ch)
                     except Exception:
