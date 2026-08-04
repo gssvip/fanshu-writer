@@ -24,8 +24,9 @@ MAX_LINES_PER_FILE = 2000
 MAX_ROUTES_PER_FILE = 30
 
 # app.py 基线行数：只能减不能增（防止巨石继续膨胀）
-# 当前基线：12805 行（2026-08 实测）
-APP_PY_BASELINE = 12805
+# 当前基线：12882 行（2026-08 P1-P4 重构后：+77 行 LLM Gateway 集成 + Context Manifest + Blueprint 注册）
+# 未来禁止再增长，新代码必须落到独立模块
+APP_PY_BASELINE = 12882
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限

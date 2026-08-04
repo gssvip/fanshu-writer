@@ -83,6 +83,39 @@ except ImportError:
     run_all_gates = None
     build_pre_write_check_prompt = None
 
+# P3：LLM Gateway 统一入口（错误分类 + 智能重试 + 空内容检测）
+try:
+    from llm_gateway import LLMGateway, ModelResult, FailureClass, LLMError, get_llm_config, create_gateway
+except ImportError:
+    LLMGateway = None
+    ModelResult = None
+    FailureClass = None
+    LLMError = None
+    get_llm_config = None
+    create_gateway = None
+
+# P3：Context Manifest（章节生成前记录上下文来源 + hash + token 预算）
+try:
+    from context_manifest import ContextManifest, ContextOrchestrator
+except ImportError:
+    ContextManifest = None
+    ContextOrchestrator = None
+
+# P3：PromptSpec 编译器（prompt 可测试 + golden 断言）
+try:
+    from prompt_spec import PromptSpec, PromptCompiler, load_prompt_spec
+except ImportError:
+    PromptSpec = None
+    PromptCompiler = None
+    load_prompt_spec = None
+
+# P4：运行恢复（幂等键 + 单步 retry/resume）
+try:
+    from run_recovery import IdempotencyKey, RunRecoveryService
+except ImportError:
+    IdempotencyKey = None
+    RunRecoveryService = None
+
 app = Flask(__name__, static_folder=None)
 app.config['SECRET_KEY'] = 'fanshu-writer-secret-key'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
@@ -161,6 +194,14 @@ if DATABASE_URL:
 
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 db = SQLAlchemy(app)
+
+# P1b：注册 Blueprint（渐进式从 app.py 拆分路由）
+try:
+    from blueprints.health_bp import health_bp
+    app.register_blueprint(health_bp)
+    _health_bp_registered = True
+except ImportError:
+    _health_bp_registered = False
 
 EXPORTS_DIR = DATA_DIR / 'exports'
 EXPORTS_DIR.mkdir(exist_ok=True)
@@ -771,6 +812,45 @@ def _count_cn_chars(s):
     if not s:
         return 0
     return len(re.sub(r'\s', '', s))
+
+
+def _llm_chat(messages, api_key=None, base_url=None, model=None,
+              temperature=0.7, max_tokens=4096, timeout=180):
+    """【P3 统一 LLM 入口】所有 LLM 调用应经此函数。
+
+    封装 LLMGateway，提供：
+      - 错误分类（auth/quota/timeout/empty/...）
+      - 智能重试（timeout/unavailable 自动重试 2 次，auth 不重试）
+      - 空内容检测（自动标记 empty_response）
+
+    返回 (content: str, error: str)。
+      - 成功：content 非空, error 为空串
+      - 失败：content 为空, error 含错误描述
+    """
+    if LLMGateway is None:
+        # gateway 不可用时回退到直接 requests.post（兼容旧环境）
+        try:
+            resp = requests.post(f'{base_url}/chat/completions',
+                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                json={'model': model, 'messages': messages,
+                      'temperature': temperature, 'max_tokens': max_tokens},
+                timeout=timeout)
+            result = resp.json()
+            content = result['choices'][0]['message']['content'] or ''
+            if result.get('error'):
+                return '', result['error'].get('message', str(result['error']))[:200]
+            return content, ''
+        except Exception as e:
+            return '', f'LLM 调用失败：{str(e)[:200]}'
+
+    # 确保 base_url 以 /v1 结尾
+    if base_url and not base_url.rstrip('/').endswith('/v1'):
+        base_url = base_url.rstrip('/') + '/v1'
+    gw = LLMGateway(base_url, api_key, model, timeout=timeout)
+    result = gw.chat(messages, temperature=temperature, max_tokens=max_tokens)
+    if result.ok:
+        return result.content, ''
+    return '', result.error or 'LLM 返回空内容'
 
 
 def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chapter_num=0):
@@ -1814,10 +1894,7 @@ def seed_builtin_templates():
         db.session.add(template)
     db.session.commit()
 
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """超轻量健康检查端点，不查数据库，用于保活 ping"""
-    return jsonify({'status': 'ok', 'time': datetime.now().isoformat()}), 200
+# /api/health 已迁移到 blueprints/health_bp.py（Blueprint 示范）
 
 @app.route('/api/templates', methods=['GET'])
 def list_templates():
@@ -6773,41 +6850,39 @@ def ai_continue(book_id):
         base_url = ctx['base_url']
         model = ctx['model']
 
-        # ===== 正文生成（含容错：LLM 异常时返回友好错误而非 500）=====
-        # 【修复】LLM 返回空内容时自动重试1次，仍空则报错返回，不继续后续流程
-        draft_content = ''
-        llm_error = None
-        for _attempt in range(2):  # 最多2次（1次正常 + 1次重试）
+        # ===== P2：Context Manifest（记录上下文来源 + hash + token 预算）=====
+        # 章节生成前生成 manifest，支持事后溯源与失效检测
+        context_manifest_data = None
+        if ContextOrchestrator is not None:
             try:
-                resp = requests.post(f'{base_url}/chat/completions',
-                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-                    json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':user_prompt}],
-                          'temperature': temperature, 'max_tokens': max_tokens},
-                    timeout=180)
-                result = resp.json()
-                draft_content = result['choices'][0]['message']['content'] or ''
-                # 检查 LLM 返回的错误信息
-                if result.get('error'):
-                    llm_error = result['error'].get('message', str(result['error']))[:200]
-                    draft_content = ''
-                    continue
-                if draft_content.strip():
-                    llm_error = None
-                    break  # 成功获取非空内容
-                # 空内容：可能是 max_tokens 过大或 finish_reason=length 截断
-                finish_reason = result.get('choices', [{}])[0].get('finish_reason', '')
-                if finish_reason == 'length':
-                    llm_error = 'LLM 输出被 max_tokens 截断（finish_reason=length），请减小 max_tokens 或换用支持更长输出的模型'
-                else:
-                    llm_error = f'LLM 返回空内容（finish_reason={finish_reason}），可能是模型异常或请求被拒绝'
-            except requests.exceptions.Timeout:
-                return jsonify({'error': '正文生成超时（180秒），请检查网络或换用更快的模型后重试'}), 504
-            except (KeyError, IndexError) as e:
-                llm_error = f'LLM 返回格式异常：{str(e)}，请重试或检查 API 配置'
-            except Exception as e:
-                llm_error = f'正文生成失败：{str(e)}'
+                _orch = ContextOrchestrator(token_budget=min(max_tokens, 8000))
+                _sources = {
+                    'key_rules': getattr(bb, 'key_rules', '') or '',
+                    'worldbuilding': getattr(bb, 'worldbuilding', '') or '',
+                    'character_profiles': getattr(bb, 'character_profiles', '') or '',
+                    'plot_design': getattr(bb, 'plot_design', '') or '',
+                    'concept': getattr(bb, 'concept', '') or book.synopsis or '',
+                }
+                if prev_chapter_content:
+                    _sources['prev_chapter'] = prev_chapter_content[:2000]
+                _manifest = _orch.prepare(
+                    sources=_sources,
+                    chapter_num=ctx['current_chapter_num'],
+                    book_id=book_id)
+                context_manifest_data = _manifest.to_dict()
+            except Exception:
+                pass  # manifest 失败不阻断章节生成
+
+        # ===== 正文生成（经 LLM Gateway 统一入口：错误分类 + 智能重试 + 空内容检测）=====
+        draft_content, llm_error = _llm_chat(
+            [{'role': 'system', 'content': system_prompt},
+             {'role': 'user', 'content': user_prompt}],
+            api_key=api_key, base_url=base_url, model=model,
+            temperature=temperature, max_tokens=max_tokens, timeout=180)
         if not draft_content or not draft_content.strip():
-            return jsonify({'error': llm_error or 'LLM 返回空内容，请重试'}), 502
+            # 超时类错误返回 504，其他返回 502
+            status = 504 if (llm_error and '超时' in llm_error) else 502
+            return jsonify({'error': llm_error or 'LLM 返回空内容，请重试'}), status
 
         # 【修复】额外校验：剥离内部标签后是否仍有正文
         # 防止 LLM 只输出 <pre_write_check>/<chapter_changes> 标签而无正文，导致后续 _extract_chapter_body 后变空、
@@ -7111,6 +7186,8 @@ def ai_continue(book_id):
             # 标题自动生成新增
             'suggested_title': suggested_title,  # 纯标题文本（如"小镇少年"）
             'formatted_title': formatted_title,  # 统一格式标题（如"第1章 小镇少年"），前端直接使用
+            # P2 新增：上下文溯源 manifest（记录本次生成注入了哪些 bible 片段 + hash + token 预算）
+            'context_manifest': context_manifest_data,
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
