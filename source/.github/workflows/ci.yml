@@ -57,3 +57,36 @@ jobs:
 
       - name: 运行 pytest
         run: python -m pytest tests/ -v
+
+  # 部署：main 分支 push 且测试全绿后，自动触发 Render 部署
+  # 无需手动刷新 Render Dashboard
+  deploy:
+    name: 触发 Render 部署
+    needs: [architecture-gate, backend-test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 调用 Render Deploy Hook
+        # RENDER_DEPLOY_HOOK_URL 需在 GitHub 仓库 Settings → Secrets → Actions 中配置
+        # 获取方式：Render Dashboard → 你的服务 → Settings → Deploy Hook → 复制 URL
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "⚠️  未配置 RENDER_DEPLOY_HOOK_URL secret，跳过自动部署"
+            echo "配置方法：GitHub 仓库 Settings → Secrets and variables → Actions → New repository secret"
+            echo "名称：RENDER_DEPLOY_HOOK_URL"
+            echo "值：Render Dashboard → 你的服务 → Settings → Deploy Hook 复制的 URL"
+            exit 0
+          fi
+          echo "🚀 触发 Render 部署..."
+          STATUS_CODE=$(curl -s -o /tmp/render_resp.json -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+          echo "Render 响应状态码: $STATUS_CODE"
+          cat /tmp/render_resp.json
+          if [ "$STATUS_CODE" = "200" ] || [ "$STATUS_CODE" = "202" ]; then
+            echo "✅ Render 部署已触发"
+          else
+            echo "❌ Render 部署触发失败（HTTP $STATUS_CODE）"
+            exit 1
+          fi
+
