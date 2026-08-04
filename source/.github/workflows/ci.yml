@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/src/**"
+      - "scripts/check-architecture.py"
+      - ".github/workflows/ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/src/**"
+      - "scripts/check-architecture.py"
+      - ".github/workflows/ci.yml"
+
+jobs:
+  architecture-gate:
+    name: 架构门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 运行架构门禁（防巨石回生）
+        run: python scripts/check-architecture.py
+
+  backend-test:
+    name: 后端冒烟测试
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # 测试环境：强制 SQLite，不触发生产检测
+      FANSHU_DATA_DIR: /tmp/fanshu_test_data
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: 语法编译检查
+        run: python -m py_compile app.py && echo "syntax OK"
+
+      - name: 运行 pytest
+        run: python -m pytest tests/ -v
