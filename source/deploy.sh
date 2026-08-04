@@ -47,6 +47,25 @@ git commit -m "deploy: $(date +'%Y-%m-%d %H:%M:%S')" -q || true
 # 本地分支为 master/main，推到远程 gh-pages 分支
 git push -f origin HEAD:gh-pages
 
+echo "=== 触发 Render 自动部署 ==="
+# Render Deploy Hook：push 后自动触发后端部署，无需手动刷新 Render Dashboard
+# Hook URL 从环境变量读取（避免密钥泄露到 git 历史）
+# 本机配置：echo 'export RENDER_DEPLOY_HOOK_URL="https://api.render.com/deploy/srv-xxx?key=yyy"' >> ~/.bashrc
+RENDER_DEPLOY_HOOK_URL="${RENDER_DEPLOY_HOOK_URL:-}"
+if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+    echo "⚠️  未配置 RENDER_DEPLOY_HOOK_URL 环境变量，跳过自动触发 Render"
+    echo "配置方法：echo 'export RENDER_DEPLOY_HOOK_URL=\"https://api.render.com/deploy/srv-xxx?key=yyy\"' >> ~/.bashrc && source ~/.bashrc"
+else
+    RENDER_STATUS=$(curl -s -o /tmp/render_deploy_resp.json -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+    echo "Render 响应: HTTP $RENDER_STATUS"
+    cat /tmp/render_deploy_resp.json 2>/dev/null
+    if [ "$RENDER_STATUS" = "200" ] || [ "$RENDER_STATUS" = "202" ]; then
+        echo "✅ Render 部署已触发"
+    else
+        echo "⚠️  Render 部署触发失败（HTTP $RENDER_STATUS），可手动到 Render Dashboard 触发"
+    fi
+fi
+
 echo "=== 部署完成 ==="
 echo "main: https://fanshu-writer-backend.onrender.com"
 echo "gh-pages: https://gssvip.github.io/fanshu-writer"
