@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
+import { useStore } from '../store';
 import type { Book, BookBible, BrainstormResult, BrainstormSuggestion, Chapter, SkillPack, DynamicReport, AISession } from '../types';
 import AiCreateModal from './AiCreateModal';
 import EntityRegistryModal from './EntityRegistryModal';
@@ -2128,8 +2129,9 @@ function ConceptPanel(props: {
   const { brainstorming, brainstormResult, adoptedSuggestions, onAdopt,
     conceptAiMode, conceptAiPrompt, conceptAiAssisting, conceptAiError,
     onExecuteConceptAi, onCancelConceptAi, onEditConceptAiPrompt,
-    skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, onOpenAiCreate,
-    aiSessions, onRefreshSessions, onDeleteAiSessions, onRenameAiSession, onResumeAiSession } = props;
+    skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
+    bookId, aiSessions, onRefreshSessions, onDeleteAiSessions, onRenameAiSession, onResumeAiSession } = props;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const selectedCount = selectedSkillPackIds.length;
@@ -2275,20 +2277,15 @@ function ConceptPanel(props: {
 
   return (
     <div className="concept-panel">
-      {/* 构思维度：仅保留居中的 AI总创作 入口，图标放大2倍；一句话构思/消息框/从章节识别构思 已移除 */}
+      {/* 构思维度：AI 副驾入口（方案A：副驾做指挥官，总创作能力已收入副驾快捷动作） */}
       <div className="concept-input-section" style={{ alignItems: 'center', justifyContent: 'center', flex: 0 }}>
         <button
           className="btn-primary concept-ai-create-cta"
-          onClick={onOpenAiCreate}
-          title="AI 总创作：全维度协同生成，可对构思/设定/大纲/人物等批量创作"
-          style={{
-            background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)',
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '14px 28px', fontSize: 15, fontWeight: 700,
-          }}
+          onClick={() => bookId && openChatPanel(bookId)}
+          title="打开 AI 副驾：聊天讨论 + 一键生成设定/续写/润色"
+          style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)', display: 'flex', alignItems: 'center', gap: 8, padding: '14px 28px', fontSize: 15, fontWeight: 700 }}
         >
-          <span style={{ fontSize: '2em', lineHeight: 1 }} aria-hidden>✨</span>
-          <span>AI总创作</span>
+          <span style={{ fontSize: '2em', lineHeight: 1 }} aria-hidden>🤝</span><span>AI 副驾创作</span>
         </button>
       </div>
 

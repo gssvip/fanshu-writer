@@ -775,4 +775,26 @@ export const api = {
     request<{ id: string; title: string; scope: string; updated_at: string | null; messages: AIMessage[] }>(
       `/ai/sessions/${sessionId}/messages`
     ),
+  // 副驾快捷动作（方案A：副驾做指挥官，调度总创作/章节创作能力）
+  // action: master_create / continue / polish
+  // 返回 SSE，统一副驾卡片协议（delta/card/done/error）
+  chatSmartAction: (bookId: string, action: 'master_create' | 'continue' | 'polish', opts?: { instruction?: string; target_chapter_num?: number; prev_chapter_content?: string; session_id?: string }, signal?: AbortSignal) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const cfg: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        book_id: bookId,
+        action,
+        instruction: opts?.instruction || '',
+        target_chapter_num: opts?.target_chapter_num,
+        prev_chapter_content: opts?.prev_chapter_content,
+        session_id: opts?.session_id,
+      }),
+    };
+    if (signal) cfg.signal = signal;
+    return fetch(`${getApiBaseUrl()}/ai/chat/smart/action`, cfg);
+  },
 };

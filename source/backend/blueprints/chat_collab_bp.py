@@ -486,3 +486,292 @@ def get_session_messages(session_id):
         'messages': msgs,
         'updated_at': session.updated_at.isoformat() if session.updated_at else None,
     })
+
+
+# ============================================================================
+# 方案A：副驾做指挥官，总创作/章节创作降级为被调度的能力
+# 统一动作调度接口：前端点快捷按钮 → 后端代理调用现有能力 → 统一转成副驾卡片协议
+# ============================================================================
+# 支持的动作：
+#   action=master_create  批量生成设定（调 ai-master-create 维度生成，每维度产一张卡）
+#   action=continue       续写本章正文（调 ai-continue/stream，产 SAVE_CHAPTER 卡）
+#   action=polish         润色本章正文（调 ai-continue/stream + 润色指令，产 SAVE_CHAPTER 卡）
+#
+# SSE 输出统一为副驾协议：
+#   data: {"type":"delta","content":"..."}\n\n          流式正文
+#   data: {"type":"card","card":{...},"session_id":"..."}\n\n  落地卡片
+#   data: {"type":"done","session_id":"..."}\n\n
+#   data: {"type":"error","error":"..."}\n\n
+
+# 动作 → 默认维度（master_create 用）
+_ACTION_DIMENSIONS = {
+    'master_create': ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design'],
+}
+
+# 维度字段 → 卡片类型（master_create 产出时映射）
+_DIM_TO_CARD = {
+    'concept': 'SAVE_CONCEPT',
+    'key_rules': 'SAVE_RULE',
+    'worldbuilding': 'SAVE_WORLDSETTING',
+    'character_profiles': 'SAVE_CHARACTER',
+    'plot_design': 'SAVE_OUTLINE_NODE',
+    'timeline': 'SAVE_PLOT',
+    'locations': 'SAVE_LOCATION',
+    'style_guide': 'APPLY_STYLE',
+}
+
+
+@chat_collab_bp.route('/api/ai/chat/smart/action', methods=['POST'])
+def chat_smart_action():
+    """统一动作调度：副驾快捷按钮入口。
+
+    body: { book_id, action, session_id?, instruction?, target_chapter_num?, prev_chapter_content? }
+    返回 SSE，统一副驾卡片协议。
+    """
+    from app import (db, AISession, Book, BookBible, AIConfig, Chapter)
+    from llm_gateway import LLMGateway, get_llm_config
+    data = request.json or {}
+    book_id = data.get('book_id')
+    action = data.get('action')
+    session_id = data.get('session_id')
+    instruction = (data.get('instruction') or '').strip()
+    target_chapter_num = data.get('target_chapter_num')
+    prev_chapter_content = data.get('prev_chapter_content')
+
+    if not book_id or action not in ('master_create', 'continue', 'polish'):
+        return jsonify({'error': '参数无效，action 必须为 master_create/continue/polish'}), 400
+
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+
+    # 复用或创建会话（动作也走会话，便于历史回看）
+    session = None
+    if session_id:
+        session = AISession.query.get(session_id)
+    if not session:
+        title_map = {'master_create': '批量生成设定', 'continue': '续写本章', 'polish': '润色本章'}
+        session = AISession(book_id=book_id, scope='general', title=title_map.get(action, 'AI动作'),
+                            messages_json='[]')
+        db.session.add(session)
+        db.session.commit()
+    session_id = session.id
+
+    # 取激活配置
+    try:
+        base_url, api_key, model = get_llm_config()
+    except Exception as e:
+        return jsonify({'error': f'AI 配置异常：{e}'}), 400
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    gw = LLMGateway(base_url, api_key, model)
+
+    def sse(payload: dict) -> str:
+        return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
+
+    def generate():
+        try:
+            if action == 'master_create':
+                yield from _action_master_create(book, session, instruction, gw, sse)
+            elif action == 'continue':
+                yield from _action_chapter(book, session, instruction, gw, sse,
+                                           target_chapter_num, prev_chapter_content, mode='continue')
+            elif action == 'polish':
+                yield from _action_chapter(book, session, instruction, gw, sse,
+                                           target_chapter_num, prev_chapter_content, mode='polish')
+        except Exception as e:
+            yield sse({'type': 'error', 'error': str(e)})
+        finally:
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+def _action_master_create(book, session, instruction, gw, sse):
+    """批量生成设定：逐维度调用 LLM，每维度产出一张落地卡片。"""
+    from app import BookBible
+    book_id = book.id
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    dims = _ACTION_DIMENSIONS['master_create']
+
+    # 构建各维度上下文（已生成维度作为下游上下文）
+    generated = {}
+    for dim in dims:
+        label = _DIM_LABELS.get(dim, dim)
+        card_type = _DIM_TO_CARD.get(dim, 'SAVE_CONCEPT')
+        yield sse({'type': 'delta', 'content': f'\n\n正在生成【{label}】…\n\n'})
+
+        # 维度 prompt
+        existing = ''
+        if bb:
+            existing = (getattr(bb, dim, '') or '').strip()
+        ctx_parts = []
+        for k, v in generated.items():
+            ctx_parts.append(f'【{_DIM_LABELS.get(k, k)}】\n{v[:600]}')
+        ctx_block = '\n\n'.join(ctx_parts) if ctx_parts else '（暂无）'
+
+        sys_prompt = (
+            f'你是资深网文创作副驾。请为《{book.title}》生成「{label}」设定。'
+            f'题材：{book.genre or "未指定"}，类型：{book.book_type or "未指定"}。'
+            f'\n已有设定参考：\n{ctx_block}'
+            f'\n用户补充要求：{instruction or "无"}'
+            f'\n请直接输出该维度的设定内容（300-600字），不要寒暄，不要解释。'
+        )
+        if existing:
+            sys_prompt += f'\n\n已有内容（可在其基础上补充完善，不要简单重复）：\n{existing[:400]}'
+
+        messages = [{'role': 'system', 'content': sys_prompt},
+                    {'role': 'user', 'content': f'请生成{label}'}]
+        content = ''
+        try:
+            for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=1500):
+                content += chunk
+                yield sse({'type': 'delta', 'content': chunk})
+        except Exception as e:
+            yield sse({'type': 'error', 'error': f'{label}生成失败：{e}'})
+            continue
+
+        generated[dim] = content
+        # 产出落地卡片
+        card = {
+            'id': str(uuid.uuid4())[:8],
+            'type': card_type,
+            'title': f'{label}（AI生成）',
+            'content': content.strip(),
+            'target': _CARD_TARGET.get(card_type, label),
+        }
+        yield sse({'type': 'card', 'card': card, 'session_id': session.id})
+
+    # 持久化会话
+    yield from _persist_action_session(session, f'批量生成设定：{instruction or "默认五维度"}',
+                                       generated, dims)
+
+
+def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, prev_chapter_content, mode):
+    """续写/润色本章正文：产 SAVE_CHAPTER 卡。"""
+    from app import BookBible, Chapter
+    book_id = book.id
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+
+    # 确定当前章号 + 上一章内容
+    if not target_chapter_num:
+        max_idx = db.session.query(db.func.max(Chapter.order_index)) \
+            .filter_by(book_id=book_id, is_volume=False).scalar() or 0
+        target_chapter_num = max_idx + 1
+    if not prev_chapter_content:
+        prev = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
+            .filter(Chapter.order_index < target_chapter_num) \
+            .order_by(Chapter.order_index.desc()).first()
+        prev_chapter_content = (prev.content or '')[:2000] if prev else ''
+
+    # bible 上下文摘要
+    bible_ctx = ''
+    if bb:
+        parts = []
+        for f in ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design']:
+            v = (getattr(bb, f, '') or '').strip()
+            if v:
+                parts.append(f'【{_DIM_LABELS.get(f, f)}】\n{v[:400]}')
+        bible_ctx = '\n\n'.join(parts)
+
+    mode_label = '续写' if mode == 'continue' else '润色'
+    yield sse({'type': 'delta', 'content': f'正在{mode_label}第 {target_chapter_num} 章…\n\n'})
+
+    if mode == 'polish':
+        # 润色：需要有原文
+        cur = Chapter.query.filter_by(book_id=book_id, is_volume=False,
+                                       order_index=target_chapter_num).first()
+        if not cur or not (cur.content or '').strip():
+            yield sse({'type': 'error', 'error': f'第 {target_chapter_num} 章无正文，无法润色'})
+            return
+        sys_prompt = (
+            f'你是资深网文润色编辑。请润色《{book.title}》第 {target_chapter_num} 章正文。'
+            f'\n要求：保持剧情和人物不变，优化文笔节奏，去除AI味，提升画面感。'
+            f'\n用户要求：{instruction or "无"}'
+            f'\n\n【原文】\n{cur.content}'
+            f'\n\n请直接输出润色后的完整正文（含章节标题），不要解释。'
+        )
+        user_msg = f'请润色第 {target_chapter_num} 章'
+    else:
+        sys_prompt = (
+            f'你是资深网文创作副驾。请为《{book.title}》续写第 {target_chapter_num} 章正文。'
+            f'\n题材：{book.genre or "未指定"}，类型：{book.book_type or "未指定"}。'
+            f'\n\n【设定参考】\n{bible_ctx or "（暂无设定）"}'
+            f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
+            f'\n用户要求：{instruction or "自然推进剧情"}'
+            f'\n请直接输出完整章节正文（含标题，2400字左右），不要解释。'
+        )
+        user_msg = f'请续写第 {target_chapter_num} 章'
+
+    messages = [{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': user_msg}]
+    content = ''
+    try:
+        for chunk in gw.chat_stream(messages, temperature=0.85, max_tokens=4096):
+            content += chunk
+            yield sse({'type': 'delta', 'content': chunk})
+    except Exception as e:
+        yield sse({'type': 'error', 'error': f'{mode_label}失败：{e}'})
+        return
+
+    card = {
+        'id': str(uuid.uuid4())[:8],
+        'type': 'SAVE_CHAPTER',
+        'title': f'第 {target_chapter_num} 章（AI{mode_label}）',
+        'content': content.strip(),
+        'target': '章节正文',
+    }
+    yield sse({'type': 'card', 'card': card, 'session_id': session.id})
+
+    # 持久化会话
+    yield from _persist_action_session(session, f'{mode_label}第{target_chapter_num}章：{instruction or ""}',
+                                       {f'chapter_{target_chapter_num}': content},
+                                       [f'chapter_{target_chapter_num}'])
+
+
+def _persist_action_session(session, title, generated, dims):
+    """动作执行完后持久化会话消息。"""
+    from app import db
+    history = load_session_messages(session)
+    history.append({'role': 'user', 'content': title})
+    # 动作产出的卡片也存进会话，便于历史回看
+    cards = []
+    for dim in dims:
+        c = generated.get(dim)
+        if c:
+            card_type = _DIM_TO_CARD.get(dim, 'SAVE_CHAPTER') if dim != dims[0] or 'chapter' not in dim else 'SAVE_CHAPTER'
+            if 'chapter' in dim:
+                card_type = 'SAVE_CHAPTER'
+            cards.append({
+                'id': str(uuid.uuid4())[:8],
+                'type': card_type,
+                'title': _DIM_LABELS.get(dim, dim),
+                'content': c,
+                'target': _CARD_TARGET.get(card_type, dim),
+                'status': 'pending',
+            })
+    history.append({'role': 'assistant', 'content': title, 'cards': cards})
+    session.messages_json = json.dumps(history, ensure_ascii=False)
+    session.updated_at = datetime.now(timezone.utc)
+    if not session.title or session.title == 'AI动作':
+        session.title = title[:30]
+    db.session.commit()
+    yield f'data: {json.dumps({"type": "done", "session_id": session.id}, ensure_ascii=False)}\n\n'
+
+
+# 维度标签/卡片目标映射（供动作调度用）
+_DIM_LABELS = {
+    'concept': '核心构思', 'key_rules': '核心规则', 'worldbuilding': '世界观',
+    'character_profiles': '人物档案', 'plot_design': '剧情大纲',
+    'timeline': '时间线', 'locations': '地点', 'style_guide': '文风指南',
+}
+_CARD_TARGET = {
+    'SAVE_CONCEPT': '核心构思', 'SAVE_RULE': '核心规则', 'SAVE_WORLDSETTING': '世界观',
+    'SAVE_CHARACTER': '人物', 'SAVE_OUTLINE_NODE': '大纲', 'SAVE_PLOT': '剧情线',
+    'SAVE_LOCATION': '地点', 'APPLY_STYLE': '文风', 'SAVE_CHAPTER': '章节正文',
+    'SAVE_FORESHADOW': '伏笔',
+}

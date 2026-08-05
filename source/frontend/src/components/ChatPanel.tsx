@@ -255,6 +255,50 @@ export default function ChatPanel() {
     }
   }, [chatPanelOpen]);
 
+  // 公共：消费 SSE 流，把 delta/card/done/error 写入 messages
+  const consumeSSE = useCallback(async (res: Response, ctrl: AbortController) => {
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    let receivedSessionId = sessionId;
+    for await (const evt of parseSSE(res)) {
+      if (ctrl.signal.aborted) break;
+      if (evt.type === 'delta') {
+        streamBufferRef.current += evt.content;
+        const buf = streamBufferRef.current;
+        setMessages(prev => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last && last.role === 'assistant') {
+            next[next.length - 1] = { ...last, content: buf };
+          }
+          return next;
+        });
+      } else if (evt.type === 'card') {
+        if (evt.session_id && !receivedSessionId) {
+          receivedSessionId = evt.session_id;
+          setSessionId(evt.session_id);
+        }
+        setMessages(prev => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last && last.role === 'assistant') {
+            next[next.length - 1] = { ...last, cards: [...(last.cards || []), { ...evt.card, status: 'pending' }] };
+          }
+          return next;
+        });
+      } else if (evt.type === 'done') {
+        if (evt.session_id) {
+          setSessionId(evt.session_id);
+          receivedSessionId = evt.session_id;
+        }
+      } else if (evt.type === 'error') {
+        throw new Error(evt.error);
+      }
+    }
+  }, [sessionId]);
+
   // 发送消息
   const sendMessage = useCallback(async () => {
     const text = input.trim();
@@ -273,51 +317,7 @@ export default function ChatPanel() {
     abortRef.current = ctrl;
     try {
       const res = await api.chatSmartStream(bookId, text, sessionId || undefined, 'general', ctrl.signal);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-
-      const newCards: ActionCard[] = [];
-      let receivedSessionId = sessionId;
-
-      for await (const evt of parseSSE(res)) {
-        if (ctrl.signal.aborted) break;
-        if (evt.type === 'delta') {
-          streamBufferRef.current += evt.content;
-          const buf = streamBufferRef.current;
-          setMessages(prev => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.role === 'assistant') {
-              next[next.length - 1] = { ...last, content: buf };
-            }
-            return next;
-          });
-        } else if (evt.type === 'card') {
-          newCards.push({ ...evt.card, status: 'pending' });
-          if (evt.session_id && !receivedSessionId) {
-            receivedSessionId = evt.session_id;
-            setSessionId(evt.session_id);
-          }
-          // 把卡片附加到当前 assistant 消息
-          setMessages(prev => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.role === 'assistant') {
-              next[next.length - 1] = { ...last, cards: [...(last.cards || []), { ...evt.card, status: 'pending' }] };
-            }
-            return next;
-          });
-        } else if (evt.type === 'done') {
-          if (evt.session_id) {
-            setSessionId(evt.session_id);
-            receivedSessionId = evt.session_id;
-          }
-        } else if (evt.type === 'error') {
-          throw new Error(evt.error);
-        }
-      }
+      await consumeSSE(res, ctrl);
 
       // 流结束后刷新进度
       refreshProgress();
@@ -341,7 +341,43 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [input, bookId, streaming, sessionId, refreshProgress, refreshHistory]);
+  }, [input, bookId, streaming, sessionId, consumeSSE, refreshProgress, refreshHistory]);
+
+  // 触发快捷动作（方案A：副驾调度总创作/章节创作能力）
+  const triggerAction = useCallback(async (action: 'master_create' | 'continue' | 'polish', label: string) => {
+    if (!bookId || streaming) return;
+    setStreamError('');
+    streamBufferRef.current = '';
+
+    const userMsg: AIMessage = { role: 'user', content: `快捷动作：${label}` };
+    const aiMsg: AIMessage = { role: 'assistant', content: '', cards: [] };
+    setMessages(prev => [...prev, userMsg, aiMsg]);
+    setStreaming(true);
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await api.chatSmartAction(bookId, action, { session_id: sessionId || undefined }, ctrl.signal);
+      await consumeSSE(res, ctrl);
+      refreshProgress();
+      refreshHistory();
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setStreamError(e.message || `${label}失败`);
+        setMessages(prev => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last && last.role === 'assistant' && !last.content && !(last.cards || []).length) {
+            next.pop();
+          }
+          return next;
+        });
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }, [bookId, streaming, sessionId, consumeSSE, refreshProgress, refreshHistory]);
 
   const stopStream = useCallback(() => {
     if (abortRef.current) {
@@ -545,25 +581,48 @@ export default function ChatPanel() {
 
             {/* 输入区 */}
             <div className="chat-input-area">
-              <textarea
-                className="chat-input"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                placeholder="和 AI 聊聊你的小说…（Enter 发送，Shift+Enter 换行）"
-                rows={1}
-                disabled={streaming}
-              />
-              {streaming ? (
-                <button className="chat-send stop" onClick={stopStream}>停止</button>
-              ) : (
-                <button className="chat-send" onClick={sendMessage} disabled={!input.trim()}>发送</button>
-              )}
+              {/* 快捷动作栏：副驾做指挥官，一键调度总创作/章节创作能力 */}
+              <div className="chat-quick-actions">
+                <button
+                  className="chat-quick-action"
+                  onClick={() => triggerAction('master_create', '批量生成设定')}
+                  disabled={streaming}
+                  title="一次性生成构思/规则/世界观/人物/大纲五维度，以卡片形式返回"
+                >⚡ 批量生成设定</button>
+                <button
+                  className="chat-quick-action"
+                  onClick={() => triggerAction('continue', '续写本章')}
+                  disabled={streaming}
+                  title="基于设定和上一章，续写下一章正文"
+                >✍️ 续写本章</button>
+                <button
+                  className="chat-quick-action"
+                  onClick={() => triggerAction('polish', '润色本章')}
+                  disabled={streaming}
+                  title="对最新章节正文进行润色去AI味"
+                >✨ 润色本章</button>
+              </div>
+              <div className="chat-input-row">
+                <textarea
+                  className="chat-input"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  placeholder="和 AI 聊聊你的小说…（Enter 发送，Shift+Enter 换行）"
+                  rows={1}
+                  disabled={streaming}
+                />
+                {streaming ? (
+                  <button className="chat-send stop" onClick={stopStream}>停止</button>
+                ) : (
+                  <button className="chat-send" onClick={sendMessage} disabled={!input.trim()}>发送</button>
+                )}
+              </div>
             </div>
           </div>
         </div>
