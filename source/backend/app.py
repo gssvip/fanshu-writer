@@ -195,14 +195,16 @@ if DATABASE_URL:
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 db = SQLAlchemy(app)
 
-# P1b：注册 Blueprint（渐进式从 app.py 拆分路由）
 try:
-    from blueprints.health_bp import health_bp
-    app.register_blueprint(health_bp)
-    from blueprints.ai_config_bp import ai_config_bp
-    app.register_blueprint(ai_config_bp)
+    from blueprints.health_bp import health_bp; app.register_blueprint(health_bp)
+    from blueprints.ai_config_bp import ai_config_bp; app.register_blueprint(ai_config_bp)
 except ImportError:
     pass
+
+# gunicorn prefork 使 _app_engines(WeakKeyDictionary) weakref 失效，请求前检查重注册
+@app.before_request
+def _ensure_db():
+    if app not in db._app_engines: app.extensions.pop('sqlalchemy', None); db.init_app(app)
 
 EXPORTS_DIR = DATA_DIR / 'exports'
 EXPORTS_DIR.mkdir(exist_ok=True)
@@ -526,11 +528,9 @@ class AIConfig(db.Model):
 
     @classmethod
     def get_active(cls):
-        """返回当前激活的配置（兼容旧数据）。全项目 LLM 调用统一入口。"""
         cfg = cls.query.filter_by(is_active=True).first()
         if cfg:
             return cfg
-        # 兼容旧库：旧版本仅一条记录无 is_active 字段
         cfg = cls.query.order_by(cls.id.asc()).first()
         if cfg:
             cfg.is_active = True
