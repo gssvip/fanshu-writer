@@ -716,16 +716,43 @@ export default function ChatPanel() {
 
   // ========== 去AITab：对选中章节去AI味 ==========
   const handleDeai = useCallback(async () => {
-    if (!bookId || !deaiTargetId || streaming) return;
+    if (!bookId || streaming) return;
+    // 优先使用下拉选中的章节；未选则从消息框解析章节号
+    let targetId = deaiTargetId;
+    let note = '';
+    if (!targetId) {
+      const text = input.trim();
+      if (text) {
+        const numMatch = text.match(/第?\s*(\d+)\s*章/);
+        if (numMatch) {
+          const targetNum = parseInt(numMatch[1]);
+          const ch = chapters.find(c => c.order_index === targetNum);
+          if (ch) {
+            targetId = ch.id;
+            note = text;
+          } else {
+            setStreamError(`未找到第 ${targetNum} 章，请检查章节号`);
+            return;
+          }
+        } else {
+          setStreamError('请先选择章节，或在输入框输入「第N章」指定');
+          return;
+        }
+      } else {
+        setStreamError('请先选择章节，或在输入框输入「第N章」指定');
+        return;
+      }
+    }
     setStreamError('');
     streamBufferRef.current = '';
-    const ch = chapters.find(c => c.id === deaiTargetId);
-    appendUserAi(`去AI味：${ch?.title || '选中章节'}`);
+    const ch = chapters.find(c => c.id === targetId);
+    appendUserAi(`去AI味：${ch?.title || '选中章节'}${note ? `（${note.slice(0, 40)}）` : ''}`);
+    if (note) setInput('');
     setStreaming(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.smartDeaiStream(bookId, deaiTargetId, deaiPacks_selected, sessionId || undefined, ctrl.signal);
+      const res = await api.smartDeaiStream(bookId, targetId, deaiPacks_selected, sessionId || undefined, ctrl.signal);
       await consumeSSE(res, ctrl, (card, meta) => {
         (card as any).__meta = meta;
       });
@@ -740,7 +767,7 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [bookId, deaiTargetId, streaming, chapters, deaiPacks_selected, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshHistory]);
+  }, [bookId, deaiTargetId, streaming, chapters, deaiPacks_selected, sessionId, input, appendUserAi, removeEmptyAi, consumeSSE, refreshHistory]);
 
   // ========== 校审Tab：防遗忘 / 一致性检查（按卷，拉取动态文件+伏笔）==========
   const handleReview = useCallback(async (mode: 'anti_forget' | 'consistency') => {
@@ -1216,12 +1243,15 @@ export default function ChatPanel() {
                         disabled={streaming}
                       >
                         <option value="">请选择章节…</option>
-                        {chapters.map(c => (
+                        {[...chapters].sort((a, b) => b.order_index - a.order_index).slice(0, 10).map(c => (
                           <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}（{c.word_count}字）</option>
                         ))}
                       </select>
                     )}
                   </div>
+                  {chapters.length > 10 && (
+                    <div className="smart-deai-hint">💡 仅显示最新10章，其他章节可在下方消息框输入「第N章」指定</div>
+                  )}
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={deaiPacks_selected} onToggle={(id) => toggleSkillPack('deai', id)} compact />
                   {deaiPacks.length > 0 && deaiPacks_selected.length === 0 && (
                     <div className="smart-deai-hint">💡 检测到 {deaiPacks.length} 个去AI味技能包，可在上方勾选，未选将使用默认去AI味规则</div>
@@ -1243,29 +1273,30 @@ export default function ChatPanel() {
                       disabled={reviewing || streaming}
                     >⚖️ 一致性检查</button>
                   </div>
-                  {/* 校审范围：两行紧凑布局 */}
+                  {/* 校审范围：两行下拉选择（按卷 + 一致性章节），样式统一对齐 */}
                   <div className="smart-review-scope">
                     {volumes.length > 0 && (
-                      <div className="smart-review-scope-row">
-                        <span className="smart-review-scope-label">按卷（不选=全书）</span>
-                        <div className="smart-volume-chips">
+                      <div className="smart-chapter-select smart-review-scope-row">
+                        <label>📚 按卷（不选=全书）</label>
+                        <select
+                          className="smart-review-scope-select"
+                          value={reviewVolumeIds[0] || ''}
+                          onChange={e => {
+                            const v = e.target.value;
+                            setReviewVolumeIds(v ? [v] : []);
+                          }}
+                          disabled={reviewing || streaming}
+                        >
+                          <option value="">全书</option>
                           {volumes.map(v => (
-                            <button
-                              key={v.id}
-                              className={`smart-volume-chip ${reviewVolumeIds.includes(v.id) ? 'active' : ''}`}
-                              onClick={() => setReviewVolumeIds(prev => prev.includes(v.id) ? prev.filter(x => x !== v.id) : [...prev, v.id])}
-                              disabled={reviewing || streaming}
-                            >{v.title}（{v.chapter_count}章）</button>
+                            <option key={v.id} value={v.id}>{v.title}（{v.chapter_count}章）</option>
                           ))}
-                          {reviewVolumeIds.length > 0 && (
-                            <button className="smart-volume-clear" onClick={() => setReviewVolumeIds([])}>清除</button>
-                          )}
-                        </div>
+                        </select>
                       </div>
                     )}
                     {chapters.length > 0 && (
-                      <div className="smart-review-scope-row">
-                        <span className="smart-review-scope-label">一致性章节（不选=最新）</span>
+                      <div className="smart-chapter-select smart-review-scope-row">
+                        <label>📖 一致性章节（不选=最新）</label>
                         <select
                           className="smart-review-scope-select"
                           value={reviewChapterId || ''}
@@ -1343,9 +1374,9 @@ export default function ChatPanel() {
                 <button
                   className="smart-main-action"
                   onClick={handleDeai}
-                  disabled={streaming || !deaiTargetId}
+                  disabled={streaming}
                 >{streaming ? '处理中…' : '🧹 开始去AI味'}</button>
-                {!deaiTargetId && <span className="smart-main-hint">请先选择章节</span>}
+                {!deaiTargetId && <span className="smart-main-hint">未选章节时可在输入框输入「第N章」</span>}
               </div>
             )}
 
@@ -1384,19 +1415,24 @@ export default function ChatPanel() {
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey && activeTab === 'chapter' && pendingChapterAction) {
-                        e.preventDefault();
-                        if (pendingChapterAction === 'continue') {
-                          doChapterAction('continue', null);
-                        } else if (pendingChapterAction === 'polish') {
-                          const text = input.trim();
-                          if (text) {
-                            const numMatch = text.match(/第?\s*(\d+)\s*章/);
-                            const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter?.order_index || 1);
-                            const ch = chapters.find(c => c.order_index === targetNum);
-                            if (ch) doChapterActionWithNote('polish', ch.id, text);
-                            else setStreamError(`未找到第 ${targetNum} 章`);
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        if (activeTab === 'chapter' && pendingChapterAction) {
+                          e.preventDefault();
+                          if (pendingChapterAction === 'continue') {
+                            doChapterAction('continue', null);
+                          } else if (pendingChapterAction === 'polish') {
+                            const text = input.trim();
+                            if (text) {
+                              const numMatch = text.match(/第?\s*(\d+)\s*章/);
+                              const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter?.order_index || 1);
+                              const ch = chapters.find(c => c.order_index === targetNum);
+                              if (ch) doChapterActionWithNote('polish', ch.id, text);
+                              else setStreamError(`未找到第 ${targetNum} 章`);
+                            }
                           }
+                        } else if (activeTab === 'deai' && input.trim()) {
+                          e.preventDefault();
+                          handleDeai();
                         }
                       }
                     }}
@@ -1423,6 +1459,12 @@ export default function ChatPanel() {
                         else setStreamError(`未找到第 ${targetNum} 章`);
                       }}
                     >▶️ 修改</button>
+                  ) : activeTab === 'deai' ? (
+                    <button
+                      className="chat-send"
+                      onClick={handleDeai}
+                      disabled={!input.trim() && !deaiTargetId}
+                    >🧹 去味</button>
                   ) : null}
                 </div>
               </div>
