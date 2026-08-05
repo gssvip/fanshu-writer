@@ -1631,7 +1631,7 @@ textarea{resize:vertical;line-height:1.8}
 .chat-empty {
   text-align: center; padding: 32px 16px; color: var(--text-secondary);
 }
-.chat-empty-icon { font-size: 40px; margin-bottom: 12px; }
+.chat-empty-icon { font-size: 40px; margin-bottom: 12px; display: flex; justify-content: center; }
 .chat-empty p { font-size: 13px; line-height: 1.6; margin: 0 0 16px; }
 .chat-empty-hint {
   background: var(--bg-secondary); border-radius: 10px;

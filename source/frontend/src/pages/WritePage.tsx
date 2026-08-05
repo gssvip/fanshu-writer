@@ -5,6 +5,7 @@ import { useStore } from '../store';
 import type { Book, BookBible, BrainstormResult, BrainstormSuggestion, Chapter, SkillPack, DynamicReport, AISession } from '../types';
 import AiCreateModal from './AiCreateModal';
 import EntityRegistryModal from './EntityRegistryModal';
+import CarLogo from '../components/CarLogo';
 import { CHAPTER_LANG_STYLES } from '../constants';
 
 // 两行 Tab 布局：上下各 5 个维度
@@ -2289,7 +2290,7 @@ function ConceptPanel(props: {
           title="打开 AI 智驾：设定/正文/去AI/校审 四Tab协作创作"
           style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)', display: 'flex', alignItems: 'center', gap: 8, padding: '14px 28px', fontSize: 15, fontWeight: 700 }}
         >
-          <span style={{ fontSize: '2em', lineHeight: 1 }} aria-hidden>🏎️</span><span>AI 智驾</span>
+          <span style={{ lineHeight: 1 }} aria-hidden><CarLogo size={32} /></span><span>AI 智驾</span>
         </button>
       </div>
 
@@ -2381,7 +2382,7 @@ function ConceptPanel(props: {
         {historyExpanded && (
           aiSessions.length === 0 ? (
             <div style={{ padding: '16px 12px', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px dashed var(--border-color)' }}>
-              暂无聊天记录。点击上方「🏎️ AI 智驾」开始第一次创作，生成的内容会自动保存到这里。
+              暂无聊天记录。点击上方「AI 智驾」开始第一次创作，生成的内容会自动保存到这里。
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
@@ -3360,7 +3361,7 @@ function ChapterPanel(props: {
             disabled={aiCreating}
             title="打开 AI 智驾·正文Tab：续写/润色本章"
           >
-            🏎️ AI 智驾
+            <span style={{display:'inline-flex',alignItems:'center',gap:4}}><CarLogo size={16} /> AI 智驾</span>
           </button>
         </div>
         <input
