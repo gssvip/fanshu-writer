@@ -278,7 +278,7 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
       onMouseMove={onMove}
       style={{ position: 'relative' }}
     >
-      <div className="chat-msg-avatar">{isUser ? '我' : '🚗'}</div>
+      <div className="chat-msg-avatar">{isUser ? '我' : '🏎️'}</div>
       <div className="chat-msg-body">
         {editing ? (
           <div className="chat-msg-edit-wrap">
@@ -1081,7 +1081,7 @@ export default function ChatPanel() {
             {/* 头部（紧凑） */}
             <div className="chat-panel-header chat-panel-header-compact">
               <div className="chat-panel-title">
-                <span className="chat-panel-logo">🚗</span>
+                <span className="chat-panel-logo">🏎️</span>
                 <div className="chat-panel-name">AI 智驾</div>
               </div>
               <div className="chat-panel-tools">
@@ -1339,7 +1339,7 @@ export default function ChatPanel() {
             <div className="chat-messages" ref={scrollRef}>
               {messages.length === 0 && !loadingSuggest && (
                 <div className="chat-empty">
-                  <div className="chat-empty-icon">🚗</div>
+                  <div className="chat-empty-icon">🏎️</div>
                   <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
                 </div>
               )}
