@@ -1,4 +1,4 @@
-import type { Book, Chapter, Character, Outline, Template, AIConfig, AISession, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport } from './types';
+import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport } from './types';
 
 // 后端 API 默认地址（内置，开箱即用）
 // 其他用户无需手动配置即可使用。如需切换到自部署的后端，可在「我的 → 服务器」覆盖。
@@ -197,6 +197,10 @@ export const api = {
   // AI
   getAIConfig: () => request<AIConfig>('/ai/config'),
   updateAIConfig: (data: Partial<AIConfig>) => request<AIConfig>('/ai/config', { method: 'PUT', body: JSON.stringify(data) }),
+  listAIConfigs: () => request<AIConfigList>('/ai/configs'),
+  createAIConfig: (data: Partial<AIConfig>) => request<AIConfig>('/ai/configs', { method: 'POST', body: JSON.stringify(data) }),
+  activateAIConfig: (id: string) => request<AIConfig>(`/ai/configs/${id}/activate`, { method: 'PUT' }),
+  deleteAIConfig: (id: string) => request<{ ok: boolean }>(`/ai/configs/${id}`, { method: 'DELETE' }),
   fetchAIModels: (baseUrl: string, apiKey: string) =>
     request<{ models: { id: string; owned_by: string }[] }>('/ai/models', { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }) }),
   testAIConnection: (baseUrl: string, apiKey: string, model: string) =>

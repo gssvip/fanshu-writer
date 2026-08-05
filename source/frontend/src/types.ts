@@ -56,10 +56,16 @@ export interface DailyStat {
 }
 
 export interface AIConfig {
-  id: string; provider: string; model: string;
+  id: string; name: string; is_active: boolean;
+  provider: string; model: string;
   recognition_model: string;
   api_key: string; base_url: string;
   temperature: number; max_tokens: number; has_key: boolean;
+}
+
+export interface AIConfigList {
+  configs: AIConfig[];
+  max: number;
 }
 
 export interface AISession {

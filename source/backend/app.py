@@ -199,9 +199,10 @@ db = SQLAlchemy(app)
 try:
     from blueprints.health_bp import health_bp
     app.register_blueprint(health_bp)
-    _health_bp_registered = True
+    from blueprints.ai_config_bp import ai_config_bp
+    app.register_blueprint(ai_config_bp)
 except ImportError:
-    _health_bp_registered = False
+    pass
 
 EXPORTS_DIR = DATA_DIR / 'exports'
 EXPORTS_DIR.mkdir(exist_ok=True)
@@ -497,6 +498,8 @@ class AISession(db.Model):
 class AIConfig(db.Model):
     __tablename__ = 'ai_config'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = db.Column(db.String(50), default='默认配置')  # 多配置标识
+    is_active = db.Column(db.Boolean, default=True, index=True)  # 是否激活（同时仅一个）
     provider = db.Column(db.String(50), default='deepseek')
     model = db.Column(db.String(100), default='deepseek-chat')
     recognition_model = db.Column(db.String(100), default='')  # AI识别专用模型，为空时使用model
@@ -507,7 +510,8 @@ class AIConfig(db.Model):
 
     def to_dict(self):
         return {
-            'id': self.id, 'provider': self.provider, 'model': self.model,
+            'id': self.id, 'name': self.name or '默认配置', 'is_active': self.is_active,
+            'provider': self.provider, 'model': self.model,
             'recognition_model': self.recognition_model or '',
             'api_key': '***' if self.api_key else '', 'base_url': self.base_url,
             'temperature': self.temperature, 'max_tokens': self.max_tokens,
@@ -519,6 +523,23 @@ class AIConfig(db.Model):
         if task_type == 'recognition' and self.recognition_model:
             return self.recognition_model
         return self.model
+
+    @classmethod
+    def get_active(cls):
+        """返回当前激活的配置（兼容旧数据）。全项目 LLM 调用统一入口。"""
+        cfg = cls.query.filter_by(is_active=True).first()
+        if cfg:
+            return cfg
+        # 兼容旧库：旧版本仅一条记录无 is_active 字段
+        cfg = cls.query.order_by(cls.id.asc()).first()
+        if cfg:
+            cfg.is_active = True
+            db.session.commit()
+            return cfg
+        cfg = cls(name='默认配置', is_active=True)
+        db.session.add(cfg)
+        db.session.commit()
+        return cfg
 
 
 class AppPreference(db.Model):
@@ -1916,31 +1937,7 @@ def create_template():
 
 
 # ==== AI API ====
-
-@app.route('/api/ai/config', methods=['GET'])
-def get_ai_config():
-    cfg = AIConfig.query.first()
-    if not cfg:
-        cfg = AIConfig()
-        db.session.add(cfg)
-        db.session.commit()
-    return jsonify(cfg.to_dict())
-
-@app.route('/api/ai/config', methods=['PUT'])
-def update_ai_config():
-    data = request.json
-    cfg = AIConfig.query.first()
-    if not cfg:
-        cfg = AIConfig()
-        db.session.add(cfg)
-    for field in ['provider', 'model', 'recognition_model', 'base_url', 'temperature', 'max_tokens']:
-        if field in data:
-            setattr(cfg, field, data[field])
-    if 'api_key' in data and data['api_key'] and data['api_key'] != '***':
-        cfg.api_key = data['api_key']
-    db.session.commit()
-    return jsonify(cfg.to_dict())
-
+# 注：/api/ai/config GET/PUT 已迁移至 blueprints/ai_config_bp.py（多配置支持）
 
 def _do_fetch_models(base_url, api_key):
     """实际拉取模型列表的内部函数，供多个接口复用"""
@@ -2020,7 +2017,7 @@ def fetch_ai_models():
 
     # 如果 api_key 是掩码或为空，尝试使用已保存的配置
     if api_key == '***' or not api_key:
-        cfg = AIConfig.query.first()
+        cfg = AIConfig.get_active()
         if cfg and cfg.api_key:
             api_key = cfg.api_key
             if not base_url:
@@ -2054,7 +2051,7 @@ def test_ai_connection():
 
     # 如果 api_key 是掩码或为空，尝试使用已保存的配置
     if api_key == '***' or not api_key:
-        cfg = AIConfig.query.first()
+        cfg = AIConfig.get_active()
         if cfg and cfg.api_key:
             api_key = cfg.api_key
             if not base_url:
@@ -2086,7 +2083,7 @@ def ai_chat():
     if not messages:
         return jsonify({'error': 'No messages'}), 400
 
-    cfg = AIConfig.query.first()
+    cfg = AIConfig.get_active()
     if not cfg or not cfg.api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
@@ -2126,7 +2123,7 @@ def ai_chat_stream():
     data = request.json
     messages = data.get('messages', [])
 
-    cfg = AIConfig.query.first()
+    cfg = AIConfig.get_active()
     if not cfg or not cfg.api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
@@ -2771,7 +2768,7 @@ def ai_import_recognize(book_id):
     # 可选：指定要识别的维度；为空则识别全部
     target_dims = data.get('dimensions', [])
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     if not config or not config.api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
@@ -2911,7 +2908,7 @@ def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
         bb = BookBible.query.filter_by(book_id=book_id).first()
         if not bb:
             return None
-        config = AIConfig.query.first()
+        config = AIConfig.get_active()
         if not config or not config.api_key:
             return None
 
@@ -2977,7 +2974,7 @@ def ai_anti_forget_check(book_id):
     if not isinstance(volume_ids, list):
         volume_ids = []
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     if not config or not config.api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
@@ -3757,7 +3754,7 @@ REVIEW_CRITERIA = {
 
 @app.route('/api/books/<book_id>/review', methods=['POST'])
 def review_book(book_id):
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.model if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -4707,7 +4704,7 @@ def sync_skill_pack_from_github(pack_id):
 
 @app.route('/api/analyze-book', methods=['POST'])
 def analyze_book():
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = os.environ.get('USER_LLM_API_KEY', '')
     base_url = os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -6430,7 +6427,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     - skip_chapter_plan：跳过 chapter_plan Agent（批处理流式模式用，避免同步 LLM 调用阻塞 20-60s
       期间生成器无法推送心跳，导致 Render 空闲超时 network error）。"""
     book = Book.query.get(book_id)
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.model if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -7237,7 +7234,7 @@ def ai_spot_fix(book_id):
     token_saving = estimate_token_saving(content, patches)
 
     # 调用 LLM 修订
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('creation') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -8379,7 +8376,7 @@ def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation')
     """统一的 LLM 调用辅助函数，返回 (content, error)
     task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)
     max_tokens 语义：None → 用 cfg.max_tokens；0 → 不限制（不下发该字段，用模型自身默认上限）；正整数 → 显式限定。"""
-    cfg = AIConfig.query.first()
+    cfg = AIConfig.get_active()
     if not cfg or not cfg.api_key:
         return None, '请先配置 AI 模型 API Key'
     try:
@@ -9943,7 +9940,7 @@ def ai_master_create_stream(book_id):
     # 上下文：本轮已生成(session_outputs)优先，回退 bible 已有内容
     ctx = _build_master_ctx(bb, session_outputs)
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('creation') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -10174,7 +10171,7 @@ def ai_brainstorm(book_id):
     if not book:
         return jsonify({'error': 'Book not found'}), 404
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.model if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -10272,7 +10269,7 @@ def ai_analyze_content(book_id):
     if not book:
         return jsonify({'error': 'Book not found'}), 404
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -10405,7 +10402,7 @@ def ai_analyze_dimension(book_id):
     }
     dim_label = dim_labels.get(dimension, dimension)
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -10563,7 +10560,7 @@ def ai_analyze_character(book_id):
     data = request.get_json() or {}
     character_name = data.get('character_name', '')  # 指定角色名，为空则识别全部角色列表
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -10699,7 +10696,7 @@ def ai_analyze_plot_volume(book_id):
 
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -11106,7 +11103,7 @@ def ai_analyze_character_volume(book_id):
         db.session.add(bb)
         db.session.commit()
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -11228,7 +11225,7 @@ def ai_analyze_inventory_volume(book_id):
         db.session.add(bb)
         db.session.commit()
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -11357,7 +11354,7 @@ def ai_analyze_dynamic_volume(book_id):
         db.session.add(bb)
         db.session.commit()
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -11479,7 +11476,7 @@ def ai_analyze_foreshadowing_volume(book_id):
         db.session.add(bb)
         db.session.commit()
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -11582,7 +11579,7 @@ def ai_analyze_locations_volume(book_id):
         db.session.add(bb)
         db.session.commit()
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -11764,7 +11761,7 @@ def ai_generate_dynamic_memory(book_id):
     if not book:
         return jsonify({'error': 'Book not found'}), 404
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.model if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -11891,7 +11888,7 @@ def _generate_dynamic_report_content(book_id, chapter_start, chapter_end, skill_
     if not book:
         return None, 'Book not found'
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.model if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -12158,7 +12155,7 @@ def batch_generate_dynamic_reports(book_id):
     skill_pack_ids = data.get('skill_pack_ids', [])
     overwrite = data.get('overwrite', False)
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     if not config or not config.api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
@@ -12369,7 +12366,7 @@ def ai_analyze_from_reports(book_id):
     }
     dim_label = dim_labels.get(dimension, dimension)
 
-    config = AIConfig.query.first()
+    config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('recognition') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')

@@ -8,7 +8,10 @@ import type { Book } from '../types';
 export default function MinePage() {
   const { currentUser, theme, customColors, setTheme, setCustomColors, setCurrentUser, logout } = useStore() as any;
   const { requireAuth } = useContext(AuthContext);
-  const [aiConfig, setAIConfig] = useState<AIConfig>({ id: '', provider: 'deepseek', model: 'deepseek-chat', recognition_model: '', api_key: '', base_url: 'https://api.deepseek.com/v1', temperature: 0.7, max_tokens: 4000, has_key: false });
+  const [aiConfig, setAIConfig] = useState<AIConfig>({ id: '', name: '默认配置', is_active: true, provider: 'deepseek', model: 'deepseek-chat', recognition_model: '', api_key: '', base_url: 'https://api.deepseek.com/v1', temperature: 0.7, max_tokens: 4000, has_key: false });
+  // 多配置支持：最多 3 个，可切换
+  const [configList, setConfigList] = useState<AIConfig[]>([]);
+  const [maxConfigs] = useState(3);
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeSection, setActiveSection] = useState('');
@@ -109,7 +112,7 @@ export default function MinePage() {
     if (!currentUser) return;
     // 已登录用户进入"我的"页面时，默认展开"账户安全"分区，方便修改密码
     setActiveSection('account');
-    api.getAIConfig().then(setAIConfig).catch(() => {});
+    refreshConfigs();
     api.listBooks().then((books: Book[]) => {
       setStats({
         totalBooks: books.length,
@@ -119,6 +122,58 @@ export default function MinePage() {
     }).catch(() => {});
   }, [currentUser]);
 
+  // 拉取全部配置列表 + 当前激活配置，保证 UI 与后端一致
+  function refreshConfigs() {
+    api.listAIConfigs().then((res) => {
+      setConfigList(res.configs);
+      const active = res.configs.find(c => c.is_active) || res.configs[0];
+      if (active) setAIConfig(active);
+    }).catch(() => {
+      // 兼容旧后端：list 接口不存在时回退到单配置接口
+      api.getAIConfig().then(setAIConfig).catch(() => {});
+    });
+  }
+
+  // 切换激活配置：切换后立即重新加载该配置详情
+  async function handleSwitchConfig(id: string) {
+    if (id === aiConfig.id) return;
+    try {
+      const cfg = await api.activateAIConfig(id);
+      setAIConfig(cfg);
+      await refreshConfigs();
+    } catch (e: any) {
+      alert('切换失败: ' + e.message);
+    }
+  }
+
+  // 新建配置：新建后自动激活并切换到编辑该配置
+  async function handleNewConfig() {
+    if (configList.length >= maxConfigs) {
+      alert(`最多 ${maxConfigs} 个配置，请先删除一个`);
+      return;
+    }
+    const name = prompt('新配置名称', `配置 ${configList.length + 1}`);
+    if (!name) return;
+    try {
+      const cfg = await api.createAIConfig({ name });
+      setAIConfig(cfg);
+      await refreshConfigs();
+    } catch (e: any) {
+      alert('新建失败: ' + e.message);
+    }
+  }
+
+  // 删除配置：删除激活配置时后端自动激活剩下首条，前端刷新
+  async function handleDeleteConfig(id: string) {
+    if (!confirm('确认删除该配置？')) return;
+    try {
+      await api.deleteAIConfig(id);
+      await refreshConfigs();
+    } catch (e: any) {
+      alert('删除失败: ' + e.message);
+    }
+  }
+
   async function handleSaveAIConfig() {
     const ok = await requireAuth();
     if (!ok) return;
@@ -126,6 +181,7 @@ export default function MinePage() {
     try {
       const cfg = await api.updateAIConfig(aiConfig);
       setAIConfig(cfg);
+      await refreshConfigs();
       alert('AI配置已保存');
     } catch (e: any) {
       alert('保存失败: ' + e.message);
@@ -410,6 +466,55 @@ export default function MinePage() {
           <div className="tool-panel">
             <h3>AI 配置</h3>
             <p className="text-muted">配置国产大模型 API，让AI帮你写作和审稿。所有提供商均兼容 OpenAI 接口格式。</p>
+
+            {/* 多配置切换：最多 3 个，旧配置保留不丢 */}
+            <div className="config-switcher" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 10px', background: 'var(--bg-soft, #f7f7f8)', borderRadius: 8, flexWrap: 'wrap' }}>
+              <label style={{ fontSize: 13, color: 'var(--text-muted, #888)', marginRight: 4 }}>当前配置：</label>
+              <select
+                className="input"
+                value={aiConfig.id}
+                onChange={e => handleSwitchConfig(e.target.value)}
+                style={{ flex: 1, minWidth: 160, maxWidth: 280 }}
+              >
+                {configList.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{c.is_active ? ' ✓' : ''} {c.has_key ? '🔑' : '🚫'}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn-primary"
+                onClick={handleNewConfig}
+                disabled={configList.length >= maxConfigs}
+                style={{ padding: '6px 12px', fontSize: 13 }}
+                title={configList.length >= maxConfigs ? `最多 ${maxConfigs} 个配置` : '新建配置'}
+              >
+                ＋ 新建
+              </button>
+              <button
+                className="btn-icon"
+                onClick={() => handleDeleteConfig(aiConfig.id)}
+                disabled={configList.length <= 1}
+                style={{ fontSize: 13, padding: '6px 10px' }}
+                title={configList.length <= 1 ? '至少保留 1 个配置' : '删除当前配置'}
+              >
+                🗑️ 删除
+              </button>
+              <span style={{ fontSize: 12, color: 'var(--text-muted, #888)' }}>
+                {configList.length} / {maxConfigs}
+              </span>
+            </div>
+
+            {/* 配置名称编辑 */}
+            <div className="form-row" style={{ marginBottom: 12 }}>
+              <label>配置名称</label>
+              <input
+                className="input"
+                value={aiConfig.name}
+                onChange={e => setAIConfig((p: AIConfig) => ({ ...p, name: e.target.value }))}
+                placeholder="如：DeepSeek / 备用 / 公司账号"
+              />
+            </div>
 
             {/* 快捷预设：国产提供商一键填充 */}
             <div className="provider-presets">
