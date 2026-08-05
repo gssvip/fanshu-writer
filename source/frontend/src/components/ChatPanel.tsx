@@ -202,29 +202,109 @@ const ProgressMapView = memo(function ProgressMapView({ progress, onClose }: { p
 });
 
 // ============================================================================
-// 消息气泡
+// 消息气泡（长按菜单 + 超两行折叠）
 // ============================================================================
 interface MessageBubbleProps {
   message: AIMessage;
+  index: number;
   onAdopt: (c: ActionCard) => void;
   onEdit: (c: ActionCard, content: string) => void;
   onIgnore: (c: ActionCard) => void;
   applyingCardId: string | null;
   streaming: boolean;
   onReplaceChapter?: (card: ActionCard, meta: any) => void;
+  onEditMessage?: (index: number, newContent: string) => void;
+  onDeleteMessage?: (index: number) => void;
+  onRegenerate?: (index: number) => void;
 }
 
-const MessageBubble = memo(function MessageBubble({ message, onAdopt, onEdit, onIgnore, applyingCardId, streaming, onReplaceChapter }: MessageBubbleProps) {
+// 长按计时器
+const LONG_PRESS_MS = 500;
+
+const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onEdit, onIgnore, applyingCardId, streaming, onReplaceChapter, onEditMessage, onDeleteMessage, onRegenerate }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const [collapsed, setCollapsed] = useState(true);
+  const [showMenu, setShowMenu] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
+  const pressTimer = useRef<number | null>(null);
+  const movedRef = useRef(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // 判断是否需要折叠：内容超过两行（约80字或多行）
+  const contentLines = (message.content || '').split('\n');
+  const isLong = message.content.length > 80 || contentLines.length > 2;
+  const showCollapsed = isLong && collapsed && !streaming;
+
+  // 长按开始
+  const startPress = () => {
+    movedRef.current = false;
+    if (pressTimer.current) window.clearTimeout(pressTimer.current);
+    pressTimer.current = window.setTimeout(() => {
+      if (!movedRef.current) setShowMenu(true);
+    }, LONG_PRESS_MS);
+  };
+  const cancelPress = () => {
+    if (pressTimer.current) { window.clearTimeout(pressTimer.current); pressTimer.current = null; }
+  };
+  const onMove = () => { movedRef.current = true; cancelPress(); };
+
+  // 点击外部关闭菜单
+  useEffect(() => {
+    if (!showMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowMenu(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showMenu]);
+
+  const handleSaveEdit = () => {
+    if (onEditMessage && draft.trim() !== message.content) {
+      onEditMessage(index, draft.trim());
+    }
+    setEditing(false);
+  };
+
   return (
-    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-ai'}`}>
+    <div
+      className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-ai'}`}
+      onTouchStart={startPress}
+      onTouchEnd={cancelPress}
+      onTouchMove={onMove}
+      onMouseDown={startPress}
+      onMouseUp={cancelPress}
+      onMouseLeave={cancelPress}
+      onMouseMove={onMove}
+      style={{ position: 'relative' }}
+    >
       <div className="chat-msg-avatar">{isUser ? '我' : '🚗'}</div>
       <div className="chat-msg-body">
-        {message.content ? (
-          <div className="chat-msg-text">{message.content}{streaming && <span className="chat-cursor">▋</span>}</div>
+        {editing ? (
+          <div className="chat-msg-edit-wrap">
+            <textarea
+              className="chat-msg-edit"
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              rows={Math.min(12, Math.max(3, draft.split('\n').length))}
+              autoFocus
+            />
+            <div className="chat-msg-edit-actions">
+              <button className="chat-card-btn primary" onClick={handleSaveEdit}>保存</button>
+              <button className="chat-card-btn" onClick={() => { setEditing(false); setDraft(message.content); }}>取消</button>
+            </div>
+          </div>
+        ) : message.content ? (
+          <div
+            className={`chat-msg-text ${showCollapsed ? 'chat-msg-collapsed' : ''}`}
+            onClick={() => { if (isLong && !streaming) setCollapsed(c => !c); }}
+          >
+            {message.content}{streaming && <span className="chat-cursor">▋</span>}
+          </div>
         ) : streaming ? (
           <div className="chat-msg-text"><span className="chat-cursor">▋</span></div>
         ) : null}
+        {showCollapsed && <button className="chat-msg-expand" onClick={(e) => { e.stopPropagation(); setCollapsed(false); }}>展开全文 ▼</button>}
         {message.cards && message.cards.length > 0 && (
           <div className="chat-msg-cards">
             {message.cards.map((c, idx) => (
@@ -241,6 +321,13 @@ const MessageBubble = memo(function MessageBubble({ message, onAdopt, onEdit, on
           </div>
         )}
       </div>
+      {showMenu && (
+        <div className="chat-msg-menu" ref={menuRef}>
+          <button className="chat-msg-menu-item" onClick={() => { setEditing(true); setShowMenu(false); }}>✏️ 编辑</button>
+          {!isUser && onRegenerate && <button className="chat-msg-menu-item" onClick={() => { onRegenerate(index); setShowMenu(false); }}>🔄 重新生成</button>}
+          {onDeleteMessage && <button className="chat-msg-menu-item danger" onClick={() => { onDeleteMessage(index); setShowMenu(false); }}>🗑️ 删除</button>}
+        </div>
+      )}
     </div>
   );
 });
@@ -305,13 +392,23 @@ export default function ChatPanel() {
   const [suggestions, setSuggestions] = useState<Array<{ id: string; title: string; preview: string }>>([]);
   const [loadingSuggest, setLoadingSuggest] = useState(false);
   const [skillPacks, setSkillPacks] = useState<SkillPack[]>([]);
-  const [selectedSkillPacks, setSelectedSkillPacks] = useState<string[]>([]);
+  // 各 Tab 独立的技能包选择（切换 Tab 互不干扰）
+  const [settingPacks, setSettingPacks] = useState<string[]>([]);
+  const [chapterPacks, setChapterPacks] = useState<string[]>([]);
+  const [deaiPacks_selected, setDeaiPacksSelected] = useState<string[]>([]);
+  const [reviewPacks, setReviewPacks] = useState<string[]>([]);
   const [latestChapter, setLatestChapter] = useState<{ id: string; title: string; order_index: number; word_count: number; status: string } | null>(null);
   const [nextChapterNum, setNextChapterNum] = useState(1);
   const [chapters, setChapters] = useState<Array<{ id: string; title: string; order_index: number; word_count: number; status: string }>>([]);
-  const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
+  const [volumes, setVolumes] = useState<Array<{ id: string; title: string; order_index: number; chapter_count: number }>>([]);
+  // 正文/去AI/校审 各自的章节选择（独立）
+  const [deaiTargetId, setDeaiTargetId] = useState<string | null>(null);         // 去AITab：去味目标章节
+  const [reviewChapterId, setReviewChapterId] = useState<string | null>(null);   // 校审Tab：一致性检查章节
+  const [reviewVolumeIds, setReviewVolumeIds] = useState<string[]>([]);          // 校审Tab：按卷检查
   const [deaiPacks, setDeaiPacks] = useState<Array<{ id: string; name: string; description: string; icon: string; priority: number }>>([]);
   const [reviewing, setReviewing] = useState(false);
+  // 正文Tab：待选章节的动作（写作/润色），点击后底部消息提示选章节
+  const [pendingChapterAction, setPendingChapterAction] = useState<'continue' | 'polish' | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -349,21 +446,29 @@ export default function ChatPanel() {
     if (chatPanelOpen && bookId) {
       refreshProgress();
       refreshHistory();
-      // 加载维度列表
       api.smartDimensions().then(r => setDimensions(r.dimensions || [])).catch(() => {});
-      // 加载技能包（构思类 + 文风类，设定/正文用）
       api.listSkillPacks().then(all => setSkillPacks(all || [])).catch(() => {});
-      // 加载去AI味技能包
       api.smartDeaiPacks().then(r => setDeaiPacks(r.packs || [])).catch(() => {});
-      // 加载章节列表
       api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
-      // 加载最新章节
+      api.smartVolumes(bookId).then(r => setVolumes(r.volumes || [])).catch(() => {});
       api.smartLatestChapter(bookId).then(r => {
         setLatestChapter(r.latest);
         setNextChapterNum(r.next_chapter_num);
       }).catch(() => {});
     }
   }, [chatPanelOpen, bookId, refreshProgress, refreshHistory]);
+
+  // 切换 Tab 时清空待选动作和选中章节（各Tab独立）
+  const switchTab = useCallback((tab: SmartTab) => {
+    setActiveTab(tab);
+    setPendingChapterAction(null);
+  }, []);
+
+  // 各 Tab 独立的技能包切换
+  const toggleSkillPack = useCallback((tab: SmartTab, id: string) => {
+    const setter = tab === 'setting' ? setSettingPacks : tab === 'chapter' ? setChapterPacks : tab === 'deai' ? setDeaiPacksSelected : setReviewPacks;
+    setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }, []);
 
   // 关闭时取消流
   useEffect(() => {
@@ -452,9 +557,8 @@ export default function ChatPanel() {
     setLoadingSuggest(true);
     appendUserAi(`【${dimensions.find(d => d.key === selectedDim)?.label || selectedDim}】${text}`);
     try {
-      const r = await api.smartSuggest(bookId, selectedDim, text, selectedSkillPacks);
+      const r = await api.smartSuggest(bookId, selectedDim, text, settingPacks);
       setSuggestions(r.suggestions || []);
-      // 在AI消息位展示方案列表
       setMessages(prev => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -472,7 +576,7 @@ export default function ChatPanel() {
     } finally {
       setLoadingSuggest(false);
     }
-  }, [input, bookId, selectedDim, streaming, selectedSkillPacks, dimensions, appendUserAi, removeEmptyAi]);
+  }, [input, bookId, selectedDim, streaming, settingPacks, dimensions, appendUserAi, removeEmptyAi]);
 
   // 2. 选中意见 → 流式生成最终内容
   const handleGenerate = useCallback(async (suggestion: { id: string; title: string; preview: string }) => {
@@ -485,7 +589,7 @@ export default function ChatPanel() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.smartGenerateStream(bookId, selectedDim, suggestion.preview, '', selectedSkillPacks, sessionId || undefined, ctrl.signal);
+      const res = await api.smartGenerateStream(bookId, selectedDim, suggestion.preview, '', settingPacks, sessionId || undefined, ctrl.signal);
       await consumeSSE(res, ctrl);
       refreshProgress();
       refreshHistory();
@@ -498,7 +602,7 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [bookId, selectedDim, streaming, selectedSkillPacks, sessionId, dimensions, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+  }, [bookId, selectedDim, streaming, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
   // 3. 单独维度AI修改（基于已落地内容）
   const handleDimEdit = useCallback(async () => {
@@ -513,7 +617,7 @@ export default function ChatPanel() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.smartDimEditStream(bookId, selectedDim, '', text, selectedSkillPacks, sessionId || undefined, ctrl.signal);
+      const res = await api.smartDimEditStream(bookId, selectedDim, '', text, settingPacks, sessionId || undefined, ctrl.signal);
       await consumeSSE(res, ctrl);
       refreshProgress();
       refreshHistory();
@@ -526,7 +630,7 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [input, bookId, selectedDim, streaming, selectedSkillPacks, sessionId, dimensions, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+  }, [input, bookId, selectedDim, streaming, settingPacks, sessionId, dimensions, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
   // 4. 批量生成多维度
   const handleBatch = useCallback(async () => {
@@ -539,7 +643,7 @@ export default function ChatPanel() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.smartBatchStream(bookId, allDims, input.trim(), selectedSkillPacks, sessionId || undefined, ctrl.signal);
+      const res = await api.smartBatchStream(bookId, allDims, input.trim(), settingPacks, sessionId || undefined, ctrl.signal);
       setInput('');
       await consumeSSE(res, ctrl);
       refreshProgress();
@@ -553,27 +657,48 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [bookId, streaming, dimensions, input, selectedSkillPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+  }, [bookId, streaming, dimensions, input, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
-  // ========== 正文Tab：续写/润色（自动定位最新章节）==========
+  // ========== 正文Tab：写作/润色（自动定位最新章节，写后自动填入新章节到目录）==========
+  // 点击「写作」或「润色」→ 底部消息提示选择目标章节 → 选章后执行
   const triggerChapterAction = useCallback(async (action: 'continue' | 'polish') => {
     if (!bookId || streaming) return;
+    if (action === 'continue') {
+      // 写作：默认续写最新章节+1，无需选章节，直接执行
+      await doChapterAction('continue', null);
+    } else {
+      // 润色：需要选择要润色的章节
+      setPendingChapterAction('polish');
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `✨ 请选择要润色的章节：从下方章节列表选择一个章节进行润色。`,
+      }]);
+    }
+  }, [bookId, streaming]);
+
+  // 真正执行章节写作/润色
+  const doChapterAction = useCallback(async (action: 'continue' | 'polish', targetChapterId: string | null) => {
+    if (!bookId || streaming) return;
+    setPendingChapterAction(null);
     setStreamError('');
     streamBufferRef.current = '';
-    const label = action === 'continue' ? `续写第 ${nextChapterNum} 章` : `润色第 ${latestChapter?.order_index || nextChapterNum - 1} 章`;
+    const targetNum = action === 'continue'
+      ? nextChapterNum
+      : (chapters.find(c => c.id === targetChapterId)?.order_index || latestChapter?.order_index || nextChapterNum - 1);
+    const label = action === 'continue' ? `续写第 ${nextChapterNum} 章` : `润色第 ${targetNum} 章`;
     appendUserAi(label);
     setStreaming(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
       const res = await api.chatSmartAction(bookId, action, {
-        target_chapter_num: action === 'continue' ? nextChapterNum : (latestChapter?.order_index || nextChapterNum - 1),
+        target_chapter_num: targetNum,
         session_id: sessionId || undefined,
       }, ctrl.signal);
       await consumeSSE(res, ctrl);
       refreshProgress();
       refreshHistory();
-      // 刷新最新章节
+      // 刷新最新章节 + 章节列表（写后会自动填入新章节到目录）
       api.smartLatestChapter(bookId).then(r => {
         setLatestChapter(r.latest);
         setNextChapterNum(r.next_chapter_num);
@@ -588,25 +713,42 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [bookId, streaming, nextChapterNum, latestChapter, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+  }, [bookId, streaming, nextChapterNum, chapters, latestChapter, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+
+  // 章节点位刷新🔄：手动重新拉取最新章节和章节列表
+  const refreshChapterAnchor = useCallback(() => {
+    if (!bookId) return;
+    api.smartLatestChapter(bookId).then(r => {
+      setLatestChapter(r.latest);
+      setNextChapterNum(r.next_chapter_num);
+    }).catch(() => {});
+    api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
+  }, [bookId]);
+
+  // 正文Tab：选择章节后执行待进行的动作（润色）
+  const handlePickChapterForAction = useCallback((chapterId: string) => {
+    if (pendingChapterAction === 'polish') {
+      doChapterAction('polish', chapterId);
+    }
+  }, [pendingChapterAction, doChapterAction]);
 
   // ========== 去AITab：对选中章节去AI味 ==========
   const handleDeai = useCallback(async () => {
-    if (!bookId || !selectedChapterId || streaming) return;
+    if (!bookId || !deaiTargetId || streaming) return;
     setStreamError('');
     streamBufferRef.current = '';
-    const ch = chapters.find(c => c.id === selectedChapterId);
+    const ch = chapters.find(c => c.id === deaiTargetId);
     appendUserAi(`去AI味：${ch?.title || '选中章节'}`);
     setStreaming(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.smartDeaiStream(bookId, selectedChapterId, selectedSkillPacks, sessionId || undefined, ctrl.signal);
+      const res = await api.smartDeaiStream(bookId, deaiTargetId, deaiPacks_selected, sessionId || undefined, ctrl.signal);
       await consumeSSE(res, ctrl, (card, meta) => {
-        // 去AI味卡片落地时需要替换原章节，标记 meta
         (card as any).__meta = meta;
       });
       refreshHistory();
+      api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
     } catch (e: any) {
       if (e.name !== 'AbortError') {
         setStreamError(e.message || '去AI味失败');
@@ -616,17 +758,23 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [bookId, selectedChapterId, streaming, chapters, selectedSkillPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshHistory]);
+  }, [bookId, deaiTargetId, streaming, chapters, deaiPacks_selected, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshHistory]);
 
-  // ========== 校审Tab：防遗忘 / 一致性检查 ==========
+  // ========== 校审Tab：防遗忘 / 一致性检查（按卷，拉取动态文件+伏笔）==========
   const handleReview = useCallback(async (mode: 'anti_forget' | 'consistency') => {
     if (!bookId || reviewing) return;
     setStreamError('');
     setReviewing(true);
     const label = mode === 'anti_forget' ? '防遗忘检查' : '一致性检查';
-    appendUserAi(`执行${label}`);
+    const volLabel = reviewVolumeIds.length ? `（按卷：${reviewVolumeIds.length}卷）` : '（全书）';
+    appendUserAi(`执行${label}${volLabel}`);
     try {
-      const r = await api.smartReview(bookId, mode, mode === 'consistency' ? (selectedChapterId || undefined) : undefined, selectedSkillPacks);
+      const r = await api.smartReview(
+        bookId, mode,
+        mode === 'consistency' ? (reviewChapterId || undefined) : undefined,
+        reviewPacks,
+        reviewVolumeIds
+      );
       setMessages(prev => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -674,7 +822,35 @@ export default function ChatPanel() {
     } finally {
       setReviewing(false);
     }
-  }, [bookId, reviewing, selectedChapterId, selectedSkillPacks, appendUserAi, removeEmptyAi, refreshHistory]);
+  }, [bookId, reviewing, reviewChapterId, reviewVolumeIds, reviewPacks, appendUserAi, removeEmptyAi, refreshHistory]);
+
+  // ========== 消息长按操作：编辑/删除/重新生成 ==========
+  const handleEditMessage = useCallback((index: number, newContent: string) => {
+    setMessages(prev => prev.map((m, i) => i === index ? { ...m, content: newContent } : m));
+  }, []);
+
+  const handleDeleteMessage = useCallback((index: number) => {
+    setMessages(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const handleRegenerate = useCallback((index: number) => {
+    // 重新生成：找到该AI消息前最近的用户消息，重新触发对应动作
+    setMessages(prev => {
+      // 删除该AI消息及之后的，保留之前的用户消息
+      const before = prev.slice(0, index);
+      const userMsg = [...before].reverse().find(m => m.role === 'user');
+      setMessages(before);
+      if (userMsg && activeTab === 'setting' && selectedDim) {
+        // 设定Tab：用用户消息内容重新触发
+        const text = userMsg.content.replace(/^【[^】]+】/, '').trim();
+        if (text) {
+          setInput(text);
+          setTimeout(() => handleSuggest(), 50);
+        }
+      }
+      return before;
+    });
+  }, [activeTab, selectedDim, handleSuggest]);
 
   // ========== 卡片操作 ==========
   const handleAdopt = useCallback(async (card: ActionCard) => {
@@ -805,11 +981,6 @@ export default function ChatPanel() {
     setStreaming(false);
   }, []);
 
-  // 技能包切换
-  const toggleSkillPack = useCallback((id: string) => {
-    setSelectedSkillPacks(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  }, []);
-
   // 输入框占位符
   const inputPlaceholder = (() => {
     if (activeTab === 'setting') {
@@ -919,8 +1090,8 @@ export default function ChatPanel() {
             <div className="smart-toolbar">
               {activeTab === 'setting' && (
                 <>
-                  {/* 维度子按钮栏 */}
-                  <div className="smart-dim-bar">
+                  {/* 维度子按钮栏（手机端排两行：批量+8维度=9个，自动换行） */}
+                  <div className="smart-dim-bar smart-dim-bar-two-rows">
                     <button
                       className={`smart-dim-btn batch ${selectedDim === null && suggestions.length === 0 ? 'active' : ''}`}
                       onClick={handleBatch}
@@ -937,7 +1108,7 @@ export default function ChatPanel() {
                       >{d.icon} {d.label}</button>
                     ))}
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={selectedSkillPacks} onToggle={toggleSkillPack} compact />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} compact />
                 </>
               )}
 
@@ -945,26 +1116,46 @@ export default function ChatPanel() {
                 <>
                   <div className="smart-chapter-info">
                     {latestChapter ? (
-                      <span>📖 最新章节：<strong>{latestChapter.title}</strong>（{latestChapter.word_count}字，第{latestChapter.order_index}章）</span>
+                      <span>📖 最新：<strong>{latestChapter.title}</strong>（{latestChapter.word_count}字，第{latestChapter.order_index}章）</span>
                     ) : (
                       <span>📖 还没有章节，将创建第 1 章</span>
                     )}
+                    <button className="chat-tool-btn" onClick={refreshChapterAnchor} title="刷新章节定位" disabled={streaming} style={{ marginLeft: 'auto', padding: '2px 8px' }}>🔄</button>
                   </div>
                   <div className="smart-chapter-actions">
                     <button
                       className="smart-action-btn primary"
                       onClick={() => triggerChapterAction('continue')}
                       disabled={streaming}
-                    >✍️ 续写第 {nextChapterNum} 章</button>
-                    {latestChapter && (
-                      <button
-                        className="smart-action-btn"
-                        onClick={() => triggerChapterAction('polish')}
-                        disabled={streaming}
-                      >✨ 润色第 {latestChapter.order_index} 章</button>
-                    )}
+                    >✍️ 写作第 {nextChapterNum} 章</button>
+                    <button
+                      className="smart-action-btn"
+                      onClick={() => triggerChapterAction('polish')}
+                      disabled={streaming || chapters.length === 0}
+                    >✨ 润色</button>
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style' || p.category === 'master')} selected={selectedSkillPacks} onToggle={toggleSkillPack} compact />
+                  {/* 润色时提示选择章节 */}
+                  {pendingChapterAction === 'polish' && (
+                    <div className="smart-chapter-pick">
+                      <div className="smart-chapter-pick-hint">请选择要润色的章节：</div>
+                      <div className="smart-chapter-pick-list">
+                        {chapters.map(c => (
+                          <button
+                            key={c.id}
+                            className="smart-chapter-pick-item"
+                            onClick={() => handlePickChapterForAction(c.id)}
+                            disabled={streaming}
+                          >
+                            <span>第{c.order_index}章</span>
+                            <span className="smart-chapter-pick-title">{c.title}</span>
+                            <span className="smart-chapter-pick-meta">{c.word_count}字</span>
+                          </button>
+                        ))}
+                      </div>
+                      <button className="smart-suggestion-cancel" onClick={() => setPendingChapterAction(null)}>取消</button>
+                    </div>
+                  )}
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} compact />
                 </>
               )}
 
@@ -976,8 +1167,8 @@ export default function ChatPanel() {
                       <span className="smart-empty-hint">暂无章节</span>
                     ) : (
                       <select
-                        value={selectedChapterId || ''}
-                        onChange={e => setSelectedChapterId(e.target.value)}
+                        value={deaiTargetId || ''}
+                        onChange={e => setDeaiTargetId(e.target.value)}
                         disabled={streaming}
                       >
                         <option value="">请选择章节…</option>
@@ -987,8 +1178,8 @@ export default function ChatPanel() {
                       </select>
                     )}
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={selectedSkillPacks} onToggle={toggleSkillPack} compact />
-                  {deaiPacks.length > 0 && selectedSkillPacks.length === 0 && (
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={deaiPacks_selected} onToggle={(id) => toggleSkillPack('deai', id)} compact />
+                  {deaiPacks.length > 0 && deaiPacks_selected.length === 0 && (
                     <div className="smart-deai-hint">💡 检测到 {deaiPacks.length} 个去AI味技能包，可在上方勾选，未选将使用默认去AI味规则</div>
                   )}
                 </>
@@ -1008,24 +1199,42 @@ export default function ChatPanel() {
                       disabled={reviewing || streaming}
                     >⚖️ 一致性检查</button>
                   </div>
-                  {activeTab === 'review' && (
-                    <div className="smart-chapter-select">
-                      <label>一致性检查章节（不选则检查最新）：</label>
-                      {chapters.length > 0 && (
-                        <select
-                          value={selectedChapterId || ''}
-                          onChange={e => setSelectedChapterId(e.target.value)}
-                          disabled={reviewing || streaming}
-                        >
-                          <option value="">最新章节</option>
-                          {chapters.map(c => (
-                            <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}</option>
-                          ))}
-                        </select>
-                      )}
+                  {/* 按卷选择 */}
+                  {volumes.length > 0 && (
+                    <div className="smart-volume-select">
+                      <label>按卷检查（不选=全书）：</label>
+                      <div className="smart-volume-chips">
+                        {volumes.map(v => (
+                          <button
+                            key={v.id}
+                            className={`smart-volume-chip ${reviewVolumeIds.includes(v.id) ? 'active' : ''}`}
+                            onClick={() => setReviewVolumeIds(prev => prev.includes(v.id) ? prev.filter(x => x !== v.id) : [...prev, v.id])}
+                            disabled={reviewing || streaming}
+                          >{v.title}（{v.chapter_count}章）</button>
+                        ))}
+                        {reviewVolumeIds.length > 0 && (
+                          <button className="smart-volume-clear" onClick={() => setReviewVolumeIds([])}>清除</button>
+                        )}
+                      </div>
                     </div>
                   )}
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={selectedSkillPacks} onToggle={toggleSkillPack} compact />
+                  {/* 一致性检查可选指定章节 */}
+                  <div className="smart-chapter-select">
+                    <label>一致性检查章节（不选则最新）：</label>
+                    {chapters.length > 0 && (
+                      <select
+                        value={reviewChapterId || ''}
+                        onChange={e => setReviewChapterId(e.target.value || null)}
+                        disabled={reviewing || streaming}
+                      >
+                        <option value="">最新章节</option>
+                        {chapters.map(c => (
+                          <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={reviewPacks} onToggle={(id) => toggleSkillPack('review', id)} compact />
                 </>
               )}
             </div>
@@ -1071,6 +1280,7 @@ export default function ChatPanel() {
               {messages.map((m, i) => (
                 <MessageBubble
                   key={i}
+                  index={i}
                   message={m}
                   onAdopt={handleAdopt}
                   onEdit={handleEdit}
@@ -1078,20 +1288,23 @@ export default function ChatPanel() {
                   applyingCardId={applyingCardId}
                   streaming={streaming && i === messages.length - 1 && m.role === 'assistant'}
                   onReplaceChapter={handleReplaceChapter}
+                  onEditMessage={handleEditMessage}
+                  onDeleteMessage={handleDeleteMessage}
+                  onRegenerate={handleRegenerate}
                 />
               ))}
               {streamError && <div className="chat-error">{streamError}</div>}
             </div>
 
-            {/* 去AI/校审Tab的主操作按钮（在输入框上方） */}
+            {/* 去AITab的主操作按钮（在输入框上方） */}
             {activeTab === 'deai' && (
               <div className="smart-main-action-bar">
                 <button
                   className="smart-main-action"
                   onClick={handleDeai}
-                  disabled={streaming || !selectedChapterId}
+                  disabled={streaming || !deaiTargetId}
                 >{streaming ? '处理中…' : '🧹 开始去AI味'}</button>
-                {!selectedChapterId && <span className="smart-main-hint">请先选择章节</span>}
+                {!deaiTargetId && <span className="smart-main-hint">请先选择章节</span>}
               </div>
             )}
 
@@ -1148,7 +1361,7 @@ export default function ChatPanel() {
                 <button
                   key={t.key}
                   className={`smart-tab ${activeTab === t.key ? 'active' : ''}`}
-                  onClick={() => setActiveTab(t.key)}
+                  onClick={() => switchTab(t.key)}
                 >
                   <span className="smart-tab-icon">{t.icon}</span>
                   <span className="smart-tab-label">{t.label}</span>

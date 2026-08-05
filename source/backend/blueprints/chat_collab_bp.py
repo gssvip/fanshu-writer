@@ -1478,9 +1478,11 @@ def smart_deai():
 
 @chat_collab_bp.route('/api/ai/smart/review', methods=['POST'])
 def smart_review():
-    """AI智驾·校审：防遗忘检查 / 一致性检查。
+    """AI智驾·校审：防遗忘检查 / 一致性检查（按卷）。
 
-    body: { book_id, mode: 'anti_forget'|'consistency', chapter_id?, skill_pack_ids? }
+    body: { book_id, mode: 'anti_forget'|'consistency', chapter_id?, volume_ids?, skill_pack_ids? }
+    - anti_forget: 拉取动态文件报告 + 伏笔资料，按 volume_ids 指定卷检查（空=全书）
+    - consistency: 对 chapter_id（或最新章节）所在卷做一致性检查，附伏笔/动态文件上下文
     返回: { mode, report: {...}, summary, health_score? }
     """
     from app import db, Book, BookBible, Chapter, AIConfig
@@ -1491,6 +1493,7 @@ def smart_review():
     book_id = data.get('book_id')
     mode = data.get('mode')
     chapter_id = data.get('chapter_id')
+    volume_ids = data.get('volume_ids') or []
     skill_pack_ids = data.get('skill_pack_ids') or []
 
     if not book_id or mode not in ('anti_forget', 'consistency'):
@@ -1513,20 +1516,15 @@ def smart_review():
     except Exception as e:
         return jsonify({'error': f'AI 配置异常：{e}'}), 400
 
-    # ---------- 防遗忘检查 ----------
+    # ---------- 防遗忘检查（按卷，拉取动态文件+伏笔）----------
     if mode == 'anti_forget':
-        # 复用 app.py 的 ai_anti_forget_check 逻辑：直接调用其内部实现
         try:
             from app import ai_anti_forget_check as _do_anti_forget
-            # 该函数从 request 取参数，需构造 request context
-            # 这里直接调用并捕获其返回
-            # 由于 ai_anti_forget_check 是 view 函数，直接调用会返回 Response
-            # 更稳妥：在 test_request_context 中调用
             from flask import current_app
             with current_app.test_request_context(
                 f'/api/books/{book_id}/ai-anti-forget-check',
                 method='POST',
-                json={'scope': 'reports', 'volume_ids': [], 'skill_pack_ids': skill_pack_ids}
+                json={'scope': 'reports', 'volume_ids': volume_ids, 'skill_pack_ids': skill_pack_ids}
             ):
                 resp = _do_anti_forget(book_id)
                 if hasattr(resp, 'get_json'):
@@ -1535,10 +1533,9 @@ def smart_review():
         except Exception as e:
             return jsonify({'error': f'防遗忘检查失败：{e}'}), 500
 
-    # ---------- 一致性检查 ----------
-    # mode == 'consistency'
+    # ---------- 一致性检查（按卷，附伏笔+动态文件上下文）----------
+    # 若未指定 chapter_id，取最新章节
     if not chapter_id:
-        # 默认检查最新章节
         latest = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
             .order_by(Chapter.order_index.desc()).first()
         if not latest:
@@ -1549,14 +1546,47 @@ def smart_review():
     if not chapter or chapter.book_id != book_id:
         return jsonify({'error': '章节不存在'}), 404
 
+    # 若未指定 volume_ids，自动识别该章所属卷
+    if not volume_ids and chapter.parent_id:
+        volume_ids = [chapter.parent_id]
+
     draft_content = (chapter.content or '').strip()
     if not draft_content:
         return jsonify({'error': '该章节无正文'}), 400
 
     try:
         from app import _consistency_check, _collect_anti_forget_alerts
+        # 拉取伏笔资料 + 动态文件上下文，拼入一致性检查上下文
+        extra_context = ''
+        try:
+            alerts = _collect_anti_forget_alerts(bb, max_reports=2, max_alerts=6)
+            if alerts:
+                extra_context += f'\n\n【近期防遗忘诊断】\n{alerts}'
+        except Exception:
+            pass
+        try:
+            from app import DynamicReport
+            q = DynamicReport.query.filter_by(book_id=book_id)
+            if volume_ids:
+                q = q.filter(DynamicReport.volume_id.in_([str(v) for v in volume_ids]))
+            recent_reports = q.order_by(DynamicReport.chapter_start.desc()).limit(3).all()
+            if recent_reports:
+                rep_lines = []
+                for r in recent_reports:
+                    rep_lines.append(f'- {r.title or "动态报告"}（{r.chapter_start or "?"}-{r.chapter_end or "?"}）')
+                extra_context += f'\n\n【动态文件报告】\n' + '\n'.join(rep_lines)
+        except Exception:
+            pass
+        try:
+            if getattr(bb, 'foreshadowing', None):
+                fs = bb.foreshadowing.strip()
+                if fs:
+                    extra_context += f'\n\n【伏笔资料】\n{fs[:1500]}'
+        except Exception:
+            pass
+
         passed, issues = _consistency_check(
-            book_id, bb, draft_content, chapter.order_index,
+            book_id, bb, draft_content + extra_context, chapter.order_index,
             api_key, base_url, recognition_model,
             max_tokens=1200, chapter_plan=''
         )
@@ -1565,12 +1595,35 @@ def smart_review():
             'chapter_id': chapter_id,
             'chapter_title': chapter.title,
             'order_index': chapter.order_index,
+            'volume_ids': volume_ids,
             'passed': passed,
             'issues': issues,
             'summary': '✅ 一致性检查通过' if passed else f'⚠️ 发现问题：{issues}',
         })
     except Exception as e:
         return jsonify({'error': f'一致性检查失败：{e}'}), 500
+
+
+@chat_collab_bp.route('/api/ai/smart/volumes', methods=['GET'])
+def smart_volumes():
+    """列出书的所有分卷（供校审Tab按卷选择）。
+
+    返回: { volumes: [{id, title, order_index, chapter_count}] }
+    """
+    from app import Chapter
+    book_id = request.args.get('book_id')
+    if not book_id:
+        return jsonify({'error': '缺少 book_id'}), 400
+    vols = Chapter.query.filter_by(book_id=book_id, is_volume=True) \
+        .order_by(Chapter.order_index.asc()).all()
+    result = []
+    for v in vols:
+        cnt = Chapter.query.filter_by(book_id=book_id, parent_id=v.id, is_volume=False).count()
+        result.append({
+            'id': v.id, 'title': v.title,
+            'order_index': v.order_index, 'chapter_count': cnt,
+        })
+    return jsonify({'volumes': result})
 
 
 @chat_collab_bp.route('/api/ai/smart/chapters', methods=['GET'])

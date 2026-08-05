@@ -1824,15 +1824,27 @@ textarea{resize:vertical;line-height:1.8}
   max-height: 40vh; overflow-y: auto;
 }
 
-/* 维度子按钮栏（设定Tab） */
+/* 维度子按钮栏（设定Tab，手机端两行布局） */
 .smart-dim-bar {
   display: flex; gap: 6px; flex-wrap: wrap;
+}
+.smart-dim-bar.smart-dim-bar-two-rows {
+  /* 手机端：9个按钮分两行展示（5+4 或自动换行） */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+}
+@media (min-width: 600px) {
+  .smart-dim-bar.smart-dim-bar-two-rows {
+    display: flex; flex-wrap: wrap;
+  }
 }
 .smart-dim-btn {
   padding: 7px 11px; border: 1px solid var(--border-color);
   background: var(--bg-secondary); border-radius: 16px;
   font-size: 12px; color: var(--text-primary); cursor: pointer;
   white-space: nowrap; transition: all 0.15s; touch-action: manipulation;
+  text-align: center;
 }
 .smart-dim-btn:hover:not(:disabled) { border-color: var(--accent); }
 .smart-dim-btn.active {
@@ -1976,4 +1988,81 @@ textarea{resize:vertical;line-height:1.8}
 
 /* 手机端优化：消息区占满剩余空间 */
 .smart-panel .chat-messages { flex: 1; min-height: 0; }
+
+/* ========== 消息长按菜单 + 折叠 ========== */
+.chat-msg-text.chat-msg-collapsed {
+  max-height: 3.6em; overflow: hidden; position: relative;
+  cursor: pointer;
+}
+.chat-msg-text.chat-msg-collapsed::after {
+  content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 1.4em;
+  background: linear-gradient(transparent, var(--bg-primary));
+}
+.chat-msg-user .chat-msg-text.chat-msg-collapsed::after {
+  background: linear-gradient(transparent, var(--accent-light));
+}
+.chat-msg-expand {
+  display: block; margin-top: 4px; padding: 2px 8px; font-size: 11px;
+  color: var(--accent); background: transparent; border: none; cursor: pointer;
+  text-align: left;
+}
+.chat-msg-edit-wrap { display: flex; flex-direction: column; gap: 6px; }
+.chat-msg-edit {
+  width: 100%; padding: 8px 10px; font-size: 13px; line-height: 1.6;
+  border: 1px solid var(--accent); border-radius: 6px;
+  background: var(--bg-secondary); color: var(--text-primary); resize: vertical;
+}
+.chat-msg-edit-actions { display: flex; gap: 6px; }
+.chat-msg-menu {
+  position: absolute; right: 8px; top: 32px; z-index: 20;
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-radius: 8px; box-shadow: var(--shadow-md); padding: 4px 0;
+  min-width: 120px;
+}
+.chat-msg-menu-item {
+  display: block; width: 100%; padding: 8px 14px; font-size: 13px;
+  text-align: left; background: transparent; color: var(--text-primary);
+  border: none; cursor: pointer;
+}
+.chat-msg-menu-item:hover { background: var(--bg-hover); }
+.chat-msg-menu-item.danger { color: var(--danger); }
+
+/* ========== 正文Tab：润色章节选择列表 ========== */
+.smart-chapter-pick {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; background: var(--accent-light); border-radius: 6px;
+}
+.smart-chapter-pick-hint { font-size: 12px; color: var(--accent); font-weight: 600; }
+.smart-chapter-pick-list {
+  display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto;
+}
+.smart-chapter-pick-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-radius: 6px; font-size: 12px; cursor: pointer; text-align: left;
+}
+.smart-chapter-pick-item:hover:not(:disabled) { border-color: var(--accent); }
+.smart-chapter-pick-item:disabled { opacity: 0.5; }
+.smart-chapter-pick-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.smart-chapter-pick-meta { color: var(--text-muted); font-size: 11px; }
+
+/* ========== 校审Tab：按卷选择 ========== */
+.smart-volume-select {
+  display: flex; flex-direction: column; gap: 6px; font-size: 12px;
+}
+.smart-volume-select label { font-weight: 500; color: var(--text-secondary); }
+.smart-volume-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.smart-volume-chip {
+  padding: 5px 10px; border: 1px solid var(--border-color); border-radius: 14px;
+  background: var(--bg-secondary); font-size: 11px; color: var(--text-primary);
+  cursor: pointer; touch-action: manipulation;
+}
+.smart-volume-chip.active {
+  background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
+}
+.smart-volume-chip:disabled { opacity: 0.5; }
+.smart-volume-clear {
+  padding: 5px 10px; font-size: 11px; color: var(--danger);
+  background: transparent; border: none; cursor: pointer;
+}
 

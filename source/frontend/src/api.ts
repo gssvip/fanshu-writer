@@ -874,11 +874,16 @@ export const api = {
     if (signal) cfg.signal = signal;
     return fetch(`${getApiBaseUrl()}/ai/smart/deai`, cfg);
   },
-  // 校审Tab：防遗忘 / 一致性检查
-  smartReview: (bookId: string, mode: 'anti_forget' | 'consistency', chapterId?: string, skillPackIds: string[] = []) =>
+  // 校审Tab：防遗忘 / 一致性检查（支持按卷）
+  smartReview: (bookId: string, mode: 'anti_forget' | 'consistency', chapterId?: string, skillPackIds: string[] = [], volumeIds: string[] = []) =>
     request<{ mode: string; report?: any; summary?: string; health_score?: number; chapter_id?: string; chapter_title?: string; passed?: boolean; issues?: string }>(
       '/ai/smart/review',
-      { method: 'POST', body: JSON.stringify({ book_id: bookId, mode, chapter_id: chapterId, skill_pack_ids: skillPackIds }) }
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, mode, chapter_id: chapterId, skill_pack_ids: skillPackIds, volume_ids: volumeIds }) }
+    ),
+  // 校审Tab：列出分卷（按卷检查用）
+  smartVolumes: (bookId: string) =>
+    request<{ volumes: Array<{ id: string; title: string; order_index: number; chapter_count: number }> }>(
+      `/ai/smart/volumes?book_id=${bookId}`
     ),
   // 列出书的所有章节（去AI/校审选章节用）
   smartChapters: (bookId: string) =>
