@@ -441,7 +441,7 @@ export default function ChatPanel() {
     } catch { /* ignore */ }
   }, [bookId]);
 
-  // 打开时加载基础数据
+  // 打开时加载基础数据 + 自动加载最新一次聊天会话（不新建窗口）
   useEffect(() => {
     if (chatPanelOpen && bookId) {
       refreshProgress();
@@ -455,6 +455,30 @@ export default function ChatPanel() {
         setLatestChapter(r.latest);
         setNextChapterNum(r.next_chapter_num);
       }).catch(() => {});
+      // 自动加载最新一次聊天会话消息（除非用户主动新建）
+      (async () => {
+        try {
+          const r = await api.listBookChatSessions(bookId);
+          const sessions = r.sessions || [];
+          if (sessions.length > 0) {
+            // 取最新一个（按 updated_at 降序，接口已排序）
+            const latestSession = sessions[0];
+            setSessionId(latestSession.id);
+            const msgR = await api.getChatSessionMessages(latestSession.id);
+            const loaded: AIMessage[] = (msgR.messages || []).map((m: any) => ({
+              role: m.role || 'assistant',
+              content: m.content || '',
+              cards: Array.isArray(m.cards) ? m.cards : undefined,
+            }));
+            setMessages(loaded);
+          } else {
+            setMessages([]);
+            setSessionId(null);
+          }
+        } catch {
+          setMessages([]);
+        }
+      })();
     }
   }, [chatPanelOpen, bookId, refreshProgress, refreshHistory]);
 
@@ -659,25 +683,9 @@ export default function ChatPanel() {
     }
   }, [bookId, streaming, dimensions, input, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
-  // ========== 正文Tab：写作/润色（自动定位最新章节，写后自动填入新章节到目录）==========
-  // 点击「写作」或「润色」→ 底部消息提示选择目标章节 → 选章后执行
-  const triggerChapterAction = useCallback(async (action: 'continue' | 'polish') => {
-    if (!bookId || streaming) return;
-    if (action === 'continue') {
-      // 写作：默认续写最新章节+1，无需选章节，直接执行
-      await doChapterAction('continue', null);
-    } else {
-      // 润色：需要选择要润色的章节
-      setPendingChapterAction('polish');
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: `✨ 请选择要润色的章节：从下方章节列表选择一个章节进行润色。`,
-      }]);
-    }
-  }, [bookId, streaming]);
-
-  // 真正执行章节写作/润色
-  const doChapterAction = useCallback(async (action: 'continue' | 'polish', targetChapterId: string | null) => {
+  // ========== 正文Tab：写作/修改（结合消息栏输入的要求创作）==========
+  // 真正执行章节写作/修改（结合用户在消息栏输入的要求）
+  const doChapterAction = useCallback(async (action: 'continue' | 'polish', targetChapterId: string | null, instruction?: string) => {
     if (!bookId || streaming) return;
     setPendingChapterAction(null);
     setStreamError('');
@@ -685,8 +693,10 @@ export default function ChatPanel() {
     const targetNum = action === 'continue'
       ? nextChapterNum
       : (chapters.find(c => c.id === targetChapterId)?.order_index || latestChapter?.order_index || nextChapterNum - 1);
-    const label = action === 'continue' ? `续写第 ${nextChapterNum} 章` : `润色第 ${targetNum} 章`;
-    appendUserAi(label);
+    const label = action === 'continue' ? `写作第 ${nextChapterNum} 章` : `修改第 ${targetNum} 章`;
+    const userNote = (instruction || input.trim());
+    appendUserAi(userNote ? `${label}（${userNote.slice(0, 60)}）` : label);
+    if (userNote) setInput('');
     setStreaming(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -694,6 +704,7 @@ export default function ChatPanel() {
       const res = await api.chatSmartAction(bookId, action, {
         target_chapter_num: targetNum,
         session_id: sessionId || undefined,
+        instruction: userNote || undefined,
       }, ctrl.signal);
       await consumeSSE(res, ctrl);
       refreshProgress();
@@ -713,7 +724,12 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [bookId, streaming, nextChapterNum, chapters, latestChapter, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+  }, [bookId, streaming, nextChapterNum, chapters, latestChapter, sessionId, input, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+
+  // 带明确意见执行修改（从消息栏解析章节号后调用）
+  const doChapterActionWithNote = useCallback((action: 'continue' | 'polish', chapterId: string, note: string) => {
+    doChapterAction(action, chapterId, note);
+  }, [doChapterAction]);
 
   // 章节点位刷新🔄：手动重新拉取最新章节和章节列表
   const refreshChapterAnchor = useCallback(() => {
@@ -724,13 +740,6 @@ export default function ChatPanel() {
     }).catch(() => {});
     api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
   }, [bookId]);
-
-  // 正文Tab：选择章节后执行待进行的动作（润色）
-  const handlePickChapterForAction = useCallback((chapterId: string) => {
-    if (pendingChapterAction === 'polish') {
-      doChapterAction('polish', chapterId);
-    }
-  }, [pendingChapterAction, doChapterAction]);
 
   // ========== 去AITab：对选中章节去AI味 ==========
   const handleDeai = useCallback(async () => {
@@ -985,9 +994,10 @@ export default function ChatPanel() {
   const inputPlaceholder = (() => {
     if (activeTab === 'setting') {
       if (!selectedDim) return '请先选择上方维度按钮…';
+      if (selectedDim === 'general') return '和 AI 智驾自由讨论小说/剧情…（提及人物/伏笔/世界观等会自动产出卡片）';
       return `描述你对「${dimensions.find(d => d.key === selectedDim)?.label || selectedDim}」的需求或修改意见…`;
     }
-    if (activeTab === 'chapter') return '补充本章写作要求（可选）…';
+    if (activeTab === 'chapter') return '点击「写作」开始最新章节，或点「修改」后在此说明修改哪一章及意见…';
     if (activeTab === 'deai') return '点击上方「开始去AI味」按钮即可…';
     if (activeTab === 'review') return '点击上方检查按钮即可…';
     return '和 AI 智驾聊聊…';
@@ -1000,23 +1010,53 @@ export default function ChatPanel() {
     return false;
   })();
 
-  // 主发送动作（设定Tab：维度已有内容走dim-edit修订，否则走suggest生成多选意见）
+  // 通用聊天：自由讨论，关键词触发填入维度
+  const handleGeneral = useCallback(async () => {
+    const text = input.trim();
+    if (!bookId || !text || streaming) return;
+    setInput('');
+    setStreamError('');
+    streamBufferRef.current = '';
+    appendUserAi(text);
+    setStreaming(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await api.smartGeneralStream(bookId, text, settingPacks, sessionId || undefined, ctrl.signal);
+      await consumeSSE(res, ctrl);
+      refreshProgress();
+      refreshHistory();
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setStreamError(e.message || '通用聊天失败');
+        removeEmptyAi();
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }, [input, bookId, streaming, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+
+  // 主发送动作（设定Tab：通用走general，维度已有内容走dim-edit，否则走suggest）
   const handleMainSend = useCallback(() => {
     if (activeTab !== 'setting' || !selectedDim) return;
     if (suggestions.length > 0) return;
+    if (selectedDim === 'general') {
+      handleGeneral();
+      return;
+    }
     const dimStatus = progress?.dims.find(d => d.field === selectedDim)?.status;
     if (dimStatus && dimStatus !== 'empty') {
       handleDimEdit();
     } else {
       handleSuggest();
     }
-  }, [activeTab, selectedDim, suggestions, progress, handleSuggest, handleDimEdit]);
+  }, [activeTab, selectedDim, suggestions, progress, handleSuggest, handleDimEdit, handleGeneral]);
 
   // 设定Tab：选择维度后，第一次输入走 suggest（生成多选意见）
   // 选中意见后走 generate（流式生成）
   // 生成落地后，再输入走 dim-edit（修订）
-  // 这里统一：如果有 suggestions 在显示，输入框禁用（只能选方案）
-  // 否则，输入框 enter 触发 handleMainSend（根据维度是否已有内容自动选择 suggest/dim-edit）
+  // 通用模式：直接走 general（流式聊天）
   const onInputKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -1090,23 +1130,53 @@ export default function ChatPanel() {
             <div className="smart-toolbar">
               {activeTab === 'setting' && (
                 <>
-                  {/* 维度子按钮栏（手机端排两行：批量+8维度=9个，自动换行） */}
-                  <div className="smart-dim-bar smart-dim-bar-two-rows">
-                    <button
-                      className={`smart-dim-btn batch ${selectedDim === null && suggestions.length === 0 ? 'active' : ''}`}
-                      onClick={handleBatch}
-                      disabled={streaming || loadingSuggest}
-                      title="一次性生成全部维度"
-                    >⚡ 批量</button>
-                    {dimensions.map(d => (
+                  {/* 维度子按钮栏：分两行（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔）+ 文风/地图 */}
+                  <div className="smart-dim-rows">
+                    <div className="smart-dim-row">
                       <button
-                        key={d.key}
-                        className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
-                        onClick={() => { setSelectedDim(d.key); setSuggestions([]); setInput(''); }}
+                        className={`smart-dim-btn ${selectedDim === 'general' ? 'active' : ''}`}
+                        onClick={() => { setSelectedDim('general'); setSuggestions([]); setInput(''); }}
                         disabled={streaming || loadingSuggest}
-                        title={d.hint}
-                      >{d.icon} {d.label}</button>
-                    ))}
+                        title="通用聊天：自由讨论小说/剧情，关键词触发填入各维度"
+                      >💬 通用</button>
+                      {dimensions.filter(d => ['concept', 'key_rules', 'worldbuilding'].includes(d.key)).map(d => (
+                        <button
+                          key={d.key}
+                          className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
+                          onClick={() => { setSelectedDim(d.key); setSuggestions([]); setInput(''); }}
+                          disabled={streaming || loadingSuggest}
+                          title={d.hint}
+                        >{d.icon} {d.label}</button>
+                      ))}
+                    </div>
+                    <div className="smart-dim-row">
+                      {dimensions.filter(d => ['plot_design', 'timeline', 'character_profiles', 'foreshadowing'].includes(d.key)).map(d => (
+                        <button
+                          key={d.key}
+                          className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
+                          onClick={() => { setSelectedDim(d.key); setSuggestions([]); setInput(''); }}
+                          disabled={streaming || loadingSuggest}
+                          title={d.hint}
+                        >{d.icon} {d.label}</button>
+                      ))}
+                    </div>
+                    <div className="smart-dim-row">
+                      {dimensions.filter(d => ['style_guide', 'locations'].includes(d.key)).map(d => (
+                        <button
+                          key={d.key}
+                          className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
+                          onClick={() => { setSelectedDim(d.key); setSuggestions([]); setInput(''); }}
+                          disabled={streaming || loadingSuggest}
+                          title={d.hint}
+                        >{d.icon} {d.label}</button>
+                      ))}
+                      <button
+                        className={`smart-dim-btn batch ${selectedDim === null && suggestions.length === 0 ? 'active' : ''}`}
+                        onClick={handleBatch}
+                        disabled={streaming || loadingSuggest}
+                        title="一次性生成全部维度"
+                      >⚡ 批量</button>
+                    </div>
                   </div>
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} compact />
                 </>
@@ -1120,30 +1190,86 @@ export default function ChatPanel() {
                     ) : (
                       <span>📖 还没有章节，将创建第 1 章</span>
                     )}
-                    <button className="chat-tool-btn" onClick={refreshChapterAnchor} title="刷新章节定位" disabled={streaming} style={{ marginLeft: 'auto', padding: '2px 8px' }}>🔄</button>
                   </div>
-                  <div className="smart-chapter-actions">
+                  {/* 写作 / 修改 / 🔄 三按钮一排 */}
+                  <div className="smart-chapter-actions smart-chapter-actions-row">
                     <button
-                      className="smart-action-btn primary"
-                      onClick={() => triggerChapterAction('continue')}
+                      className={`smart-action-btn primary ${pendingChapterAction === 'continue' ? 'pending' : ''}`}
+                      onClick={() => {
+                        if (pendingChapterAction === 'continue') {
+                          // 已点过写作，现在结合消息栏输入执行
+                          doChapterAction('continue', null);
+                        } else {
+                          setPendingChapterAction('continue');
+                          setMessages(prev => [...prev, {
+                            role: 'assistant',
+                            content: `✍️ 即将写作第 ${nextChapterNum} 章。请在下方输入框补充本章写作要求（如情节要点、人物、场景），不填也可直接点「写作」开始。`,
+                          }]);
+                        }
+                      }}
                       disabled={streaming}
-                    >✍️ 写作第 {nextChapterNum} 章</button>
+                    >{pendingChapterAction === 'continue' ? '▶️ 开始写作' : '✍️ 写作'}</button>
                     <button
-                      className="smart-action-btn"
-                      onClick={() => triggerChapterAction('polish')}
+                      className={`smart-action-btn ${pendingChapterAction === 'polish' ? 'pending' : ''}`}
+                      onClick={() => {
+                        if (pendingChapterAction === 'polish') {
+                          // 已点过修改，结合消息栏输入执行（消息栏说明改哪一章+意见）
+                          const text = input.trim();
+                          if (text) {
+                            // 从消息栏解析章节号
+                            const numMatch = text.match(/第?\s*(\d+)\s*章/);
+                            const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter?.order_index || 1);
+                            const ch = chapters.find(c => c.order_index === targetNum);
+                            if (ch) {
+                              doChapterActionWithNote('polish', ch.id, text);
+                            } else {
+                              setStreamError(`未找到第 ${targetNum} 章，请检查章节号`);
+                            }
+                          } else {
+                            // 未输入，弹出章节选择
+                            setMessages(prev => [...prev, {
+                              role: 'assistant',
+                              content: `✨ 请选择要修改的章节，或在下方输入框说明「第N章 + 修改意见」：`,
+                            }]);
+                          }
+                        } else {
+                          setPendingChapterAction('polish');
+                          setMessages(prev => [...prev, {
+                            role: 'assistant',
+                            content: `✨ 修改模式：请在下方输入框说明要修改哪一章及修改意见（如「第3章，增加主角心理描写」），或直接从下方章节列表选择：`,
+                          }]);
+                        }
+                      }}
                       disabled={streaming || chapters.length === 0}
-                    >✨ 润色</button>
+                    >{pendingChapterAction === 'polish' ? '▶️ 执行修改' : '✨ 修改'}</button>
+                    <button
+                      className="smart-action-btn ghost"
+                      onClick={refreshChapterAnchor}
+                      disabled={streaming}
+                      title="刷新章节定位（写作后会自动填入新章节到目录）"
+                    >🔄</button>
                   </div>
-                  {/* 润色时提示选择章节 */}
+                  {/* 修改模式：显示章节选择列表 */}
                   {pendingChapterAction === 'polish' && (
                     <div className="smart-chapter-pick">
-                      <div className="smart-chapter-pick-hint">请选择要润色的章节：</div>
+                      <div className="smart-chapter-pick-hint">选择要修改的章节（或在输入框说明）：</div>
                       <div className="smart-chapter-pick-list">
                         {chapters.map(c => (
                           <button
                             key={c.id}
                             className="smart-chapter-pick-item"
-                            onClick={() => handlePickChapterForAction(c.id)}
+                            onClick={() => {
+                              setMessages(prev => [...prev, {
+                                role: 'user',
+                                content: `修改第 ${c.order_index} 章《${c.title}》`,
+                              }]);
+                              // 进入等待意见状态
+                              setPendingChapterAction(null);
+                              setMessages(prev => [...prev, {
+                                role: 'assistant',
+                                content: `请在下方输入框输入对第 ${c.order_index} 章《${c.title}》的修改意见，然后点「修改」执行：`,
+                              }]);
+                            }}
                             disabled={streaming}
                           >
                             <span>第{c.order_index}章</span>
@@ -1308,7 +1434,7 @@ export default function ChatPanel() {
               </div>
             )}
 
-            {/* 输入区（仅设定Tab可输入；其他Tab通过按钮操作） */}
+            {/* 输入区（设定Tab可输入；正文Tab修改模式可输入） */}
             {activeTab === 'setting' && (
               <div className="chat-input-area">
                 <div className="chat-input-row">
@@ -1329,11 +1455,15 @@ export default function ChatPanel() {
                       className="chat-send"
                       onClick={handleMainSend}
                       disabled={!canSend || loadingSuggest || suggestions.length > 0}
-                    >{loadingSuggest ? '…' : '生成方案'}</button>
+                    >{loadingSuggest ? '…' : (selectedDim === 'general' ? '发送' : '生成方案')}</button>
                   )}
                 </div>
                 {selectedDim && suggestions.length === 0 && (
-                  <div className="chat-input-hint">描述需求 → AI 给多选方案 → 选中生成 → 可输入修改意见重新生成</div>
+                  <div className="chat-input-hint">
+                    {selectedDim === 'general'
+                      ? '自由讨论小说/剧情，提及维度关键词（人物/伏笔/世界观等）会自动产出可落地卡片'
+                      : '描述需求 → AI 给多选方案 → 选中生成 → 可输入修改意见重新生成'}
+                  </div>
                 )}
               </div>
             )}
@@ -1345,11 +1475,46 @@ export default function ChatPanel() {
                     className="chat-input"
                     value={input}
                     onChange={e => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey && activeTab === 'chapter' && pendingChapterAction) {
+                        e.preventDefault();
+                        if (pendingChapterAction === 'continue') {
+                          doChapterAction('continue', null);
+                        } else if (pendingChapterAction === 'polish') {
+                          const text = input.trim();
+                          if (text) {
+                            const numMatch = text.match(/第?\s*(\d+)\s*章/);
+                            const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter?.order_index || 1);
+                            const ch = chapters.find(c => c.order_index === targetNum);
+                            if (ch) doChapterActionWithNote('polish', ch.id, text);
+                            else setStreamError(`未找到第 ${targetNum} 章`);
+                          }
+                        }
+                      }
+                    }}
                     placeholder={inputPlaceholder}
                     disabled={streaming}
                   />
                   {streaming ? (
                     <button className="chat-send stop" onClick={stopStream}>停止</button>
+                  ) : (activeTab === 'chapter' && pendingChapterAction === 'continue') ? (
+                    <button
+                      className="chat-send"
+                      onClick={() => doChapterAction('continue', null)}
+                    >▶️ 写作</button>
+                  ) : (activeTab === 'chapter' && pendingChapterAction === 'polish') ? (
+                    <button
+                      className="chat-send"
+                      onClick={() => {
+                        const text = input.trim();
+                        if (!text) return;
+                        const numMatch = text.match(/第?\s*(\d+)\s*章/);
+                        const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter?.order_index || 1);
+                        const ch = chapters.find(c => c.order_index === targetNum);
+                        if (ch) doChapterActionWithNote('polish', ch.id, text);
+                        else setStreamError(`未找到第 ${targetNum} 章`);
+                      }}
+                    >▶️ 修改</button>
                   ) : null}
                 </div>
               </div>

@@ -874,6 +874,20 @@ export const api = {
     if (signal) cfg.signal = signal;
     return fetch(`${getApiBaseUrl()}/ai/smart/deai`, cfg);
   },
+  // 设定Tab·通用聊天：自由讨论，关键词触发填入维度（SSE 流式）
+  smartGeneralStream: (bookId: string, message: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const cfg: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ book_id: bookId, message, skill_pack_ids: skillPackIds, session_id: sessionId }),
+    };
+    if (signal) cfg.signal = signal;
+    return fetch(`${getApiBaseUrl()}/ai/smart/general`, cfg);
+  },
+
   // 校审Tab：防遗忘 / 一致性检查（支持按卷）
   smartReview: (bookId: string, mode: 'anti_forget' | 'consistency', chapterId?: string, skillPackIds: string[] = [], volumeIds: string[] = []) =>
     request<{ mode: string; report?: any; summary?: string; health_score?: number; chapter_id?: string; chapter_title?: string; passed?: boolean; issues?: string }>(

@@ -786,13 +786,17 @@ _CARD_TARGET = {
 SMART_DIMENSIONS = [
     {'key': 'concept',            'label': '构思',       'field': 'concept',            'card': 'SAVE_CONCEPT',      'icon': '💡', 'hint': '一句话讲清故事核：主角是谁、要什么、最大的阻碍'},
     {'key': 'key_rules',          'label': '设定',       'field': 'key_rules',          'card': 'SAVE_RULE',         'icon': '⚙️', 'hint': '能力体系/修炼体系/科技树，硬规则'},
-    {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': '🌍', 'hint': '故事发生的世界，独特规则或设定'},
+    {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': '🌍', 'hint': '故事发生的世界，独特规则或设定（生成中会提取世界地图架构到「地图」维度）'},
     {'key': 'plot_design',        'label': '大纲',       'field': 'plot_design',        'card': 'SAVE_OUTLINE_NODE', 'icon': '📋', 'hint': '主线走向，三幕式或起承转合'},
     {'key': 'timeline',           'label': '剧情',       'field': 'timeline',           'card': 'SAVE_PLOT',         'icon': '📖', 'hint': '关键剧情节点的时间顺序'},
-    {'key': 'character_profiles', 'label': '人物及关系', 'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': '👤', 'hint': '主角和核心配角的动机、性格、关系网'},
+    {'key': 'character_profiles', 'label': '人物',       'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': '👤', 'hint': '主角和核心配角的动机、性格、关系网'},
     {'key': 'foreshadowing',      'label': '伏笔',       'field': 'foreshadowing',      'card': 'SAVE_FORESHADOW',   'icon': '🔮', 'hint': '长线伏笔的埋设与回收计划'},
-    {'key': 'locations',          'label': '地图',       'field': 'locations',          'card': 'SAVE_LOCATION',     'icon': '🗺️', 'hint': '故事中的地点、势力分布'},
+    {'key': 'locations',          'label': '地图',       'field': 'locations',          'card': 'SAVE_LOCATION',     'icon': '🗺️', 'hint': '故事中的地点、势力分布、世界地图架构'},
+    {'key': 'style_guide',        'label': '文风',       'field': 'style_guide',        'card': 'APPLY_STYLE',       'icon': '🎨', 'hint': '叙事风格、语言调性、节奏把控'},
 ]
+
+# 通用聊天：不属于任何维度，自由讨论小说/剧情分析，通过触发关键词填入各维度
+SMART_GENERAL_KEY = 'general'
 
 _DIM_KEY_TO_SPEC = {d['key']: d for d in SMART_DIMENSIONS}
 
@@ -823,6 +827,176 @@ def _build_dim_context(book, bb, dim_key, with_self=True, self_limit=800, other_
 def smart_dimensions():
     """返回 AI 智驾支持的维度列表（供前端渲染子按钮）。"""
     return jsonify({'dimensions': SMART_DIMENSIONS})
+
+
+# ----------------------------------------------------------------------------
+# 设定Tab：通用聊天（自由讨论，关键词触发填入维度）
+# ----------------------------------------------------------------------------
+
+# 关键词到维度的映射：用户消息中含关键词时，AI 回复可产对应维度的卡片
+_GENERAL_KEYWORD_MAP = {
+    'concept': ['构思', '故事核', '主线思路', '核心冲突'],
+    'key_rules': ['设定', '体系', '规则', '修炼', '能力', '科技树'],
+    'worldbuilding': ['世界观', '世界设定', '世界规则'],
+    'plot_design': ['大纲', '主线', '剧情走向', '起承转合'],
+    'timeline': ['剧情', '时间线', '事件顺序', '剧情节点'],
+    'character_profiles': ['人物', '角色', '主角', '配角', '关系'],
+    'foreshadowing': ['伏笔', '埋线', '回收'],
+    'locations': ['地图', '地点', '势力分布', '地理位置'],
+    'style_guide': ['文风', '风格', '语言调性', '叙事'],
+}
+
+
+def _detect_dim_from_text(text):
+    """从用户文本中检测涉及的维度关键词，返回 [(dim_key, matched_words)]。"""
+    if not text:
+        return []
+    hits = []
+    for dim_key, kws in _GENERAL_KEYWORD_MAP.items():
+        matched = [kw for kw in kws if kw in text]
+        if matched:
+            hits.append((dim_key, matched))
+    return hits
+
+
+@chat_collab_bp.route('/api/ai/smart/general', methods=['POST'])
+def smart_general():
+    """AI智驾·设定·通用聊天：自由讨论小说/剧情，流式回复，关键词触发产维度卡片。
+
+    body: { book_id, message, history?, skill_pack_ids?, session_id? }
+    返回 SSE：delta / card / done / error
+    """
+    from app import db, AISession, Book, BookBible
+    from llm_gateway import LLMGateway, get_llm_config
+    import app as app_module
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    message = (data.get('message') or '').strip()
+    skill_pack_ids = data.get('skill_pack_ids') or []
+    session_id = data.get('session_id')
+
+    if not book_id or not message:
+        return jsonify({'error': '缺少 book_id 或 message'}), 400
+
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+
+    # 构建上下文：所有维度的简短摘要
+    ctx_parts = []
+    if bb:
+        for d in SMART_DIMENSIONS:
+            v = (getattr(bb, d['field'], '') or '').strip()
+            if v:
+                ctx_parts.append(f'【{d["label"]}】{_smart_truncate(v, 300)}')
+    ctx = '\n\n'.join(ctx_parts) if ctx_parts else '（暂无设定）'
+
+    # 检测关键词，决定是否产卡片
+    detected = _detect_dim_from_text(message)
+
+    skill_note = ''
+    try:
+        from app import _get_skill_prompts_by_category
+        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='agent') or ''
+    except Exception:
+        pass
+
+    session = None
+    if session_id:
+        session = AISession.query.get(session_id)
+    if not session:
+        session = AISession(book_id=book_id, scope='smart_setting',
+                            title='通用聊天', messages_json='[]')
+        db.session.add(session)
+        db.session.commit()
+    session_id = session.id
+
+    try:
+        base_url, api_key, model = get_llm_config(app_module)
+    except Exception as e:
+        return jsonify({'error': f'AI 配置异常：{e}'}), 400
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    gw = LLMGateway(base_url, api_key, model)
+
+    dim_hint = ''
+    if detected:
+        dim_labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k, _ in detected)
+        dim_hint = f'\n\n【关键词触发】用户讨论涉及维度：{dim_labels}。若你的回复中产出了可落地的设定内容，请用卡片标记输出（每个维度一张）：\n[[CARD:卡片类型|标题|内容]]\n卡片类型对照：SAVE_CONCEPT=构思, SAVE_RULE=设定, SAVE_WORLDSETTING=世界观, SAVE_OUTLINE_NODE=大纲, SAVE_PLOT=剧情, SAVE_CHARACTER=人物, SAVE_FORESHADOW=伏笔, SAVE_LOCATION=地图, APPLY_STYLE=文风。无则不输出卡片。'
+
+    sys_prompt = f"""你是资深网文创作智驾，正在与作者自由讨论《{book.title or "未命名"}》。
+
+题材：{book.genre or "未指定"}  类型：{book.book_type or "未指定"}
+
+【已有设定参考】
+{ctx}
+
+{("【技能包指引】\n" + skill_note) if skill_note else ""}
+
+请与作者自然对话：讨论剧情、分析人物、推演走向、解答创作疑问。回复简洁有洞察力。
+若作者明确要求生成某维度设定，或讨论中形成了可落地的设定内容，可输出对应卡片。
+{dim_hint}
+"""
+
+    messages = [{'role': 'system', 'content': sys_prompt},
+                {'role': 'user', 'content': message}]
+
+    def sse(payload):
+        return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
+
+    def generate():
+        full = []
+        try:
+            for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=2500):
+                full.append(chunk)
+                yield sse({'type': 'delta', 'content': chunk})
+            content = ''.join(full).strip()
+            # 解析卡片标记
+            cards = _parse_card_markers(content)
+            clean_content = _strip_card_markers(content)
+            for card in cards:
+                yield sse({'type': 'card', 'card': card, 'session_id': session_id})
+            history = load_session_messages(session)
+            history.append({'role': 'user', 'content': message})
+            history.append({'role': 'assistant', 'content': clean_content,
+                            'cards': [{**c, 'status': 'pending'} for c in cards] if cards else None})
+            session.messages_json = json.dumps(history, ensure_ascii=False)
+            session.updated_at = datetime.now(timezone.utc)
+            db.session.commit()
+            yield sse({'type': 'done', 'session_id': session_id})
+        except Exception as e:
+            yield sse({'type': 'error', 'error': str(e)})
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+def _parse_card_markers(text):
+    """解析 [[CARD:TYPE|title|content]] 标记为卡片列表。"""
+    cards = []
+    if not text:
+        return cards
+    pattern = re.compile(r'\[\[CARD:([A-Z_]+)\|([^\|]*)\|([^\]]+)\]\]', re.S)
+    for m in pattern.finditer(text):
+        ctype, title, content = m.group(1), m.group(2).strip(), m.group(3).strip()
+        cards.append({
+            'id': str(uuid.uuid4())[:8],
+            'type': ctype,
+            'title': title or _CARD_TARGET.get(ctype, ctype),
+            'content': content,
+            'target': _CARD_TARGET.get(ctype, ctype),
+        })
+    return cards
+
+
+def _strip_card_markers(text):
+    """移除文本中的卡片标记。"""
+    if not text:
+        return text
+    return re.sub(r'\[\[CARD:[A-Z_]+\|[^\|]*\|[^\]]+\]\]', '', text).strip()
 
 
 # ----------------------------------------------------------------------------
@@ -1003,6 +1177,10 @@ def smart_generate():
 
 请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。"""
 
+    # 世界观维度：生成后额外产出地图卡片，便于提取到「地图」维度
+    if dim_key == 'worldbuilding':
+        sys_prompt += '\n\n另外，若世界观中包含地理/势力分布信息，请在正文之后追加一张「地图」卡片，格式：\n[[CARD:SAVE_LOCATION|世界地图架构|在此输出主要地理区域、势力分布、关键地点的简要架构]]'
+
     messages = [{'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': f'请生成{spec["label"]}的完整内容'}]
 
@@ -1016,18 +1194,23 @@ def smart_generate():
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
+            # 解析卡片标记（世界观会额外产出地图卡片）
+            extra_cards = _parse_card_markers(content)
+            clean_content = _strip_card_markers(content) if extra_cards else content
             card = {
                 'id': str(uuid.uuid4())[:8],
                 'type': spec['card'],
                 'title': f'{spec["label"]}（AI智驾生成）',
-                'content': content,
+                'content': clean_content,
                 'target': _CARD_TARGET.get(spec['card'], spec['label']),
             }
             yield sse({'type': 'card', 'card': card, 'session_id': session_id})
+            for ec in extra_cards:
+                yield sse({'type': 'card', 'card': ec, 'session_id': session_id})
             history = load_session_messages(session)
             history.append({'role': 'user', 'content': f'生成{spec["label"]}：{requirement or suggestion[:50]}'})
-            history.append({'role': 'assistant', 'content': content,
-                            'cards': [{**card, 'status': 'pending'}]})
+            history.append({'role': 'assistant', 'content': clean_content,
+                            'cards': [{**c, 'status': 'pending'} for c in [card] + extra_cards]})
             session.messages_json = json.dumps(history, ensure_ascii=False)
             session.updated_at = datetime.now(timezone.utc)
             db.session.commit()
