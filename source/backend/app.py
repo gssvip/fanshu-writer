@@ -204,7 +204,11 @@ except ImportError:
 # gunicorn prefork 使 _app_engines(WeakKeyDictionary) weakref 失效，请求前检查重注册
 @app.before_request
 def _ensure_db():
-    if app not in db._app_engines: app.extensions.pop('sqlalchemy', None); db.init_app(app)
+    import traceback as _tb
+    try:
+        if app not in db._app_engines: app.extensions.pop('sqlalchemy', None); db.init_app(app)
+    except Exception as _e:
+        print(f'[_ensure_db] ERROR: {_e}', flush=True)
 
 EXPORTS_DIR = DATA_DIR / 'exports'
 EXPORTS_DIR.mkdir(exist_ok=True)
