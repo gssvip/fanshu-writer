@@ -71,6 +71,7 @@ const CARD_ICON: Record<string, string> = {
   SAVE_RULE: '⚙️',
   APPLY_STYLE: '✍️',
   SAVE_CONCEPT: '💡',
+  SAVE_CHAPTER: '📚',
 };
 
 const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onIgnore, applying }: CardViewProps) {
@@ -138,10 +139,10 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
           <div className="chat-card-body">{card.content}</div>
           <div className="chat-card-actions">
             <button className="chat-card-btn primary" onClick={() => onAdopt(card)} disabled={applying}>
-              {applying ? '落地中…' : '采纳落地'}
+              {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '保存为新章节' : '采纳落地')}
             </button>
             <button className="chat-card-btn" onClick={() => setEditing(true)} disabled={applying}>
-              编辑
+              {card.type === 'SAVE_CHAPTER' ? '编辑后保存' : '编辑'}
             </button>
             <button className="chat-card-btn ghost" onClick={() => onIgnore(card)} disabled={applying}>
               忽略
@@ -355,12 +356,22 @@ export default function ChatPanel() {
     if (!bookId) return;
     setApplyingCardId(card.id);
     try {
-      await api.applyChatCard(bookId, card);
+      const r = await api.applyChatCard(bookId, card);
       setMessages(prev => prev.map(m => {
         if (m.role !== 'assistant' || !m.cards) return m;
         return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...c, status: 'adopted' as const } : c) };
       }));
       refreshProgress();
+      // 章节卡落地成功：提示用户已保存为新章节
+      if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
+        const ch = r as any;
+        setStreamError('');
+        // 用 inline 提示而非错误样式
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `✅ 章节已保存：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。可在「章节」Tab 查看。`,
+        }]);
+      }
     } catch (e: any) {
       setStreamError(e.message || '落地失败');
     } finally {
@@ -373,12 +384,19 @@ export default function ChatPanel() {
     setApplyingCardId(card.id);
     try {
       const editedCard = { ...card, content: newContent };
-      await api.applyChatCard(bookId, editedCard);
+      const r = await api.applyChatCard(bookId, editedCard);
       setMessages(prev => prev.map(m => {
         if (m.role !== 'assistant' || !m.cards) return m;
         return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...editedCard, status: 'edited' as const } : c) };
       }));
       refreshProgress();
+      if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
+        const ch = r as any;
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `✅ 章节已保存：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。可在「章节」Tab 查看。`,
+        }]);
+      }
     } catch (e: any) {
       setStreamError(e.message || '落地失败');
     } finally {
@@ -392,6 +410,27 @@ export default function ChatPanel() {
       return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...c, status: 'ignored' as const } : c) };
     }));
   }, []);
+
+  // 切换历史会话：加载该会话的全部消息
+  const handleSelectSession = useCallback(async (sid: string) => {
+    if (streaming) stopStream();
+    setSessionId(sid);
+    setShowHistory(false);
+    setStreamError('');
+    setMessages([]);
+    try {
+      const r = await api.getChatSessionMessages(sid);
+      // 后端 messages 结构：[{role, content, cards?}]，cards 已含 status
+      const loaded: AIMessage[] = (r.messages || []).map((m: any) => ({
+        role: m.role || 'assistant',
+        content: m.content || '',
+        cards: Array.isArray(m.cards) ? m.cards : undefined,
+      }));
+      setMessages(loaded);
+    } catch (e: any) {
+      setStreamError('加载历史会话失败：' + (e.message || ''));
+    }
+  }, [streaming, stopStream]);
 
   // 新建会话
   const handleNewSession = useCallback(() => {
@@ -462,7 +501,7 @@ export default function ChatPanel() {
                     <div className="chat-history-empty">还没有历史会话</div>
                   ) : (
                     historySessions.map(s => (
-                      <button key={s.id} className={`chat-history-item ${s.id === sessionId ? 'active' : ''}`} onClick={() => { setSessionId(s.id); setShowHistory(false); }}>
+                      <button key={s.id} className={`chat-history-item ${s.id === sessionId ? 'active' : ''}`} onClick={() => handleSelectSession(s.id)}>
                         <div className="chat-history-title">{s.title || '未命名'}</div>
                         <div className="chat-history-meta">{s.message_count} 条 · {s.updated_at ? new Date(s.updated_at).toLocaleString() : ''}</div>
                       </button>

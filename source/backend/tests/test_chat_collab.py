@@ -205,3 +205,59 @@ class TestBuildChatSystemPrompt:
         from blueprints.chat_collab_bp import build_chat_system_prompt
         prompt = build_chat_system_prompt(_FakeBook(), None)
         assert '新书' in prompt
+
+
+class TestChapterCardAndSession:
+    """章节正文卡 + 会话消息持久化相关纯逻辑测试。"""
+
+    def test_chapter_card_in_registry(self):
+        from blueprints.chat_collab_bp import CARD_REGISTRY
+        assert 'SAVE_CHAPTER' in CARD_REGISTRY
+        assert CARD_REGISTRY['SAVE_CHAPTER']['mode'] == 'chapter'
+        assert CARD_REGISTRY['SAVE_CHAPTER']['label'] == '章节正文'
+
+    def test_chapter_card_parsed(self):
+        from blueprints.chat_collab_bp import parse_cards
+        text = '[[CARD:SAVE_CHAPTER|第一章 觉醒|林天睁开眼，发现自己身处……]]'
+        cards = parse_cards(text)
+        assert len(cards) == 1
+        assert cards[0]['type'] == 'SAVE_CHAPTER'
+        assert cards[0]['title'] == '第一章 觉醒'
+        assert '林天' in cards[0]['content']
+
+    def test_chapter_card_instructions_in_prompt(self):
+        from blueprints.chat_collab_bp import build_chat_system_prompt
+        prompt = build_chat_system_prompt(_FakeBook(), None)
+        assert 'SAVE_CHAPTER' in prompt
+        assert '章节正文' in prompt
+
+    def test_persisted_cards_structure(self):
+        """模拟 generate() 持久化的 cards 结构，确保含 status 字段。"""
+        from blueprints.chat_collab_bp import parse_cards
+        text = '讨论\n[[CARD:SAVE_CHAPTER|第一章|正文内容]]'
+        cards = parse_cards(text)
+        persisted = [{'id': c['id'], 'type': c['type'], 'title': c['title'],
+                      'content': c['content'], 'target': c['target'],
+                      'status': 'pending'} for c in cards]
+        assert len(persisted) == 1
+        assert persisted[0]['status'] == 'pending'
+        assert persisted[0]['type'] == 'SAVE_CHAPTER'
+
+    def test_history_load_preserves_cards(self):
+        """历史会话加载时，assistant 消息的 cards 字段应保留。"""
+        import json
+        from blueprints.chat_collab_bp import load_session_messages
+
+        class _FakeSession:
+            messages_json = json.dumps([
+                {'role': 'user', 'content': '写一章'},
+                {'role': 'assistant', 'content': '好的',
+                 'cards': [{'id': 'abc', 'type': 'SAVE_CHAPTER', 'title': '第一章',
+                            'content': '正文', 'target': '章节正文', 'status': 'pending'}]},
+            ], ensure_ascii=False)
+        msgs = load_session_messages(_FakeSession())
+        assert len(msgs) == 2
+        assert msgs[1]['role'] == 'assistant'
+        assert 'cards' in msgs[1]
+        assert len(msgs[1]['cards']) == 1
+        assert msgs[1]['cards'][0]['type'] == 'SAVE_CHAPTER'

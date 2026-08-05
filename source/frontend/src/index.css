@@ -1676,12 +1676,13 @@ textarea{resize:vertical;line-height:1.8}
 .chat-card-body {
   padding: 10px 12px; font-size: 12px; line-height: 1.6;
   color: var(--text-primary); white-space: pre-wrap;
+  max-height: 240px; overflow-y: auto;
 }
 .chat-card-edit {
   width: 100%; border: none; border-top: 1px solid var(--border-color);
   padding: 8px 12px; font-size: 12px; line-height: 1.5;
   font-family: inherit; background: var(--bg-secondary); color: var(--text-primary);
-  resize: vertical; min-height: 60px;
+  resize: vertical; min-height: 60px; max-height: 320px;
 }
 .chat-card-actions {
   display: flex; gap: 6px; padding: 8px 12px;

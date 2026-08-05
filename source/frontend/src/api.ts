@@ -1,4 +1,4 @@
-import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport } from './types';
+import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport } from './types';
 
 // 后端 API 默认地址（内置，开箱即用）
 // 其他用户无需手动配置即可使用。如需切换到自部署的后端，可在「我的 → 服务器」覆盖。
@@ -769,5 +769,10 @@ export const api = {
   listBookChatSessions: (bookId: string) =>
     request<{ sessions: Array<{ id: string; scope: string; title: string; updated_at: string | null; message_count: number }> }>(
       `/books/${bookId}/ai/sessions`
+    ),
+  // 获取单个会话的全部消息（历史会话切换时加载聊天记录）
+  getChatSessionMessages: (sessionId: string) =>
+    request<{ id: string; title: string; scope: string; updated_at: string | null; messages: AIMessage[] }>(
+      `/ai/sessions/${sessionId}/messages`
     ),
 };

@@ -35,7 +35,7 @@ MAX_MSG_CHARS = 2000
 # Action Card 协议
 # ============================================================================
 
-# 卡片类型 → 目标维度字段 + 落地方式（append 覆盖/追加, character 走独立表）
+# 卡片类型 → 目标维度字段 + 落地方式（append 覆盖/追加, character 走独立表, chapter 走章节表）
 CARD_REGISTRY = {
     'SAVE_WORLDSETTING': {'field': 'worldbuilding', 'mode': 'append', 'label': '世界观'},
     'SAVE_CHARACTER':    {'field': 'character_profiles', 'mode': 'character', 'label': '人物'},
@@ -46,6 +46,7 @@ CARD_REGISTRY = {
     'SAVE_RULE':         {'field': 'key_rules', 'mode': 'append', 'label': '核心规则'},
     'APPLY_STYLE':       {'field': 'style_guide', 'mode': 'append', 'label': '文风'},
     'SAVE_CONCEPT':      {'field': 'concept', 'mode': 'append', 'label': '核心构思'},
+    'SAVE_CHAPTER':      {'field': 'chapter', 'mode': 'chapter', 'label': '章节正文'},
 }
 
 # LLM 输出的卡片标记格式：
@@ -165,9 +166,11 @@ _CARD_INSTRUCTIONS = """
 - SAVE_RULE          核心规则/能力体系（如：修为突破需渡劫）
 - APPLY_STYLE        文风指南（如：冷硬派叙事，短句为主）
 - SAVE_CONCEPT       核心构思（一句话故事核）
+- SAVE_CHAPTER       章节正文（标题=章节名，内容=完整章节正文，可直接作为章节保存）
 
 注意：
-- 卡片内容必须具体、可直接写入设定库，不要写"建议讨论XXX"这种空话
+- 卡片内容必须具体、可直接写入设定库或作为正文保存，不要写"建议讨论XXX"这种空话
+- SAVE_CHAPTER 仅在用户明确要求"写一章""接着写正文"时产出，内容必须是完整的章节正文（2000字以上）
 - 不要每条回复都产卡片，只在确实有可落地结论时才产
 - 先用对话讨论，达成共识后再产卡片
 """.strip()
@@ -335,10 +338,15 @@ def chat_smart():
             for card in cards:
                 yield f'data: {json.dumps({"type": "card", "card": card, "session_id": session_id}, ensure_ascii=False)}\n\n'
 
-            # 持久化对话（剥离卡片标记后存历史）
+            # 持久化对话（剥离卡片标记后存历史，cards 单独存以便历史会话恢复）
             clean_text = strip_cards(complete)
+            # 卡片持久化时标记为 pending，前端历史会话加载后可继续采纳
+            persisted_cards = [{'id': c['id'], 'type': c['type'], 'title': c['title'],
+                                'content': c['content'], 'target': c['target'],
+                                'status': 'pending'} for c in cards]
             history.append({'role': 'user', 'content': message})
-            history.append({'role': 'assistant', 'content': clean_text})
+            history.append({'role': 'assistant', 'content': clean_text,
+                            'cards': persisted_cards})
             session.messages_json = json.dumps(history, ensure_ascii=False)
             session.updated_at = datetime.now(timezone.utc)
             db.session.commit()
@@ -353,8 +361,12 @@ def chat_smart():
 
 @chat_collab_bp.route('/api/ai/chat/smart/apply-card', methods=['POST'])
 def apply_card():
-    """采纳 Action Card，落地到对应维度。"""
-    from app import db, BookBible, Character
+    """采纳 Action Card，落地到对应维度。
+
+    SAVE_CHAPTER 模式：落地到 Chapter 表，作为新章节追加。
+    返回 chapter_id 供前端跳转/确认。
+    """
+    from app import db, BookBible, Character, Chapter
     data = request.json or {}
     book_id = data.get('book_id')
     card = data.get('card', {})
@@ -365,12 +377,44 @@ def apply_card():
     if ctype not in CARD_REGISTRY or not content:
         return jsonify({'error': '无效的卡片或内容为空'}), 400
 
+    spec = CARD_REGISTRY[ctype]
+    result_extra = {}
+
+    # 章节正文卡：落地到 Chapter 表
+    if spec['mode'] == 'chapter':
+        # 计算 order_index：当前书最大 order_index + 1
+        max_idx = db.session.query(db.func.max(Chapter.order_index)) \
+            .filter_by(book_id=book_id, is_volume=False).scalar() or 0
+        # 计算字数（中英文混合估算）
+        wc = len(content)
+        ch = Chapter(
+            book_id=book_id,
+            title=title or f'第{max_idx + 1}章',
+            content=content,
+            order_index=max_idx + 1,
+            word_count=wc,
+            status='draft',
+            is_volume=False,
+            parent_id='',
+        )
+        db.session.add(ch)
+        db.session.commit()
+        result_extra = {
+            'chapter_id': ch.id,
+            'chapter_title': ch.title,
+            'word_count': wc,
+            'order_index': ch.order_index,
+        }
+        # bible 可能不存在，但 progress 仍要返回
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+        return jsonify({'ok': True, 'field': spec['field'], 'label': spec['label'],
+                        'progress': build_progress_map(bb),
+                        **result_extra})
+
     bb = BookBible.query.filter_by(book_id=book_id).first()
     if not bb:
         bb = BookBible(book_id=book_id)
         db.session.add(bb)
-
-    spec = CARD_REGISTRY[ctype]
 
     if spec['mode'] == 'character':
         # 人物卡走独立 Character 表：解析"姓名|身份|性格|背景"格式
@@ -398,7 +442,8 @@ def apply_card():
 
     db.session.commit()
     return jsonify({'ok': True, 'field': spec['field'], 'label': spec['label'],
-                    'progress': build_progress_map(bb)})
+                    'progress': build_progress_map(bb),
+                    **result_extra})
 
 
 @chat_collab_bp.route('/api/books/<book_id>/ai/progress', methods=['GET'])
@@ -420,3 +465,24 @@ def list_sessions(book_id):
          'message_count': len(json.loads(s.messages_json or '[]'))}
         for s in sessions
     ]})
+
+
+@chat_collab_bp.route('/api/ai/sessions/<session_id>/messages', methods=['GET'])
+def get_session_messages(session_id):
+    """获取单个聊天会话的全部消息（用于历史会话切换时加载聊天记录）。
+
+    返回：{ id, title, scope, messages: [...] }
+    messages 元素结构：{ role, content, cards? }
+    """
+    from app import AISession
+    session = AISession.query.get(session_id)
+    if not session:
+        return jsonify({'error': '会话不存在'}), 404
+    msgs = load_session_messages(session)
+    return jsonify({
+        'id': session.id,
+        'title': session.title,
+        'scope': session.scope,
+        'messages': msgs,
+        'updated_at': session.updated_at.isoformat() if session.updated_at else None,
+    })
