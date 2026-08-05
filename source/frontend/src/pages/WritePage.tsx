@@ -267,12 +267,11 @@ export default function WritePage() {
   const refreshAiSessions = useCallback(async () => {
     if (!bookId) { setAiSessions([]); return; }
     try {
-      // 加载本书全部 AI 智驾会话（不限 scope），保留近期最新 5 条
+      // 加载本书全部 AI 智驾会话（不限数量），按更新时间倒序
       const list = await api.listAISessions(bookId);
       const sorted = (list || [])
         .slice()
-        .sort((a: AISession, b: AISession) => (b.updated_at || '').localeCompare(a.updated_at || ''))
-        .slice(0, 5);
+        .sort((a: AISession, b: AISession) => (b.updated_at || '').localeCompare(a.updated_at || ''));
       setAiSessions(sorted);
     } catch { /* 静默 */ }
   }, [bookId]);
@@ -2335,18 +2334,18 @@ function ConceptPanel(props: {
         </div>
       )}
 
-      {/* 近期 AI 智驾 聊天记录，支持批量删除/编辑/重命名/继续对话 */}
+      {/* 历史对话（不限数量，支持批量删除/编辑/重命名/继续对话） */}
       <div className="ai-chat-history" style={{ marginTop: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div className="ai-history-bar" style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'nowrap', overflowX: 'auto' }}>
           <button
             className="btn-ghost-sm"
             onClick={() => setHistoryExpanded(v => !v)}
-            style={{ padding: '2px 8px', fontSize: 12, fontWeight: 600 }}
+            style={{ padding: '2px 8px', fontSize: 12, fontWeight: 600, flexShrink: 0 }}
             title={historyExpanded ? '收起' : '展开'}
           >
-            {historyExpanded ? '▼' : '▶'} 💬 近期 AI 创作对话 {aiSessions.length > 0 && `(${aiSessions.length})`}
+            {historyExpanded ? '▼' : '▶'} 💬 历史对话 {aiSessions.length > 0 && `(${aiSessions.length})`}
           </button>
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexShrink: 0 }}>
             {aiSessions.length > 0 && (
               <>
                 <button
