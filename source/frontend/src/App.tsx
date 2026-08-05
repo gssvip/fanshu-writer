@@ -3,6 +3,7 @@ import { useState, useEffect, createContext, useContext, useCallback } from 'rea
 import { useStore } from './store';
 import { api, warmUpBackend } from './api';
 import AuthModal from './components/AuthModal';
+import ChatPanel from './components/ChatPanel';
 import WorkbenchPage from './pages/WorkbenchPage';
 import WritePage from './pages/WritePage';
 import ToolsPage from './pages/ToolsPage';
@@ -192,6 +193,7 @@ export default function App() {
           </Routes>
         </Layout>
         {showAuth && <AuthModal onDone={handleAuthDone} />}
+        <ChatPanel />
       </HashRouter>
     </AuthContext.Provider>
   );

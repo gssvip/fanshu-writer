@@ -13,8 +13,7 @@ from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, send_from_directory, stream_with_context
-from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
+from flask_cors import CORS; from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -198,6 +197,7 @@ db = SQLAlchemy(app)
 try:
     from blueprints.health_bp import health_bp; app.register_blueprint(health_bp)
     from blueprints.ai_config_bp import ai_config_bp; app.register_blueprint(ai_config_bp)
+    from blueprints.chat_collab_bp import chat_collab_bp; app.register_blueprint(chat_collab_bp)
 except ImportError:
     pass
 

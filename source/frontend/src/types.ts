@@ -79,6 +79,28 @@ export type AIMessageRole = 'user' | 'assistant' | 'system';
 export interface AIMessage {
   role: AIMessageRole;
   content: string;
+  cards?: ActionCard[];  // AI 回复中携带的落地卡片
+}
+
+// 聊天中的 Action Card（讨论即落地）
+export interface ActionCard {
+  id: string;
+  type: string;        // SAVE_CHARACTER / SAVE_FORESHADOW / ...
+  title: string;
+  content: string;
+  target: string;      // 目标维度标签
+  status?: 'pending' | 'adopted' | 'edited' | 'ignored';
+}
+
+// 创作进度地图
+export interface ProgressDim {
+  field: string; label: string; status: 'empty' | 'sketch' | 'partial' | 'solid';
+  pct: number; hint: string;
+}
+export interface ProgressMap {
+  dims: ProgressDim[];
+  overall: number; filled: number; total: number;
+  next_step: { field: string; label: string; hint: string } | null;
 }
 
 export interface StatsData {

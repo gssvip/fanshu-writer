@@ -28,6 +28,9 @@ interface AppStore {
   rightPanel: 'ai' | 'characters' | 'outline' | 'stats' | null;
   rightPanelWidth: number;
   loading: boolean;
+  // 聊天驱动创作浮窗（全局，跨页面可用）
+  chatPanelOpen: boolean;
+  chatPanelBookId: string | null;
 
   setBooks: (books: Book[]) => void;
   setCurrentBook: (book: Book | null) => void;
@@ -40,6 +43,8 @@ interface AppStore {
   setRightPanel: (panel: 'ai' | 'characters' | 'outline' | 'stats' | null) => void;
   setRightPanelWidth: (width: number) => void;
   setLoading: (loading: boolean) => void;
+  openChatPanel: (bookId: string) => void;
+  closeChatPanel: () => void;
   logout: () => void;
 }
 
@@ -79,6 +84,8 @@ export const useStore = create<AppStore>((set) => ({
   rightPanel: null,
   rightPanelWidth: 380,
   loading: false,
+  chatPanelOpen: false,
+  chatPanelBookId: null,
 
   setBooks: (books) => set({ books }),
   setCurrentBook: (book) => set({ currentBook: book }),
@@ -100,6 +107,8 @@ export const useStore = create<AppStore>((set) => ({
   setRightPanel: (panel) => set({ rightPanel: panel }),
   setRightPanelWidth: (width) => set({ rightPanelWidth: width }),
   setLoading: (loading) => set({ loading }),
+  openChatPanel: (bookId) => set({ chatPanelOpen: true, chatPanelBookId: bookId }),
+  closeChatPanel: () => set({ chatPanelOpen: false }),
   logout: () => {
     localStorage.removeItem('fanshu-token');
     set({ currentUser: null, books: [], currentBook: null });

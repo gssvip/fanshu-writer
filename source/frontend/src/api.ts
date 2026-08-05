@@ -1,4 +1,4 @@
-import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport } from './types';
+import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport } from './types';
 
 // 后端 API 默认地址（内置，开箱即用）
 // 其他用户无需手动配置即可使用。如需切换到自部署的后端，可在「我的 → 服务器」覆盖。
@@ -740,4 +740,34 @@ export const api = {
     if (signal) cfg.signal = signal;
     return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-master-create/stream`, cfg);
   },
+
+  // ============================================================================
+  // 聊天驱动创作（边聊边写）
+  // ============================================================================
+  // 维度感知流式聊天：SSE 流，事件格式见后端 chat_collab_bp.py
+  chatSmartStream: (bookId: string, message: string, sessionId?: string, scope?: string, signal?: AbortSignal) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const cfg: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ book_id: bookId, message, session_id: sessionId, scope: scope || 'general' }),
+    };
+    if (signal) cfg.signal = signal;
+    return fetch(`${getApiBaseUrl()}/ai/chat/smart`, cfg);
+  },
+  // 采纳 Action Card，落地到对应维度
+  applyChatCard: (bookId: string, card: ActionCard) =>
+    request<{ ok: boolean; field: string; label: string; progress: ProgressMap }>(
+      '/ai/chat/smart/apply-card',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, card }) }
+    ),
+  // 创作进度地图
+  getProgressMap: (bookId: string) => request<ProgressMap>(`/books/${bookId}/ai/progress`),
+  // 列出该书所有聊天会话
+  listBookChatSessions: (bookId: string) =>
+    request<{ sessions: Array<{ id: string; scope: string; title: string; updated_at: string | null; message_count: number }> }>(
+      `/books/${bookId}/ai/sessions`
+    ),
 };
