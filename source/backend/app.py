@@ -1,4 +1,5 @@
-import os
+import os, sys
+if __name__ == '__main__': sys.modules.setdefault('app', sys.modules[__name__])  # 防双加载
 import re
 import json
 import uuid
@@ -11,7 +12,6 @@ import requests
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from pathlib import Path
-
 from flask import Flask, request, jsonify, send_file, send_from_directory, stream_with_context
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
@@ -204,11 +204,7 @@ except ImportError:
 # gunicorn prefork 使 _app_engines(WeakKeyDictionary) weakref 失效，请求前检查重注册
 @app.before_request
 def _ensure_db():
-    import traceback as _tb
-    try:
-        if app not in db._app_engines: app.extensions.pop('sqlalchemy', None); db.init_app(app)
-    except Exception as _e:
-        print(f'[_ensure_db] ERROR: {_e}', flush=True)
+    if app not in db._app_engines: app.extensions.pop('sqlalchemy', None); db.init_app(app)
 
 EXPORTS_DIR = DATA_DIR / 'exports'
 EXPORTS_DIR.mkdir(exist_ok=True)

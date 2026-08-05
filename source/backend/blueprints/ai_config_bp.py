@@ -22,14 +22,8 @@ MAX_CONFIGS = 3
 @ai_config_bp.route('/api/ai/config', methods=['GET'])
 def get_ai_config():
     """返回当前激活配置（兼容旧接口）。"""
-    import traceback
-    from app import AIConfig, app, db
-    try:
-        return jsonify(AIConfig.get_active().to_dict())
-    except Exception as e:
-        return jsonify({'error': str(e), 'trace': traceback.format_exc(),
-                        'app_in_engines': app in db._app_engines,
-                        'extensions_has_sqlalchemy': 'sqlalchemy' in app.extensions}), 500
+    from app import AIConfig
+    return jsonify(AIConfig.get_active().to_dict())
 
 
 @ai_config_bp.route('/api/ai/config', methods=['PUT'])
