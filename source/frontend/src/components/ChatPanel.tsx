@@ -373,7 +373,7 @@ function SkillPackSelector({ packs, selected, onToggle, compact }: {
 // 主组件：AI 智驾
 // ============================================================================
 export default function ChatPanel() {
-  const { chatPanelOpen, chatPanelBookId, closeChatPanel, openChatPanel } = useStore() as any;
+  const { chatPanelOpen, chatPanelBookId, closeChatPanel } = useStore() as any;
   const [activeTab, setActiveTab] = useState<SmartTab>('setting');
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState('');
@@ -655,33 +655,6 @@ export default function ChatPanel() {
       abortRef.current = null;
     }
   }, [input, bookId, selectedDim, streaming, settingPacks, sessionId, dimensions, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
-
-  // 4. 批量生成多维度
-  const handleBatch = useCallback(async () => {
-    if (!bookId || streaming) return;
-    setStreamError('');
-    streamBufferRef.current = '';
-    const allDims = dimensions.map(d => d.key);
-    appendUserAi(`批量生成全部 ${allDims.length} 个维度`);
-    setStreaming(true);
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    try {
-      const res = await api.smartBatchStream(bookId, allDims, input.trim(), settingPacks, sessionId || undefined, ctrl.signal);
-      setInput('');
-      await consumeSSE(res, ctrl);
-      refreshProgress();
-      refreshHistory();
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
-        setStreamError(e.message || '批量生成失败');
-        removeEmptyAi();
-      }
-    } finally {
-      setStreaming(false);
-      abortRef.current = null;
-    }
-  }, [bookId, streaming, dimensions, input, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
   // ========== 正文Tab：写作/修改（结合消息栏输入的要求创作）==========
   // 真正执行章节写作/修改（结合用户在消息栏输入的要求）
@@ -1075,19 +1048,14 @@ export default function ChatPanel() {
 
   return (
     <>
-      <FloatingButton hidden={chatPanelOpen} onOpen={(bid) => openChatPanel(bid)} />
-
       {chatPanelOpen && bookId && (
         <div className="chat-panel-overlay">
           <div className="chat-panel smart-panel">
-            {/* 头部 */}
-            <div className="chat-panel-header">
+            {/* 头部（紧凑） */}
+            <div className="chat-panel-header chat-panel-header-compact">
               <div className="chat-panel-title">
                 <span className="chat-panel-logo">🚗</span>
-                <div>
-                  <div className="chat-panel-name">AI 智驾</div>
-                  <div className="chat-panel-sub">设定 · 正文 · 去AI · 校审</div>
-                </div>
+                <div className="chat-panel-name">AI 智驾</div>
               </div>
               <div className="chat-panel-tools">
                 <button className="chat-tool-btn" onClick={() => { setShowProgress(s => !s); }} title="创作进度">🗺️</button>
@@ -1130,7 +1098,7 @@ export default function ChatPanel() {
             <div className="smart-toolbar">
               {activeTab === 'setting' && (
                 <>
-                  {/* 维度子按钮栏：分两行（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔）+ 文风/地图 */}
+                  {/* 维度子按钮栏：两行（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔） */}
                   <div className="smart-dim-rows">
                     <div className="smart-dim-row">
                       <button
@@ -1145,7 +1113,7 @@ export default function ChatPanel() {
                           className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
                           onClick={() => { setSelectedDim(d.key); setSuggestions([]); setInput(''); }}
                           disabled={streaming || loadingSuggest}
-                          title={d.hint}
+                          title={d.key === 'key_rules' ? '能力体系/科技树等硬规则（生成时同步产出文风指南）' : d.hint}
                         >{d.icon} {d.label}</button>
                       ))}
                     </div>
@@ -1160,23 +1128,6 @@ export default function ChatPanel() {
                         >{d.icon} {d.label}</button>
                       ))}
                     </div>
-                    <div className="smart-dim-row">
-                      {dimensions.filter(d => ['style_guide', 'locations'].includes(d.key)).map(d => (
-                        <button
-                          key={d.key}
-                          className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
-                          onClick={() => { setSelectedDim(d.key); setSuggestions([]); setInput(''); }}
-                          disabled={streaming || loadingSuggest}
-                          title={d.hint}
-                        >{d.icon} {d.label}</button>
-                      ))}
-                      <button
-                        className={`smart-dim-btn batch ${selectedDim === null && suggestions.length === 0 ? 'active' : ''}`}
-                        onClick={handleBatch}
-                        disabled={streaming || loadingSuggest}
-                        title="一次性生成全部维度"
-                      >⚡ 批量</button>
-                    </div>
                   </div>
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} compact />
                 </>
@@ -1184,14 +1135,23 @@ export default function ChatPanel() {
 
               {activeTab === 'chapter' && (
                 <>
-                  <div className="smart-chapter-info">
-                    {latestChapter ? (
-                      <span>📖 最新：<strong>{latestChapter.title}</strong>（{latestChapter.word_count}字，第{latestChapter.order_index}章）</span>
-                    ) : (
-                      <span>📖 还没有章节，将创建第 1 章</span>
-                    )}
+                  {/* 最新章节信息行 + 内联🔄刷新按钮 */}
+                  <div className="smart-chapter-info smart-chapter-info-row">
+                    <span className="smart-chapter-info-text">
+                      {latestChapter ? (
+                        <>📖 最新：<strong>{latestChapter.title}</strong>（{latestChapter.word_count}字，第{latestChapter.order_index}章）</>
+                      ) : (
+                        <>📖 还没有章节，将创建第 1 章</>
+                      )}
+                    </span>
+                    <button
+                      className="smart-chapter-refresh"
+                      onClick={refreshChapterAnchor}
+                      disabled={streaming}
+                      title="刷新章节定位（写作后会自动填入新章节到目录）"
+                    >🔄</button>
                   </div>
-                  {/* 写作 / 修改 / 🔄 三按钮一排 */}
+                  {/* 写作 / 修改 两按钮一排 */}
                   <div className="smart-chapter-actions smart-chapter-actions-row">
                     <button
                       className={`smart-action-btn primary ${pendingChapterAction === 'continue' ? 'pending' : ''}`}
@@ -1226,61 +1186,19 @@ export default function ChatPanel() {
                               setStreamError(`未找到第 ${targetNum} 章，请检查章节号`);
                             }
                           } else {
-                            // 未输入，弹出章节选择
-                            setMessages(prev => [...prev, {
-                              role: 'assistant',
-                              content: `✨ 请选择要修改的章节，或在下方输入框说明「第N章 + 修改意见」：`,
-                            }]);
+                            setStreamError('请在输入框说明要修改哪一章及修改意见（如「第3章，增加主角心理描写」）');
                           }
                         } else {
                           setPendingChapterAction('polish');
                           setMessages(prev => [...prev, {
                             role: 'assistant',
-                            content: `✨ 修改模式：请在下方输入框说明要修改哪一章及修改意见（如「第3章，增加主角心理描写」），或直接从下方章节列表选择：`,
+                            content: `✨ 修改模式：请在下方输入框说明要修改哪一章及修改意见（如「第3章，增加主角心理描写」），不填章节号默认改最新章。`,
                           }]);
                         }
                       }}
                       disabled={streaming || chapters.length === 0}
                     >{pendingChapterAction === 'polish' ? '▶️ 执行修改' : '✨ 修改'}</button>
-                    <button
-                      className="smart-action-btn ghost"
-                      onClick={refreshChapterAnchor}
-                      disabled={streaming}
-                      title="刷新章节定位（写作后会自动填入新章节到目录）"
-                    >🔄</button>
                   </div>
-                  {/* 修改模式：显示章节选择列表 */}
-                  {pendingChapterAction === 'polish' && (
-                    <div className="smart-chapter-pick">
-                      <div className="smart-chapter-pick-hint">选择要修改的章节（或在输入框说明）：</div>
-                      <div className="smart-chapter-pick-list">
-                        {chapters.map(c => (
-                          <button
-                            key={c.id}
-                            className="smart-chapter-pick-item"
-                            onClick={() => {
-                              setMessages(prev => [...prev, {
-                                role: 'user',
-                                content: `修改第 ${c.order_index} 章《${c.title}》`,
-                              }]);
-                              // 进入等待意见状态
-                              setPendingChapterAction(null);
-                              setMessages(prev => [...prev, {
-                                role: 'assistant',
-                                content: `请在下方输入框输入对第 ${c.order_index} 章《${c.title}》的修改意见，然后点「修改」执行：`,
-                              }]);
-                            }}
-                            disabled={streaming}
-                          >
-                            <span>第{c.order_index}章</span>
-                            <span className="smart-chapter-pick-title">{c.title}</span>
-                            <span className="smart-chapter-pick-meta">{c.word_count}字</span>
-                          </button>
-                        ))}
-                      </div>
-                      <button className="smart-suggestion-cancel" onClick={() => setPendingChapterAction(null)}>取消</button>
-                    </div>
-                  )}
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} compact />
                 </>
               )}
@@ -1325,39 +1243,41 @@ export default function ChatPanel() {
                       disabled={reviewing || streaming}
                     >⚖️ 一致性检查</button>
                   </div>
-                  {/* 按卷选择 */}
-                  {volumes.length > 0 && (
-                    <div className="smart-volume-select">
-                      <label>按卷检查（不选=全书）：</label>
-                      <div className="smart-volume-chips">
-                        {volumes.map(v => (
-                          <button
-                            key={v.id}
-                            className={`smart-volume-chip ${reviewVolumeIds.includes(v.id) ? 'active' : ''}`}
-                            onClick={() => setReviewVolumeIds(prev => prev.includes(v.id) ? prev.filter(x => x !== v.id) : [...prev, v.id])}
-                            disabled={reviewing || streaming}
-                          >{v.title}（{v.chapter_count}章）</button>
-                        ))}
-                        {reviewVolumeIds.length > 0 && (
-                          <button className="smart-volume-clear" onClick={() => setReviewVolumeIds([])}>清除</button>
-                        )}
+                  {/* 校审范围：两行紧凑布局 */}
+                  <div className="smart-review-scope">
+                    {volumes.length > 0 && (
+                      <div className="smart-review-scope-row">
+                        <span className="smart-review-scope-label">按卷（不选=全书）</span>
+                        <div className="smart-volume-chips">
+                          {volumes.map(v => (
+                            <button
+                              key={v.id}
+                              className={`smart-volume-chip ${reviewVolumeIds.includes(v.id) ? 'active' : ''}`}
+                              onClick={() => setReviewVolumeIds(prev => prev.includes(v.id) ? prev.filter(x => x !== v.id) : [...prev, v.id])}
+                              disabled={reviewing || streaming}
+                            >{v.title}（{v.chapter_count}章）</button>
+                          ))}
+                          {reviewVolumeIds.length > 0 && (
+                            <button className="smart-volume-clear" onClick={() => setReviewVolumeIds([])}>清除</button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                  {/* 一致性检查可选指定章节 */}
-                  <div className="smart-chapter-select">
-                    <label>一致性检查章节（不选则最新）：</label>
+                    )}
                     {chapters.length > 0 && (
-                      <select
-                        value={reviewChapterId || ''}
-                        onChange={e => setReviewChapterId(e.target.value || null)}
-                        disabled={reviewing || streaming}
-                      >
-                        <option value="">最新章节</option>
-                        {chapters.map(c => (
-                          <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}</option>
-                        ))}
-                      </select>
+                      <div className="smart-review-scope-row">
+                        <span className="smart-review-scope-label">一致性章节（不选=最新）</span>
+                        <select
+                          className="smart-review-scope-select"
+                          value={reviewChapterId || ''}
+                          onChange={e => setReviewChapterId(e.target.value || null)}
+                          disabled={reviewing || streaming}
+                        >
+                          <option value="">最新章节</option>
+                          {chapters.map(c => (
+                            <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}</option>
+                          ))}
+                        </select>
+                      </div>
                     )}
                   </div>
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={reviewPacks} onToggle={(id) => toggleSkillPack('review', id)} compact />
@@ -1390,11 +1310,6 @@ export default function ChatPanel() {
                 <div className="chat-empty">
                   <div className="chat-empty-icon">🚗</div>
                   <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
-                  {progress?.next_step && (
-                    <div className="chat-empty-hint">
-                      建议从 <strong>{progress.next_step.label}</strong> 开始：{progress.next_step.hint}
-                    </div>
-                  )}
                 </div>
               )}
               {loadingSuggest && (
@@ -1458,13 +1373,6 @@ export default function ChatPanel() {
                     >{loadingSuggest ? '…' : (selectedDim === 'general' ? '发送' : '生成方案')}</button>
                   )}
                 </div>
-                {selectedDim && suggestions.length === 0 && (
-                  <div className="chat-input-hint">
-                    {selectedDim === 'general'
-                      ? '自由讨论小说/剧情，提及维度关键词（人物/伏笔/世界观等）会自动产出可落地卡片'
-                      : '描述需求 → AI 给多选方案 → 选中生成 → 可输入修改意见重新生成'}
-                  </div>
-                )}
               </div>
             )}
 
@@ -1537,32 +1445,5 @@ export default function ChatPanel() {
         </div>
       )}
     </>
-  );
-}
-
-// ============================================================================
-// FAB 悬浮按钮（仅在 /write?book=xxx 路由下显示）
-// ============================================================================
-function FloatingButton({ onOpen, hidden }: { onOpen: (bookId: string) => void; hidden: boolean }) {
-  const [bookId, setBookId] = useState<string | null>(null);
-  useEffect(() => {
-    const check = () => {
-      const hash = window.location.hash;
-      if (!hash.startsWith('#/write')) { setBookId(null); return; }
-      const qIdx = hash.indexOf('?');
-      if (qIdx < 0) { setBookId(null); return; }
-      const params = new URLSearchParams(hash.slice(qIdx + 1));
-      setBookId(params.get('book'));
-    };
-    check();
-    window.addEventListener('hashchange', check);
-    return () => window.removeEventListener('hashchange', check);
-  }, []);
-  if (!bookId || hidden) return null;
-  return (
-    <button className="chat-fab" onClick={() => onOpen(bookId)} title="打开 AI 智驾">
-      <span>🚗</span>
-      <span className="chat-fab-label">AI 智驾</span>
-    </button>
   );
 }

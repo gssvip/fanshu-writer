@@ -266,8 +266,13 @@ export default function WritePage() {
   const refreshAiSessions = useCallback(async () => {
     if (!bookId) { setAiSessions([]); return; }
     try {
-      const list = await api.listAISessions(bookId, 'global_create');
-      setAiSessions(list || []);
+      // 加载本书全部 AI 智驾会话（不限 scope），保留近期最新 5 条
+      const list = await api.listAISessions(bookId);
+      const sorted = (list || [])
+        .slice()
+        .sort((a: AISession, b: AISession) => (b.updated_at || '').localeCompare(a.updated_at || ''))
+        .slice(0, 5);
+      setAiSessions(sorted);
     } catch { /* 静默 */ }
   }, [bookId]);
 

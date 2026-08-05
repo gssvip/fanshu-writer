@@ -1181,6 +1181,10 @@ def smart_generate():
     if dim_key == 'worldbuilding':
         sys_prompt += '\n\n另外，若世界观中包含地理/势力分布信息，请在正文之后追加一张「地图」卡片，格式：\n[[CARD:SAVE_LOCATION|世界地图架构|在此输出主要地理区域、势力分布、关键地点的简要架构]]'
 
+    # 设定维度：文风已并入设定，额外产出一张「文风」卡片，便于落地到 style_guide
+    if dim_key == 'key_rules':
+        sys_prompt += '\n\n另外，请基于本书题材与设定，提炼出适配的文风指南（叙事风格、语言调性、节奏把控），在正文之后追加一张「文风」卡片，格式：\n[[CARD:APPLY_STYLE|文风指南|在此输出叙事风格、语言调性、节奏把控等文风约束]]'
+
     messages = [{'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': f'请生成{spec["label"]}的完整内容'}]
 

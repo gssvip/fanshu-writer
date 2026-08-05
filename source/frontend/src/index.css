@@ -1597,7 +1597,10 @@ textarea{resize:vertical;line-height:1.8}
   padding: 14px 16px; border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
 }
-.chat-panel-title { display: flex; align-items: center; gap: 10px; }
+.chat-panel-header-compact { padding: 8px 12px; }
+.chat-panel-header-compact .chat-panel-logo { font-size: 18px; }
+.chat-panel-header-compact .chat-panel-name { font-size: 14px; }
+.chat-panel-title { display: flex; align-items: center; gap: 8px; }
 .chat-panel-logo { font-size: 24px; }
 .chat-panel-name { font-weight: 600; font-size: 15px; color: var(--text-primary); }
 .chat-panel-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
@@ -1895,6 +1898,18 @@ textarea{resize:vertical;line-height:1.8}
   font-size: 12px; color: var(--text-secondary); padding: 4px 0;
 }
 .smart-chapter-info strong { color: var(--text-primary); }
+/* 章节信息行 + 内联🔄刷新按钮（与文字同高） */
+.smart-chapter-info-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.smart-chapter-info-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.smart-chapter-refresh {
+  flex-shrink: 0; border: none; background: transparent; cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 4px 6px; border-radius: 6px;
+  color: var(--text-secondary);
+}
+.smart-chapter-refresh:hover:not(:disabled) { background: var(--bg-tertiary); color: var(--accent); }
+.smart-chapter-refresh:disabled { opacity: 0.4; cursor: not-allowed; }
 .smart-chapter-actions, .smart-review-actions {
   display: flex; gap: 8px; flex-wrap: wrap;
 }
@@ -2058,7 +2073,21 @@ textarea{resize:vertical;line-height:1.8}
   display: flex; flex-direction: column; gap: 6px; font-size: 12px;
 }
 .smart-volume-select label { font-weight: 500; color: var(--text-secondary); }
-.smart-volume-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.smart-volume-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* 校审范围：两行紧凑布局（按卷 + 一致性章节） */
+.smart-review-scope { display: flex; flex-direction: column; gap: 6px; }
+.smart-review-scope-row {
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+  flex-wrap: wrap; min-height: 28px;
+}
+.smart-review-scope-label {
+  font-weight: 500; color: var(--text-secondary); white-space: nowrap; flex-shrink: 0;
+}
+.smart-review-scope-select {
+  flex: 1; min-width: 0; padding: 4px 8px; font-size: 12px;
+  border: 1px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-secondary); color: var(--text-primary);
+}
 .smart-volume-chip {
   padding: 5px 10px; border: 1px solid var(--border-color); border-radius: 14px;
   background: var(--bg-secondary); font-size: 11px; color: var(--text-primary);
