@@ -2335,7 +2335,7 @@ function ConceptPanel(props: {
       )}
 
       {/* 历史对话（不限数量，支持批量删除/编辑/重命名/继续对话） */}
-      <div className="ai-chat-history" style={{ marginTop: 16 }}>
+      <div className="ai-chat-history" style={{ marginTop: 0 }}>
         <div className="ai-history-bar" style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'nowrap', overflowX: 'auto' }}>
           <button
             className="btn-ghost-sm"
