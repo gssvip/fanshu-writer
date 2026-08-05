@@ -654,7 +654,7 @@ def _action_master_create(book, session, instruction, gw, sse):
 
 def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, prev_chapter_content, mode):
     """续写/润色本章正文：产 SAVE_CHAPTER 卡。"""
-    from app import BookBible, Chapter
+    from app import db, BookBible, Chapter
     book_id = book.id
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
