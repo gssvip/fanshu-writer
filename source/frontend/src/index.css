@@ -1549,7 +1549,10 @@ textarea{resize:vertical;line-height:1.8}
    聊天驱动创作浮窗（ChatPanel）
    ============================================================================ */
 .chat-fab {
-  position: fixed; right: 24px; bottom: 80px; z-index: 900;
+  position: fixed; right: 20px;
+  /* 手机端：避开底部 TabBar(56px) + safe-area(home indicator) */
+  bottom: calc(var(--tab-h) + var(--safe-bottom) + 20px);
+  z-index: 900;
   display: flex; align-items: center; gap: 6px;
   padding: 10px 16px; border: none; border-radius: 28px;
   background: linear-gradient(135deg, var(--accent), #6366f1);
@@ -1559,6 +1562,15 @@ textarea{resize:vertical;line-height:1.8}
 }
 .chat-fab:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(99,102,241,0.45); }
 .chat-fab-label { letter-spacing: 0.5px; }
+/* 桌面端：TabBar 隐藏，FAB 贴近右下 */
+@media (min-width: 768px) {
+  .chat-fab { bottom: 24px; right: 24px; }
+}
+/* 超小屏：只显示图标，省空间 */
+@media (max-width: 360px) {
+  .chat-fab { padding: 12px; border-radius: 50%; }
+  .chat-fab-label { display: none; }
+}
 
 .chat-panel-overlay {
   position: fixed; inset: 0; z-index: 1000;
