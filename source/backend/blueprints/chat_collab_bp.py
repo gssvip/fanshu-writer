@@ -775,3 +775,845 @@ _CARD_TARGET = {
     'SAVE_LOCATION': '地点', 'APPLY_STYLE': '文风', 'SAVE_CHAPTER': '章节正文',
     'SAVE_FORESHADOW': '伏笔',
 }
+
+
+# ============================================================================
+# AI 智驾：四Tab（设定/正文/去AI/校审）统一接口
+# 整合原 AI副驾 + AI总创作 + 章节AI创作 能力，统一入口
+# ============================================================================
+
+# 维度定义：用户可见的9个维度子按钮（设定Tab下）
+SMART_DIMENSIONS = [
+    {'key': 'concept',            'label': '构思',       'field': 'concept',            'card': 'SAVE_CONCEPT',      'icon': '💡', 'hint': '一句话讲清故事核：主角是谁、要什么、最大的阻碍'},
+    {'key': 'key_rules',          'label': '设定',       'field': 'key_rules',          'card': 'SAVE_RULE',         'icon': '⚙️', 'hint': '能力体系/修炼体系/科技树，硬规则'},
+    {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': '🌍', 'hint': '故事发生的世界，独特规则或设定'},
+    {'key': 'plot_design',        'label': '大纲',       'field': 'plot_design',        'card': 'SAVE_OUTLINE_NODE', 'icon': '📋', 'hint': '主线走向，三幕式或起承转合'},
+    {'key': 'timeline',           'label': '剧情',       'field': 'timeline',           'card': 'SAVE_PLOT',         'icon': '📖', 'hint': '关键剧情节点的时间顺序'},
+    {'key': 'character_profiles', 'label': '人物及关系', 'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': '👤', 'hint': '主角和核心配角的动机、性格、关系网'},
+    {'key': 'foreshadowing',      'label': '伏笔',       'field': 'foreshadowing',      'card': 'SAVE_FORESHADOW',   'icon': '🔮', 'hint': '长线伏笔的埋设与回收计划'},
+    {'key': 'locations',          'label': '地图',       'field': 'locations',          'card': 'SAVE_LOCATION',     'icon': '🗺️', 'hint': '故事中的地点、势力分布'},
+]
+
+_DIM_KEY_TO_SPEC = {d['key']: d for d in SMART_DIMENSIONS}
+
+
+def _build_dim_context(book, bb, dim_key, with_self=True, self_limit=800, other_limit=400):
+    """构建指定维度的上下文：其他已填维度作为参考 + 当前维度已有内容。"""
+    target = _DIM_KEY_TO_SPEC.get(dim_key)
+    if not target:
+        return '', ''
+    parts = []
+    for d in SMART_DIMENSIONS:
+        if d['key'] == dim_key:
+            continue
+        if bb:
+            v = (getattr(bb, d['field'], '') or '').strip()
+            if v:
+                parts.append(f'【{d["label"]}】\n{_smart_truncate(v, other_limit)}')
+    ctx = '\n\n'.join(parts)
+    self_content = ''
+    if bb and with_self:
+        self_content = (getattr(bb, target['field'], '') or '').strip()
+        if self_content:
+            self_content = _smart_truncate(self_content, self_limit)
+    return ctx, self_content
+
+
+@chat_collab_bp.route('/api/ai/smart/dimensions', methods=['GET'])
+def smart_dimensions():
+    """返回 AI 智驾支持的维度列表（供前端渲染子按钮）。"""
+    return jsonify({'dimensions': SMART_DIMENSIONS})
+
+
+# ----------------------------------------------------------------------------
+# 设定Tab：人机协作流（提需求 → 多选意见 → 选中 → 生成 → 可改重生成 → 填入维度）
+# ----------------------------------------------------------------------------
+
+@chat_collab_bp.route('/api/ai/smart/suggest', methods=['POST'])
+def smart_suggest():
+    """AI智驾·设定：用户提需求 → AI给 3-5 个多选意见。
+
+    body: { book_id, dimension, requirement, skill_pack_ids? }
+    返回: { suggestions: [{id, title, preview}], dimension, dimension_label, requirement }
+    """
+    from app import Book, BookBible
+    from llm_gateway import get_llm_config
+    import app as app_module
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    dim_key = data.get('dimension')
+    requirement = (data.get('requirement') or '').strip()
+    skill_pack_ids = data.get('skill_pack_ids') or []
+
+    if not book_id or dim_key not in _DIM_KEY_TO_SPEC:
+        return jsonify({'error': '缺少 book_id 或 dimension 无效'}), 400
+
+    spec = _DIM_KEY_TO_SPEC[dim_key]
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    ctx, self_content = _build_dim_context(book, bb, dim_key)
+
+    # 注入构思类技能包
+    skill_note = ''
+    try:
+        from app import _get_skill_prompts_by_category
+        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='single') or ''
+    except Exception:
+        pass
+
+    sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》的「{spec['label']}」维度生成 3-5 个差异化的创意方案供作者选择。
+
+题材：{book.genre or "未指定"}
+类型：{book.book_type or "未指定"}
+
+【已有设定参考】
+{ctx or "（暂无）"}
+
+{("【当前维度已有内容（可在其基础上补充完善）】\n" + self_content) if self_content else ""}
+
+【作者需求】
+{requirement or f"请帮我生成{spec['label']}的设定"}
+
+{("【技能包指引】\n" + skill_note) if skill_note else ""}
+
+请输出 3-5 个不同切入角度的方案。严格按以下 JSON 格式输出（不要任何其他内容、不要 Markdown 代码块）：
+{{
+  "suggestions": [
+    {{"title": "方案标题（10字内）", "preview": "方案简介（80-150字，说清核心思路和亮点）"}}
+  ]
+}}"""
+
+    messages = [{'role': 'system', 'content': sys_prompt},
+                {'role': 'user', 'content': f'请生成{spec["label"]}的多选方案'}]
+
+    from app import _call_llm
+    content, err = _call_llm(messages, max_tokens=2000, temperature=0.85, task_type='creation')
+    if err:
+        return jsonify({'error': f'生成方案失败：{err}'}), 500
+
+    suggestions = []
+    try:
+        m = re.search(r'\{[\s\S]*\}', content or '')
+        if m:
+            parsed = json.loads(m.group(0))
+            suggestions = parsed.get('suggestions', []) or []
+    except Exception:
+        pass
+
+    # 兜底：按段落切分
+    if not suggestions:
+        lines = [l.strip() for l in (content or '').split('\n') if l.strip() and not l.strip().startswith('```')]
+        for i, line in enumerate(lines[:5]):
+            # 去掉前导序号
+            clean = re.sub(r'^[\d一二三四五1-5\.、\)\s]+', '', line)
+            if clean:
+                suggestions.append({'title': f'方案{i + 1}', 'preview': clean[:150]})
+
+    for i, s in enumerate(suggestions):
+        s.setdefault('title', f'方案{i + 1}')
+        s.setdefault('preview', '')
+        s['id'] = f'sug_{i + 1}'
+
+    if not suggestions:
+        return jsonify({'error': 'AI 未返回有效方案，请重试或调整需求'}), 500
+
+    return jsonify({
+        'suggestions': suggestions,
+        'dimension': dim_key,
+        'dimension_label': spec['label'],
+        'requirement': requirement,
+    })
+
+
+@chat_collab_bp.route('/api/ai/smart/generate', methods=['POST'])
+def smart_generate():
+    """AI智驾·设定：基于选中意见生成最终内容（流式，产卡片）。
+
+    body: { book_id, dimension, suggestion, requirement?, skill_pack_ids?, session_id? }
+    返回 SSE：delta / card / done / error
+    """
+    from app import db, AISession, Book, BookBible
+    from llm_gateway import LLMGateway, get_llm_config
+    import app as app_module
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    dim_key = data.get('dimension')
+    suggestion = (data.get('suggestion') or '').strip()
+    requirement = (data.get('requirement') or '').strip()
+    skill_pack_ids = data.get('skill_pack_ids') or []
+    session_id = data.get('session_id')
+
+    if not book_id or dim_key not in _DIM_KEY_TO_SPEC or not suggestion:
+        return jsonify({'error': '参数无效：需要 book_id/dimension/suggestion'}), 400
+
+    spec = _DIM_KEY_TO_SPEC[dim_key]
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    ctx, self_content = _build_dim_context(book, bb, dim_key)
+
+    skill_note = ''
+    try:
+        from app import _get_skill_prompts_by_category
+        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='agent') or ''
+    except Exception:
+        pass
+
+    session = None
+    if session_id:
+        session = AISession.query.get(session_id)
+    if not session:
+        session = AISession(book_id=book_id, scope='smart_setting',
+                            title=f'{spec["label"]}生成', messages_json='[]')
+        db.session.add(session)
+        db.session.commit()
+    session_id = session.id
+
+    try:
+        base_url, api_key, model = get_llm_config(app_module)
+    except Exception as e:
+        return jsonify({'error': f'AI 配置异常：{e}'}), 400
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    gw = LLMGateway(base_url, api_key, model)
+
+    sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{spec['label']}」维度的完整设定内容。
+
+题材：{book.genre or "未指定"}
+类型：{book.book_type or "未指定"}
+
+【已有设定参考】
+{ctx or "（暂无）"}
+
+{("【当前维度已有内容（可在此基础上完善，不要简单重复）】\n" + self_content) if self_content else ""}
+
+【作者需求】
+{requirement or "无"}
+
+【选中方案】
+{suggestion}
+
+{("【技能包指引】\n" + skill_note) if skill_note else ""}
+
+请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。"""
+
+    messages = [{'role': 'system', 'content': sys_prompt},
+                {'role': 'user', 'content': f'请生成{spec["label"]}的完整内容'}]
+
+    def sse(payload):
+        return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
+
+    def generate():
+        full = []
+        try:
+            for chunk in gw.chat_stream(messages, temperature=0.85, max_tokens=2000):
+                full.append(chunk)
+                yield sse({'type': 'delta', 'content': chunk})
+            content = ''.join(full).strip()
+            card = {
+                'id': str(uuid.uuid4())[:8],
+                'type': spec['card'],
+                'title': f'{spec["label"]}（AI智驾生成）',
+                'content': content,
+                'target': _CARD_TARGET.get(spec['card'], spec['label']),
+            }
+            yield sse({'type': 'card', 'card': card, 'session_id': session_id})
+            history = load_session_messages(session)
+            history.append({'role': 'user', 'content': f'生成{spec["label"]}：{requirement or suggestion[:50]}'})
+            history.append({'role': 'assistant', 'content': content,
+                            'cards': [{**card, 'status': 'pending'}]})
+            session.messages_json = json.dumps(history, ensure_ascii=False)
+            session.updated_at = datetime.now(timezone.utc)
+            db.session.commit()
+            yield sse({'type': 'done', 'session_id': session_id})
+        except Exception as e:
+            yield sse({'type': 'error', 'error': str(e)})
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@chat_collab_bp.route('/api/ai/smart/dim-edit', methods=['POST'])
+def smart_dim_edit():
+    """AI智驾·设定：单独维度AI修改（流式，产卡片）。
+
+    body: { book_id, dimension, current_content, edit_request, skill_pack_ids?, session_id? }
+    返回 SSE：delta / card / done / error
+    """
+    from app import db, AISession, Book, BookBible
+    from llm_gateway import LLMGateway, get_llm_config
+    import app as app_module
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    dim_key = data.get('dimension')
+    current_content = (data.get('current_content') or '').strip()
+    edit_request = (data.get('edit_request') or '').strip()
+    skill_pack_ids = data.get('skill_pack_ids') or []
+    session_id = data.get('session_id')
+
+    if not book_id or dim_key not in _DIM_KEY_TO_SPEC or not edit_request:
+        return jsonify({'error': '参数无效：需要 book_id/dimension/edit_request'}), 400
+
+    spec = _DIM_KEY_TO_SPEC[dim_key]
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+
+    # 如果未传 current_content，从 bb 读取
+    if not current_content and bb:
+        current_content = (getattr(bb, spec['field'], '') or '').strip()
+
+    ctx, _ = _build_dim_context(book, bb, dim_key, with_self=False)
+
+    skill_note = ''
+    try:
+        from app import _get_skill_prompts_by_category
+        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='agent') or ''
+    except Exception:
+        pass
+
+    session = None
+    if session_id:
+        session = AISession.query.get(session_id)
+    if not session:
+        session = AISession(book_id=book_id, scope='smart_setting',
+                            title=f'{spec["label"]}修改', messages_json='[]')
+        db.session.add(session)
+        db.session.commit()
+    session_id = session.id
+
+    try:
+        base_url, api_key, model = get_llm_config(app_module)
+    except Exception as e:
+        return jsonify({'error': f'AI 配置异常：{e}'}), 400
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    gw = LLMGateway(base_url, api_key, model)
+
+    sys_prompt = f"""你是资深网文创作智驾。请根据作者的修改意见，修订《{book.title or "未命名"}》的「{spec['label']}」维度内容。
+
+【其他维度参考】
+{ctx or "（暂无）"}
+
+【当前维度原文】
+{current_content or "（暂无）"}
+
+【作者修改意见】
+{edit_request}
+
+{("【技能包指引】\n" + skill_note) if skill_note else ""}
+
+请直接输出修订后的完整内容（保留原文中合理的部分，按修改意见调整），不要寒暄，不要解释，不要加 Markdown 标题。"""
+
+    messages = [{'role': 'system', 'content': sys_prompt},
+                {'role': 'user', 'content': f'请修订{spec["label"]}内容'}]
+
+    def sse(payload):
+        return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
+
+    def generate():
+        full = []
+        try:
+            for chunk in gw.chat_stream(messages, temperature=0.7, max_tokens=2000):
+                full.append(chunk)
+                yield sse({'type': 'delta', 'content': chunk})
+            content = ''.join(full).strip()
+            card = {
+                'id': str(uuid.uuid4())[:8],
+                'type': spec['card'],
+                'title': f'{spec["label"]}（AI智驾修订）',
+                'content': content,
+                'target': _CARD_TARGET.get(spec['card'], spec['label']),
+            }
+            yield sse({'type': 'card', 'card': card, 'session_id': session_id})
+            history = load_session_messages(session)
+            history.append({'role': 'user', 'content': f'修订{spec["label"]}：{edit_request}'})
+            history.append({'role': 'assistant', 'content': content,
+                            'cards': [{**card, 'status': 'pending'}]})
+            session.messages_json = json.dumps(history, ensure_ascii=False)
+            session.updated_at = datetime.now(timezone.utc)
+            db.session.commit()
+            yield sse({'type': 'done', 'session_id': session_id})
+        except Exception as e:
+            yield sse({'type': 'error', 'error': str(e)})
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@chat_collab_bp.route('/api/ai/smart/batch', methods=['POST'])
+def smart_batch():
+    """AI智驾·设定·批量：一次性生成多个维度（流式，每维度产一张卡）。
+
+    body: { book_id, dimensions: [dim_key, ...], requirement?, skill_pack_ids?, session_id? }
+    返回 SSE：delta / card / done / error
+    """
+    from app import db, AISession, Book, BookBible
+    from llm_gateway import LLMGateway, get_llm_config
+    import app as app_module
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    dims = data.get('dimensions') or []
+    requirement = (data.get('requirement') or '').strip()
+    skill_pack_ids = data.get('skill_pack_ids') or []
+    session_id = data.get('session_id')
+
+    if not book_id or not dims:
+        return jsonify({'error': '参数无效：需要 book_id/dimensions'}), 400
+
+    # 过滤合法维度
+    dims = [d for d in dims if d in _DIM_KEY_TO_SPEC]
+    if not dims:
+        return jsonify({'error': '无有效维度'}), 400
+
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+
+    skill_note = ''
+    try:
+        from app import _get_skill_prompts_by_category
+        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='agent') or ''
+    except Exception:
+        pass
+
+    session = None
+    if session_id:
+        session = AISession.query.get(session_id)
+    if not session:
+        session = AISession(book_id=book_id, scope='smart_setting',
+                            title=f'批量生成{len(dims)}维度', messages_json='[]')
+        db.session.add(session)
+        db.session.commit()
+    session_id = session.id
+
+    try:
+        base_url, api_key, model = get_llm_config(app_module)
+    except Exception as e:
+        return jsonify({'error': f'AI 配置异常：{e}'}), 400
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    gw = LLMGateway(base_url, api_key, model)
+
+    def sse(payload):
+        return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
+
+    def generate():
+        generated = {}
+        try:
+            for dim_key in dims:
+                spec = _DIM_KEY_TO_SPEC[dim_key]
+                label = spec['label']
+                yield sse({'type': 'delta', 'content': f'\n\n正在生成【{label}】…\n\n'})
+
+                ctx_parts = []
+                for k, v in generated.items():
+                    ctx_parts.append(f'【{_DIM_KEY_TO_SPEC[k]["label"]}】\n{v[:500]}')
+                ctx_block = '\n\n'.join(ctx_parts) if ctx_parts else '（暂无）'
+
+                existing = ''
+                if bb:
+                    existing = (getattr(bb, spec['field'], '') or '').strip()
+
+                sys_prompt = (
+                    f'你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{label}」设定。'
+                    f'\n题材：{book.genre or "未指定"}，类型：{book.book_type or "未指定"}。'
+                    f'\n\n【已生成维度参考】\n{ctx_block}'
+                    f'\n\n【作者补充要求】\n{requirement or "无"}'
+                    f'{(chr(10) + chr(10) + "【技能包指引】" + chr(10) + skill_note) if skill_note else ""}'
+                    f'\n\n请直接输出该维度的设定内容（300-600字），不要寒暄，不要解释。'
+                )
+                if existing:
+                    sys_prompt += f'\n\n【已有内容（可补充完善，不要简单重复）】\n{existing[:400]}'
+
+                messages = [{'role': 'system', 'content': sys_prompt},
+                            {'role': 'user', 'content': f'请生成{label}'}]
+                content = ''
+                try:
+                    for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=1500):
+                        content += chunk
+                        yield sse({'type': 'delta', 'content': chunk})
+                except Exception as e:
+                    yield sse({'type': 'error', 'error': f'{label}生成失败：{e}'})
+                    continue
+
+                content = content.strip()
+                generated[dim_key] = content
+                card = {
+                    'id': str(uuid.uuid4())[:8],
+                    'type': spec['card'],
+                    'title': f'{label}（AI智驾生成）',
+                    'content': content,
+                    'target': _CARD_TARGET.get(spec['card'], label),
+                }
+                yield sse({'type': 'card', 'card': card, 'session_id': session_id})
+
+            # 持久化
+            history = load_session_messages(session)
+            history.append({'role': 'user', 'content': f'批量生成{len(dims)}维度：{requirement or "默认"}'})
+            cards = []
+            for dim_key in dims:
+                c = generated.get(dim_key)
+                if c:
+                    spec = _DIM_KEY_TO_SPEC[dim_key]
+                    cards.append({
+                        'id': str(uuid.uuid4())[:8],
+                        'type': spec['card'],
+                        'title': f'{spec["label"]}（AI智驾生成）',
+                        'content': c,
+                        'target': _CARD_TARGET.get(spec['card'], spec['label']),
+                        'status': 'pending',
+                    })
+            history.append({'role': 'assistant', 'content': f'已生成 {len(cards)} 个维度', 'cards': cards})
+            session.messages_json = json.dumps(history, ensure_ascii=False)
+            session.updated_at = datetime.now(timezone.utc)
+            db.session.commit()
+            yield sse({'type': 'done', 'session_id': session_id})
+        except Exception as e:
+            yield sse({'type': 'error', 'error': str(e)})
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+# ----------------------------------------------------------------------------
+# 正文Tab：融合章节AI创作（自动定位最新章节，续写/润色）
+# 复用 /api/ai/chat/smart/action 的 continue/polish 动作，前端自动传入 target_chapter_num
+# ----------------------------------------------------------------------------
+
+@chat_collab_bp.route('/api/ai/smart/latest-chapter', methods=['GET'])
+def smart_latest_chapter():
+    """获取最新章节信息（供正文Tab自动定位）。
+
+    返回: { latest: {id, title, order_index, word_count, status}|null, next_chapter_num }
+    """
+    from app import Chapter
+    book_id = request.args.get('book_id')
+    if not book_id:
+        return jsonify({'error': '缺少 book_id'}), 400
+    latest = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
+        .order_by(Chapter.order_index.desc()).first()
+    if latest:
+        return jsonify({
+            'latest': {
+                'id': latest.id,
+                'title': latest.title,
+                'order_index': latest.order_index,
+                'word_count': latest.word_count or 0,
+                'status': latest.status,
+            },
+            'next_chapter_num': latest.order_index + 1,
+        })
+    return jsonify({'latest': None, 'next_chapter_num': 1})
+
+
+# ----------------------------------------------------------------------------
+# 去AITab：拉取去AI味技能包 + 选章节去AI味
+# ----------------------------------------------------------------------------
+
+@chat_collab_bp.route('/api/ai/smart/deai-packs', methods=['GET'])
+def smart_deai_packs():
+    """拉取去AI味技能包列表（review 类，便于前端默认勾选）。
+
+    返回: { packs: [{id, name, description, icon, priority}] }
+    """
+    from app import SkillPack
+    packs = SkillPack.query.filter_by(category='review').order_by(SkillPack.priority.asc()).all()
+    return jsonify({'packs': [
+        {'id': p.id, 'name': p.name, 'description': p.description or '',
+         'icon': p.icon or '📦', 'priority': p.priority}
+        for p in packs
+    ]})
+
+
+@chat_collab_bp.route('/api/ai/smart/deai', methods=['POST'])
+def smart_deai():
+    """AI智驾·去AI：对指定章节正文去AI味（流式，产 SAVE_CHAPTER 卡）。
+
+    body: { book_id, chapter_id, skill_pack_ids?, session_id? }
+    返回 SSE：delta / card / done / error
+    """
+    from app import db, AISession, Book, BookBible, Chapter
+    from llm_gateway import LLMGateway, get_llm_config
+    import app as app_module
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    chapter_id = data.get('chapter_id')
+    skill_pack_ids = data.get('skill_pack_ids') or []
+    session_id = data.get('session_id')
+
+    if not book_id or not chapter_id:
+        return jsonify({'error': '缺少 book_id 或 chapter_id'}), 400
+
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+    chapter = Chapter.query.get(chapter_id)
+    if not chapter or chapter.book_id != book_id:
+        return jsonify({'error': '章节不存在'}), 404
+
+    raw_content = (chapter.content or '').strip()
+    if not raw_content:
+        return jsonify({'error': '该章节无正文，无法去AI味'}), 400
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+
+    # 注入去AI味技能包（review 类，限定 deai 相关 prompt_keys）
+    skill_note = ''
+    try:
+        from app import _get_skill_prompts_by_category
+        skill_note = _get_skill_prompts_by_category(
+            skill_pack_ids, 'review',
+            ['tomato_deai', 'de_ai_flavor', 'polish', 'consistency_check'],
+            mode='agent'
+        ) or ''
+    except Exception:
+        pass
+
+    # 无技能包时使用默认去AI味规则
+    if not skill_note:
+        skill_note = """【默认去AI味规则】
+【必删清单】一股、一抹、不由得、不禁、随即、旋即、仿佛、似乎、似乎在、缓缓、微微、淡淡、轻轻、静静地、默默地、不知不觉、若有所思、若有所悟
+【人味注入】加入不完美细节（结巴/重复/打断）、感官碎片、口语化表达、删除冗余形容词
+【硬性约束】保留原章节剧情走向和钩子，只改文风不改剧情，字数与原文相近"""
+
+    session = None
+    if session_id:
+        session = AISession.query.get(session_id)
+    if not session:
+        session = AISession(book_id=book_id, scope='smart_deai',
+                            title=f'去AI味·{chapter.title}', messages_json='[]')
+        db.session.add(session)
+        db.session.commit()
+    session_id = session.id
+
+    try:
+        base_url, api_key, model = get_llm_config(app_module)
+    except Exception as e:
+        return jsonify({'error': f'AI 配置异常：{e}'}), 400
+    if not api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    gw = LLMGateway(base_url, api_key, model)
+
+    # 设定上下文（用于保持人物口吻一致）
+    bible_ctx = ''
+    if bb:
+        parts = []
+        for f in ['character_profiles', 'key_rules', 'worldbuilding']:
+            v = (getattr(bb, f, '') or '').strip()
+            if v:
+                parts.append(f'【{_DIM_LABELS.get(f, f)}】\n{v[:300]}')
+        bible_ctx = '\n\n'.join(parts)
+
+    sys_prompt = f"""你是番茄去AI味审查员。请对以下章节正文做去AI味审校，按规则修改后只输出修改后的正文。
+
+{skill_note}
+
+【设定参考】
+{bible_ctx or "（暂无）"}
+
+【优先级铁律】人味>克制>流畅。
+【硬性约束】修改后字数与原文相近（±10%），保留原章节的剧情走向和钩子，只改文风不改剧情。
+
+请直接输出修改后的完整正文（含章节标题），不要解释，不要加 Markdown 代码块。"""
+
+    messages = [{'role': 'system', 'content': sys_prompt},
+                {'role': 'user', 'content': f'请审校以下章节正文：\n\n{raw_content}'}]
+
+    def sse(payload):
+        return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
+
+    def generate():
+        full = []
+        try:
+            yield sse({'type': 'delta', 'content': f'正在为《{chapter.title}》去AI味…\n\n'})
+            for chunk in gw.chat_stream(messages, temperature=0.5, max_tokens=4096):
+                full.append(chunk)
+                yield sse({'type': 'delta', 'content': chunk})
+            content = ''.join(full).strip()
+            # 去掉可能的 Markdown 代码块包裹
+            content = re.sub(r'^```[a-zA-Z]*\n', '', content)
+            content = re.sub(r'\n```$', '', content).strip()
+            card = {
+                'id': str(uuid.uuid4())[:8],
+                'type': 'SAVE_CHAPTER',
+                'title': chapter.title,
+                'content': content,
+                'target': '章节正文',
+            }
+            yield sse({'type': 'card', 'card': card, 'session_id': session_id,
+                       'meta': {'chapter_id': chapter_id, 'replace': True}})
+            history = load_session_messages(session)
+            history.append({'role': 'user', 'content': f'去AI味：{chapter.title}'})
+            history.append({'role': 'assistant', 'content': content,
+                            'cards': [{**card, 'status': 'pending'}]})
+            session.messages_json = json.dumps(history, ensure_ascii=False)
+            session.updated_at = datetime.now(timezone.utc)
+            db.session.commit()
+            yield sse({'type': 'done', 'session_id': session_id})
+        except Exception as e:
+            yield sse({'type': 'error', 'error': str(e)})
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+# ----------------------------------------------------------------------------
+# 校审Tab：防遗忘 + 一致性检查
+# ----------------------------------------------------------------------------
+
+@chat_collab_bp.route('/api/ai/smart/review', methods=['POST'])
+def smart_review():
+    """AI智驾·校审：防遗忘检查 / 一致性检查。
+
+    body: { book_id, mode: 'anti_forget'|'consistency', chapter_id?, skill_pack_ids? }
+    返回: { mode, report: {...}, summary, health_score? }
+    """
+    from app import db, Book, BookBible, Chapter, AIConfig
+    from llm_gateway import get_llm_config
+    import app as app_module
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    mode = data.get('mode')
+    chapter_id = data.get('chapter_id')
+    skill_pack_ids = data.get('skill_pack_ids') or []
+
+    if not book_id or mode not in ('anti_forget', 'consistency'):
+        return jsonify({'error': '参数无效：需要 book_id/mode(anti_forget|consistency)'}), 400
+
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': '请先创建设定（BookBible 不存在）'}), 400
+
+    cfg = AIConfig.get_active()
+    if not cfg or not cfg.api_key:
+        return jsonify({'error': '请先配置 AI'}), 400
+
+    try:
+        base_url, api_key, model = get_llm_config(app_module)
+        recognition_model = cfg.get_model_for_task('recognition') if hasattr(cfg, 'get_model_for_task') else model
+    except Exception as e:
+        return jsonify({'error': f'AI 配置异常：{e}'}), 400
+
+    # ---------- 防遗忘检查 ----------
+    if mode == 'anti_forget':
+        # 复用 app.py 的 ai_anti_forget_check 逻辑：直接调用其内部实现
+        try:
+            from app import ai_anti_forget_check as _do_anti_forget
+            # 该函数从 request 取参数，需构造 request context
+            # 这里直接调用并捕获其返回
+            # 由于 ai_anti_forget_check 是 view 函数，直接调用会返回 Response
+            # 更稳妥：在 test_request_context 中调用
+            from flask import current_app
+            with current_app.test_request_context(
+                f'/api/books/{book_id}/ai-anti-forget-check',
+                method='POST',
+                json={'scope': 'reports', 'volume_ids': [], 'skill_pack_ids': skill_pack_ids}
+            ):
+                resp = _do_anti_forget(book_id)
+                if hasattr(resp, 'get_json'):
+                    return jsonify(resp.get_json()), resp.status_code
+                return resp
+        except Exception as e:
+            return jsonify({'error': f'防遗忘检查失败：{e}'}), 500
+
+    # ---------- 一致性检查 ----------
+    # mode == 'consistency'
+    if not chapter_id:
+        # 默认检查最新章节
+        latest = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
+            .order_by(Chapter.order_index.desc()).first()
+        if not latest:
+            return jsonify({'error': '该书尚无章节，无法一致性检查'}), 400
+        chapter_id = latest.id
+
+    chapter = Chapter.query.get(chapter_id)
+    if not chapter or chapter.book_id != book_id:
+        return jsonify({'error': '章节不存在'}), 404
+
+    draft_content = (chapter.content or '').strip()
+    if not draft_content:
+        return jsonify({'error': '该章节无正文'}), 400
+
+    try:
+        from app import _consistency_check, _collect_anti_forget_alerts
+        passed, issues = _consistency_check(
+            book_id, bb, draft_content, chapter.order_index,
+            api_key, base_url, recognition_model,
+            max_tokens=1200, chapter_plan=''
+        )
+        return jsonify({
+            'mode': 'consistency',
+            'chapter_id': chapter_id,
+            'chapter_title': chapter.title,
+            'order_index': chapter.order_index,
+            'passed': passed,
+            'issues': issues,
+            'summary': '✅ 一致性检查通过' if passed else f'⚠️ 发现问题：{issues}',
+        })
+    except Exception as e:
+        return jsonify({'error': f'一致性检查失败：{e}'}), 500
+
+
+@chat_collab_bp.route('/api/ai/smart/chapters', methods=['GET'])
+def smart_chapters():
+    """列出书的所有章节（供去AI/校审Tab选择章节）。
+
+    返回: { chapters: [{id, title, order_index, word_count, status}] }
+    """
+    from app import Chapter
+    book_id = request.args.get('book_id')
+    if not book_id:
+        return jsonify({'error': '缺少 book_id'}), 400
+    chs = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
+        .order_by(Chapter.order_index.asc()).all()
+    return jsonify({'chapters': [
+        {'id': c.id, 'title': c.title, 'order_index': c.order_index,
+         'word_count': c.word_count or 0, 'status': c.status}
+        for c in chs
+    ]})
+
+
+@chat_collab_bp.route('/api/ai/smart/chapter-replace', methods=['POST'])
+def smart_chapter_replace():
+    """用去AI味后的内容替换原章节正文（落地）。
+
+    body: { book_id, chapter_id, content }
+    返回: { ok, chapter_id, word_count }
+    """
+    from app import db, Chapter
+    data = request.json or {}
+    book_id = data.get('book_id')
+    chapter_id = data.get('chapter_id')
+    content = (data.get('content') or '').strip()
+
+    if not book_id or not chapter_id or not content:
+        return jsonify({'error': '参数无效'}), 400
+
+    chapter = Chapter.query.get(chapter_id)
+    if not chapter or chapter.book_id != book_id:
+        return jsonify({'error': '章节不存在'}), 404
+
+    chapter.content = content
+    chapter.word_count = len(content)
+    chapter.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({'ok': True, 'chapter_id': chapter_id, 'word_count': chapter.word_count})

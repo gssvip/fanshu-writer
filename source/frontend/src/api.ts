@@ -797,4 +797,98 @@ export const api = {
     if (signal) cfg.signal = signal;
     return fetch(`${getApiBaseUrl()}/ai/chat/smart/action`, cfg);
   },
+
+  // ============================================================================
+  // AI 智驾（四Tab：设定/正文/去AI/校审）
+  // ============================================================================
+  // 设定Tab：维度列表
+  smartDimensions: () =>
+    request<{ dimensions: Array<{ key: string; label: string; field: string; card: string; icon: string; hint: string }> }>(
+      '/ai/smart/dimensions'
+    ),
+  // 设定Tab：多选意见生成（用户提需求 → AI给 3-5 个方案）
+  smartSuggest: (bookId: string, dimension: string, requirement: string, skillPackIds: string[] = []) =>
+    request<{ suggestions: Array<{ id: string; title: string; preview: string }>; dimension: string; dimension_label: string; requirement: string }>(
+      '/ai/smart/suggest',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, dimension, requirement, skill_pack_ids: skillPackIds }) }
+    ),
+  // 设定Tab：基于选中意见生成最终内容（SSE 流式）
+  smartGenerateStream: (bookId: string, dimension: string, suggestion: string, requirement: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const cfg: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ book_id: bookId, dimension, suggestion, requirement, skill_pack_ids: skillPackIds, session_id: sessionId }),
+    };
+    if (signal) cfg.signal = signal;
+    return fetch(`${getApiBaseUrl()}/ai/smart/generate`, cfg);
+  },
+  // 设定Tab：单独维度AI修改（SSE 流式）
+  smartDimEditStream: (bookId: string, dimension: string, currentContent: string, editRequest: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const cfg: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ book_id: bookId, dimension, current_content: currentContent, edit_request: editRequest, skill_pack_ids: skillPackIds, session_id: sessionId }),
+    };
+    if (signal) cfg.signal = signal;
+    return fetch(`${getApiBaseUrl()}/ai/smart/dim-edit`, cfg);
+  },
+  // 设定Tab：批量生成多维度（SSE 流式）
+  smartBatchStream: (bookId: string, dimensions: string[], requirement: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const cfg: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ book_id: bookId, dimensions, requirement, skill_pack_ids: skillPackIds, session_id: sessionId }),
+    };
+    if (signal) cfg.signal = signal;
+    return fetch(`${getApiBaseUrl()}/ai/smart/batch`, cfg);
+  },
+  // 正文Tab：获取最新章节（自动定位）
+  smartLatestChapter: (bookId: string) =>
+    request<{ latest: { id: string; title: string; order_index: number; word_count: number; status: string } | null; next_chapter_num: number }>(
+      `/ai/smart/latest-chapter?book_id=${bookId}`
+    ),
+  // 去AITab：拉取去AI味技能包列表
+  smartDeaiPacks: () =>
+    request<{ packs: Array<{ id: string; name: string; description: string; icon: string; priority: number }> }>(
+      '/ai/smart/deai-packs'
+    ),
+  // 去AITab：对指定章节去AI味（SSE 流式）
+  smartDeaiStream: (bookId: string, chapterId: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const cfg: RequestInit = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ book_id: bookId, chapter_id: chapterId, skill_pack_ids: skillPackIds, session_id: sessionId }),
+    };
+    if (signal) cfg.signal = signal;
+    return fetch(`${getApiBaseUrl()}/ai/smart/deai`, cfg);
+  },
+  // 校审Tab：防遗忘 / 一致性检查
+  smartReview: (bookId: string, mode: 'anti_forget' | 'consistency', chapterId?: string, skillPackIds: string[] = []) =>
+    request<{ mode: string; report?: any; summary?: string; health_score?: number; chapter_id?: string; chapter_title?: string; passed?: boolean; issues?: string }>(
+      '/ai/smart/review',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, mode, chapter_id: chapterId, skill_pack_ids: skillPackIds }) }
+    ),
+  // 列出书的所有章节（去AI/校审选章节用）
+  smartChapters: (bookId: string) =>
+    request<{ chapters: Array<{ id: string; title: string; order_index: number; word_count: number; status: string }> }>(
+      `/ai/smart/chapters?book_id=${bookId}`
+    ),
+  // 用去AI味后的内容替换原章节正文
+  smartChapterReplace: (bookId: string, chapterId: string, content: string) =>
+    request<{ ok: boolean; chapter_id: string; word_count: number }>(
+      '/ai/smart/chapter-replace',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, chapter_id: chapterId, content }) }
+    ),
 };

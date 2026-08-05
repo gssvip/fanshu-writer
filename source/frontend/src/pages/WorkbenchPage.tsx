@@ -2,8 +2,7 @@ import { useState, useEffect, useContext, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { AuthContext } from '../App';
-import type { Book, BookBible, SkillPack } from '../types';
-import AiCreateModal from './AiCreateModal';
+import type { Book } from '../types';
 import { getStylesForGenre, filterStylesByGenre, getVolumeRange } from '../constants';
 
 export default function WorkbenchPage() {
@@ -37,12 +36,8 @@ export default function WorkbenchPage() {
   const [editBookForm, setEditBookForm] = useState({ title: '', genre: 'other', book_type: 'novel', synopsis: '', total_volumes: 0, novel_styles: [] as string[] });
   const [editBookSaving, setEditBookSaving] = useState(false);
 
-  // 总AI创作面板状态（与创作页 AiCreateModal 完全一致，仅多一步"选择作品"）
-  const [masterCreatePacks, setMasterCreatePacks] = useState<SkillPack[]>([]);
-  const [showMasterCreateModal, setShowMasterCreateModal] = useState(false); // 作品选择弹窗
-  const [aiModalBook, setAiModalBook] = useState<Book | null>(null); // 选中的作品
-  const [aiBible, setAiBible] = useState<BookBible | null>(null);
-  const [aiModalOpen, setAiModalOpen] = useState(false);
+  // AI 智驾 - 作品选择弹窗（选完作品后跳转创作页自动打开 AI 智驾）
+  const [showMasterCreateModal, setShowMasterCreateModal] = useState(false);
 
   // 切换类型时重置卷数和风格（确保符合新类型的范围限制）—— 新建表单
   const handleNewBookTypeChange = (newType: string) => {
@@ -172,11 +167,6 @@ export default function WorkbenchPage() {
     } catch { /* ignore */ }
   }, []);
 
-  // 加载所有技能包供总AI创作选择
-  useEffect(() => {
-    api.listSkillPacks().then(all => setMasterCreatePacks(all)).catch(() => { /* ignore */ });
-  }, []);
-
   async function handleCreateBook() {
     if (!newBookForm.title) return;
     const ok = await requireAuth();
@@ -256,54 +246,12 @@ export default function WorkbenchPage() {
     setImporting(false);
   }
 
-  // 选择作品后打开 AiCreateModal（与创作页完全一致，仅多一步"选择作品"）
-  // 优化：先立即打开弹窗（bible 传 null，AiCreateModal 内部均为可选链安全访问），bible 后台异步加载
+  // 选择作品后跳转到创作页并自动打开 AI 智驾
   async function handleSelectBookForAi(book: Book) {
     const ok = await requireAuth();
     if (!ok) return;
-    // 先关闭作品选择弹窗，立即打开 AiCreateModal（bible=null 占位），让用户立刻看到界面
     setShowMasterCreateModal(false);
-    setAiModalBook(book);
-    setAiBible(null);
-    setAiModalOpen(true);
-    // 后台异步加载 bible，加载完成后回填（不阻塞弹窗显示）
-    try {
-      const bb = await api.getBible(book.id);
-      setAiBible(bb);
-    } catch (e: any) {
-      alert('加载作品设定失败：' + (e.message || '请重试'));
-    }
-  }
-
-  // 单维度填入：保存到对应 BookBible 字段（与创作页 handleAiCreateApply 一致）
-  async function handleAiCreateApply(field: string, content: string) {
-    if (!aiModalBook) return;
-    try {
-      const updated = await api.updateBible(aiModalBook.id, { [field]: content } as Partial<BookBible>);
-      setAiBible(updated);
-    } catch (e: any) {
-      alert('填入失败：' + (e.message || '请重试'));
-    }
-  }
-
-  // 全局多维度批量填入（与创作页 handleAiCreateApplyMany 一致）
-  async function handleAiCreateApplyMany(results: { field: string; content: string }[]) {
-    if (!aiModalBook || results.length === 0) return;
-    const patch: Partial<BookBible> = {};
-    for (const r of results) (patch as any)[r.field] = r.content;
-    try {
-      const updated = await api.updateBible(aiModalBook.id, patch);
-      setAiBible(updated);
-    } catch (e: any) {
-      alert('填入失败：' + (e.message || '请重试'));
-    }
-  }
-
-  // 关闭 AiCreateModal
-  function handleCloseAiModal() {
-    setAiModalOpen(false);
-    setAiModalBook(null);
-    setAiBible(null);
+    navigate(`/write?book=${book.id}&ai=global`);
   }
 
   if (loading) return <div className="page loading-screen"><span>加载中...</span></div>;
@@ -409,17 +357,17 @@ export default function WorkbenchPage() {
         </div>
       )}
 
-      {/* AI 总创作入口 */}
+      {/* AI 智驾入口（原 Ai总创作，已统一到 AI 智驾四Tab） */}
       <div className="home-section">
         <button
           className="master-create-entry"
           onClick={() => setShowMasterCreateModal(true)}
           disabled={books.length === 0}
         >
-          <div className="master-create-entry-icon">🤖</div>
+          <div className="master-create-entry-icon">🚗</div>
           <div className="master-create-entry-content">
-            <div className="master-create-entry-label">Ai总创作</div>
-            <div className="master-create-entry-desc">{books.length > 0 ? '选择作品，对构思/设定/世界观/人物/大纲/剧情协同生成' : '请先创建作品'}</div>
+            <div className="master-create-entry-label">AI 智驾</div>
+            <div className="master-create-entry-desc">{books.length > 0 ? '选择作品，进入设定/正文/去AI/校审四Tab协作' : '请先创建作品'}</div>
           </div>
           <div className="master-create-entry-arrow">{books.length > 0 ? '→' : ''}</div>
         </button>
@@ -762,16 +710,16 @@ export default function WorkbenchPage() {
         </div>
       )}
 
-      {/* AI 总创作 - 作品选择弹窗（首页入口多出的一步，选完作品后进入与创作页完全一致的 AiCreateModal） */}
+      {/* AI 智驾 - 作品选择弹窗（选完作品后跳转创作页自动打开 AI 智驾） */}
       {showMasterCreateModal && (
         <div className="modal-overlay" onClick={() => setShowMasterCreateModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
             <div className="master-create-modal-header">
-              <h2>🤖 Ai总创作</h2>
+              <h2>🚗 AI 智驾</h2>
               <button className="btn-ghost" onClick={() => setShowMasterCreateModal(false)}>✕</button>
             </div>
             <p className="text-muted" style={{ fontSize: 13, marginBottom: 16 }}>
-              选择要创作的作品，进入后可对构思/设定/大纲/世界观/人物/剧情等维度协同生成（与创作界面入口为同一功能）
+              选择要创作的作品，进入后可使用设定/正文/去AI/校审四Tab协作（与创作界面入口为同一功能）
             </p>
             {books.length === 0 ? (
               <div className="empty-state" style={{ padding: 24 }}>
@@ -808,21 +756,6 @@ export default function WorkbenchPage() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* AiCreateModal：与创作页完全一致的全屏 AI 创作弹窗 */}
-      {aiModalOpen && aiModalBook && (
-        <AiCreateModal
-          mode="global"
-          bookId={aiModalBook.id}
-          book={aiModalBook}
-          bible={aiBible}
-          skillPacks={masterCreatePacks}
-          selectedSkillPackIds={[]}
-          onApply={handleAiCreateApply}
-          onApplyMany={handleAiCreateApplyMany}
-          onClose={handleCloseAiModal}
-        />
       )}
     </div>
   );

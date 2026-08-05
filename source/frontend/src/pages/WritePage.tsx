@@ -185,6 +185,7 @@ export default function WritePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const bookId = searchParams.get('book');
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string) => void;
 
   const [book, setBook] = useState<Book | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -292,17 +293,15 @@ export default function WritePage() {
     } catch (e: any) { alert('重命名失败：' + (e.message || '未知错误')); }
   }, [refreshAiSessions]);
 
-  // 打开历史会话继续对话
-  const handleResumeAiSession = useCallback((session: AISession) => {
-    setResumeSession(session);
-    setAiCreateModalState({ mode: 'global' });
-  }, []);
+  // 打开历史会话继续对话（AI智驾有自己的历史会话加载）
+  const handleResumeAiSession = useCallback((_session: AISession) => {
+    if (bookId) openChatPanel(bookId);
+  }, [bookId, openChatPanel]);
 
-  // 打开新对话（从构思面板或头部入口）
+  // 打开 AI 智驾（原 AI总创作入口已统一到 AI智驾）
   const openNewAiCreate = useCallback(() => {
-    setResumeSession(null);
-    setAiCreateModalState({ mode: 'global' });
-  }, []);
+    if (bookId) openChatPanel(bookId);
+  }, [bookId, openChatPanel]);
 
 
   // 单维度填入：保存到对应 BookBible 字段
@@ -412,13 +411,13 @@ export default function WritePage() {
     }
   }, [bible]);
 
-  // 从首页 AI总创作 入口跳转过来时，URL 带 ai=global，自动打开 AI总创作 Modal（新对话）
+  // 从首页 AI总创作 入口跳转过来时，URL 带 ai=global，现统一打开 AI 智驾
   useEffect(() => {
-    if (bookId && searchParams.get('ai') === 'global' && bible) {
+    if (bookId && searchParams.get('ai') === 'global') {
       openNewAiCreate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookId, bible]);
+  }, [bookId]);
 
   const currentTab = ALL_TABS.find(t => t.key === activeTab) || ALL_TABS[0];
   const currentContent = bible ? (bible as any)[currentTab.field] || '' : '';
@@ -2053,8 +2052,8 @@ ${chapterEditContent}`;
         )}
       </div>
 
-      {/* 全屏 AI 创作弹窗（总览全局创作 + 各维度单独创作） */}
-      {aiCreateModalState && bookId && (
+      {/* 单维度 AI 创作弹窗（总创作入口已统一到 AI 智驾，此处仅保留 single 模式） */}
+      {aiCreateModalState && aiCreateModalState.mode === 'single' && bookId && (
         <AiCreateModal
           mode={aiCreateModalState.mode}
           dimension={aiCreateModalState.dimension}
@@ -2277,15 +2276,15 @@ function ConceptPanel(props: {
 
   return (
     <div className="concept-panel">
-      {/* 构思维度：AI 副驾入口（方案A：副驾做指挥官，总创作能力已收入副驾快捷动作） */}
+      {/* 构思维度：AI 智驾入口（四Tab：设定/正文/去AI/校审） */}
       <div className="concept-input-section" style={{ alignItems: 'center', justifyContent: 'center', flex: 0 }}>
         <button
           className="btn-primary concept-ai-create-cta"
           onClick={() => bookId && openChatPanel(bookId)}
-          title="打开 AI 副驾：聊天讨论 + 一键生成设定/续写/润色"
+          title="打开 AI 智驾：设定/正文/去AI/校审 四Tab协作创作"
           style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)', display: 'flex', alignItems: 'center', gap: 8, padding: '14px 28px', fontSize: 15, fontWeight: 700 }}
         >
-          <span style={{ fontSize: '2em', lineHeight: 1 }} aria-hidden>🤝</span><span>AI 副驾创作</span>
+          <span style={{ fontSize: '2em', lineHeight: 1 }} aria-hidden>🚗</span><span>AI 智驾</span>
         </button>
       </div>
 
@@ -2330,7 +2329,7 @@ function ConceptPanel(props: {
         </div>
       )}
 
-      {/* 需求3：近期 AI总创作 聊天记录，支持批量删除/编辑/重命名/继续对话 */}
+      {/* 近期 AI 智驾 聊天记录，支持批量删除/编辑/重命名/继续对话 */}
       <div className="ai-chat-history" style={{ marginTop: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
           <button
@@ -2377,7 +2376,7 @@ function ConceptPanel(props: {
         {historyExpanded && (
           aiSessions.length === 0 ? (
             <div style={{ padding: '16px 12px', textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px dashed var(--border-color)' }}>
-              暂无聊天记录。点击上方「✨ AI总创作」开始第一次创作，生成的内容会自动保存到这里。
+              暂无聊天记录。点击上方「🚗 AI 智驾」开始第一次创作，生成的内容会自动保存到这里。
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
@@ -2602,7 +2601,7 @@ function ChapterPanel(props: {
     aiCreateMode, aiGeneratedContent, aiCreating, savingChapter, aiStreamError, aiUserPrompt,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
     onSelectChapter, onCreateChapter, onCreateVolume, onSaveChapter, onDeleteChapter, onCancelEdit, onStartEdit,
-    onEditTitle, onEditContent, onBackToList, onStartAiCreate, onExecuteAiCreate, onConfirmAiContent, onCancelAiCreate, onStopAiCreate, onEditAiPrompt,
+    onEditTitle, onEditContent, onBackToList, onExecuteAiCreate, onConfirmAiContent, onCancelAiCreate, onStopAiCreate, onEditAiPrompt,
     onRenameVolume, onDeleteVolume, bookId,
     useAgentPipeline: useAgent, onToggleAgentPipeline, agentMeta,
     spotFixing, spotFixMsg, onSpotFix,
@@ -2610,6 +2609,7 @@ function ChapterPanel(props: {
     chapterLangStyles: langStyles, onToggleChapterLangStyle,
     batchCount, onBatchCountChange, batchCreating, batchProgress, onBatchCreate,
   } = props;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [langStyleExpanded, setLangStyleExpanded] = useState(false);
@@ -3351,11 +3351,11 @@ function ChapterPanel(props: {
           </button>
           <button
             className="btn-primary-sm"
-            onClick={() => onStartAiCreate('write')}
+            onClick={() => bookId && openChatPanel(bookId)}
             disabled={aiCreating}
-            title="章节正文AI创作（无章节时确认填入会自动新建第1卷第1章）"
+            title="打开 AI 智驾·正文Tab：续写/润色本章"
           >
-            ✨ AI创作
+            🚗 AI 智驾
           </button>
         </div>
         <input
@@ -5483,7 +5483,7 @@ function InventoryPanel(props: {
         <div className="bible-empty">
           <span className="bible-empty-icon">🎒</span>
           <p>暂无物资信息</p>
-          <p className="text-muted">先在剧情维度创建分卷，或用顶部 AI总创作 生成物资库</p>
+          <p className="text-muted">先在剧情维度创建分卷，或用顶部 AI 智驾 生成物资库</p>
           <div className="bible-empty-actions">
           </div>
         </div>

@@ -1805,3 +1805,175 @@ textarea{resize:vertical;line-height:1.8}
 .chat-history-item.active { border-color: var(--accent); background: var(--bg-tertiary); }
 .chat-history-title { font-size: 13px; color: var(--text-primary); margin-bottom: 3px; }
 .chat-history-meta { font-size: 11px; color: var(--text-muted); }
+
+/* ============================================================================
+   AI 智驾（smart-*）：四Tab布局，手机优先
+   ============================================================================ */
+.smart-panel {
+  display: flex; flex-direction: column;
+  max-width: 560px; width: 100vw;
+}
+@media (max-width: 600px) {
+  .smart-panel { max-width: 100%; height: 100vh; height: 100dvh; border-radius: 0; }
+}
+
+/* Tab 工具区（维度按钮/章节选择/技能包） */
+.smart-toolbar {
+  padding: 8px 10px; border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary); display: flex; flex-direction: column; gap: 8px;
+  max-height: 40vh; overflow-y: auto;
+}
+
+/* 维度子按钮栏（设定Tab） */
+.smart-dim-bar {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.smart-dim-btn {
+  padding: 7px 11px; border: 1px solid var(--border-color);
+  background: var(--bg-secondary); border-radius: 16px;
+  font-size: 12px; color: var(--text-primary); cursor: pointer;
+  white-space: nowrap; transition: all 0.15s; touch-action: manipulation;
+}
+.smart-dim-btn:hover:not(:disabled) { border-color: var(--accent); }
+.smart-dim-btn.active {
+  background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
+}
+.smart-dim-btn.batch { background: var(--accent-light); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.smart-dim-btn.batch.active { background: var(--accent); color: #fff; }
+.smart-dim-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 技能包选择器 */
+.smart-skill-selector.compact { font-size: 12px; }
+.smart-skill-toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-secondary); font-size: 12px; color: var(--text-secondary);
+  cursor: pointer; justify-content: flex-start;
+}
+.smart-skill-toggle:hover { border-color: var(--accent); }
+.smart-skill-badge {
+  background: var(--accent); color: #fff; border-radius: 10px;
+  padding: 1px 7px; font-size: 11px; font-weight: 600;
+}
+.smart-skill-arrow { margin-left: auto; font-size: 10px; }
+.smart-skill-list {
+  display: flex; flex-direction: column; gap: 4px; margin-top: 6px;
+  padding: 8px; background: var(--bg-secondary); border-radius: 6px;
+  border: 1px solid var(--border-color);
+}
+.smart-skill-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: 4px; cursor: pointer; font-size: 12px; color: var(--text-primary);
+}
+.smart-skill-item:hover { background: var(--bg-hover); }
+.smart-skill-item.checked { background: var(--accent-light); }
+.smart-skill-item input { margin: 0; }
+.smart-skill-icon { font-size: 14px; }
+.smart-skill-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 正文Tab：章节信息 + 动作按钮 */
+.smart-chapter-info {
+  font-size: 12px; color: var(--text-secondary); padding: 4px 0;
+}
+.smart-chapter-info strong { color: var(--text-primary); }
+.smart-chapter-actions, .smart-review-actions {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.smart-action-btn {
+  flex: 1; min-width: 120px; padding: 10px 14px;
+  border: 1px solid var(--border-color); background: var(--bg-secondary);
+  border-radius: 8px; font-size: 13px; font-weight: 600;
+  color: var(--text-primary); cursor: pointer; transition: all 0.15s;
+  touch-action: manipulation;
+}
+.smart-action-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.smart-action-btn.primary {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.smart-action-btn.primary:hover:not(:disabled) { opacity: 0.9; color: #fff; }
+.smart-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 章节选择下拉 */
+.smart-chapter-select {
+  display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+.smart-chapter-select label { font-weight: 500; white-space: nowrap; }
+.smart-chapter-select select {
+  flex: 1; min-width: 140px; padding: 6px 8px; font-size: 12px;
+  border: 1px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-secondary); color: var(--text-primary);
+}
+.smart-empty-hint { font-size: 12px; color: var(--text-muted); }
+.smart-deai-hint {
+  font-size: 11px; color: var(--text-muted); padding: 4px 8px;
+  background: var(--accent-light); border-radius: 4px;
+}
+
+/* 多选意见列表（设定Tab） */
+.smart-suggestions {
+  padding: 10px 12px; border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary); display: flex; flex-direction: column; gap: 8px;
+  max-height: 45vh; overflow-y: auto;
+}
+.smart-suggestions-head {
+  font-size: 12px; color: var(--text-secondary); font-weight: 500;
+}
+.smart-suggestion-item {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--border-color);
+  border-radius: 8px; background: var(--bg-secondary); cursor: pointer;
+  text-align: left; transition: all 0.15s;
+}
+.smart-suggestion-item:hover:not(:disabled) {
+  border-color: var(--accent); background: var(--accent-light);
+}
+.smart-suggestion-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.smart-suggestion-title {
+  font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 4px;
+}
+.smart-suggestion-preview {
+  font-size: 12px; color: var(--text-secondary); line-height: 1.5;
+}
+.smart-suggestion-cancel {
+  align-self: flex-start; padding: 4px 10px; font-size: 11px;
+  color: var(--text-muted); background: transparent; border: none; cursor: pointer;
+}
+.smart-suggestion-cancel:hover { color: var(--danger); }
+
+/* 主操作栏（去AI Tab） */
+.smart-main-action-bar {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border-top: 1px solid var(--border-color); background: var(--bg-secondary);
+}
+.smart-main-action {
+  flex: 1; padding: 12px; border: none; border-radius: 8px;
+  background: var(--accent); color: #fff; font-size: 14px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s; touch-action: manipulation;
+}
+.smart-main-action:hover:not(:disabled) { opacity: 0.9; }
+.smart-main-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.smart-main-hint { font-size: 11px; color: var(--text-muted); }
+
+/* 输入区提示 */
+.chat-input-hint {
+  font-size: 11px; color: var(--text-muted); padding: 0 4px;
+}
+
+/* 底部 Tab 栏（手机友好） */
+.smart-tab-bar {
+  display: flex; border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary); padding: 4px 0 calc(4px + env(safe-area-inset-bottom));
+}
+.smart-tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 4px; font-size: 11px; color: var(--text-muted);
+  background: transparent; border: none; cursor: pointer;
+  transition: color 0.15s; touch-action: manipulation;
+}
+.smart-tab.active { color: var(--accent); font-weight: 600; }
+.smart-tab-icon { font-size: 18px; line-height: 1; }
+.smart-tab-label { font-size: 11px; }
+
+/* 手机端优化：消息区占满剩余空间 */
+.smart-panel .chat-messages { flex: 1; min-height: 0; }
+

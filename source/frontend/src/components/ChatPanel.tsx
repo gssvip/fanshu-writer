@@ -1,23 +1,29 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useStore } from '../store';
 import { api } from '../api';
-import type { ActionCard, ProgressMap, AIMessage } from '../types';
+import type { ActionCard, ProgressMap, AIMessage, SkillPack } from '../types';
 
 // ============================================================================
-// 聊天驱动创作浮窗：边聊边写
-// - 维度感知流式聊天（SSE）
-// - Inline Action Card：采纳 / 编辑 / 忽略
-// - 创作进度地图：感知完成度 + 下一步引导
+// AI 智驾：四Tab（设定/正文/去AI/校审）统一创作平台
+// 整合原 AI副驾 + AI总创作 + 章节AI创作 能力
+// 手机优先：底部Tab栏 + 大按钮 + 紧凑输入区
 // ============================================================================
+
+type SmartTab = 'setting' | 'chapter' | 'deai' | 'review';
+
+// 维度定义（与后端 SMART_DIMENSIONS 对齐）
+interface DimSpec {
+  key: string; label: string; field: string; card: string; icon: string; hint: string;
+}
 
 // SSE 事件类型
 type SseEvent =
   | { type: 'delta'; content: string }
-  | { type: 'card'; card: ActionCard; session_id: string }
+  | { type: 'card'; card: ActionCard; session_id: string; meta?: any }
   | { type: 'done'; session_id: string }
   | { type: 'error'; error: string };
 
-// SSE 流解析：后端发送 `data: {...}\n\n`，逐块解析
+// SSE 流解析
 async function* parseSSE(response: Response): AsyncGenerator<SseEvent> {
   if (!response.body) return;
   const reader = response.body.getReader();
@@ -38,9 +44,7 @@ async function* parseSSE(response: Response): AsyncGenerator<SseEvent> {
           const jsonStr = trimmed.slice(5).trim();
           if (!jsonStr) continue;
           try {
-            const evt = JSON.parse(jsonStr);
-            // 后端 ensure_ascii=False，已正常解析
-            yield evt as SseEvent;
+            yield JSON.parse(jsonStr) as SseEvent;
           } catch { /* ignore malformed */ }
         }
       }
@@ -59,25 +63,22 @@ interface CardViewProps {
   onEdit: (card: ActionCard, newContent: string) => void;
   onIgnore: (card: ActionCard) => void;
   applying: boolean;
+  onReplaceChapter?: (card: ActionCard, meta: any) => void;
 }
 
 const CARD_ICON: Record<string, string> = {
-  SAVE_WORLDSETTING: '🌍',
-  SAVE_CHARACTER: '👤',
-  SAVE_FORESHADOW: '🔮',
-  SAVE_OUTLINE_NODE: '📋',
-  SAVE_PLOT: '📖',
-  SAVE_LOCATION: '🗺️',
-  SAVE_RULE: '⚙️',
-  APPLY_STYLE: '✍️',
-  SAVE_CONCEPT: '💡',
-  SAVE_CHAPTER: '📚',
+  SAVE_WORLDSETTING: '🌍', SAVE_CHARACTER: '👤', SAVE_FORESHADOW: '🔮',
+  SAVE_OUTLINE_NODE: '📋', SAVE_PLOT: '📖', SAVE_LOCATION: '🗺️',
+  SAVE_RULE: '⚙️', APPLY_STYLE: '✍️', SAVE_CONCEPT: '💡', SAVE_CHAPTER: '📚',
 };
 
-const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onIgnore, applying }: CardViewProps) {
+const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onIgnore, applying, onReplaceChapter }: CardViewProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(card.content);
   const status = card.status || 'pending';
+  // 去AI味卡片：meta.replace=true 时主按钮变为"替换本章正文"
+  const cardMeta = (card as any).__meta as any;
+  const isReplaceMode = !!(onReplaceChapter && cardMeta?.replace && cardMeta?.chapter_id);
 
   const handleSaveEdit = () => {
     if (!draft.trim()) return;
@@ -123,7 +124,7 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
             className="chat-card-edit"
             value={draft}
             onChange={e => setDraft(e.target.value)}
-            rows={Math.min(8, Math.max(3, draft.split('\n').length))}
+            rows={Math.min(10, Math.max(4, draft.split('\n').length))}
           />
           <div className="chat-card-actions">
             <button className="chat-card-btn primary" onClick={handleSaveEdit} disabled={!draft.trim()}>
@@ -138,9 +139,15 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
         <>
           <div className="chat-card-body">{card.content}</div>
           <div className="chat-card-actions">
-            <button className="chat-card-btn primary" onClick={() => onAdopt(card)} disabled={applying}>
-              {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '保存为新章节' : '采纳落地')}
-            </button>
+            {isReplaceMode ? (
+              <button className="chat-card-btn primary" onClick={() => onReplaceChapter!(card, cardMeta)} disabled={applying}>
+                {applying ? '替换中…' : '替换本章正文'}
+              </button>
+            ) : (
+              <button className="chat-card-btn primary" onClick={() => onAdopt(card)} disabled={applying}>
+                {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '保存为新章节' : '采纳落地')}
+              </button>
+            )}
             <button className="chat-card-btn" onClick={() => setEditing(true)} disabled={applying}>
               {card.type === 'SAVE_CHAPTER' ? '编辑后保存' : '编辑'}
             </button>
@@ -155,7 +162,7 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
 });
 
 // ============================================================================
-// 进度地图
+// 进度地图（设定Tab可展开）
 // ============================================================================
 const ProgressMapView = memo(function ProgressMapView({ progress, onClose }: { progress: ProgressMap | null; onClose?: () => void }) {
   if (!progress) return null;
@@ -195,10 +202,92 @@ const ProgressMapView = memo(function ProgressMapView({ progress, onClose }: { p
 });
 
 // ============================================================================
-// 主组件
+// 消息气泡
+// ============================================================================
+interface MessageBubbleProps {
+  message: AIMessage;
+  onAdopt: (c: ActionCard) => void;
+  onEdit: (c: ActionCard, content: string) => void;
+  onIgnore: (c: ActionCard) => void;
+  applyingCardId: string | null;
+  streaming: boolean;
+  onReplaceChapter?: (card: ActionCard, meta: any) => void;
+}
+
+const MessageBubble = memo(function MessageBubble({ message, onAdopt, onEdit, onIgnore, applyingCardId, streaming, onReplaceChapter }: MessageBubbleProps) {
+  const isUser = message.role === 'user';
+  return (
+    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-ai'}`}>
+      <div className="chat-msg-avatar">{isUser ? '我' : '🚗'}</div>
+      <div className="chat-msg-body">
+        {message.content ? (
+          <div className="chat-msg-text">{message.content}{streaming && <span className="chat-cursor">▋</span>}</div>
+        ) : streaming ? (
+          <div className="chat-msg-text"><span className="chat-cursor">▋</span></div>
+        ) : null}
+        {message.cards && message.cards.length > 0 && (
+          <div className="chat-msg-cards">
+            {message.cards.map((c, idx) => (
+              <ActionCardView
+                key={c.id || idx}
+                card={c}
+                onAdopt={onAdopt}
+                onEdit={onEdit}
+                onIgnore={onIgnore}
+                applying={applyingCardId === c.id}
+                onReplaceChapter={onReplaceChapter}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+// ============================================================================
+// 技能包选择器（精简版，按 category 分组）
+// ============================================================================
+function SkillPackSelector({ packs, selected, onToggle, compact }: {
+  packs: SkillPack[];
+  selected: string[];
+  onToggle: (id: string) => void;
+  compact?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  if (packs.length === 0) return null;
+  const selectedCount = selected.length;
+  return (
+    <div className={`smart-skill-selector ${compact ? 'compact' : ''}`}>
+      <button className="smart-skill-toggle" onClick={() => setExpanded(e => !e)}>
+        📦 技能包 {selectedCount > 0 && <span className="smart-skill-badge">{selectedCount}</span>}
+        <span className="smart-skill-arrow">{expanded ? '▲' : '▼'}</span>
+      </button>
+      {expanded && (
+        <div className="smart-skill-list">
+          {packs.map(p => (
+            <label key={p.id} className={`smart-skill-item ${selected.includes(p.id) ? 'checked' : ''}`}>
+              <input
+                type="checkbox"
+                checked={selected.includes(p.id)}
+                onChange={() => onToggle(p.id)}
+              />
+              <span className="smart-skill-icon">{p.icon || '📦'}</span>
+              <span className="smart-skill-name">{p.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// 主组件：AI 智驾
 // ============================================================================
 export default function ChatPanel() {
   const { chatPanelOpen, chatPanelBookId, closeChatPanel, openChatPanel } = useStore() as any;
+  const [activeTab, setActiveTab] = useState<SmartTab>('setting');
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -210,20 +299,35 @@ export default function ChatPanel() {
   const [historySessions, setHistorySessions] = useState<Array<{ id: string; title: string; updated_at: string | null; message_count: number }>>([]);
   const [showHistory, setShowHistory] = useState(false);
 
+  // 智驾专属状态
+  const [dimensions, setDimensions] = useState<DimSpec[]>([]);
+  const [selectedDim, setSelectedDim] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<Array<{ id: string; title: string; preview: string }>>([]);
+  const [loadingSuggest, setLoadingSuggest] = useState(false);
+  const [skillPacks, setSkillPacks] = useState<SkillPack[]>([]);
+  const [selectedSkillPacks, setSelectedSkillPacks] = useState<string[]>([]);
+  const [latestChapter, setLatestChapter] = useState<{ id: string; title: string; order_index: number; word_count: number; status: string } | null>(null);
+  const [nextChapterNum, setNextChapterNum] = useState(1);
+  const [chapters, setChapters] = useState<Array<{ id: string; title: string; order_index: number; word_count: number; status: string }>>([]);
+  const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
+  const [deaiPacks, setDeaiPacks] = useState<Array<{ id: string; name: string; description: string; icon: string; priority: number }>>([]);
+  const [reviewing, setReviewing] = useState(false);
+
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef<string>('');
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const bookId = chatPanelBookId;
 
-  // 自动滚动到底
+  // 自动滚动
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, streaming]);
 
-  // 打开浮窗时加载进度
+  // 加载进度
   const refreshProgress = useCallback(async () => {
     if (!bookId) return;
     try {
@@ -240,14 +344,28 @@ export default function ChatPanel() {
     } catch { /* ignore */ }
   }, [bookId]);
 
+  // 打开时加载基础数据
   useEffect(() => {
     if (chatPanelOpen && bookId) {
       refreshProgress();
       refreshHistory();
+      // 加载维度列表
+      api.smartDimensions().then(r => setDimensions(r.dimensions || [])).catch(() => {});
+      // 加载技能包（构思类 + 文风类，设定/正文用）
+      api.listSkillPacks().then(all => setSkillPacks(all || [])).catch(() => {});
+      // 加载去AI味技能包
+      api.smartDeaiPacks().then(r => setDeaiPacks(r.packs || [])).catch(() => {});
+      // 加载章节列表
+      api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
+      // 加载最新章节
+      api.smartLatestChapter(bookId).then(r => {
+        setLatestChapter(r.latest);
+        setNextChapterNum(r.next_chapter_num);
+      }).catch(() => {});
     }
   }, [chatPanelOpen, bookId, refreshProgress, refreshHistory]);
 
-  // 关闭浮窗时取消流
+  // 关闭时取消流
   useEffect(() => {
     if (!chatPanelOpen && abortRef.current) {
       abortRef.current.abort();
@@ -255,8 +373,8 @@ export default function ChatPanel() {
     }
   }, [chatPanelOpen]);
 
-  // 公共：消费 SSE 流，把 delta/card/done/error 写入 messages
-  const consumeSSE = useCallback(async (res: Response, ctrl: AbortController) => {
+  // 公共：消费 SSE 流
+  const consumeSSE = useCallback(async (res: Response, ctrl: AbortController, onCardMeta?: (card: ActionCard, meta: any) => void) => {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
       throw new Error(err.error || `HTTP ${res.status}`);
@@ -280,6 +398,9 @@ export default function ChatPanel() {
           receivedSessionId = evt.session_id;
           setSessionId(evt.session_id);
         }
+        if (evt.meta && onCardMeta) {
+          onCardMeta({ ...evt.card, status: 'pending' }, evt.meta);
+        }
         setMessages(prev => {
           const next = [...prev];
           const last = next[next.length - 1];
@@ -299,95 +420,263 @@ export default function ChatPanel() {
     }
   }, [sessionId]);
 
-  // 发送消息
-  const sendMessage = useCallback(async () => {
+  // 追加用户+AI占位消息
+  const appendUserAi = useCallback((userText: string) => {
+    setMessages(prev => [...prev,
+      { role: 'user', content: userText },
+      { role: 'assistant', content: '', cards: [] },
+    ]);
+  }, []);
+
+  // 移除空AI占位
+  const removeEmptyAi = useCallback(() => {
+    setMessages(prev => {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last && last.role === 'assistant' && !last.content && !(last.cards || []).length) {
+        next.pop();
+      }
+      return next;
+    });
+  }, []);
+
+  // ========== 设定Tab：人机协作流 ==========
+
+  // 1. 提需求 → AI给多选意见
+  const handleSuggest = useCallback(async () => {
     const text = input.trim();
-    if (!text || !bookId || streaming) return;
+    if (!bookId || !selectedDim || streaming) return;
     setInput('');
     setStreamError('');
-    streamBufferRef.current = '';
-
-    // 乐观追加用户消息
-    const userMsg: AIMessage = { role: 'user', content: text };
-    const aiMsg: AIMessage = { role: 'assistant', content: '', cards: [] };
-    setMessages(prev => [...prev, userMsg, aiMsg]);
-    setStreaming(true);
-
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
+    setSuggestions([]);
+    setLoadingSuggest(true);
+    appendUserAi(`【${dimensions.find(d => d.key === selectedDim)?.label || selectedDim}】${text}`);
     try {
-      const res = await api.chatSmartStream(bookId, text, sessionId || undefined, 'general', ctrl.signal);
-      await consumeSSE(res, ctrl);
-
-      // 流结束后刷新进度
-      refreshProgress();
-      refreshHistory();
+      const r = await api.smartSuggest(bookId, selectedDim, text, selectedSkillPacks);
+      setSuggestions(r.suggestions || []);
+      // 在AI消息位展示方案列表
+      setMessages(prev => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'assistant') {
+          next[next.length - 1] = {
+            ...last,
+            content: `已为你生成 ${r.suggestions.length} 个「${r.dimension_label}」方案，请选择一个（点击下方方案）：`,
+          };
+        }
+        return next;
+      });
     } catch (e: any) {
-      if (e.name === 'AbortError') {
-        // 用户主动取消，不报错
-      } else {
-        setStreamError(e.message || '聊天失败');
-        // 移除空的 assistant 占位
-        setMessages(prev => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last && last.role === 'assistant' && !last.content && !(last.cards || []).length) {
-            next.pop();
-          }
-          return next;
-        });
-      }
+      setStreamError(e.message || '生成方案失败');
+      removeEmptyAi();
     } finally {
-      setStreaming(false);
-      abortRef.current = null;
+      setLoadingSuggest(false);
     }
-  }, [input, bookId, streaming, sessionId, consumeSSE, refreshProgress, refreshHistory]);
+  }, [input, bookId, selectedDim, streaming, selectedSkillPacks, dimensions, appendUserAi, removeEmptyAi]);
 
-  // 触发快捷动作（方案A：副驾调度总创作/章节创作能力）
-  const triggerAction = useCallback(async (action: 'master_create' | 'continue' | 'polish', label: string) => {
-    if (!bookId || streaming) return;
+  // 2. 选中意见 → 流式生成最终内容
+  const handleGenerate = useCallback(async (suggestion: { id: string; title: string; preview: string }) => {
+    if (!bookId || !selectedDim || streaming) return;
     setStreamError('');
+    setSuggestions([]);
     streamBufferRef.current = '';
-
-    const userMsg: AIMessage = { role: 'user', content: `快捷动作：${label}` };
-    const aiMsg: AIMessage = { role: 'assistant', content: '', cards: [] };
-    setMessages(prev => [...prev, userMsg, aiMsg]);
+    appendUserAi(`选中方案：${suggestion.title} — ${suggestion.preview}`);
     setStreaming(true);
-
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.chatSmartAction(bookId, action, { session_id: sessionId || undefined }, ctrl.signal);
+      const res = await api.smartGenerateStream(bookId, selectedDim, suggestion.preview, '', selectedSkillPacks, sessionId || undefined, ctrl.signal);
       await consumeSSE(res, ctrl);
       refreshProgress();
       refreshHistory();
     } catch (e: any) {
       if (e.name !== 'AbortError') {
-        setStreamError(e.message || `${label}失败`);
-        setMessages(prev => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last && last.role === 'assistant' && !last.content && !(last.cards || []).length) {
-            next.pop();
-          }
-          return next;
-        });
+        setStreamError(e.message || '生成失败');
+        removeEmptyAi();
       }
     } finally {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [bookId, streaming, sessionId, consumeSSE, refreshProgress, refreshHistory]);
+  }, [bookId, selectedDim, streaming, selectedSkillPacks, sessionId, dimensions, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
-  const stopStream = useCallback(() => {
-    if (abortRef.current) {
-      abortRef.current.abort();
+  // 3. 单独维度AI修改（基于已落地内容）
+  const handleDimEdit = useCallback(async () => {
+    const text = input.trim();
+    if (!bookId || !selectedDim || streaming || !text) return;
+    setInput('');
+    setStreamError('');
+    streamBufferRef.current = '';
+    const dimLabel = dimensions.find(d => d.key === selectedDim)?.label || selectedDim;
+    appendUserAi(`修订${dimLabel}：${text}`);
+    setStreaming(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await api.smartDimEditStream(bookId, selectedDim, '', text, selectedSkillPacks, sessionId || undefined, ctrl.signal);
+      await consumeSSE(res, ctrl);
+      refreshProgress();
+      refreshHistory();
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setStreamError(e.message || '修订失败');
+        removeEmptyAi();
+      }
+    } finally {
+      setStreaming(false);
       abortRef.current = null;
     }
-    setStreaming(false);
-  }, []);
+  }, [input, bookId, selectedDim, streaming, selectedSkillPacks, sessionId, dimensions, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
-  // 卡片操作
+  // 4. 批量生成多维度
+  const handleBatch = useCallback(async () => {
+    if (!bookId || streaming) return;
+    setStreamError('');
+    streamBufferRef.current = '';
+    const allDims = dimensions.map(d => d.key);
+    appendUserAi(`批量生成全部 ${allDims.length} 个维度`);
+    setStreaming(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await api.smartBatchStream(bookId, allDims, input.trim(), selectedSkillPacks, sessionId || undefined, ctrl.signal);
+      setInput('');
+      await consumeSSE(res, ctrl);
+      refreshProgress();
+      refreshHistory();
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setStreamError(e.message || '批量生成失败');
+        removeEmptyAi();
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }, [bookId, streaming, dimensions, input, selectedSkillPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+
+  // ========== 正文Tab：续写/润色（自动定位最新章节）==========
+  const triggerChapterAction = useCallback(async (action: 'continue' | 'polish') => {
+    if (!bookId || streaming) return;
+    setStreamError('');
+    streamBufferRef.current = '';
+    const label = action === 'continue' ? `续写第 ${nextChapterNum} 章` : `润色第 ${latestChapter?.order_index || nextChapterNum - 1} 章`;
+    appendUserAi(label);
+    setStreaming(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await api.chatSmartAction(bookId, action, {
+        target_chapter_num: action === 'continue' ? nextChapterNum : (latestChapter?.order_index || nextChapterNum - 1),
+        session_id: sessionId || undefined,
+      }, ctrl.signal);
+      await consumeSSE(res, ctrl);
+      refreshProgress();
+      refreshHistory();
+      // 刷新最新章节
+      api.smartLatestChapter(bookId).then(r => {
+        setLatestChapter(r.latest);
+        setNextChapterNum(r.next_chapter_num);
+      }).catch(() => {});
+      api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setStreamError(e.message || `${label}失败`);
+        removeEmptyAi();
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }, [bookId, streaming, nextChapterNum, latestChapter, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+
+  // ========== 去AITab：对选中章节去AI味 ==========
+  const handleDeai = useCallback(async () => {
+    if (!bookId || !selectedChapterId || streaming) return;
+    setStreamError('');
+    streamBufferRef.current = '';
+    const ch = chapters.find(c => c.id === selectedChapterId);
+    appendUserAi(`去AI味：${ch?.title || '选中章节'}`);
+    setStreaming(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await api.smartDeaiStream(bookId, selectedChapterId, selectedSkillPacks, sessionId || undefined, ctrl.signal);
+      await consumeSSE(res, ctrl, (card, meta) => {
+        // 去AI味卡片落地时需要替换原章节，标记 meta
+        (card as any).__meta = meta;
+      });
+      refreshHistory();
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setStreamError(e.message || '去AI味失败');
+        removeEmptyAi();
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }, [bookId, selectedChapterId, streaming, chapters, selectedSkillPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshHistory]);
+
+  // ========== 校审Tab：防遗忘 / 一致性检查 ==========
+  const handleReview = useCallback(async (mode: 'anti_forget' | 'consistency') => {
+    if (!bookId || reviewing) return;
+    setStreamError('');
+    setReviewing(true);
+    const label = mode === 'anti_forget' ? '防遗忘检查' : '一致性检查';
+    appendUserAi(`执行${label}`);
+    try {
+      const r = await api.smartReview(bookId, mode, mode === 'consistency' ? (selectedChapterId || undefined) : undefined, selectedSkillPacks);
+      setMessages(prev => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'assistant') {
+          let reportText = '';
+          if (mode === 'anti_forget' && r.report) {
+            const rep = r.report;
+            reportText = `## 防遗忘检查报告\n\n`;
+            reportText += `**健康度评分：** ${rep.health_score ?? '未评'}\n\n`;
+            if (rep.summary) reportText += `**摘要：** ${rep.summary}\n\n`;
+            if (rep.violations && rep.violations.length) {
+              reportText += `**违规问题（${rep.violations.length}）：**\n`;
+              rep.violations.slice(0, 5).forEach((v: any, i: number) => {
+                reportText += `${i + 1}. ${v.description || v.issue || JSON.stringify(v)}\n`;
+              });
+              reportText += '\n';
+            }
+            if (rep.pending_foreshadowing && rep.pending_foreshadowing.length) {
+              reportText += `**待回收伏笔（${rep.pending_foreshadowing.length}）：**\n`;
+              rep.pending_foreshadowing.slice(0, 5).forEach((f: any, i: number) => {
+                reportText += `${i + 1}. ${f.description || f.title || JSON.stringify(f)}\n`;
+              });
+              reportText += '\n';
+            }
+            if (rep.suggestions && rep.suggestions.length) {
+              reportText += `**改进建议：**\n`;
+              rep.suggestions.slice(0, 3).forEach((s: any, i: number) => {
+                reportText += `${i + 1}. ${typeof s === 'string' ? s : (s.description || s.suggestion || JSON.stringify(s))}\n`;
+              });
+            }
+          } else if (mode === 'consistency') {
+            reportText = `## 一致性检查报告\n\n`;
+            reportText += `**章节：** ${r.chapter_title || '最新章节'}\n\n`;
+            reportText += `**结果：** ${r.passed ? '✅ 通过' : '⚠️ 发现问题'}\n\n`;
+            if (r.issues) reportText += `**问题详情：** ${r.issues}\n`;
+          }
+          next[next.length - 1] = { ...last, content: reportText || r.summary || `${label}完成` };
+        }
+        return next;
+      });
+      refreshHistory();
+    } catch (e: any) {
+      setStreamError(e.message || `${label}失败`);
+      removeEmptyAi();
+    } finally {
+      setReviewing(false);
+    }
+  }, [bookId, reviewing, selectedChapterId, selectedSkillPacks, appendUserAi, removeEmptyAi, refreshHistory]);
+
+  // ========== 卡片操作 ==========
   const handleAdopt = useCallback(async (card: ActionCard) => {
     if (!bookId) return;
     setApplyingCardId(card.id);
@@ -398,15 +687,19 @@ export default function ChatPanel() {
         return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...c, status: 'adopted' as const } : c) };
       }));
       refreshProgress();
-      // 章节卡落地成功：提示用户已保存为新章节
       if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
         const ch = r as any;
         setStreamError('');
-        // 用 inline 提示而非错误样式
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: `✅ 章节已保存：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。可在「章节」Tab 查看。`,
         }]);
+        // 刷新章节列表
+        api.smartLatestChapter(bookId).then(rr => {
+          setLatestChapter(rr.latest);
+          setNextChapterNum(rr.next_chapter_num);
+        }).catch(() => {});
+        api.smartChapters(bookId).then(rr => setChapters(rr.chapters || [])).catch(() => {});
       }
     } catch (e: any) {
       setStreamError(e.message || '落地失败');
@@ -430,8 +723,13 @@ export default function ChatPanel() {
         const ch = r as any;
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: `✅ 章节已保存：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。可在「章节」Tab 查看。`,
+          content: `✅ 章节已保存：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。`,
         }]);
+        api.smartLatestChapter(bookId).then(rr => {
+          setLatestChapter(rr.latest);
+          setNextChapterNum(rr.next_chapter_num);
+        }).catch(() => {});
+        api.smartChapters(bookId).then(rr => setChapters(rr.chapters || [])).catch(() => {});
       }
     } catch (e: any) {
       setStreamError(e.message || '落地失败');
@@ -447,7 +745,30 @@ export default function ChatPanel() {
     }));
   }, []);
 
-  // 切换历史会话：加载该会话的全部消息
+  // 去AI味卡片：替换原章节正文
+  const handleReplaceChapter = useCallback(async (card: ActionCard, meta: any) => {
+    if (!bookId || !meta?.chapter_id) return;
+    setApplyingCardId(card.id);
+    try {
+      await api.smartChapterReplace(bookId, meta.chapter_id, card.content);
+      setMessages(prev => prev.map(m => {
+        if (m.role !== 'assistant' || !m.cards) return m;
+        return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...c, status: 'adopted' as const } : c) };
+      }));
+      setStreamError('');
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `✅ 已用去AI味后的内容替换原章节正文（${card.content.length}字）。`,
+      }]);
+      api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
+    } catch (e: any) {
+      setStreamError(e.message || '替换失败');
+    } finally {
+      setApplyingCardId(null);
+    }
+  }, [bookId]);
+
+  // ========== 历史会话 ==========
   const handleSelectSession = useCallback(async (sid: string) => {
     if (streaming) stopStream();
     setSessionId(sid);
@@ -456,7 +777,6 @@ export default function ChatPanel() {
     setMessages([]);
     try {
       const r = await api.getChatSessionMessages(sid);
-      // 后端 messages 结构：[{role, content, cards?}]，cards 已含 status
       const loaded: AIMessage[] = (r.messages || []).map((m: any) => ({
         role: m.role || 'assistant',
         content: m.content || '',
@@ -466,55 +786,103 @@ export default function ChatPanel() {
     } catch (e: any) {
       setStreamError('加载历史会话失败：' + (e.message || ''));
     }
-  }, [streaming, stopStream]);
+  }, [streaming]);
 
-  // 新建会话
   const handleNewSession = useCallback(() => {
     if (streaming) stopStream();
     setMessages([]);
     setSessionId(null);
     setShowHistory(false);
     setStreamError('');
-  }, [streaming, stopStream]);
+    setSuggestions([]);
+  }, [streaming]);
 
-  // 快捷提问
-  const QUICK_PROMPTS = progress?.next_step
-    ? [`帮我想想${progress.next_step.label}：${progress.next_step.hint}`]
-    : ['帮我把主角和核心配角定下来', '我们聊聊世界观设定吧', '梳理一下故事大纲'];
+  const stopStream = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setStreaming(false);
+  }, []);
+
+  // 技能包切换
+  const toggleSkillPack = useCallback((id: string) => {
+    setSelectedSkillPacks(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }, []);
+
+  // 输入框占位符
+  const inputPlaceholder = (() => {
+    if (activeTab === 'setting') {
+      if (!selectedDim) return '请先选择上方维度按钮…';
+      return `描述你对「${dimensions.find(d => d.key === selectedDim)?.label || selectedDim}」的需求或修改意见…`;
+    }
+    if (activeTab === 'chapter') return '补充本章写作要求（可选）…';
+    if (activeTab === 'deai') return '点击上方「开始去AI味」按钮即可…';
+    if (activeTab === 'review') return '点击上方检查按钮即可…';
+    return '和 AI 智驾聊聊…';
+  })();
+
+  // 发送按钮是否可用
+  const canSend = (() => {
+    if (streaming || !input.trim()) return false;
+    if (activeTab === 'setting') return !!selectedDim;
+    return false;
+  })();
+
+  // 主发送动作（设定Tab：维度已有内容走dim-edit修订，否则走suggest生成多选意见）
+  const handleMainSend = useCallback(() => {
+    if (activeTab !== 'setting' || !selectedDim) return;
+    if (suggestions.length > 0) return;
+    const dimStatus = progress?.dims.find(d => d.field === selectedDim)?.status;
+    if (dimStatus && dimStatus !== 'empty') {
+      handleDimEdit();
+    } else {
+      handleSuggest();
+    }
+  }, [activeTab, selectedDim, suggestions, progress, handleSuggest, handleDimEdit]);
+
+  // 设定Tab：选择维度后，第一次输入走 suggest（生成多选意见）
+  // 选中意见后走 generate（流式生成）
+  // 生成落地后，再输入走 dim-edit（修订）
+  // 这里统一：如果有 suggestions 在显示，输入框禁用（只能选方案）
+  // 否则，输入框 enter 触发 handleMainSend（根据维度是否已有内容自动选择 suggest/dim-edit）
+  const onInputKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (activeTab === 'setting' && selectedDim && suggestions.length === 0) {
+        handleMainSend();
+      }
+    }
+  };
+
+  const TABS: Array<{ key: SmartTab; label: string; icon: string }> = [
+    { key: 'setting', label: '设定', icon: '⚙️' },
+    { key: 'chapter', label: '正文', icon: '✍️' },
+    { key: 'deai', label: '去AI', icon: '🧹' },
+    { key: 'review', label: '校审', icon: '🔍' },
+  ];
 
   return (
     <>
-      {/* FAB 悬浮按钮（仅在 /write 路由下显示，从 URL 解析 bookId） */}
-      <FloatingButton
-        hidden={chatPanelOpen}
-        onOpen={(bid) => openChatPanel(bid)}
-      />
+      <FloatingButton hidden={chatPanelOpen} onOpen={(bid) => openChatPanel(bid)} />
 
       {chatPanelOpen && bookId && (
         <div className="chat-panel-overlay">
-          <div className="chat-panel">
+          <div className="chat-panel smart-panel">
             {/* 头部 */}
             <div className="chat-panel-header">
               <div className="chat-panel-title">
-                <span className="chat-panel-logo">🤝</span>
+                <span className="chat-panel-logo">🚗</span>
                 <div>
-                  <div className="chat-panel-name">AI 副驾</div>
-                  <div className="chat-panel-sub">边聊边写 · 讨论即落地</div>
+                  <div className="chat-panel-name">AI 智驾</div>
+                  <div className="chat-panel-sub">设定 · 正文 · 去AI · 校审</div>
                 </div>
               </div>
               <div className="chat-panel-tools">
-                <button className="chat-tool-btn" onClick={() => { setShowProgress(s => !s); }} title="创作进度">
-                  🗺️
-                </button>
-                <button className="chat-tool-btn" onClick={() => { setShowHistory(s => !s); refreshHistory(); }} title="历史会话">
-                  🕘
-                </button>
-                <button className="chat-tool-btn" onClick={handleNewSession} title="新会话">
-                  ✨
-                </button>
-                <button className="chat-tool-btn close" onClick={closeChatPanel} title="关闭">
-                  ✕
-                </button>
+                <button className="chat-tool-btn" onClick={() => { setShowProgress(s => !s); }} title="创作进度">🗺️</button>
+                <button className="chat-tool-btn" onClick={() => { setShowHistory(s => !s); refreshHistory(); }} title="历史会话">🕘</button>
+                <button className="chat-tool-btn" onClick={handleNewSession} title="新会话">✨</button>
+                <button className="chat-tool-btn close" onClick={closeChatPanel} title="关闭">✕</button>
               </div>
             </div>
 
@@ -547,22 +915,157 @@ export default function ChatPanel() {
               </div>
             )}
 
+            {/* Tab 工具区（根据当前Tab显示不同工具） */}
+            <div className="smart-toolbar">
+              {activeTab === 'setting' && (
+                <>
+                  {/* 维度子按钮栏 */}
+                  <div className="smart-dim-bar">
+                    <button
+                      className={`smart-dim-btn batch ${selectedDim === null && suggestions.length === 0 ? 'active' : ''}`}
+                      onClick={handleBatch}
+                      disabled={streaming || loadingSuggest}
+                      title="一次性生成全部维度"
+                    >⚡ 批量</button>
+                    {dimensions.map(d => (
+                      <button
+                        key={d.key}
+                        className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
+                        onClick={() => { setSelectedDim(d.key); setSuggestions([]); setInput(''); }}
+                        disabled={streaming || loadingSuggest}
+                        title={d.hint}
+                      >{d.icon} {d.label}</button>
+                    ))}
+                  </div>
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={selectedSkillPacks} onToggle={toggleSkillPack} compact />
+                </>
+              )}
+
+              {activeTab === 'chapter' && (
+                <>
+                  <div className="smart-chapter-info">
+                    {latestChapter ? (
+                      <span>📖 最新章节：<strong>{latestChapter.title}</strong>（{latestChapter.word_count}字，第{latestChapter.order_index}章）</span>
+                    ) : (
+                      <span>📖 还没有章节，将创建第 1 章</span>
+                    )}
+                  </div>
+                  <div className="smart-chapter-actions">
+                    <button
+                      className="smart-action-btn primary"
+                      onClick={() => triggerChapterAction('continue')}
+                      disabled={streaming}
+                    >✍️ 续写第 {nextChapterNum} 章</button>
+                    {latestChapter && (
+                      <button
+                        className="smart-action-btn"
+                        onClick={() => triggerChapterAction('polish')}
+                        disabled={streaming}
+                      >✨ 润色第 {latestChapter.order_index} 章</button>
+                    )}
+                  </div>
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style' || p.category === 'master')} selected={selectedSkillPacks} onToggle={toggleSkillPack} compact />
+                </>
+              )}
+
+              {activeTab === 'deai' && (
+                <>
+                  <div className="smart-chapter-select">
+                    <label>选择去AI味的章节：</label>
+                    {chapters.length === 0 ? (
+                      <span className="smart-empty-hint">暂无章节</span>
+                    ) : (
+                      <select
+                        value={selectedChapterId || ''}
+                        onChange={e => setSelectedChapterId(e.target.value)}
+                        disabled={streaming}
+                      >
+                        <option value="">请选择章节…</option>
+                        {chapters.map(c => (
+                          <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}（{c.word_count}字）</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={selectedSkillPacks} onToggle={toggleSkillPack} compact />
+                  {deaiPacks.length > 0 && selectedSkillPacks.length === 0 && (
+                    <div className="smart-deai-hint">💡 检测到 {deaiPacks.length} 个去AI味技能包，可在上方勾选，未选将使用默认去AI味规则</div>
+                  )}
+                </>
+              )}
+
+              {activeTab === 'review' && (
+                <>
+                  <div className="smart-review-actions">
+                    <button
+                      className="smart-action-btn primary"
+                      onClick={() => handleReview('anti_forget')}
+                      disabled={reviewing || streaming}
+                    >🔍 防遗忘检查</button>
+                    <button
+                      className="smart-action-btn"
+                      onClick={() => handleReview('consistency')}
+                      disabled={reviewing || streaming}
+                    >⚖️ 一致性检查</button>
+                  </div>
+                  {activeTab === 'review' && (
+                    <div className="smart-chapter-select">
+                      <label>一致性检查章节（不选则检查最新）：</label>
+                      {chapters.length > 0 && (
+                        <select
+                          value={selectedChapterId || ''}
+                          onChange={e => setSelectedChapterId(e.target.value)}
+                          disabled={reviewing || streaming}
+                        >
+                          <option value="">最新章节</option>
+                          {chapters.map(c => (
+                            <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  )}
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={selectedSkillPacks} onToggle={toggleSkillPack} compact />
+                </>
+              )}
+            </div>
+
+            {/* 多选意见列表（设定Tab专属） */}
+            {activeTab === 'setting' && suggestions.length > 0 && (
+              <div className="smart-suggestions">
+                <div className="smart-suggestions-head">请选择一个方案，AI 将基于它生成完整内容：</div>
+                {suggestions.map(s => (
+                  <button
+                    key={s.id}
+                    className="smart-suggestion-item"
+                    onClick={() => handleGenerate(s)}
+                    disabled={streaming}
+                  >
+                    <div className="smart-suggestion-title">{s.title}</div>
+                    <div className="smart-suggestion-preview">{s.preview}</div>
+                  </button>
+                ))}
+                <button className="smart-suggestion-cancel" onClick={() => setSuggestions([])}>取消，重新描述需求</button>
+              </div>
+            )}
+
             {/* 消息列表 */}
             <div className="chat-messages" ref={scrollRef}>
-              {messages.length === 0 && (
+              {messages.length === 0 && !loadingSuggest && (
                 <div className="chat-empty">
-                  <div className="chat-empty-icon">💬</div>
-                  <p>和 AI 副驾聊聊你的小说吧。讨论中形成的结论会变成「落地卡片」，一键采纳就写入对应设定维度。</p>
+                  <div className="chat-empty-icon">🚗</div>
+                  <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
                   {progress?.next_step && (
                     <div className="chat-empty-hint">
                       建议从 <strong>{progress.next_step.label}</strong> 开始：{progress.next_step.hint}
                     </div>
                   )}
-                  <div className="chat-quick-prompts">
-                    {QUICK_PROMPTS.map(p => (
-                      <button key={p} className="chat-quick-prompt" onClick={() => setInput(p)}>{p}</button>
-                    ))}
-                  </div>
+                </div>
+              )}
+              {loadingSuggest && (
+                <div className="chat-empty">
+                  <div className="chat-empty-icon">⏳</div>
+                  <p>AI 正在生成多选方案…</p>
                 </div>
               )}
               {messages.map((m, i) => (
@@ -574,55 +1077,83 @@ export default function ChatPanel() {
                   onIgnore={handleIgnore}
                   applyingCardId={applyingCardId}
                   streaming={streaming && i === messages.length - 1 && m.role === 'assistant'}
+                  onReplaceChapter={handleReplaceChapter}
                 />
               ))}
               {streamError && <div className="chat-error">{streamError}</div>}
             </div>
 
-            {/* 输入区 */}
-            <div className="chat-input-area">
-              {/* 快捷动作栏：副驾做指挥官，一键调度总创作/章节创作能力 */}
-              <div className="chat-quick-actions">
+            {/* 去AI/校审Tab的主操作按钮（在输入框上方） */}
+            {activeTab === 'deai' && (
+              <div className="smart-main-action-bar">
                 <button
-                  className="chat-quick-action"
-                  onClick={() => triggerAction('master_create', '批量生成设定')}
-                  disabled={streaming}
-                  title="一次性生成构思/规则/世界观/人物/大纲五维度，以卡片形式返回"
-                >⚡ 批量生成设定</button>
-                <button
-                  className="chat-quick-action"
-                  onClick={() => triggerAction('continue', '续写本章')}
-                  disabled={streaming}
-                  title="基于设定和上一章，续写下一章正文"
-                >✍️ 续写本章</button>
-                <button
-                  className="chat-quick-action"
-                  onClick={() => triggerAction('polish', '润色本章')}
-                  disabled={streaming}
-                  title="对最新章节正文进行润色去AI味"
-                >✨ 润色本章</button>
+                  className="smart-main-action"
+                  onClick={handleDeai}
+                  disabled={streaming || !selectedChapterId}
+                >{streaming ? '处理中…' : '🧹 开始去AI味'}</button>
+                {!selectedChapterId && <span className="smart-main-hint">请先选择章节</span>}
               </div>
-              <div className="chat-input-row">
-                <textarea
-                  className="chat-input"
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      sendMessage();
-                    }
-                  }}
-                  placeholder="和 AI 聊聊你的小说…（Enter 发送，Shift+Enter 换行）"
-                  rows={1}
-                  disabled={streaming}
-                />
-                {streaming ? (
-                  <button className="chat-send stop" onClick={stopStream}>停止</button>
-                ) : (
-                  <button className="chat-send" onClick={sendMessage} disabled={!input.trim()}>发送</button>
+            )}
+
+            {/* 输入区（仅设定Tab可输入；其他Tab通过按钮操作） */}
+            {activeTab === 'setting' && (
+              <div className="chat-input-area">
+                <div className="chat-input-row">
+                  <textarea
+                    ref={inputRef}
+                    className="chat-input"
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={onInputKeyDown}
+                    placeholder={inputPlaceholder}
+                    rows={1}
+                    disabled={streaming || loadingSuggest || suggestions.length > 0 || !selectedDim}
+                  />
+                  {streaming ? (
+                    <button className="chat-send stop" onClick={stopStream}>停止</button>
+                  ) : (
+                    <button
+                      className="chat-send"
+                      onClick={handleMainSend}
+                      disabled={!canSend || loadingSuggest || suggestions.length > 0}
+                    >{loadingSuggest ? '…' : '生成方案'}</button>
+                  )}
+                </div>
+                {selectedDim && suggestions.length === 0 && (
+                  <div className="chat-input-hint">描述需求 → AI 给多选方案 → 选中生成 → 可输入修改意见重新生成</div>
                 )}
               </div>
+            )}
+
+            {activeTab !== 'setting' && (
+              <div className="chat-input-area">
+                <div className="chat-input-row">
+                  <input
+                    className="chat-input"
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    placeholder={inputPlaceholder}
+                    disabled={streaming}
+                  />
+                  {streaming ? (
+                    <button className="chat-send stop" onClick={stopStream}>停止</button>
+                  ) : null}
+                </div>
+              </div>
+            )}
+
+            {/* 底部 Tab 栏（手机友好） */}
+            <div className="smart-tab-bar">
+              {TABS.map(t => (
+                <button
+                  key={t.key}
+                  className={`smart-tab ${activeTab === t.key ? 'active' : ''}`}
+                  onClick={() => setActiveTab(t.key)}
+                >
+                  <span className="smart-tab-icon">{t.icon}</span>
+                  <span className="smart-tab-label">{t.label}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -630,48 +1161,6 @@ export default function ChatPanel() {
     </>
   );
 }
-
-// ============================================================================
-// 消息气泡（含 Inline Action Cards）
-// ============================================================================
-interface MessageBubbleProps {
-  message: AIMessage;
-  onAdopt: (c: ActionCard) => void;
-  onEdit: (c: ActionCard, content: string) => void;
-  onIgnore: (c: ActionCard) => void;
-  applyingCardId: string | null;
-  streaming: boolean;
-}
-
-const MessageBubble = memo(function MessageBubble({ message, onAdopt, onEdit, onIgnore, applyingCardId, streaming }: MessageBubbleProps) {
-  const isUser = message.role === 'user';
-  return (
-    <div className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-ai'}`}>
-      <div className="chat-msg-avatar">{isUser ? '我' : '🤝'}</div>
-      <div className="chat-msg-body">
-        {message.content ? (
-          <div className="chat-msg-text">{message.content}{streaming && <span className="chat-cursor">▋</span>}</div>
-        ) : streaming ? (
-          <div className="chat-msg-text"><span className="chat-cursor">▋</span></div>
-        ) : null}
-        {message.cards && message.cards.length > 0 && (
-          <div className="chat-msg-cards">
-            {message.cards.map((c, idx) => (
-              <ActionCardView
-                key={c.id || idx}
-                card={c}
-                onAdopt={onAdopt}
-                onEdit={onEdit}
-                onIgnore={onIgnore}
-                applying={applyingCardId === c.id}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-});
 
 // ============================================================================
 // FAB 悬浮按钮（仅在 /write?book=xxx 路由下显示）
@@ -682,7 +1171,6 @@ function FloatingButton({ onOpen, hidden }: { onOpen: (bookId: string) => void; 
     const check = () => {
       const hash = window.location.hash;
       if (!hash.startsWith('#/write')) { setBookId(null); return; }
-      // hash 路由格式：#/write?book=xxx
       const qIdx = hash.indexOf('?');
       if (qIdx < 0) { setBookId(null); return; }
       const params = new URLSearchParams(hash.slice(qIdx + 1));
@@ -694,9 +1182,9 @@ function FloatingButton({ onOpen, hidden }: { onOpen: (bookId: string) => void; 
   }, []);
   if (!bookId || hidden) return null;
   return (
-    <button className="chat-fab" onClick={() => onOpen(bookId)} title="打开 AI 副驾">
-      <span>🤝</span>
-      <span className="chat-fab-label">AI 副驾</span>
+    <button className="chat-fab" onClick={() => onOpen(bookId)} title="打开 AI 智驾">
+      <span>🚗</span>
+      <span className="chat-fab-label">AI 智驾</span>
     </button>
   );
 }

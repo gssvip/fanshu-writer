@@ -76,10 +76,10 @@ export default function Home() {
             className="btn-primary"
             onClick={() => setShowAiPicker(true)}
             disabled={books.length === 0}
-            title={books.length === 0 ? '请先创建作品' : 'AI总创作：选择作品进入全维度协同生成（与创作界面入口为同一功能）'}
+            title={books.length === 0 ? '请先创建作品' : 'AI 智驾：选择作品进入设定/正文/去AI/校审四Tab协作'}
             style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)' }}
           >
-            ✨
+            🚗
           </button>
           <button className="btn-ghost mob-hide" onClick={() => setTheme(theme==='light'?'dark':'light')}>
             {theme==='light'?'🌙':'☀️'}
@@ -195,12 +195,12 @@ export default function Home() {
         </div>
       )}
 
-      {/* AI总创作 - 作品选择 */}
+      {/* AI 智驾 - 作品选择 */}
       {showAiPicker && (
         <div className="modal-overlay" onClick={()=>setShowAiPicker(false)}>
           <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:480}}>
-            <h2 style={{marginBottom:4}}>✨ AI总创作</h2>
-            <p className="text-muted" style={{fontSize:13,marginBottom:16}}>选择要创作的作品，进入后可对构思/设定/大纲/人物等维度协同生成</p>
+            <h2 style={{marginBottom:4}}>🚗 AI 智驾</h2>
+            <p className="text-muted" style={{fontSize:13,marginBottom:16}}>选择要创作的作品，进入后可使用设定/正文/去AI/校审四Tab协作</p>
             {books.length === 0 ? (
               <div className="empty-state" style={{padding:24}}>
                 <p>还没有作品，请先新建</p>
