@@ -12784,6 +12784,9 @@ def init_db():
         _add_column('book_bible', 'foreshadowing_volumes TEXT')
         _add_column('book_bible', 'locations_volumes TEXT')
         _add_column('ai_config', 'recognition_model TEXT')
+        # Migration: AI 多配置支持（DEFAULT TRUE 兼容 PG 严格 BOOLEAN 与 SQLite）
+        _add_column('ai_config', "name VARCHAR(50) DEFAULT '默认配置'")
+        _add_column('ai_config', 'is_active BOOLEAN DEFAULT TRUE')
         # Migration: skill_packs 添加 github_source 和 github_synced_at 字段
         _add_column('skill_packs', "github_source VARCHAR(500) DEFAULT ''")
         _add_column('skill_packs', 'github_synced_at TIMESTAMP')
