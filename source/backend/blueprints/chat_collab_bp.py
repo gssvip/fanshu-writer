@@ -170,7 +170,7 @@ _CARD_INSTRUCTIONS = """
 
 注意：
 - 卡片内容必须具体、可直接写入设定库或作为正文保存，不要写"建议讨论XXX"这种空话
-- SAVE_CHAPTER 仅在用户明确要求"写一章""接着写正文"时产出，内容必须是完整的章节正文（2000字以上）
+- SAVE_CHAPTER 仅在用户明确要求"写一章""接着写正文"时产出，内容必须是完整的章节正文，且严格遵循【字数绝对铁律】：2400字±100（即 2300-2500 字区间，含标点）。低于 2300 字须扩写场景细节补足；超过 2500 字须精简删减。这是不可违反的硬约束。
 - 不要每条回复都产卡片，只在确实有可落地结论时才产
 - 先用对话讨论，达成共识后再产卡片
 """.strip()
@@ -769,12 +769,16 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         if not cur or not (cur.content or '').strip():
             yield sse({'type': 'error', 'error': f'第 {target_chapter_num} 章无正文，无法润色'})
             return
+        cur_len = len((cur.content or '').strip())
         sys_prompt = (
             f'你是资深网文润色编辑。请润色《{book.title}》第 {target_chapter_num} 章正文。'
             f'\n要求：保持剧情和人物不变，优化文笔节奏，去除AI味，提升画面感。'
             f'\n用户要求：{instruction or "无"}'
+            f'\n\n【字数绝对铁律】润色后正文必须严格控制在 2400字±100（即 2300-2500 字区间，含标点）。'
+            f'当前原文 {cur_len} 字：若不足 2300 字须扩写场景细节补足；若超过 2500 字须精简删减；'
+            f'落在区间内则保持篇幅不变。这是不可违反的硬约束。'
             f'\n\n【原文】\n{cur.content}'
-            f'\n\n请直接输出润色后的完整正文（含章节标题），不要解释。'
+            f'\n\n请直接输出润色后的完整正文（含章节标题），不要解释，不要在文末附加字数统计。'
         )
         user_msg = f'请润色第 {target_chapter_num} 章'
     else:
@@ -784,7 +788,10 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'\n\n【设定参考】\n{bible_ctx or "（暂无设定）"}'
             f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
             f'\n用户要求：{instruction or "自然推进剧情"}'
-            f'\n请直接输出完整章节正文（含标题，2400字左右），不要解释。'
+            f'\n\n【字数绝对铁律】本章正文必须严格控制在 2400字±100（即 2300-2500 字区间，含标点）。'
+            f'低于 2300 字=内容不足，须扩展场景细节、对话和心理描写补足；'
+            f'超过 2500 字=冗余，须精简枝节删减。这是不可违反的硬约束，优先级高于所有其他要求。'
+            f'\n请直接输出完整章节正文（含标题），不要解释，不要在文末附加字数统计。'
         )
         user_msg = f'请续写第 {target_chapter_num} 章'
 
@@ -1011,6 +1018,9 @@ def smart_general():
         for d in SMART_DIMENSIONS:
             v = (getattr(bb, d['field'], '') or '').strip()
             if v:
+                # 人物维度：character_profiles 是 JSON 数组，注入前转自然语言，避免 AI 模仿 JSON
+                if d['key'] == 'character_profiles' and v.startswith('['):
+                    v = _character_profiles_to_text(v)
                 ctx_parts.append(f'【{d["label"]}】{_smart_truncate(v, 300)}')
     ctx = '\n\n'.join(ctx_parts) if ctx_parts else '（暂无设定）'
 
@@ -1047,6 +1057,9 @@ def smart_general():
     if detected:
         dim_labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k, _ in detected)
         dim_hint = f'\n\n【关键词触发】用户讨论涉及维度：{dim_labels}。若你的回复中产出了可落地的设定内容，请用卡片标记输出（每个维度一张）：\n[[CARD:卡片类型|标题|内容]]\n卡片类型对照：SAVE_CONCEPT=构思, SAVE_RULE=设定, SAVE_WORLDSETTING=世界观, SAVE_OUTLINE_NODE=大纲, SAVE_PLOT=剧情, SAVE_CHARACTER=人物, SAVE_FORESHADOW=伏笔, SAVE_LOCATION=地图, APPLY_STYLE=文风。无则不输出卡片。'
+        # 涉及人物维度时，强制约束卡片内容为自然语言，禁止 JSON 符号
+        if any(k == 'character_profiles' for k, _ in detected):
+            dim_hint += '\n\n【人物卡片内容格式·铁律】绝对禁止 JSON 符号 [ ] { } " : 和英文字段名。卡片内容必须用纯中文，按「姓名：xxx\\n身份：xxx\\n性格：xxx\\n动机：xxx\\n背景：xxx\\n关系：xxx\\n能力：xxx」分行输出，每字段至少30字。'
 
     sys_prompt = f"""你是资深网文创作智驾，正在与作者自由讨论《{book.title or "未命名"}》。
 
@@ -1078,7 +1091,12 @@ def smart_general():
             # 解析卡片标记
             cards = _parse_card_markers(content)
             clean_content = _strip_card_markers(content)
+            # 人物卡片兜底：若内容仍为 JSON 数组，转成自然语言
             for card in cards:
+                if card.get('type') == 'SAVE_CHARACTER':
+                    c = (card.get('content') or '').strip()
+                    if c.startswith('[') or c.startswith('{'):
+                        card['content'] = _character_profiles_to_text(c) if c.startswith('[') else _character_profiles_to_text('[' + c + ']')
                 yield sse({'type': 'card', 'card': card, 'session_id': session_id})
             history = load_session_messages(session)
             history.append({'role': 'user', 'content': message})
@@ -1389,26 +1407,6 @@ def smart_generate():
 
     gw = LLMGateway(base_url, api_key, model)
 
-    sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{spec['label']}」维度的完整设定内容。
-
-题材：{book.genre or "未指定"}
-类型：{book.book_type or "未指定"}
-
-【已有设定参考】
-{ctx or "（暂无）"}
-
-{("【当前维度已有内容（可在此基础上完善，不要简单重复）】\n" + self_content) if self_content else ""}
-
-【作者需求】
-{requirement or "无"}
-
-【选中方案】
-{suggestion}
-
-{("【技能包指引】\n" + skill_note) if skill_note else ""}
-
-请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。"""
-
     # 世界观维度：生成后额外产出地图卡片，便于提取到「地图」维度
     if dim_key == 'worldbuilding':
         sys_prompt += '\n\n另外，若世界观中包含地理/势力分布信息，请在正文之后追加一张「地图」卡片，格式：\n[[CARD:SAVE_LOCATION|世界地图架构|在此输出主要地理区域、势力分布、关键地点的简要架构]]'
@@ -1493,6 +1491,10 @@ def smart_dim_edit():
     if not current_content and bb:
         current_content = (getattr(bb, spec['field'], '') or '').strip()
 
+    # 人物维度：current_content 是 JSON 数组时转自然语言，避免 AI 模仿 JSON 格式
+    if dim_key == 'character_profiles' and current_content.startswith('['):
+        current_content = _character_profiles_to_text(current_content)
+
     ctx, _ = _build_dim_context(book, bb, dim_key, with_self=False)
 
     skill_note = ''
@@ -1521,6 +1523,11 @@ def smart_dim_edit():
 
     gw = LLMGateway(base_url, api_key, model)
 
+    # 人物维度额外约束：禁止输出 JSON/代码符号，必须用自然语言按字段分行
+    character_extra = ''
+    if dim_key == 'character_profiles':
+        character_extra = '\n\n【人物维度输出格式·绝对铁律】绝对禁止 JSON 符号 [ ] { } " : 和英文字段名。必须用纯中文，按「姓名：xxx\\n身份：xxx\\n性格：xxx\\n动机：xxx\\n背景：xxx\\n关系：xxx\\n能力：xxx」分行输出，每字段至少30字。'
+
     sys_prompt = f"""你是资深网文创作智驾。请根据作者的修改意见，修订《{book.title or "未命名"}》的「{spec['label']}」维度内容。
 
 【其他维度参考】
@@ -1533,6 +1540,7 @@ def smart_dim_edit():
 {edit_request}
 
 {("【技能包指引】\n" + skill_note) if skill_note else ""}
+{character_extra}
 
 请直接输出修订后的完整内容（保留原文中合理的部分，按修改意见调整），不要寒暄，不要解释，不要加 Markdown 标题。"""
 
@@ -1549,6 +1557,9 @@ def smart_dim_edit():
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
+            # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言
+            if dim_key == 'character_profiles' and content.lstrip().startswith('['):
+                content = _character_profiles_to_text(content)
             card = {
                 'id': str(uuid.uuid4())[:8],
                 'type': spec['card'],

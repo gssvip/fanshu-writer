@@ -31,6 +31,8 @@ interface AppStore {
   // 聊天驱动创作浮窗（全局，跨页面可用）
   chatPanelOpen: boolean;
   chatPanelBookId: string | null;
+  // 待打开的历史会话 id：从历史对话「继续」按钮传入，ChatPanel 读取后自动加载该会话
+  chatPanelSessionId: string | null;
 
   setBooks: (books: Book[]) => void;
   setCurrentBook: (book: Book | null) => void;
@@ -43,7 +45,7 @@ interface AppStore {
   setRightPanel: (panel: 'ai' | 'characters' | 'outline' | 'stats' | null) => void;
   setRightPanelWidth: (width: number) => void;
   setLoading: (loading: boolean) => void;
-  openChatPanel: (bookId: string) => void;
+  openChatPanel: (bookId: string, sessionId?: string | null) => void;
   closeChatPanel: () => void;
   logout: () => void;
 }
@@ -86,6 +88,7 @@ export const useStore = create<AppStore>((set) => ({
   loading: false,
   chatPanelOpen: false,
   chatPanelBookId: null,
+  chatPanelSessionId: null,
 
   setBooks: (books) => set({ books }),
   setCurrentBook: (book) => set({ currentBook: book }),
@@ -107,7 +110,7 @@ export const useStore = create<AppStore>((set) => ({
   setRightPanel: (panel) => set({ rightPanel: panel }),
   setRightPanelWidth: (width) => set({ rightPanelWidth: width }),
   setLoading: (loading) => set({ loading }),
-  openChatPanel: (bookId) => set({ chatPanelOpen: true, chatPanelBookId: bookId }),
+  openChatPanel: (bookId, sessionId) => set({ chatPanelOpen: true, chatPanelBookId: bookId, chatPanelSessionId: sessionId ?? null }),
   closeChatPanel: () => set({ chatPanelOpen: false }),
   logout: () => {
     localStorage.removeItem('fanshu-token');

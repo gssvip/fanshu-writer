@@ -374,7 +374,7 @@ function SkillPackSelector({ packs, selected, onToggle, compact }: {
 // 主组件：AI 智驾
 // ============================================================================
 export default function ChatPanel() {
-  const { chatPanelOpen, chatPanelBookId, closeChatPanel } = useStore() as any;
+  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, closeChatPanel } = useStore() as any;
   const [activeTab, setActiveTab] = useState<SmartTab>('setting');
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState('');
@@ -442,7 +442,8 @@ export default function ChatPanel() {
     } catch { /* ignore */ }
   }, [bookId]);
 
-  // 打开时加载基础数据 + 自动加载最新一次聊天会话（不新建窗口）
+  // 打开时加载基础数据 + 自动加载指定/最新一次聊天会话
+  // 若 store 中有 chatPanelSessionId（从历史对话「继续」按钮传入），优先加载该会话；否则加载最新
   useEffect(() => {
     if (chatPanelOpen && bookId) {
       refreshProgress();
@@ -456,16 +457,21 @@ export default function ChatPanel() {
         setLatestChapter(r.latest);
         setNextChapterNum(r.next_chapter_num);
       }).catch(() => {});
-      // 自动加载最新一次聊天会话消息（除非用户主动新建）
+      // 加载会话：优先 chatPanelSessionId 指定的，否则最新
       (async () => {
         try {
           const r = await api.listBookChatSessions(bookId);
           const sessions = r.sessions || [];
-          if (sessions.length > 0) {
-            // 取最新一个（按 updated_at 降序，接口已排序）
-            const latestSession = sessions[0];
-            setSessionId(latestSession.id);
-            const msgR = await api.getChatSessionMessages(latestSession.id);
+          let target = null;
+          if (chatPanelSessionId) {
+            target = sessions.find((s: any) => s.id === chatPanelSessionId) || null;
+          }
+          if (!target && sessions.length > 0) {
+            target = sessions[0];
+          }
+          if (target) {
+            setSessionId(target.id);
+            const msgR = await api.getChatSessionMessages(target.id);
             const loaded: AIMessage[] = (msgR.messages || []).map((m: any) => ({
               role: m.role || 'assistant',
               content: m.content || '',
@@ -481,7 +487,7 @@ export default function ChatPanel() {
         }
       })();
     }
-  }, [chatPanelOpen, bookId, refreshProgress, refreshHistory]);
+  }, [chatPanelOpen, bookId, chatPanelSessionId, refreshProgress, refreshHistory]);
 
   // 切换 Tab 时清空待选动作和选中章节（各Tab独立）
   const switchTab = useCallback((tab: SmartTab) => {

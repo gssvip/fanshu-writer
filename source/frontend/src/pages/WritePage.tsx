@@ -299,8 +299,8 @@ export default function WritePage() {
   }, [refreshAiSessions]);
 
   // 打开历史会话继续对话（AI智驾有自己的历史会话加载）
-  const handleResumeAiSession = useCallback((_session: AISession) => {
-    if (bookId) openChatPanel(bookId);
+  const handleResumeAiSession = useCallback((session: AISession) => {
+    if (bookId) openChatPanel(bookId, session.id);
   }, [bookId, openChatPanel]);
 
   // 打开 AI 智驾（原 AI总创作入口已统一到 AI智驾）
