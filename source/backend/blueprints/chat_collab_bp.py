@@ -368,7 +368,9 @@ def apply_card():
     """采纳 Action Card，落地到对应维度。
 
     SAVE_CHAPTER 模式：落地到 Chapter 表，作为新章节追加。
-    返回 chapter_id 供前端跳转/确认。
+    其他维度：
+      - status='edited'（编辑后落地）→ 覆盖该维度原内容
+      - status='adopted' 或默认（直接采纳）→ 追加到该维度原内容后
     """
     from app import db, BookBible, Character, Chapter
     data = request.json or {}
@@ -377,6 +379,8 @@ def apply_card():
     ctype = card.get('type', '')
     content = (card.get('content') or '').strip()
     title = card.get('title', '')
+    # 编辑后落地用覆盖模式，直接采纳用追加模式
+    is_edit_overwrite = (card.get('status') == 'edited')
 
     if ctype not in CARD_REGISTRY or not content:
         return jsonify({'error': '无效的卡片或内容为空'}), 400
@@ -428,14 +432,24 @@ def apply_card():
             # 一次生成多个人物时，content 含多个人物块（空行分隔），全部解析后追加
             char_list = _parse_character_card_multi(title, content)
 
-            # 1) 写入 Character 表（兼容独立人物管理）+ 2) 写入 character_profiles JSON 数组
-            existing_list = []
-            try:
-                parsed = json.loads(bb.character_profiles or '[]')
-                if isinstance(parsed, list):
-                    existing_list = parsed
-            except Exception:
+            # 编辑后落地：覆盖模式——清空原人物列表后写入新人物
+            # 直接采纳：追加模式——保留原人物后追加新人物
+            if is_edit_overwrite:
+                # 覆盖：删除原 Character 表记录 + 重置 character_profiles
+                try:
+                    Character.query.filter_by(book_id=book_id).delete()
+                except Exception:
+                    pass
                 existing_list = []
+            else:
+                # 追加：保留原数据
+                existing_list = []
+                try:
+                    parsed = json.loads(bb.character_profiles or '[]')
+                    if isinstance(parsed, list):
+                        existing_list = parsed
+                except Exception:
+                    existing_list = []
 
             for char_data in char_list:
                 db.session.add(Character(
@@ -452,7 +466,12 @@ def apply_card():
             field = spec['field']
             existing = (getattr(bb, field, '') or '').strip()
             entry = f'【{title}】\n{content}' if title else content
-            setattr(bb, field, f'{existing}\n\n{entry}'.strip() if existing else entry)
+            if is_edit_overwrite:
+                # 编辑后落地：覆盖原内容（用户已编辑，以新内容为准）
+                setattr(bb, field, entry)
+            else:
+                # 直接采纳：追加到原内容后
+                setattr(bb, field, f'{existing}\n\n{entry}'.strip() if existing else entry)
 
         db.session.commit()
     except Exception as e:

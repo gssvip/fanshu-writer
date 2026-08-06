@@ -146,11 +146,11 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
               </button>
             ) : (
               <button className="chat-card-btn primary" onClick={() => onAdopt(card)} disabled={applying}>
-                {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '保存为新章节' : '采纳落地')}
+                {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '保存为新章节' : '采纳(追加)')}
               </button>
             )}
             <button className="chat-card-btn" onClick={() => setEditing(true)} disabled={applying}>
-              {card.type === 'SAVE_CHAPTER' ? '编辑后保存' : '编辑'}
+              {card.type === 'SAVE_CHAPTER' ? '编辑后保存' : '编辑后覆盖'}
             </button>
             <button className="chat-card-btn ghost" onClick={() => onIgnore(card)} disabled={applying}>
               忽略
