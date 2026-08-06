@@ -1180,20 +1180,23 @@ textarea{resize:vertical;line-height:1.8}
   .concept-ai-create-cta{padding:9px 36px!important;font-size:20px!important}
   .concept-ai-create-cta .cta-main-row{
     justify-content:center;
-    gap:36px;
+    gap:48px;
   }
-  /* 电脑端 AI智驾 作为整体紧贴 */
+  /* 电脑端 AI智驾 作为整体，字间距空三格 */
   .concept-ai-create-cta .cta-title{
     display:inline-flex;
     align-items:center;
+    letter-spacing:1.5em;
+    margin-right:-1.5em;
   }
-  /* 电脑端显示副标题，字号与主标题一致 */
+  /* 电脑端显示副标题，字号与主标题一致，字间距空三格 */
   .concept-ai-create-cta .cta-sub-text{
     display:inline;
     font-size:20px;
     font-weight:700;
     opacity:1;
-    letter-spacing:1px;
+    letter-spacing:1.5em;
+    margin-right:-1.5em;
     white-space:nowrap;
   }
 }
