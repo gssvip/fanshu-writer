@@ -2289,7 +2289,11 @@ function ConceptPanel(props: {
           title="打开 AI 智驾：设定/正文/去AI/校审 四Tab协作创作"
           style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)', display: 'flex', alignItems: 'center', gap: 8, padding: '14px 28px', fontSize: 15, fontWeight: 700 }}
         >
-          <span style={{ lineHeight: 1 }} aria-hidden><CarLogo size={56} /></span><span>AI 智驾</span>
+          <span style={{ lineHeight: 1, display: 'inline-flex', alignItems: 'center', gap: 14 }} aria-hidden>
+            <CarLogo size={36} />
+            <span>AI</span>
+            <span>智驾</span>
+          </span>
         </button>
       </div>
 
@@ -3360,7 +3364,7 @@ function ChapterPanel(props: {
             disabled={aiCreating}
             title="打开 AI 智驾·正文Tab：续写/润色本章"
           >
-            <span style={{display:'inline-flex',alignItems:'center',gap:4}}><CarLogo size={24} /> AI 智驾</span>
+            <span style={{display:'inline-flex',alignItems:'center',gap:6}}><CarLogo size={20} /><span>AI</span><span>智驾</span></span>
           </button>
         </div>
         <input
