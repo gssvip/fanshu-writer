@@ -2289,7 +2289,7 @@ function ConceptPanel(props: {
           title="打开 AI 智驾：设定/正文/去AI/校审 四Tab协作创作"
           style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)', display: 'flex', alignItems: 'center', gap: 8, padding: '14px 28px', fontSize: 15, fontWeight: 700 }}
         >
-          <span style={{ lineHeight: 1 }} aria-hidden><CarLogo size={48} /></span><span>AI 智驾</span>
+          <span style={{ lineHeight: 1 }} aria-hidden><CarLogo size={56} /></span><span>AI 智驾</span>
         </button>
       </div>
 
