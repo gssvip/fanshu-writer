@@ -1681,10 +1681,6 @@ textarea{resize:vertical;line-height:1.8}
   background: var(--bg-tertiary);
 }
 .chat-msg-user .chat-msg-avatar { background: var(--accent); color: white; }
-/* AI智驾图标(CarLogo)无背景：avatar容器含图标时背景透明，避免图标下出现白底 */
-.chat-msg-avatar:has(.car-logo),
-.ai-chat-msg-avatar:has(.car-logo) { background: transparent !important; border: none !important; }
-.car-logo { background: transparent !important; }
 .chat-msg-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .chat-msg-text {
   padding: 10px 14px; border-radius: 12px;
