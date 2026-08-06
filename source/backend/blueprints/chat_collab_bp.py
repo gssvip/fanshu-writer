@@ -1284,6 +1284,28 @@ def smart_generate():
         except Exception:
             pass
 
+    # 人物维度额外约束：禁止输出 JSON/代码符号，必须用自然语言按字段分行
+    character_extra = ''
+    if dim_key == 'character_profiles':
+        character_extra = """
+
+【人物维度输出格式·铁律】
+1. 禁止输出 JSON 数组、大括号、方括号、引号、逗号、冒号等代码符号。
+2. 禁止输出 "name"/"identity"/"personality" 等英文字段名。
+3. 必须用纯中文自然语言，按以下格式分行输出（每个字段一行，用中文「字段名：内容」）：
+
+姓名：xxx
+身份：xxx
+性格：xxx
+动机：xxx
+背景：xxx
+关系：xxx
+能力：xxx
+物品：xxx
+
+4. 若有多个角色，每个角色之间用空行分隔，每个角色都按上述格式输出。
+5. 内容要充实具体，每个字段至少30字，性格和背景可适当展开。"""
+
     sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{spec['label']}」维度的完整设定内容。
 
 题材：{book.genre or "未指定"}
@@ -1301,7 +1323,7 @@ def smart_generate():
 
 【选中方案】
 {suggestion}
-{outline_extra}{timeline_extra}
+{outline_extra}{timeline_extra}{character_extra}
 
 {("【技能包指引】\n" + skill_note) if skill_note else ""}
 
