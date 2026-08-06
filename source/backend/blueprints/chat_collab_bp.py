@@ -416,34 +416,114 @@ def apply_card():
         bb = BookBible(book_id=book_id)
         db.session.add(bb)
 
-    if spec['mode'] == 'character':
-        # 人物卡走独立 Character 表：解析"姓名|身份|性格|背景"格式
-        lines = content.split('\n')
-        name = title or (lines[0].split('|')[0].strip() if lines else '未命名')
-        # 尝试结构化解析
-        parts = [p.strip() for p in content.replace('\n', '|').split('|') if p.strip()]
-        char = Character(
-            book_id=book_id,
-            name=parts[0] if len(parts) > 0 else name,
-            role='protagonist' if '主角' in title or '主角' in content else 'supporting',
-            description=parts[1] if len(parts) > 1 else '',
-            personality=parts[2] if len(parts) > 2 else '',
-            background=parts[3] if len(parts) > 3 else content,
-        )
-        db.session.add(char)
-        # 同时追加到 character_profiles 文本字段（兼容老逻辑）
-        existing = (bb.character_profiles or '').strip()
-        bb.character_profiles = f'{existing}\n\n【{title}】\n{content}'.strip() if existing else f'【{title}】\n{content}'
-    else:
-        field = spec['field']
-        existing = (getattr(bb, field, '') or '').strip()
-        entry = f'【{title}】\n{content}' if title else content
-        setattr(bb, field, f'{existing}\n\n{entry}'.strip() if existing else entry)
+    try:
+        if spec['mode'] == 'character':
+            # 人物卡：解析"姓名|身份|性格|动机|背景|关系|能力|物品"或按行/【字段】解析
+            # 前端人物及关系维度期望 character_profiles 为 JSON 数组，每元素含：
+            # name/role/identity/personality/motivation/background/relationships/abilities/items
+            char_data = _parse_character_card(title, content)
 
-    db.session.commit()
+            # 1) 写入 Character 表（兼容独立人物管理）
+            char = Character(
+                book_id=book_id,
+                name=char_data.get('name') or '未命名',
+                role=char_data.get('role') or ('protagonist' if '主角' in (title or '') or '主角' in content else 'supporting'),
+                description=char_data.get('identity') or '',
+                personality=char_data.get('personality') or '',
+                background=char_data.get('background') or content,
+            )
+            db.session.add(char)
+
+            # 2) 写入 character_profiles 为 JSON 数组（前端人物及关系维度读取格式）
+            existing_list = []
+            try:
+                parsed = json.loads(bb.character_profiles or '[]')
+                if isinstance(parsed, list):
+                    existing_list = parsed
+            except Exception:
+                existing_list = []
+            existing_list.append(char_data)
+            bb.character_profiles = json.dumps(existing_list, ensure_ascii=False)
+        else:
+            field = spec['field']
+            existing = (getattr(bb, field, '') or '').strip()
+            entry = f'【{title}】\n{content}' if title else content
+            setattr(bb, field, f'{existing}\n\n{entry}'.strip() if existing else entry)
+
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'落地失败：{str(e)}'}), 500
+
     return jsonify({'ok': True, 'field': spec['field'], 'label': spec['label'],
                     'progress': build_progress_map(bb),
                     **result_extra})
+
+
+def _parse_character_card(title, content):
+    """解析人物卡片内容为结构化字段（与前端 CharacterData 对齐）。
+    支持格式：
+      1) 姓名|身份|性格|动机|背景|关系|能力|物品  （| 分隔）
+      2) 姓名：xxx\\n身份：xxx\\n...  （字段名引导）
+      3) 【姓名】xxx\\n【身份】xxx\\n...
+      4) 纯文本：首行/标题为姓名，其余为性格
+    """
+    fields = ['name', 'identity', 'personality', 'motivation', 'background', 'relationships', 'abilities', 'items']
+    # 字段关键词映射（支持中文标签）
+    key_map = {
+        'name': ['姓名', '名字', '名称'],
+        'role': ['角色', '定位'],
+        'identity': ['身份', '职业'],
+        'personality': ['性格', '个性'],
+        'motivation': ['动机', '目的'],
+        'background': ['背景', '来历'],
+        'relationships': ['关系', '人际关系'],
+        'abilities': ['能力', '技能', '金手指'],
+        'items': ['物品', '装备'],
+    }
+    result = {f: '' for f in fields}
+    result['name'] = title or '未命名'
+    result['role'] = ''
+
+    text = content.strip()
+    # 策略1：| 分隔
+    if '|' in text and '\n' not in text:
+        parts = [p.strip() for p in text.split('|') if p.strip()]
+        for i, f in enumerate(fields):
+            if i < len(parts):
+                result[f] = parts[i]
+        if result['name'] and title:
+            result['name'] = title
+        return result
+
+    # 策略2/3：按行解析，匹配字段关键词
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    matched_any = False
+    for line in lines:
+        m = re.match(r'^(?:【|\[)?(姓名|名字|名称|角色|定位|身份|职业|性格|个性|动机|目的|背景|来历|关系|人际关系|能力|技能|金手指|物品|装备)(?:】|\])?[:：]\s*(.+)$', line)
+        if m:
+            matched_any = True
+            label = m.group(1)
+            value = m.group(2).strip()
+            for f, keys in key_map.items():
+                if label in keys:
+                    result[f] = value
+                    break
+    if matched_any:
+        if title and not result['name']:
+            result['name'] = title
+        elif not result['name'] or result['name'] == '未命名':
+            result['name'] = title or lines[0][:20]
+        return result
+
+    # 策略4：纯文本兜底
+    result['name'] = title or (lines[0][:20] if lines else '未命名')
+    result['personality'] = text
+    if '主角' in (title or '') or '主角' in text:
+        result['role'] = '主角'
+    return result
 
 
 @chat_collab_bp.route('/api/books/<book_id>/ai/progress', methods=['GET'])
@@ -1030,6 +1110,14 @@ def smart_suggest():
     bb = BookBible.query.filter_by(book_id=book_id).first()
     ctx, self_content = _build_dim_context(book, bb, dim_key)
 
+    # 注入核心创作参数（卷数/题材/风格），让大纲/剧情等维度严格按全书卷数规划
+    core_params = ''
+    try:
+        from app import _build_core_params_block
+        core_params = _build_core_params_block(bb, book) or ''
+    except Exception:
+        pass
+
     # 注入构思类技能包
     skill_note = ''
     try:
@@ -1038,10 +1126,22 @@ def smart_suggest():
     except Exception:
         pass
 
+    # 大纲维度额外注入五幕模型说明，确保按卷数生成五幕式结构
+    outline_extra = ''
+    if dim_key == 'plot_design':
+        try:
+            from app import _get_total_volumes
+            tv = _get_total_volumes(bb, book)
+            outline_extra = f'\n\n【大纲维度专属要求】请生成「五幕式总纲」，全书严格 {tv} 卷，每卷约50章12万字。五幕模型：立身(1-5%)/立足(5-25%)/立势(25-50%)/立威(50-75%)/立命(75-100%)。为每卷输出：卷号卷名、所属幕、本卷核心目标、主要冲突、关键转折点(2-3个)、卷尾高潮与悬念。只输出总纲文本，不输出详细情节节点。'
+        except Exception:
+            pass
+
     sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》的「{spec['label']}」维度生成 3-5 个差异化的创意方案供作者选择。
 
 题材：{book.genre or "未指定"}
 类型：{book.book_type or "未指定"}
+
+{core_params}
 
 【已有设定参考】
 {ctx or "（暂无）"}
@@ -1050,6 +1150,7 @@ def smart_suggest():
 
 【作者需求】
 {requirement or f"请帮我生成{spec['label']}的设定"}
+{outline_extra}
 
 {("【技能包指引】\n" + skill_note) if skill_note else ""}
 
@@ -1131,12 +1232,80 @@ def smart_generate():
     bb = BookBible.query.filter_by(book_id=book_id).first()
     ctx, self_content = _build_dim_context(book, bb, dim_key)
 
+    # 注入核心创作参数（卷数/题材/风格），让大纲/剧情等维度严格按全书卷数规划
+    core_params = ''
+    try:
+        from app import _build_core_params_block
+        core_params = _build_core_params_block(bb, book) or ''
+    except Exception:
+        pass
+
     skill_note = ''
     try:
         from app import _get_skill_prompts_by_category
         skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='agent') or ''
     except Exception:
         pass
+
+    # 大纲维度额外注入五幕模型说明，确保按卷数生成五幕式结构
+    outline_extra = ''
+    if dim_key == 'plot_design':
+        try:
+            from app import _get_total_volumes
+            tv = _get_total_volumes(bb, book)
+            outline_extra = f'\n\n【大纲维度专属要求】请生成「五幕式总纲」，全书严格 {tv} 卷，每卷约50章12万字。五幕模型：立身(1-5%)/立足(5-25%)/立势(25-50%)/立威(50-75%)/立命(75-100%)。为每卷输出：卷号卷名、所属幕、本卷核心目标、主要冲突、关键转折点(2-3个)、卷尾高潮与悬念。只输出总纲文本，不输出详细情节节点。'
+        except Exception:
+            pass
+
+    # 剧情维度额外注入全部卷剧情约束，确保按全部卷创作
+    timeline_extra = ''
+    if dim_key == 'timeline':
+        try:
+            from app import _get_total_volumes
+            tv = _get_total_volumes(bb, book)
+            # 注入已有卷剧情作为连贯约束
+            existing_volumes = ''
+            if bb and bb.timeline:
+                try:
+                    vols = json.loads(bb.timeline)
+                    if isinstance(vols, list) and vols:
+                        vol_lines = []
+                        for v in vols:
+                            vi = v.get('volume_index') or v.get('volume_id') or '?'
+                            vn = v.get('volume', f'第{vi}卷')
+                            mp = (v.get('main_plot') or '')[:200]
+                            vol_lines.append(f'第{vi}卷《{vn}》：{mp}')
+                        existing_volumes = '\n'.join(vol_lines)
+                except Exception:
+                    pass
+            timeline_extra = f'\n\n【剧情维度专属要求】全书严格 {tv} 卷，每卷约50章12万字。请基于五幕式总纲生成全部 {tv} 卷的剧情，各卷剧情连贯、卷间衔接（ending_hook与下一卷开头承接），每卷剧情须支撑50章12万字容量。'
+            if existing_volumes:
+                timeline_extra += f'\n\n【已有卷剧情（须保持连贯，可在其基础上完善）】\n{existing_volumes}'
+        except Exception:
+            pass
+
+    sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{spec['label']}」维度的完整设定内容。
+
+题材：{book.genre or "未指定"}
+类型：{book.book_type or "未指定"}
+
+{core_params}
+
+【已有设定参考】
+{ctx or "（暂无）"}
+
+{("【当前维度已有内容（可在此基础上完善，不要简单重复）】\n" + self_content) if self_content else ""}
+
+【作者需求】
+{requirement or "无"}
+
+【选中方案】
+{suggestion}
+{outline_extra}{timeline_extra}
+
+{("【技能包指引】\n" + skill_note) if skill_note else ""}
+
+请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。"""
 
     session = None
     if session_id:
