@@ -1859,7 +1859,7 @@ textarea{resize:vertical;line-height:1.8}
 
   /* 设定Tab：两行维度按钮合并为一行，宽面板下横向排开自动换行 */
   .smart-dim-rows { flex-direction: row; flex-wrap: wrap; gap: 8px; }
-  .smart-dim-row { overflow-x: visible; flex-wrap: wrap; padding-bottom: 0; gap: 8px; flex: 0 0 auto; }
+  .smart-dim-row { display: contents; }
   .smart-dim-btn { flex: 0 1 auto; padding: 8px 14px; font-size: 13px; }
 
   /* 顶部工具按钮：电脑端显示图标+文字，关闭按钮醒目化 */
