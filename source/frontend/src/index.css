@@ -1150,7 +1150,7 @@ textarea{resize:vertical;line-height:1.8}
 /* ===== 构思面板 ===== */
 .concept-panel{padding:12px 16px;display:flex;flex-direction:column;min-height:0}
 .concept-input-section{margin-bottom:8px;display:flex;flex-direction:column;flex:1;min-height:0}
-/* AI 智驾入口按钮：宽度占满，主行[图标 AI 智 驾]均匀分布，上下 padding 减半 */
+/* AI 智驾入口按钮：手机端居中，电脑端单行[图标 AI 智 驾 AI领航，人机共创] */
 .concept-ai-create-cta{
   width:100%;
   display:flex;
@@ -1169,10 +1169,26 @@ textarea{resize:vertical;line-height:1.8}
   width:100%;
   display:flex;
   align-items:center;
-  justify-content:space-between;
+  justify-content:center;
+  gap:16px;
 }
+/* 手机端隐藏副标题 */
+.concept-ai-create-cta .cta-sub-text{display:none}
 @media (min-width:768px){
   .concept-ai-create-cta{padding:9px 36px!important;font-size:20px!important}
+  .concept-ai-create-cta .cta-main-row{
+    justify-content:space-between;
+    gap:0;
+  }
+  /* 电脑端显示副标题，与主标题同一行，小字 */
+  .concept-ai-create-cta .cta-sub-text{
+    display:inline;
+    font-size:13px;
+    font-weight:500;
+    opacity:0.85;
+    letter-spacing:1px;
+    white-space:nowrap;
+  }
 }
 .concept-label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-shrink:0}
 .concept-label{font-size:13px;font-weight:600;color:var(--text-secondary)}
