@@ -1177,12 +1177,12 @@ textarea{resize:vertical;line-height:1.8}
 /* 手机端隐藏副标题 */
 .concept-ai-create-cta .cta-sub-text{display:none}
 @media (min-width:768px){
-  .concept-ai-create-cta{padding:9px 36px!important;font-size:20px!important}
+  .concept-ai-create-cta{padding:9px 36px!important;font-size:20px!important;color:#000!important}
   .concept-ai-create-cta .cta-main-row{
     justify-content:center;
     gap:48px;
   }
-  /* 电脑端 AI智驾：inline-flex + gap，AI整体不分，字间距1.2em */
+  /* 电脑端 Ai智驾：inline-flex + gap，Ai整体不分，字间距1.2em */
   .concept-ai-create-cta .cta-title{
     display:inline-flex;
     align-items:center;
@@ -1198,10 +1198,9 @@ textarea{resize:vertical;line-height:1.8}
     margin-right:-1.2em;
     white-space:nowrap;
   }
-  /* AI 作为整体，字母间无间距，AI后补1.2em间距 */
+  /* Ai 作为整体，字母间无间距 */
   .concept-ai-create-cta .cta-ai{
     letter-spacing:0;
-    margin-right:1.2em;
   }
 }
 .concept-label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-shrink:0}
