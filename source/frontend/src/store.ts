@@ -111,7 +111,7 @@ export const useStore = create<AppStore>((set) => ({
   setRightPanelWidth: (width) => set({ rightPanelWidth: width }),
   setLoading: (loading) => set({ loading }),
   openChatPanel: (bookId, sessionId) => set({ chatPanelOpen: true, chatPanelBookId: bookId, chatPanelSessionId: sessionId ?? null }),
-  closeChatPanel: () => set({ chatPanelOpen: false }),
+  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null }),
   logout: () => {
     localStorage.removeItem('fanshu-token');
     set({ currentUser: null, books: [], currentBook: null });

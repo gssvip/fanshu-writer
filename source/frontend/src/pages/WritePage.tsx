@@ -186,7 +186,7 @@ export default function WritePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const bookId = searchParams.get('book');
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null) => void;
 
   const [book, setBook] = useState<Book | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -2135,7 +2135,7 @@ function ConceptPanel(props: {
     onExecuteConceptAi, onCancelConceptAi, onEditConceptAiPrompt,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
     bookId, aiSessions, onRefreshSessions, onDeleteAiSessions, onRenameAiSession, onResumeAiSession } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const selectedCount = selectedSkillPackIds.length;
@@ -2622,7 +2622,7 @@ function ChapterPanel(props: {
     chapterLangStyles: langStyles, onToggleChapterLangStyle,
     batchCount, onBatchCountChange, batchCreating, batchProgress, onBatchCreate,
   } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [langStyleExpanded, setLangStyleExpanded] = useState(false);

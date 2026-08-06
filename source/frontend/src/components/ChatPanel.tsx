@@ -471,8 +471,6 @@ export default function ChatPanel() {
   const [reviewVolumeIds, setReviewVolumeIds] = useState<string[]>([]);          // 校审Tab：按卷检查
   const [deaiPacks, setDeaiPacks] = useState<Array<{ id: string; name: string; description: string; icon: string; priority: number }>>([]);
   const [reviewing, setReviewing] = useState(false);
-  // 正文Tab：待选章节的动作（写作/润色），点击后底部消息提示选章节
-  const [pendingChapterAction, setPendingChapterAction] = useState<'continue' | 'polish' | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -552,10 +550,9 @@ export default function ChatPanel() {
     }
   }, [chatPanelOpen, bookId, chatPanelSessionId, refreshProgress, refreshHistory]);
 
-  // 切换 Tab 时清空待选动作和选中章节（各Tab独立）
+  // 切换 Tab 时清空选中章节（各Tab独立）
   const switchTab = useCallback((tab: SmartTab) => {
     setActiveTab(tab);
-    setPendingChapterAction(null);
   }, []);
 
   // 各 Tab 独立的技能包切换
@@ -730,7 +727,6 @@ export default function ChatPanel() {
   // 真正执行章节写作/修改（结合用户在消息栏输入的要求）
   const doChapterAction = useCallback(async (action: 'continue' | 'polish', targetChapterId: string | null, instruction?: string) => {
     if (!bookId || streaming) return;
-    setPendingChapterAction(null);
     setStreamError('');
     streamBufferRef.current = '';
     const targetNum = action === 'continue'
@@ -773,6 +769,33 @@ export default function ChatPanel() {
   const doChapterActionWithNote = useCallback((action: 'continue' | 'polish', chapterId: string, note: string) => {
     doChapterAction(action, chapterId, note);
   }, [doChapterAction]);
+
+  // 正文Tab统一发送：直接从消息框输入，智能判断修改/续写，无需先点按钮切换模式
+  const handleChapterSend = useCallback(() => {
+    if (!bookId || streaming) return;
+    const text = input.trim();
+    if (!text) {
+      // 无输入时直接续写下一章
+      doChapterAction('continue', null);
+      return;
+    }
+    // 智能判断：包含"第X章"或修改关键词 → 修改模式；否则 → 续写模式（输入作为写作要求）
+    const hasChapterNum = /第\s*\d+\s*章/.test(text);
+    const hasModifyKeyword = /修改|润色|改一?下|调整|增加|删掉|删除|替换|优化|扩充|精简/.test(text);
+    if ((hasChapterNum || hasModifyKeyword) && chapters.length > 0) {
+      const numMatch = text.match(/第?\s*(\d+)\s*章/);
+      const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter?.order_index || 1);
+      const ch = chapters.find(c => c.order_index === targetNum);
+      if (ch) {
+        doChapterActionWithNote('polish', ch.id, text);
+      } else {
+        setStreamError(`未找到第 ${targetNum} 章，请检查章节号或直接输入写作要求`);
+      }
+    } else {
+      // 续写：输入内容作为本章写作要求
+      doChapterAction('continue', null, text);
+    }
+  }, [bookId, streaming, input, chapters, latestChapter, doChapterAction, doChapterActionWithNote]);
 
   // 章节点位刷新🔄：手动重新拉取最新章节和章节列表
   const refreshChapterAnchor = useCallback(() => {
@@ -1067,7 +1090,7 @@ export default function ChatPanel() {
       if (selectedDim === 'general') return '和 AI 智驾自由讨论小说/剧情…（提及人物/伏笔/世界观等会自动产出卡片）';
       return `描述你对「${dimensions.find(d => d.key === selectedDim)?.label || selectedDim}」的需求或修改意见…`;
     }
-    if (activeTab === 'chapter') return '点击「写作」开始最新章节，或点「修改」后在此说明修改哪一章及意见…';
+    if (activeTab === 'chapter') return '输入写作要求直接续写，或输入「第3章 增加心理描写」修改已写章节…';
     if (activeTab === 'deai') return '点击上方「开始去AI味」按钮即可…';
     if (activeTab === 'review') return '点击上方检查按钮即可…';
     return '和 AI 智驾聊聊…';
@@ -1248,53 +1271,27 @@ export default function ChatPanel() {
                       title="刷新章节定位（写作后会自动填入新章节到目录）"
                     >🔄</button>
                   </div>
-                  {/* 写作 / 修改 两按钮一排 */}
+                  {/* 写作 / 修改 两按钮一排（直接执行，无需切换模式） */}
                   <div className="smart-chapter-actions smart-chapter-actions-row">
                     <button
-                      className={`smart-action-btn primary ${pendingChapterAction === 'continue' ? 'pending' : ''}`}
-                      onClick={() => {
-                        if (pendingChapterAction === 'continue') {
-                          // 已点过写作，现在结合消息栏输入执行
-                          doChapterAction('continue', null);
-                        } else {
-                          setPendingChapterAction('continue');
-                          setMessages(prev => [...prev, {
-                            role: 'assistant',
-                            content: `✍️ 即将写作第 ${nextChapterNum} 章。请在下方输入框补充本章写作要求（如情节要点、人物、场景），不填也可直接点「写作」开始。`,
-                          }]);
-                        }
-                      }}
+                      className="smart-action-btn primary"
+                      onClick={() => doChapterAction('continue', null, input.trim() || undefined)}
                       disabled={streaming}
-                    >{pendingChapterAction === 'continue' ? '▶️ 开始写作' : '✍️ 写作'}</button>
+                      title="续写下一章（输入框内容作为写作要求）"
+                    >✍️ 写作第 {nextChapterNum} 章</button>
                     <button
-                      className={`smart-action-btn ${pendingChapterAction === 'polish' ? 'pending' : ''}`}
+                      className="smart-action-btn"
                       onClick={() => {
-                        if (pendingChapterAction === 'polish') {
-                          // 已点过修改，结合消息栏输入执行（消息栏说明改哪一章+意见）
-                          const text = input.trim();
-                          if (text) {
-                            // 从消息栏解析章节号
-                            const numMatch = text.match(/第?\s*(\d+)\s*章/);
-                            const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter?.order_index || 1);
-                            const ch = chapters.find(c => c.order_index === targetNum);
-                            if (ch) {
-                              doChapterActionWithNote('polish', ch.id, text);
-                            } else {
-                              setStreamError(`未找到第 ${targetNum} 章，请检查章节号`);
-                            }
-                          } else {
-                            setStreamError('请在输入框说明要修改哪一章及修改意见（如「第3章，增加主角心理描写」）');
-                          }
-                        } else {
-                          setPendingChapterAction('polish');
-                          setMessages(prev => [...prev, {
-                            role: 'assistant',
-                            content: `✨ 修改模式：请在下方输入框说明要修改哪一章及修改意见（如「第3章，增加主角心理描写」），不填章节号默认改最新章。`,
-                          }]);
+                        const text = input.trim();
+                        if (!text) {
+                          setStreamError('请在输入框说明要修改哪一章及修改意见（如「第3章，增加主角心理描写」）');
+                          return;
                         }
+                        handleChapterSend();
                       }}
                       disabled={streaming || chapters.length === 0}
-                    >{pendingChapterAction === 'polish' ? '▶️ 执行修改' : '✨ 修改'}</button>
+                      title="修改已写章节（在输入框写明章节号和修改意见）"
+                    >✨ 修改</button>
                   </div>
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} compact />
                 </>
@@ -1486,22 +1483,11 @@ export default function ChatPanel() {
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
-                        if (activeTab === 'chapter' && pendingChapterAction) {
-                          e.preventDefault();
-                          if (pendingChapterAction === 'continue') {
-                            doChapterAction('continue', null);
-                          } else if (pendingChapterAction === 'polish') {
-                            const text = input.trim();
-                            if (text) {
-                              const numMatch = text.match(/第?\s*(\d+)\s*章/);
-                              const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter?.order_index || 1);
-                              const ch = chapters.find(c => c.order_index === targetNum);
-                              if (ch) doChapterActionWithNote('polish', ch.id, text);
-                              else setStreamError(`未找到第 ${targetNum} 章`);
-                            }
-                          }
+                        e.preventDefault();
+                        if (activeTab === 'chapter') {
+                          // 正文Tab：直接发送，智能判断修改/续写
+                          handleChapterSend();
                         } else if (activeTab === 'deai' && input.trim()) {
-                          e.preventDefault();
                           handleDeai();
                         }
                       }
@@ -1511,24 +1497,12 @@ export default function ChatPanel() {
                   />
                   {streaming ? (
                     <button className="chat-send stop" onClick={stopStream}>停止</button>
-                  ) : (activeTab === 'chapter' && pendingChapterAction === 'continue') ? (
+                  ) : activeTab === 'chapter' ? (
                     <button
                       className="chat-send"
-                      onClick={() => doChapterAction('continue', null)}
-                    >▶️ 写作</button>
-                  ) : (activeTab === 'chapter' && pendingChapterAction === 'polish') ? (
-                    <button
-                      className="chat-send"
-                      onClick={() => {
-                        const text = input.trim();
-                        if (!text) return;
-                        const numMatch = text.match(/第?\s*(\d+)\s*章/);
-                        const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter?.order_index || 1);
-                        const ch = chapters.find(c => c.order_index === targetNum);
-                        if (ch) doChapterActionWithNote('polish', ch.id, text);
-                        else setStreamError(`未找到第 ${targetNum} 章`);
-                      }}
-                    >▶️ 修改</button>
+                      onClick={handleChapterSend}
+                      disabled={chapters.length === 0 && !input.trim()}
+                    >{input.trim() ? '发送' : '▶️ 写作'}</button>
                   ) : activeTab === 'deai' ? (
                     <button
                       className="chat-send"
