@@ -228,9 +228,11 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
   const [showMenu, setShowMenu] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
+  const [copied, setCopied] = useState(false);
   const pressTimer = useRef<number | null>(null);
   const movedRef = useRef(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const copyTimer = useRef<number | null>(null);
 
   // 判断是否需要折叠：内容超过两行（约80字或多行）
   const contentLines = (message.content || '').split('\n');
@@ -260,11 +262,38 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
     return () => document.removeEventListener('mousedown', handler);
   }, [showMenu]);
 
+  // 卸载时清理复制提示计时器
+  useEffect(() => {
+    return () => { if (copyTimer.current) window.clearTimeout(copyTimer.current); };
+  }, []);
+
   const handleSaveEdit = () => {
     if (onEditMessage && draft.trim() !== message.content) {
       onEditMessage(index, draft.trim());
     }
     setEditing(false);
+  };
+
+  // 复制消息内容到剪贴板
+  const handleCopy = async () => {
+    const text = (message.content || '').trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // 降级方案：用 textarea + execCommand
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch { /* ignore */ }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    if (copyTimer.current) window.clearTimeout(copyTimer.current);
+    copyTimer.current = window.setTimeout(() => setCopied(false), 1500);
   };
 
   return (
@@ -306,6 +335,39 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
           <div className="chat-msg-text"><span className="chat-cursor">▋</span></div>
         ) : null}
         {showCollapsed && <button className="chat-msg-expand" onClick={(e) => { e.stopPropagation(); setCollapsed(false); }}>展开全文 ▼</button>}
+        {/* 消息操作栏：复制 / 重新生成 / 删除（流式生成中隐藏） */}
+        {!streaming && !editing && (message.content || '') && (
+          <div className={`chat-msg-actions ${isUser ? 'chat-msg-actions-user' : ''}`}>
+            <button
+              className="chat-msg-action-btn"
+              onClick={handleCopy}
+              title="复制"
+            >{copied ? '✓ 已复制' : '📋 复制'}</button>
+            {!isUser && onRegenerate && (
+              <button
+                className="chat-msg-action-btn"
+                onClick={() => onRegenerate(index)}
+                title="重新生成"
+              >🔄 重新生成</button>
+            )}
+            {isUser && onEditMessage && (
+              <button
+                className="chat-msg-action-btn"
+                onClick={() => setEditing(true)}
+                title="编辑"
+              >✏️ 编辑</button>
+            )}
+            {onDeleteMessage && (
+              <button
+                className="chat-msg-action-btn danger"
+                onClick={() => {
+                  if (window.confirm('确定删除这条消息？')) onDeleteMessage(index);
+                }}
+                title="删除"
+              >🗑️ 删除</button>
+            )}
+          </div>
+        )}
         {message.cards && message.cards.length > 0 && (
           <div className="chat-msg-cards">
             {message.cards.map((c, idx) => (
@@ -324,9 +386,10 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
       </div>
       {showMenu && (
         <div className="chat-msg-menu" ref={menuRef}>
-          <button className="chat-msg-menu-item" onClick={() => { setEditing(true); setShowMenu(false); }}>✏️ 编辑</button>
+          <button className="chat-msg-menu-item" onClick={() => { handleCopy(); setShowMenu(false); }}>📋 复制</button>
+          {isUser && onEditMessage && <button className="chat-msg-menu-item" onClick={() => { setEditing(true); setShowMenu(false); }}>✏️ 编辑</button>}
           {!isUser && onRegenerate && <button className="chat-msg-menu-item" onClick={() => { onRegenerate(index); setShowMenu(false); }}>🔄 重新生成</button>}
-          {onDeleteMessage && <button className="chat-msg-menu-item danger" onClick={() => { onDeleteMessage(index); setShowMenu(false); }}>🗑️ 删除</button>}
+          {onDeleteMessage && <button className="chat-msg-menu-item danger" onClick={() => { if (window.confirm('确定删除这条消息？')) onDeleteMessage(index); setShowMenu(false); }}>🗑️ 删除</button>}
         </div>
       )}
     </div>

@@ -2188,6 +2188,24 @@ textarea{resize:vertical;line-height:1.8}
 .chat-msg-menu-item:hover { background: var(--bg-hover); }
 .chat-msg-menu-item.danger { color: var(--danger); }
 
+/* ========== 消息操作栏（复制/重新生成/删除，常驻显示） ========== */
+.chat-msg-actions {
+  display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap;
+}
+.chat-msg-actions-user { justify-content: flex-end; }
+.chat-msg-action-btn {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 3px 8px; font-size: 11px; line-height: 1.4;
+  color: var(--text-muted); background: transparent;
+  border: 1px solid transparent; border-radius: 5px;
+  cursor: pointer; transition: all 0.15s;
+}
+.chat-msg-action-btn:hover {
+  color: var(--text-secondary); background: var(--bg-hover);
+  border-color: var(--border-color);
+}
+.chat-msg-action-btn.danger:hover { color: var(--danger); background: rgba(220,53,69,0.08); }
+
 /* ========== 正文Tab：润色章节选择列表 ========== */
 .smart-chapter-pick {
   display: flex; flex-direction: column; gap: 6px;
