@@ -1188,15 +1188,16 @@ textarea{resize:vertical;line-height:1.8}
     align-items:center;
     gap:1.2em;
   }
-  /* 电脑端显示副标题，字号与主标题一致，字间距1.2em */
+  /* 电脑端显示副标题，字号与主标题一致，字间距三个空格，白色字 */
   .concept-ai-create-cta .cta-sub-text{
     display:inline;
     font-size:20px;
     font-weight:700;
     opacity:1;
-    letter-spacing:1.2em;
-    margin-right:-1.2em;
+    letter-spacing:1.5em;
+    margin-right:-1.5em;
     white-space:nowrap;
+    color:#fff!important;
   }
   /* Ai 作为整体，字母间无间距 */
   .concept-ai-create-cta .cta-ai{
