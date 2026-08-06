@@ -792,9 +792,208 @@ def _action_master_create(book, session, instruction, gw, sse):
                                        generated, dims)
 
 
+# ============================================================================
+# 视点感知注入（第三人称有限视角）：正文写作时只给AI看POV角色能知道的信息
+# 目标：减少token + 防剧透（不注入未来卷剧情、伏笔谜底、无关人物）
+# ============================================================================
+
+def _infer_pov_character(book_id, target_chapter_num, prev_chapter_content):
+    """推断当前章的视点人物（POV）。
+    策略：从上一章内容中找出现频率最高的已注册人物名；回退到主角；再回退到None。
+    """
+    from app import Character
+    try:
+        all_chars = Character.query.filter_by(book_id=book_id).all()
+        if not all_chars:
+            return None
+        # 主角兜底
+        protagonist = next((c for c in all_chars if c.role == 'protagonist'), None)
+        if not prev_chapter_content:
+            return protagonist.name if protagonist else (all_chars[0].name if all_chars else None)
+        # 统计每个人物名在上一章出现的次数
+        counts = {}
+        for c in all_chars:
+            n = c.name or ''
+            if n and len(n) >= 2:
+                counts[n] = prev_chapter_content.count(n)
+        # 取出现次数最多的（至少出现1次）
+        best = max(counts.items(), key=lambda x: x[1], default=(None, 0))
+        if best[1] > 0:
+            return best[0]
+        return protagonist.name if protagonist else None
+    except Exception:
+        return None
+
+
+def _filter_characters_by_pov(book_id, pov_name):
+    """人物维度过滤：只注入POV角色 + POV关系网中的人 + 主角。
+    返回自然语言文本。大幅减少token，且避免无关人物干扰当前视角。
+    """
+    from app import Character
+    try:
+        all_chars = Character.query.filter_by(book_id=book_id).all()
+        if not all_chars:
+            return ''
+        # 确定要注入的人物集合
+        target_names = set()
+        if pov_name:
+            target_names.add(pov_name)
+        protagonist = next((c for c in all_chars if c.role == 'protagonist'), None)
+        if protagonist:
+            target_names.add(protagonist.name)
+        # POV的关系网：从relationships_json提取关联人物名
+        if pov_name:
+            pov_char = next((c for c in all_chars if c.name == pov_name), None)
+            if pov_char:
+                try:
+                    rels = json.loads(pov_char.relationships_json or '[]')
+                    for r in rels:
+                        if isinstance(r, dict):
+                            tn = r.get('target_name') or r.get('name') or r.get('with') or ''
+                            if tn:
+                                target_names.add(tn)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        # 过滤 + 转自然语言
+        blocks = []
+        for c in all_chars:
+            if c.name not in target_names:
+                continue
+            lines = []
+            if c.role and c.role != 'supporting':
+                role_label = {'protagonist': '主角', 'antagonist': '反派'}.get(c.role, c.role)
+                lines.append(f'角色定位：{role_label}')
+            for label, val in [('身份描述', c.description), ('外貌', c.appearance),
+                               ('性格', c.personality), ('背景', c.background)]:
+                v = (val or '').strip()
+                if v:
+                    lines.append(f'{label}：{v}')
+            try:
+                rels = json.loads(c.relationships_json or '[]')
+                if rels:
+                    rel_lines = []
+                    for r in rels:
+                        if isinstance(r, dict):
+                            tn = r.get('target_name') or r.get('name') or r.get('with') or ''
+                            rel = r.get('relation') or r.get('type') or ''
+                            if tn:
+                                rel_lines.append(f'{tn}（{rel}）' if rel else tn)
+                    if rel_lines:
+                        lines.append('关系：' + '、'.join(rel_lines))
+            except (json.JSONDecodeError, ValueError):
+                pass
+            if lines:
+                blocks.append(f'姓名：{c.name}\n' + '\n'.join(lines))
+        return '\n\n'.join(blocks)
+    except Exception:
+        return ''
+
+
+def _filter_timeline_for_chapter(timeline_raw, target_chapter_num):
+    """剧情维度过滤：只注入当前卷及之前卷的剧情。
+    当前卷内注入：已发生节点 + 当前节点 + 卷尾钩子（写作目标）。
+    不注入后续卷（防剧透）。返回 (文本, 是否截断了后续卷)。
+    """
+    if not timeline_raw or not timeline_raw.strip():
+        return '', False
+    text = timeline_raw.strip()
+    # 尝试解析为JSON卷列表
+    try:
+        vols = json.loads(text)
+        if not isinstance(vols, list):
+            return text, False
+        kept = []
+        truncated = False
+        for v in vols:
+            if not isinstance(v, dict):
+                continue
+            vol_idx = v.get('volume_index') or v.get('volume_id') or '?'
+            vol_name = v.get('volume', f'第{vol_idx}卷')
+            # 判断该卷是否在target之前或当前
+            nodes = v.get('nodes') or []
+            vol_has_current = False
+            vol_is_past = False
+            for n in nodes:
+                if not isinstance(n, dict):
+                    continue
+                ch_range = str(n.get('chapters', ''))
+                nums = re.findall(r'\d+', ch_range)
+                if len(nums) >= 2:
+                    if int(nums[-1]) < target_chapter_num:
+                        vol_is_past = True
+                    if int(nums[0]) <= target_chapter_num <= int(nums[-1]):
+                        vol_has_current = True
+            # 只保留"有已发生或当前节点"的卷
+            if vol_is_past or vol_has_current:
+                vol_lines = [f'第{vol_idx}卷《{vol_name}》']
+                main_plot = v.get('main_plot') or ''
+                if main_plot:
+                    vol_lines.append(f'本卷主线：{main_plot}')
+                for n in nodes:
+                    if not isinstance(n, dict):
+                        continue
+                    ch_range = n.get('chapters', '')
+                    summary = n.get('summary') or n.get('plot') or ''
+                    if summary:
+                        nums = re.findall(r'\d+', str(ch_range))
+                        # 当前卷内：只注入已发生+当前节点，未来节点不注入
+                        if vol_has_current and len(nums) >= 2:
+                            if int(nums[0]) > target_chapter_num:
+                                continue  # 跳过本卷未来节点
+                        vol_lines.append(f'  · [{ch_range}] {summary}')
+                ending_hook = v.get('ending_hook') or ''
+                if ending_hook and (vol_is_past or vol_has_current):
+                    vol_lines.append(f'卷尾钩子：{ending_hook}')
+                kept.append('\n'.join(vol_lines))
+            else:
+                truncated = True  # 有后续卷被跳过
+        return ('\n\n'.join(kept) if kept else text, truncated)
+    except (json.JSONDecodeError, ValueError):
+        # 纯文本timeline：无法结构化过滤，返回原文但标记
+        return text, False
+
+
+def _filter_foreshadowing_for_chapter(foreshadow_raw, target_chapter_num):
+    """伏笔维度过滤：注入伏笔但加防剧透指令。
+    纯文本伏笔难以按章节精确过滤，采用"注入+强约束"策略：
+    只允许AI呼应POV已察觉的线索，严禁揭示未到回收时机的谜底。
+    """
+    if not foreshadow_raw or not foreshadow_raw.strip():
+        return ''
+    return foreshadow_raw.strip()
+
+
+def _filter_dynamic_reports_for_chapter(book_id, target_chapter_num, limit=5):
+    """动态报告过滤：只注入 chapter_end < target_chapter_num 的报告（已发生事件摘要）。
+    防止未来事件泄露给当前章创作。
+    """
+    from app import DynamicReport
+    try:
+        reports = DynamicReport.query.filter_by(book_id=book_id) \
+            .filter(DynamicReport.chapter_end < target_chapter_num) \
+            .order_by(DynamicReport.chapter_end.desc()).limit(limit).all()
+        if not reports:
+            return ''
+        lines = []
+        for r in reports:
+            title = r.title or f'动态({r.chapter_start}-{r.chapter_end}章)'
+            content = (r.content or '').strip()
+            lines.append(f'· {title}：\n{content}')
+        return '\n\n'.join(lines)
+    except Exception:
+        return ''
+
+
+
+
 def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, prev_chapter_content, mode):
     """续写/润色本章正文：产 SAVE_CHAPTER 卡。
-    注入全维度设定 + 本卷剧情大纲 + 最新5个动态文件报告 + 上一章结尾，确保正文创作不偏离设定。
+    视点感知注入（第三人称有限视角）：只给AI看POV角色能知道的信息，减少token + 防剧透。
+    - 人物：只注入POV + POV关系网 + 主角
+    - 剧情：只注入当前卷及之前卷（当前卷内只注入已发生节点）
+    - 动态报告：只注入target章之前的报告
+    - 伏笔：注入但加强约束（严禁揭示未到回收时机的谜底）
+    - 世界观/规则/文风/地点/构思：全量注入（写作基础，不剧透）
     """
     from app import db, BookBible, Chapter
     book_id = book.id
@@ -811,87 +1010,67 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             .order_by(Chapter.order_index.desc()).first()
         prev_chapter_content = (prev.content or '')[:2000] if prev else ''
 
-    # bible 全维度上下文（完整注入，不截断）
-    bible_ctx = ''
-    if bb:
-        parts = []
-        # 全部9个维度按顺序注入
-        for d in SMART_DIMENSIONS:
-            v = (getattr(bb, d['field'], '') or '').strip()
-            if v:
-                # 人物维度转自然语言
-                if d['key'] == 'character_profiles' and v.startswith('['):
-                    v = _character_profiles_to_text(v)
-                parts.append(f'【{d["label"]}】\n{v}')
-        bible_ctx = '\n\n'.join(parts)
+    # 推断POV视点人物
+    pov_name = _infer_pov_character(book_id, target_chapter_num, prev_chapter_content)
 
-    # 本卷剧情大纲：从 timeline（JSON 数组）中提取目标章所属卷的剧情
-    volume_plot_ctx = ''
+    # === 视点感知上下文构建 ===
+    # 1. 人物维度：只注入POV + 关系网 + 主角（大幅省token，防无关人物干扰）
+    char_ctx = _filter_characters_by_pov(book_id, pov_name)
+    # 若Character表为空，回退到bible.character_profiles
+    if not char_ctx and bb and bb.character_profiles:
+        cp = bb.character_profiles.strip()
+        if cp.startswith('['):
+            char_ctx = _character_profiles_to_text(cp)
+        else:
+            char_ctx = cp
+
+    # 2. 剧情维度：只注入当前卷及之前卷（防后续卷剧透）
+    timeline_ctx, timeline_truncated = '', False
     if bb and bb.timeline:
-        try:
-            vols = json.loads(bb.timeline) if bb.timeline.strip().startswith('[') else None
-            if isinstance(vols, list) and vols:
-                # 优先用章节的 parent_id 定位卷；无则按章号区间匹配
-                cur_chapter = Chapter.query.filter_by(book_id=book_id, is_volume=False,
-                                                       order_index=target_chapter_num).first()
-                target_vol = None
-                if cur_chapter and cur_chapter.parent_id:
-                    target_vol = next((v for v in vols if isinstance(v, dict)
-                                       and str(v.get('volume_id', '')) == str(cur_chapter.parent_id)), None)
-                if not target_vol:
-                    # 按卷的章节范围匹配
-                    for v in vols:
-                        if not isinstance(v, dict):
-                            continue
-                        nodes = v.get('nodes') or []
-                        for n in nodes:
-                            if not isinstance(n, dict):
-                                continue
-                            ch_range = str(n.get('chapters', ''))
-                            nums = re.findall(r'\d+', ch_range)
-                            if len(nums) >= 2 and int(nums[0]) <= target_chapter_num <= int(nums[-1]):
-                                target_vol = v
-                                break
-                        if target_vol:
-                            break
-                if target_vol:
-                    vol_idx = target_vol.get('volume_index') or target_vol.get('volume_id') or '?'
-                    vol_name = target_vol.get('volume', f'第{vol_idx}卷')
-                    main_plot = target_vol.get('main_plot') or ''
-                    vol_lines = [f'第{vol_idx}卷《{vol_name}》']
-                    if main_plot:
-                        vol_lines.append(f'本卷主线：{main_plot}')
-                    nodes = target_vol.get('nodes') or []
-                    if nodes:
-                        vol_lines.append('情节节点：')
-                        for n in nodes:
-                            if isinstance(n, dict):
-                                ch_range = n.get('chapters', '')
-                                summary = n.get('summary') or n.get('plot') or ''
-                                if summary:
-                                    vol_lines.append(f'  · [{ch_range}] {summary}')
-                    ending_hook = target_vol.get('ending_hook') or ''
-                    if ending_hook:
-                        vol_lines.append(f'卷尾钩子：{ending_hook}')
-                    volume_plot_ctx = '\n'.join(vol_lines)
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
+        timeline_ctx, timeline_truncated = _filter_timeline_for_chapter(bb.timeline, target_chapter_num)
 
-    # 最新5个动态文件报告（长篇防遗忘摘要）
-    dynamic_reports_ctx = ''
-    try:
-        from app import DynamicReport
-        recent_reports = DynamicReport.query.filter_by(book_id=book_id) \
-            .order_by(DynamicReport.chapter_end.desc()).limit(5).all()
-        if recent_reports:
-            rep_lines = []
-            for r in recent_reports:
-                title = r.title or f'动态({r.chapter_start}-{r.chapter_end}章)'
-                content = (r.content or '').strip()
-                rep_lines.append(f'· {title}：\n{content}')
-            dynamic_reports_ctx = '\n\n'.join(rep_lines)
-    except Exception:
-        pass
+    # 3. 动态报告：只注入target章之前的（防未来事件泄露）
+    dynamic_reports_ctx = _filter_dynamic_reports_for_chapter(book_id, target_chapter_num)
+
+    # 4. 伏笔：注入但后续prompt加强约束
+    foreshadow_ctx = _filter_foreshadowing_for_chapter(
+        bb.foreshadowing if bb else '', target_chapter_num)
+
+    # 5. 世界观/规则/文风/地点/构思/大纲：全量注入（写作基础，不剧透）
+    #    大纲(plot_design)是总纲，注入但加约束"仅作宏观方向，不可剧透未发生转折"
+    static_dims = []
+    for d in SMART_DIMENSIONS:
+        if d['key'] in ('character_profiles', 'timeline', 'foreshadowing'):
+            continue  # 这三个已单独处理
+        v = (getattr(bb, d['field'], '') or '').strip() if bb else ''
+        if v:
+            static_dims.append(f'【{d["label"]}】\n{v}')
+    static_ctx = '\n\n'.join(static_dims)
+
+    # 组装上下文块
+    ctx_blocks = []
+    if static_ctx:
+        ctx_blocks.append(static_ctx)
+    if char_ctx:
+        pov_note = f'（本章视点人物：{pov_name}，第三人称有限视角，只写{pov_name}能感知到的事物）' if pov_name else '（第三人称有限视角）'
+        ctx_blocks.append(f'【人物档案·视点感知】{pov_note}\n{char_ctx}')
+    if timeline_ctx:
+        trunc_note = '\n（注：后续卷剧情已省略，防剧透）' if timeline_truncated else ''
+        ctx_blocks.append(f'【本卷及过往剧情】{trunc_note}\n{timeline_ctx}')
+    if foreshadow_ctx:
+        ctx_blocks.append(f'【伏笔线索】\n{foreshadow_ctx}')
+    if dynamic_reports_ctx:
+        ctx_blocks.append(f'【近期动态文件（已发生事件摘要）】\n{dynamic_reports_ctx}')
+    bible_ctx = '\n\n'.join(ctx_blocks) or '（暂无设定）'
+
+    # 防剧透硬约束（伏笔+大纲）
+    anti_spoiler_rule = (
+        '\n\n【防剧透铁律·第三人称有限视角】'
+        '\n1. 严禁在正文中揭示伏笔的谜底/真相，只能呼应POV已察觉的表象线索'
+        '\n2. 严禁写出POV不在场时发生的事件（POV不知道的事不能写）'
+        '\n3. 大纲/总纲中的未来转折不可在当前章节提前泄露'
+        '\n4. 严禁出现POV不认识的人物内心活动（只能通过POV观察推测他人）'
+    )
 
     mode_label = '续写' if mode == 'continue' else '润色'
     yield sse({'type': 'delta', 'content': f'正在{mode_label}第 {target_chapter_num} 章…\n\n'})
@@ -911,10 +1090,9 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'\n\n【字数绝对铁律】润色后正文必须严格控制在 2400字±100（即 2300-2500 字区间，含标点）。'
             f'当前原文 {cur_len} 字：若不足 2300 字须扩写场景细节补足；若超过 2500 字须精简删减；'
             f'落在区间内则保持篇幅不变。这是不可违反的硬约束。'
-            f'\n\n【全文设定参考】\n{bible_ctx or "（暂无设定）"}'
-            f'\n\n【本卷剧情大纲】\n{volume_plot_ctx or "（暂无本卷剧情，参考总大纲）"}'
-            f'\n\n【近期动态文件】\n{dynamic_reports_ctx or "（暂无动态报告）"}'
+            f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【原文】\n{cur.content}'
+            f'{anti_spoiler_rule}'
             f'\n\n请直接输出润色后的完整正文（含章节标题），不要解释，不要在文末附加字数统计。'
         )
         user_msg = f'请润色第 {target_chapter_num} 章'
@@ -922,14 +1100,13 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         sys_prompt = (
             f'你是资深网文创作副驾。请为《{book.title}》续写第 {target_chapter_num} 章正文。'
             f'\n题材：{book.genre or "未指定"}，类型：{book.book_type or "未指定"}。'
-            f'\n\n【全文设定参考】\n{bible_ctx or "（暂无设定）"}'
-            f'\n\n【本卷剧情大纲】\n{volume_plot_ctx or "（暂无本卷剧情，参考总大纲推进）"}'
-            f'\n\n【近期动态文件】\n{dynamic_reports_ctx or "（暂无动态报告）"}'
+            f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
             f'\n用户要求：{instruction or "自然推进剧情"}'
             f'\n\n【字数绝对铁律】本章正文必须严格控制在 2400字±100（即 2300-2500 字区间，含标点）。'
             f'低于 2300 字=内容不足，须扩展场景细节、对话和心理描写补足；'
             f'超过 2500 字=冗余，须精简枝节删减。这是不可违反的硬约束，优先级高于所有其他要求。'
+            f'{anti_spoiler_rule}'
             f'\n请直接输出完整章节正文（含标题），不要解释，不要在文末附加字数统计。'
         )
         user_msg = f'请续写第 {target_chapter_num} 章'
