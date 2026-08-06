@@ -421,20 +421,10 @@ def apply_card():
             # 人物卡：解析"姓名|身份|性格|动机|背景|关系|能力|物品"或按行/【字段】解析
             # 前端人物及关系维度期望 character_profiles 为 JSON 数组，每元素含：
             # name/role/identity/personality/motivation/background/relationships/abilities/items
-            char_data = _parse_character_card(title, content)
+            # 一次生成多个人物时，content 含多个人物块（空行分隔），全部解析后追加
+            char_list = _parse_character_card_multi(title, content)
 
-            # 1) 写入 Character 表（兼容独立人物管理）
-            char = Character(
-                book_id=book_id,
-                name=char_data.get('name') or '未命名',
-                role=char_data.get('role') or ('protagonist' if '主角' in (title or '') or '主角' in content else 'supporting'),
-                description=char_data.get('identity') or '',
-                personality=char_data.get('personality') or '',
-                background=char_data.get('background') or content,
-            )
-            db.session.add(char)
-
-            # 2) 写入 character_profiles 为 JSON 数组（前端人物及关系维度读取格式）
+            # 1) 写入 Character 表（兼容独立人物管理）+ 2) 写入 character_profiles JSON 数组
             existing_list = []
             try:
                 parsed = json.loads(bb.character_profiles or '[]')
@@ -442,7 +432,17 @@ def apply_card():
                     existing_list = parsed
             except Exception:
                 existing_list = []
-            existing_list.append(char_data)
+
+            for char_data in char_list:
+                db.session.add(Character(
+                    book_id=book_id,
+                    name=char_data.get('name') or '未命名',
+                    role=char_data.get('role') or ('protagonist' if '主角' in (title or '') or '主角' in content else 'supporting'),
+                    description=char_data.get('identity') or '',
+                    personality=char_data.get('personality') or '',
+                    background=char_data.get('background') or '',
+                ))
+                existing_list.append(char_data)
             bb.character_profiles = json.dumps(existing_list, ensure_ascii=False)
         else:
             field = spec['field']
@@ -460,6 +460,59 @@ def apply_card():
     return jsonify({'ok': True, 'field': spec['field'], 'label': spec['label'],
                     'progress': build_progress_map(bb),
                     **result_extra})
+
+
+def _parse_character_card_multi(title, content):
+    """解析可能含多个人物的内容，返回人物字典列表。
+
+    拆分策略：
+      1) | 分隔的纯文本 → 单个人物
+      2) 按"姓名：xxx"行作为每个人物的起始边界拆块（最常见格式）
+      3) 每个块再走 _parse_character_card 解析
+      4) 无"姓名："引导时，整段作为单个人物
+    """
+    text = (content or '').strip()
+    if not text:
+        return []
+
+    # 策略1：| 分隔的单行纯文本（无换行）→ 单个人物
+    if '|' in text and '\n' not in text:
+        return [_parse_character_card(title, text)]
+
+    # 策略2：按"姓名："行拆块。匹配"姓名：xxx"作为新人物块的起始。
+    lines = [l.rstrip() for l in text.split('\n')]
+    blocks = []
+    cur_block = []
+    name_re = re.compile(r'^(?:【|\[)?(姓名|名字|名称)(?:】|\])?[:：]\s*\S')
+    for line in lines:
+        if name_re.match(line.strip()) and cur_block:
+            blocks.append('\n'.join(cur_block).strip())
+            cur_block = []
+        cur_block.append(line)
+    if cur_block:
+        tail = '\n'.join(cur_block).strip()
+        if tail:
+            blocks.append(tail)
+
+    # 若只拆出1块（或0块），回退为整段单人物
+    if len(blocks) <= 1:
+        return [_parse_character_card(title, text)]
+
+    # 每块解析为人物字典
+    result = []
+    for i, blk in enumerate(blocks):
+        # 第一块继承卡片标题；后续块用块内"姓名："作标题（在 _parse_character_card 内会取到）
+        blk_title = title if i == 0 else ''
+        parsed = _parse_character_card(blk_title, blk)
+        # 兜底：若解析后姓名为空或"未命名"，取块首行
+        if not parsed.get('name') or parsed['name'] == '未命名':
+            first_line = blk.split('\n', 1)[0].strip()
+            m = re.match(r'^(?:【|\[)?(姓名|名字|名称)(?:】|\])?[:：]\s*(.+)$', first_line)
+            if m:
+                parsed['name'] = m.group(2).strip()
+        if parsed.get('name') and parsed['name'] != '未命名':
+            result.append(parsed)
+    return result if result else [_parse_character_card(title, text)]
 
 
 def _parse_character_card(title, content):
