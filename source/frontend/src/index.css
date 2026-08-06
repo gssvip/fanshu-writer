@@ -1934,6 +1934,22 @@ textarea{resize:vertical;line-height:1.8}
   white-space: nowrap; transition: all 0.15s; touch-action: manipulation;
   text-align: center; flex-shrink: 0;
 }
+/* 电脑端（宽屏）：设定Tab维度按钮合并为一行，自动换行展示 */
+@media (min-width: 601px) {
+  .smart-dim-rows {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .smart-dim-row {
+    flex-wrap: wrap;
+    overflow-x: visible;
+    padding-bottom: 0;
+  }
+  .smart-dim-row .smart-dim-btn {
+    flex: 0 0 auto;
+  }
+}
 /* 手机端：设定Tab两行维度按钮均匀占满横向 */
 @media (max-width: 600px) {
   .smart-dim-row { overflow-x: visible; padding-bottom: 0; }
