@@ -365,7 +365,7 @@ export default function WorkbenchPage() {
           onClick={() => setShowMasterCreateModal(true)}
           disabled={books.length === 0}
         >
-          <div className="master-create-entry-icon"><CarLogo size={32} /></div>
+          <div className="master-create-entry-icon"><CarLogo size={48} /></div>
           <div className="master-create-entry-content">
             <div className="master-create-entry-label">AI 智驾</div>
             <div className="master-create-entry-desc">{books.length > 0 ? '选择作品，进入设定/正文/去AI/校审四Tab协作' : '请先创建作品'}</div>
@@ -716,7 +716,7 @@ export default function WorkbenchPage() {
         <div className="modal-overlay" onClick={() => setShowMasterCreateModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
             <div className="master-create-modal-header">
-              <h2 style={{display:'flex', alignItems:'center', gap:8}}><CarLogo size={22} /> AI 智驾</h2>
+              <h2 style={{display:'flex', alignItems:'center', gap:8}}><CarLogo size={33} /> AI 智驾</h2>
               <button className="btn-ghost" onClick={() => setShowMasterCreateModal(false)}>✕</button>
             </div>
             <p className="text-muted" style={{ fontSize: 13, marginBottom: 16 }}>
