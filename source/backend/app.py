@@ -3093,7 +3093,14 @@ def ai_anti_forget_check(book_id):
     for f, lbl in dim_fields:
         v = getattr(bb, f, '') or ''
         if v.strip():
-            dim_ctx_parts.append(f'【{lbl}】\n{v[:800]}')
+            # 人物维度转自然语言，避免 JSON 干扰
+            if f == 'character_profiles' and v.strip().startswith('['):
+                try:
+                    from chat_collab_bp import _character_profiles_to_text
+                    v = _character_profiles_to_text(v)
+                except Exception:
+                    pass
+            dim_ctx_parts.append(f'【{lbl}】\n{v}')
     dim_ctx = '\n\n'.join(dim_ctx_parts) or '（维度数据为空）'
 
     # ===== P2增强：注入章级变更日志 + 伏笔DAG结构化状态 =====
@@ -10990,18 +10997,18 @@ def _collect_volume_chapters(book_id, volume_id):
 
 def _collect_dimension_source(bb, volume_title=''):
     """当无章节时，从设定/大纲/剧情等主要维度收集基础数据作为识别来源。
-    返回 (source_text, source_label)。source_label 标识数据来源（用于提示AI）。"""
+    返回 (source_text, source_label)。完整注入各维度，不截断。"""
     if not bb:
         return '', ''
     parts = []
     if bb.concept and bb.concept.strip():
-        parts.append(f'【构思】\n{bb.concept.strip()[:600]}')
+        parts.append(f'【构思】\n{bb.concept.strip()}')
     if bb.key_rules and bb.key_rules.strip():
-        parts.append(f'【设定/核心规则】\n{bb.key_rules.strip()[:1200]}')
+        parts.append(f'【设定/核心规则】\n{bb.key_rules.strip()}')
     if bb.worldbuilding and bb.worldbuilding.strip():
-        parts.append(f'【世界观】\n{bb.worldbuilding.strip()[:800]}')
+        parts.append(f'【世界观】\n{bb.worldbuilding.strip()}')
     if bb.plot_design and bb.plot_design.strip():
-        parts.append(f'【大纲/总纲】\n{bb.plot_design.strip()[:1500]}')
+        parts.append(f'【大纲/总纲】\n{bb.plot_design.strip()}')
     if bb.timeline and bb.timeline.strip():
         # timeline 可能是 JSON（卷列表）或纯文本
         tl_text = bb.timeline.strip()
@@ -11014,14 +11021,28 @@ def _collect_dimension_source(bb, volume_title=''):
                         vol_name = v.get('volume', '')
                         vol_content = v.get('content', '') or v.get('outline', '') or v.get('plot', '')
                         if vol_content:
-                            tl_lines.append(f'卷「{vol_name}」: {str(vol_content)[:300]}')
+                            tl_lines.append(f'卷「{vol_name}」: {vol_content}')
                 if tl_lines:
                     tl_text = '\n'.join(tl_lines)
         except (json.JSONDecodeError, ValueError):
             pass
-        parts.append(f'【剧情/时间线】\n{tl_text[:1500]}')
+        parts.append(f'【剧情/时间线】\n{tl_text}')
     if bb.character_profiles and bb.character_profiles.strip():
-        parts.append(f'【人物档案】\n{bb.character_profiles.strip()[:800]}')
+        # 人物维度转自然语言
+        cp = bb.character_profiles.strip()
+        if cp.startswith('['):
+            try:
+                from chat_collab_bp import _character_profiles_to_text
+                cp = _character_profiles_to_text(cp)
+            except Exception:
+                pass
+        parts.append(f'【人物档案】\n{cp}')
+    if bb.foreshadowing and bb.foreshadowing.strip():
+        parts.append(f'【伏笔】\n{bb.foreshadowing.strip()}')
+    if bb.locations and bb.locations.strip():
+        parts.append(f'【地点】\n{bb.locations.strip()}')
+    if bb.style_guide and bb.style_guide.strip():
+        parts.append(f'【文风】\n{bb.style_guide.strip()}')
 
     source_text = '\n\n'.join(parts)
     label = '设定/大纲/剧情维度' if source_text else ''

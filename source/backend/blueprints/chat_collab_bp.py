@@ -92,8 +92,8 @@ def _smart_truncate(text: str, limit: int) -> str:
 def build_chat_system_prompt(book, bb, recent_chapters: list = None) -> str:
     """构建维度感知的聊天 system_prompt。
 
-    注入当前书的相关 bible 维度 + 最近章节 + Action Card 使用说明 + 创作进度。
-    总量控制在 ~4000 字以内，避免 token 爆炸。
+    注入当前书的全部 bible 维度 + 最近章节 + Action Card 使用说明 + 创作进度。
+    维度内容完整注入，不做截断（避免信息缺失导致错乱）。
     recent_chapters: 最近章节列表（dict: title/word_count/order_index），由 chat_smart 注入
     """
     parts = [
@@ -114,24 +114,28 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None) -> str:
             parts.append(f'- {title}（{wc}字）')
         parts.append('作者可能在写最新章节的后续，讨论时可结合上文衔接。')
 
-    # 注入 bible 维度（每维度截断，控制总量）
+    # 注入 bible 维度（完整注入，不截断，避免信息缺失导致错乱）
     if bb:
         dims = [
-            ('核心构思', 'concept', 500),
-            ('世界观', 'worldbuilding', 800),
-            ('核心规则', 'key_rules', 600),
-            ('人物档案', 'character_profiles', 1000),
-            ('大纲', 'plot_design', 800),
-            ('剧情时间线', 'timeline', 500),
-            ('伏笔', 'foreshadowing', 400),
-            ('文风指南', 'style_guide', 300),
+            ('核心构思', 'concept'),
+            ('世界观', 'worldbuilding'),
+            ('核心规则', 'key_rules'),
+            ('人物档案', 'character_profiles'),
+            ('大纲', 'plot_design'),
+            ('剧情时间线', 'timeline'),
+            ('伏笔', 'foreshadowing'),
+            ('地点', 'locations'),
+            ('文风指南', 'style_guide'),
         ]
         filled = []
         empty = []
-        for label, field, limit in dims:
+        for label, field in dims:
             val = (getattr(bb, field, '') or '').strip()
             if val:
-                parts.append(f'\n【已设定·{label}】\n{_smart_truncate(val, limit)}')
+                # 人物维度：JSON 数组转自然语言，避免 AI 模仿 JSON 格式
+                if field == 'character_profiles' and val.startswith('['):
+                    val = _character_profiles_to_text(val)
+                parts.append(f'\n【已设定·{label}】\n{val}')
                 filled.append(label)
             else:
                 empty.append(label)
@@ -745,7 +749,10 @@ def _action_master_create(book, session, instruction, gw, sse):
             existing = (getattr(bb, dim, '') or '').strip()
         ctx_parts = []
         for k, v in generated.items():
-            ctx_parts.append(f'【{_DIM_LABELS.get(k, k)}】\n{v[:600]}')
+            # 人物维度转自然语言
+            if k == 'character_profiles' and v.startswith('['):
+                v = _character_profiles_to_text(v)
+            ctx_parts.append(f'【{_DIM_LABELS.get(k, k)}】\n{v}')
         ctx_block = '\n\n'.join(ctx_parts) if ctx_parts else '（暂无）'
 
         sys_prompt = (
@@ -786,7 +793,9 @@ def _action_master_create(book, session, instruction, gw, sse):
 
 
 def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, prev_chapter_content, mode):
-    """续写/润色本章正文：产 SAVE_CHAPTER 卡。"""
+    """续写/润色本章正文：产 SAVE_CHAPTER 卡。
+    注入全维度设定 + 本卷剧情大纲 + 最新5个动态文件报告 + 上一章结尾，确保正文创作不偏离设定。
+    """
     from app import db, BookBible, Chapter
     book_id = book.id
     bb = BookBible.query.filter_by(book_id=book_id).first()
@@ -802,15 +811,87 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             .order_by(Chapter.order_index.desc()).first()
         prev_chapter_content = (prev.content or '')[:2000] if prev else ''
 
-    # bible 上下文摘要
+    # bible 全维度上下文（完整注入，不截断）
     bible_ctx = ''
     if bb:
         parts = []
-        for f in ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design']:
-            v = (getattr(bb, f, '') or '').strip()
+        # 全部9个维度按顺序注入
+        for d in SMART_DIMENSIONS:
+            v = (getattr(bb, d['field'], '') or '').strip()
             if v:
-                parts.append(f'【{_DIM_LABELS.get(f, f)}】\n{v[:400]}')
+                # 人物维度转自然语言
+                if d['key'] == 'character_profiles' and v.startswith('['):
+                    v = _character_profiles_to_text(v)
+                parts.append(f'【{d["label"]}】\n{v}')
         bible_ctx = '\n\n'.join(parts)
+
+    # 本卷剧情大纲：从 timeline（JSON 数组）中提取目标章所属卷的剧情
+    volume_plot_ctx = ''
+    if bb and bb.timeline:
+        try:
+            vols = json.loads(bb.timeline) if bb.timeline.strip().startswith('[') else None
+            if isinstance(vols, list) and vols:
+                # 优先用章节的 parent_id 定位卷；无则按章号区间匹配
+                cur_chapter = Chapter.query.filter_by(book_id=book_id, is_volume=False,
+                                                       order_index=target_chapter_num).first()
+                target_vol = None
+                if cur_chapter and cur_chapter.parent_id:
+                    target_vol = next((v for v in vols if isinstance(v, dict)
+                                       and str(v.get('volume_id', '')) == str(cur_chapter.parent_id)), None)
+                if not target_vol:
+                    # 按卷的章节范围匹配
+                    for v in vols:
+                        if not isinstance(v, dict):
+                            continue
+                        nodes = v.get('nodes') or []
+                        for n in nodes:
+                            if not isinstance(n, dict):
+                                continue
+                            ch_range = str(n.get('chapters', ''))
+                            nums = re.findall(r'\d+', ch_range)
+                            if len(nums) >= 2 and int(nums[0]) <= target_chapter_num <= int(nums[-1]):
+                                target_vol = v
+                                break
+                        if target_vol:
+                            break
+                if target_vol:
+                    vol_idx = target_vol.get('volume_index') or target_vol.get('volume_id') or '?'
+                    vol_name = target_vol.get('volume', f'第{vol_idx}卷')
+                    main_plot = target_vol.get('main_plot') or ''
+                    vol_lines = [f'第{vol_idx}卷《{vol_name}》']
+                    if main_plot:
+                        vol_lines.append(f'本卷主线：{main_plot}')
+                    nodes = target_vol.get('nodes') or []
+                    if nodes:
+                        vol_lines.append('情节节点：')
+                        for n in nodes:
+                            if isinstance(n, dict):
+                                ch_range = n.get('chapters', '')
+                                summary = n.get('summary') or n.get('plot') or ''
+                                if summary:
+                                    vol_lines.append(f'  · [{ch_range}] {summary}')
+                    ending_hook = target_vol.get('ending_hook') or ''
+                    if ending_hook:
+                        vol_lines.append(f'卷尾钩子：{ending_hook}')
+                    volume_plot_ctx = '\n'.join(vol_lines)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+    # 最新5个动态文件报告（长篇防遗忘摘要）
+    dynamic_reports_ctx = ''
+    try:
+        from app import DynamicReport
+        recent_reports = DynamicReport.query.filter_by(book_id=book_id) \
+            .order_by(DynamicReport.chapter_end.desc()).limit(5).all()
+        if recent_reports:
+            rep_lines = []
+            for r in recent_reports:
+                title = r.title or f'动态({r.chapter_start}-{r.chapter_end}章)'
+                content = (r.content or '').strip()
+                rep_lines.append(f'· {title}：\n{content}')
+            dynamic_reports_ctx = '\n\n'.join(rep_lines)
+    except Exception:
+        pass
 
     mode_label = '续写' if mode == 'continue' else '润色'
     yield sse({'type': 'delta', 'content': f'正在{mode_label}第 {target_chapter_num} 章…\n\n'})
@@ -830,6 +911,9 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'\n\n【字数绝对铁律】润色后正文必须严格控制在 2400字±100（即 2300-2500 字区间，含标点）。'
             f'当前原文 {cur_len} 字：若不足 2300 字须扩写场景细节补足；若超过 2500 字须精简删减；'
             f'落在区间内则保持篇幅不变。这是不可违反的硬约束。'
+            f'\n\n【全文设定参考】\n{bible_ctx or "（暂无设定）"}'
+            f'\n\n【本卷剧情大纲】\n{volume_plot_ctx or "（暂无本卷剧情，参考总大纲）"}'
+            f'\n\n【近期动态文件】\n{dynamic_reports_ctx or "（暂无动态报告）"}'
             f'\n\n【原文】\n{cur.content}'
             f'\n\n请直接输出润色后的完整正文（含章节标题），不要解释，不要在文末附加字数统计。'
         )
@@ -838,7 +922,9 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         sys_prompt = (
             f'你是资深网文创作副驾。请为《{book.title}》续写第 {target_chapter_num} 章正文。'
             f'\n题材：{book.genre or "未指定"}，类型：{book.book_type or "未指定"}。'
-            f'\n\n【设定参考】\n{bible_ctx or "（暂无设定）"}'
+            f'\n\n【全文设定参考】\n{bible_ctx or "（暂无设定）"}'
+            f'\n\n【本卷剧情大纲】\n{volume_plot_ctx or "（暂无本卷剧情，参考总大纲推进）"}'
+            f'\n\n【近期动态文件】\n{dynamic_reports_ctx or "（暂无动态报告）"}'
             f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
             f'\n用户要求：{instruction or "自然推进剧情"}'
             f'\n\n【字数绝对铁律】本章正文必须严格控制在 2400字±100（即 2300-2500 字区间，含标点）。'
@@ -941,8 +1027,10 @@ SMART_GENERAL_KEY = 'general'
 _DIM_KEY_TO_SPEC = {d['key']: d for d in SMART_DIMENSIONS}
 
 
-def _build_dim_context(book, bb, dim_key, with_self=True, self_limit=800, other_limit=400):
-    """构建指定维度的上下文：其他已填维度作为参考 + 当前维度已有内容。"""
+def _build_dim_context(book, bb, dim_key, with_self=True):
+    """构建指定维度的上下文：其他已填维度作为参考 + 当前维度已有内容。
+    完整注入各维度内容，不截断（避免信息缺失导致设定错乱）。
+    """
     target = _DIM_KEY_TO_SPEC.get(dim_key)
     if not target:
         return '', ''
@@ -956,7 +1044,7 @@ def _build_dim_context(book, bb, dim_key, with_self=True, self_limit=800, other_
                 # 人物维度：character_profiles 存的是 JSON 数组，注入前转成自然语言，避免 AI 模仿 JSON 格式
                 if d['key'] == 'character_profiles' and v.startswith('['):
                     v = _character_profiles_to_text(v)
-                parts.append(f'【{d["label"]}】\n{_smart_truncate(v, other_limit)}')
+                parts.append(f'【{d["label"]}】\n{v}')
     ctx = '\n\n'.join(parts)
     self_content = ''
     if bb and with_self:
@@ -965,7 +1053,6 @@ def _build_dim_context(book, bb, dim_key, with_self=True, self_limit=800, other_
             # 人物维度自身已有内容也转自然语言
             if dim_key == 'character_profiles' and self_content.startswith('['):
                 self_content = _character_profiles_to_text(self_content)
-            self_content = _smart_truncate(self_content, self_limit)
     return ctx, self_content
 
 
@@ -1065,7 +1152,7 @@ def smart_general():
         return jsonify({'error': '书籍不存在'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
-    # 构建上下文：所有维度的简短摘要
+    # 构建上下文：所有维度完整注入（不截断，避免信息缺失导致错乱）
     ctx_parts = []
     if bb:
         for d in SMART_DIMENSIONS:
@@ -1074,7 +1161,7 @@ def smart_general():
                 # 人物维度：character_profiles 是 JSON 数组，注入前转自然语言，避免 AI 模仿 JSON
                 if d['key'] == 'character_profiles' and v.startswith('['):
                     v = _character_profiles_to_text(v)
-                ctx_parts.append(f'【{d["label"]}】{_smart_truncate(v, 300)}')
+                ctx_parts.append(f'【{d["label"]}】\n{v}')
     ctx = '\n\n'.join(ctx_parts) if ctx_parts else '（暂无设定）'
 
     # 检测关键词，决定是否产卡片
@@ -1899,17 +1986,20 @@ def smart_deai():
     bible_ctx = ''
     if bb:
         parts = []
-        for f in ['character_profiles', 'key_rules', 'worldbuilding']:
-            v = (getattr(bb, f, '') or '').strip()
+        # 全维度完整注入（去AI味也要参考全部设定，避免改写时偏离设定）
+        for d in SMART_DIMENSIONS:
+            v = (getattr(bb, d['field'], '') or '').strip()
             if v:
-                parts.append(f'【{_DIM_LABELS.get(f, f)}】\n{v[:300]}')
+                if d['key'] == 'character_profiles' and v.startswith('['):
+                    v = _character_profiles_to_text(v)
+                parts.append(f'【{d["label"]}】\n{v}')
         bible_ctx = '\n\n'.join(parts)
 
     sys_prompt = f"""你是番茄去AI味审查员。请对以下章节正文做去AI味审校，按规则修改后只输出修改后的正文。
 
 {skill_note}
 
-【设定参考】
+【全文设定参考】
 {bible_ctx or "（暂无）"}
 
 【优先级铁律】人味>克制>流畅。
