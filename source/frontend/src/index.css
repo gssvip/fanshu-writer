@@ -1841,9 +1841,9 @@ textarea{resize:vertical;line-height:1.8}
   /* 工具区：padding 加大，间距更舒展 */
   .smart-toolbar { padding: 12px 16px; gap: 10px; }
 
-  /* 设定Tab：维度按钮允许换行，不再横向滚动，宽面板下一行排满自动换行 */
-  .smart-dim-rows { gap: 8px; }
-  .smart-dim-row { overflow-x: visible; flex-wrap: wrap; justify-content: flex-start; padding-bottom: 0; }
+  /* 设定Tab：两行维度按钮合并为一行，宽面板下横向排开自动换行 */
+  .smart-dim-rows { flex-direction: row; flex-wrap: wrap; gap: 8px; }
+  .smart-dim-row { overflow-x: visible; flex-wrap: wrap; padding-bottom: 0; gap: 8px; }
   .smart-dim-btn { flex: 0 1 auto; padding: 8px 14px; font-size: 13px; }
 
   /* 正文Tab：写作/修改按钮一排，宽面板下更舒展 */
