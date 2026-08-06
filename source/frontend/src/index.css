@@ -1150,6 +1150,11 @@ textarea{resize:vertical;line-height:1.8}
 /* ===== 构思面板 ===== */
 .concept-panel{padding:12px 16px;display:flex;flex-direction:column;min-height:0}
 .concept-input-section{margin-bottom:16px;display:flex;flex-direction:column;flex:1;min-height:0}
+/* AI 智驾入口按钮：手机端占满屏幕宽度，电脑端适当加宽（min-width 保证视觉醒目） */
+.concept-ai-create-cta{width:100%;justify-content:center}
+@media (min-width:768px){
+  .concept-ai-create-cta{width:auto;min-width:320px;justify-content:center;padding:16px 40px!important}
+}
 .concept-label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-shrink:0}
 .concept-label{font-size:13px;font-weight:600;color:var(--text-secondary)}
 .concept-dim-analyze-btn{font-size:11px;padding:4px 8px}
