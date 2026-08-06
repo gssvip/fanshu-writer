@@ -2295,7 +2295,6 @@ function ConceptPanel(props: {
             <span>智</span>
             <span>驾</span>
           </div>
-          <div className="cta-sub-row">AI领航，人机共创</div>
         </button>
       </div>
 
