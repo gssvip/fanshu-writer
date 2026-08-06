@@ -1086,9 +1086,9 @@ export default function ChatPanel() {
                 <div className="chat-panel-name">AI 智驾</div>
               </div>
               <div className="chat-panel-tools">
-                <button className="chat-tool-btn" onClick={() => { setShowProgress(s => !s); }} title="创作进度">🗺️</button>
-                <button className="chat-tool-btn" onClick={() => { setShowHistory(s => !s); refreshHistory(); }} title="历史会话">🕘</button>
-                <button className="chat-tool-btn" onClick={handleNewSession} title="新会话">✨</button>
+                <button className="chat-tool-btn" onClick={() => { setShowProgress(s => !s); }} title="创作进度">🗺️<span className="chat-tool-label">创作进度</span></button>
+                <button className="chat-tool-btn" onClick={() => { setShowHistory(s => !s); refreshHistory(); }} title="历史会话">🕘<span className="chat-tool-label">历史会话</span></button>
+                <button className="chat-tool-btn" onClick={handleNewSession} title="新会话">✨<span className="chat-tool-label">新会话</span></button>
                 <button className="chat-tool-btn close" onClick={closeChatPanel} title="关闭">✕</button>
               </div>
             </div>

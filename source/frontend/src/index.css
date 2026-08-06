@@ -1636,6 +1636,7 @@ textarea{resize:vertical;line-height:1.8}
 }
 .chat-tool-btn:hover { background: var(--bg-tertiary); }
 .chat-tool-btn.close:hover { background: #fee; }
+.chat-tool-label { display: none; }
 
 .chat-panel-side {
   position: absolute; top: 60px; right: 0; width: 100%; max-width: 460px;
@@ -1858,8 +1859,14 @@ textarea{resize:vertical;line-height:1.8}
 
   /* 设定Tab：两行维度按钮合并为一行，宽面板下横向排开自动换行 */
   .smart-dim-rows { flex-direction: row; flex-wrap: wrap; gap: 8px; }
-  .smart-dim-row { overflow-x: visible; flex-wrap: wrap; padding-bottom: 0; gap: 8px; }
+  .smart-dim-row { overflow-x: visible; flex-wrap: wrap; padding-bottom: 0; gap: 8px; flex: 0 0 auto; }
   .smart-dim-btn { flex: 0 1 auto; padding: 8px 14px; font-size: 13px; }
+
+  /* 顶部工具按钮：电脑端显示图标+文字，关闭按钮醒目化 */
+  .chat-panel-header-compact .chat-tool-btn { width: auto; height: 30px; padding: 0 10px; font-size: 13px; gap: 5px; border-radius: 8px; }
+  .chat-panel-header-compact .chat-tool-btn .chat-tool-label { display: inline; font-size: 13px; }
+  .chat-panel-header-compact .chat-tool-btn.close { background: #fee; color: #dc2626; font-weight: 700; font-size: 16px; width: 30px; height: 30px; padding: 0; border: 1px solid #fca5a5; }
+  .chat-panel-header-compact .chat-tool-btn.close:hover { background: #fecaca; color: #b91c1c; }
 
   /* 正文Tab：写作/修改按钮一排，宽面板下更舒展 */
   .smart-chapter-actions.smart-chapter-actions-row { gap: 10px; }
