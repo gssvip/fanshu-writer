@@ -15,8 +15,8 @@ export default function CarLogo({ size = 24, className, style }: CarLogoProps) {
       height={size}
       alt="AI 智驾"
       aria-label="AI 智驾"
-      className={className}
-      style={{ objectFit: 'contain', display: 'inline-block', verticalAlign: 'middle', ...style }}
+      className={`car-logo${className ? ' ' + className : ''}`}
+      style={{ objectFit: 'contain', display: 'inline-block', verticalAlign: 'middle', background: 'transparent', ...style }}
       draggable={false}
     />
   );
