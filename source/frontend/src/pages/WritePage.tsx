@@ -2290,7 +2290,7 @@ function ConceptPanel(props: {
           style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)' }}
         >
           <div className="cta-main-row">
-            <CarLogo size={36} />
+            <CarLogo size={90} />
             <span>AI</span>
             <span>智</span>
             <span>驾</span>
