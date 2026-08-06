@@ -1199,9 +1199,12 @@ textarea{resize:vertical;line-height:1.8}
     white-space:nowrap;
     color:#fff!important;
   }
-  /* Ai 作为整体，字母间无间距 */
+  /* Ai 作为整体，字母间无间距；副标题中 Ai 后额外补足三个空格间距 */
   .concept-ai-create-cta .cta-ai{
     letter-spacing:0;
+  }
+  .concept-ai-create-cta .cta-sub-text .cta-ai{
+    margin-right:1.5em;
   }
 }
 .concept-label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-shrink:0}
