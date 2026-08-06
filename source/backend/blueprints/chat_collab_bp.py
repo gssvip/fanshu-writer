@@ -893,14 +893,55 @@ def _build_dim_context(book, bb, dim_key, with_self=True, self_limit=800, other_
         if bb:
             v = (getattr(bb, d['field'], '') or '').strip()
             if v:
+                # 人物维度：character_profiles 存的是 JSON 数组，注入前转成自然语言，避免 AI 模仿 JSON 格式
+                if d['key'] == 'character_profiles' and v.startswith('['):
+                    v = _character_profiles_to_text(v)
                 parts.append(f'【{d["label"]}】\n{_smart_truncate(v, other_limit)}')
     ctx = '\n\n'.join(parts)
     self_content = ''
     if bb and with_self:
         self_content = (getattr(bb, target['field'], '') or '').strip()
         if self_content:
+            # 人物维度自身已有内容也转自然语言
+            if dim_key == 'character_profiles' and self_content.startswith('['):
+                self_content = _character_profiles_to_text(self_content)
             self_content = _smart_truncate(self_content, self_limit)
     return ctx, self_content
+
+
+def _character_profiles_to_text(json_str):
+    """把 character_profiles JSON 数组转为自然语言文本，避免 AI 模仿 JSON 格式输出。
+    输入：[{"name":"姜辰","identity":"...","personality":"..."}, ...]
+    输出：
+      姓名：姜辰
+      身份：...
+      性格：...
+      （空行分隔下一个角色）
+    """
+    try:
+        arr = json.loads(json_str)
+        if not isinstance(arr, list):
+            return json_str
+        blocks = []
+        for c in arr:
+            if not isinstance(c, dict):
+                continue
+            lines = []
+            field_labels = [
+                ('name', '姓名'), ('role', '角色'), ('identity', '身份'),
+                ('personality', '性格'), ('motivation', '动机'),
+                ('background', '背景'), ('relationships', '关系'),
+                ('abilities', '能力'), ('items', '物品'),
+            ]
+            for f, label in field_labels:
+                val = (c.get(f) or '').strip()
+                if val:
+                    lines.append(f'{label}：{val}')
+            if lines:
+                blocks.append('\n'.join(lines))
+        return '\n\n'.join(blocks) if blocks else json_str
+    except Exception:
+        return json_str
 
 
 @chat_collab_bp.route('/api/ai/smart/dimensions', methods=['GET'])
@@ -1289,22 +1330,22 @@ def smart_generate():
     if dim_key == 'character_profiles':
         character_extra = """
 
-【人物维度输出格式·铁律】
-1. 禁止输出 JSON 数组、大括号、方括号、引号、逗号、冒号等代码符号。
-2. 禁止输出 "name"/"identity"/"personality" 等英文字段名。
-3. 必须用纯中文自然语言，按以下格式分行输出（每个字段一行，用中文「字段名：内容」）：
-
-姓名：xxx
-身份：xxx
-性格：xxx
-动机：xxx
-背景：xxx
-关系：xxx
-能力：xxx
-物品：xxx
-
-4. 若有多个角色，每个角色之间用空行分隔，每个角色都按上述格式输出。
-5. 内容要充实具体，每个字段至少30字，性格和背景可适当展开。"""
+【人物维度输出格式·绝对铁律·违反即作废】
+1. 绝对禁止输出以下任何符号：[ ] { } " " : , 以及英文字段名 name identity personality motivation background relationships abilities items。
+2. 绝对禁止输出 JSON 数组或对象，绝对禁止输出代码块。
+3. 错误示例（严禁这样输出）：
+   [{"name":"姜辰","identity":"...","personality":"..."}]
+4. 正确格式（必须这样输出，纯中文，每字段一行）：
+   姓名：姜辰
+   身份：大胤北境边军遗孤，玄骨宗弃徒
+   性格：外表沉静寡言，行事果断
+   动机：查清蒙冤真相，建立立足之地
+   背景：黑骨矿场矿奴出身
+   关系：与镇骨营弟兄为生死之交
+   能力：骨纹修行，近身搏杀
+   物品：残骨刀
+5. 多个角色之间用空行分隔，每个角色都按上述格式。
+6. 每个字段内容充实具体，至少30字。"""
 
     sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{spec['label']}」维度的完整设定内容。
 
@@ -1389,6 +1430,9 @@ def smart_generate():
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
+            # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言，避免带符号英文内容
+            if dim_key == 'character_profiles' and content.lstrip().startswith('['):
+                content = _character_profiles_to_text(content)
             # 解析卡片标记（世界观会额外产出地图卡片）
             extra_cards = _parse_card_markers(content)
             clean_content = _strip_card_markers(content) if extra_cards else content
