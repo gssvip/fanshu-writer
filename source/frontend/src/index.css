@@ -1150,12 +1150,12 @@ textarea{resize:vertical;line-height:1.8}
 /* ===== 构思面板 ===== */
 .concept-panel{padding:12px 16px;display:flex;flex-direction:column;min-height:0}
 .concept-input-section{margin-bottom:8px;display:flex;flex-direction:column;flex:1;min-height:0}
-/* AI 智驾入口按钮：宽度为原来的0.8倍，图标字不变，居中显示 */
+/* AI 智驾入口按钮：宽度占满一行，高度（上下padding）为原来的0.8倍，图标字不变 */
 .concept-ai-create-cta{
-  width:80%;
+  width:100%;
   justify-content:center;
   gap:24px;
-  padding:22px 28px!important;
+  padding:18px 28px!important;
   font-size:18px!important;
   font-weight:700!important;
   border-radius:16px!important;
@@ -1168,7 +1168,7 @@ textarea{resize:vertical;line-height:1.8}
 .concept-ai-create-cta > span{display:inline-flex;align-items:center}
 .concept-ai-create-cta > span:last-child{text-indent:4px}
 @media (min-width:768px){
-  .concept-ai-create-cta{width:auto;min-width:304px;padding:24px 56px!important;font-size:20px!important;letter-spacing:6px;gap:28px}
+  .concept-ai-create-cta{width:auto;min-width:380px;padding:19px 56px!important;font-size:20px!important;letter-spacing:6px;gap:28px}
 }
 .concept-label-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-shrink:0}
 .concept-label{font-size:13px;font-weight:600;color:var(--text-secondary)}
