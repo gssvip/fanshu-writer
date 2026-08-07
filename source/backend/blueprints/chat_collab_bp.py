@@ -2612,10 +2612,14 @@ def smart_review():
         try:
             from app import ai_anti_forget_check as _do_anti_forget
             from flask import current_app
+            # 透传当前请求的 Authorization 头，让 @login_required 装饰器能拿到 token
+            # 否则 test_request_context 不带认证头，会返回 401 "请先登录"
+            auth_header = request.headers.get('Authorization', '')
             with current_app.test_request_context(
                 f'/api/books/{book_id}/ai-anti-forget-check',
                 method='POST',
-                json={'scope': 'reports', 'volume_ids': volume_ids, 'skill_pack_ids': skill_pack_ids}
+                json={'scope': 'reports', 'volume_ids': volume_ids, 'skill_pack_ids': skill_pack_ids},
+                headers={'Authorization': auth_header} if auth_header else None,
             ):
                 resp = _do_anti_forget(book_id)
                 if hasattr(resp, 'get_json'):
