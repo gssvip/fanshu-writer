@@ -365,6 +365,60 @@ def _get_latest_chapter_info(book_id):
 
 
 # ============================================================================
+# 章节标题剥离 + 字数统计统一口径
+# 解决：AI 输出"标题+空行+正文"被整体存入 card.content，导致
+#   1) 章节正文里混入标题行
+#   2) 字数统计 len(content) 含标题/空行，与 prompt 要求的"纯正文含标点"口径不一致
+# 统一：card.content / chapter.content 只存纯正文；字数用 _count_cn_chars（去空白含标点）
+# ============================================================================
+
+def _strip_chapter_title(content, fallback_title=''):
+    """从 AI 输出中剥离章节标题行，返回 (title, body)。
+
+    AI 被要求输出格式：第一行标题，第二行空行，第三行起纯正文。
+    本函数防御性处理：
+      - 首行像章节标题（以"第N章/Chapter N"开头 + 短行≤30 + 非句末标点）
+        且第二行为空行（匹配 AI 被要求的"标题+空行+正文"格式）→ 剥离标题及后续空行
+      - 自动去除标题行首的 markdown # 标记（如 "# 第四章 左臂开狱" → "第四章 左臂开狱"）
+      - 否则视为纯正文，title 回退到 fallback_title，body 为原文
+
+    用于：正文写作/润色/去AI 产出 SAVE_CHAPTER 卡片前剥离标题，保证 card.content 为纯正文。
+    "第二行必须为空行"的约束可避免误剥叙事句（如正文首行"第三章的秘密终于揭晓"）。
+    """
+    if not content:
+        return fallback_title, ''
+    text = content.strip()
+    lines = text.split('\n')
+    first_raw = lines[0].strip() if lines else ''
+    # 去除行首 markdown # 标记（#、##、###...）
+    first = re.sub(r'^#+\s*', '', first_raw).strip()
+    from app import parse_chapter_number
+    # 章节标题判定：以"第N章/Chapter N"开头 + 短行(≤30) + 非句末标点
+    starts_with_chapter = bool(
+        re.match(r'^第\s*[0-9零一二三四五六七八九十百千万亿两〇]+\s*[章节回卷部篇话集幕折更段讲课夜日年季场]', first)
+        or re.match(r'^(?:chapter|ch|episode|ep)\.?\s*\d+', first, re.IGNORECASE)
+    )
+    is_title_line = (
+        starts_with_chapter
+        and bool(parse_chapter_number(first))
+        and len(first) <= 30
+        and not first.endswith(('。', '！', '？', '；', '.', '!', '?', '"', '"', "'", "'", '…'))
+    )
+    # 必须满足"标题+空行+正文"格式：第二行（lines[1]）为空行，才剥离
+    has_blank_after = len(lines) >= 2 and not lines[1].strip()
+    if is_title_line and has_blank_after:
+        title = first or fallback_title
+        # 跳过标题后的所有空行
+        body_start = 1
+        while body_start < len(lines) and not lines[body_start].strip():
+            body_start += 1
+        body = '\n'.join(lines[body_start:]).strip()
+        return title, body
+    # 首行不像标题或不满足格式：原文整体作为正文，标题用兜底值
+    return fallback_title, text
+
+
+# ============================================================================
 # 路由
 # ============================================================================
 
@@ -543,7 +597,14 @@ def apply_card():
 
     # 章节正文卡：落地到 Chapter 表（覆盖同章节号/同标题，自动分卷排序）
     if spec['mode'] == 'chapter':
-        wc = len(content)
+        from app import _count_cn_chars
+        # 防御性剥离标题行：保证 chapter.content 为纯正文（与字数统计口径一致）
+        # 兜底场景：chat_smart 产出的 SAVE_CHAPTER 卡片或历史会话恢复的卡片可能仍含标题
+        stripped_title, body_content = _strip_chapter_title(content, fallback_title=title)
+        # 若剥离出更具体的标题（含章节名），优先用剥离结果
+        if stripped_title and stripped_title != title:
+            title = stripped_title
+        wc = _count_cn_chars(body_content)
         ch_num = parse_chapter_number(title)
         existing_ch = None
         # 优先按章节号匹配（覆盖同章节号的章节）
@@ -564,7 +625,7 @@ def apply_card():
         if existing_ch:
             # 覆盖模式：同章节号/同标题存在，更新内容、标题、字数
             existing_ch.title = title or existing_ch.title
-            existing_ch.content = content
+            existing_ch.content = body_content
             existing_ch.word_count = wc
             existing_ch.updated_at = datetime.now(timezone.utc)
             ch = existing_ch
@@ -576,7 +637,7 @@ def apply_card():
             ch = Chapter(
                 book_id=book_id,
                 title=title or f'第{max_idx + 1}章',
-                content=content,
+                content=body_content,
                 order_index=max_idx + 1,
                 word_count=wc,
                 status='draft',
@@ -602,7 +663,7 @@ def apply_card():
             'order_index': ch.order_index,
         }
         # 持久化卡片状态（避免重开聊天又提示采纳/保存为新章节）
-        _persist_card_status(session_id, card_id, new_card_status, content)
+        _persist_card_status(session_id, card_id, new_card_status, body_content)
         # bible 可能不存在，但 progress 仍要返回
         bb = BookBible.query.filter_by(book_id=book_id).first()
         return jsonify({'ok': True, 'field': spec['field'], 'label': spec['label'],
@@ -1330,7 +1391,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'你是资深网文润色编辑。请润色《{book.title}》第 {target_chapter_num} 章正文。'
             f'\n要求：保持剧情和人物不变，优化文笔节奏，提升画面感。'
             f'\n用户要求：{instruction or "无"}'
-            f'\n\n【输出格式】第一行输出章节标题，第二行空行，第三行起输出纯正文。'
+            f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
             f'\n【字数绝对铁律】纯正文（不含标题行）必须严格控制在 2400字±100（即 2300-2500 字区间，含标点，不含标题）。'
             f'当前原文 {cur_len} 字：若不足 2300 字须扩写场景细节补足；若超过 2500 字须精简删减；'
             f'落在区间内则保持篇幅不变。这是不可违反的硬约束。'
@@ -1348,7 +1409,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
             f'\n用户要求：{instruction or "自然推进剧情"}'
-            f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"），第二行空行，第三行起输出纯正文。'
+            f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
             f'\n【字数绝对铁律】纯正文（不含标题行）必须严格控制在 2400字±100（即 2300-2500 字区间，含标点，不含标题）。'
             f'低于 2300 字=内容不足，须扩展场景细节、对话和心理描写补足；'
             f'超过 2500 字=冗余，须精简枝节删减。这是不可违反的硬约束，优先级高于所有其他要求。'
@@ -1368,18 +1429,22 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         yield sse({'type': 'error', 'error': f'{mode_label}失败：{e}'})
         return
 
+    # 剥离标题行：card.content 只存纯正文，card.title 用 AI 生成的章节名（去 # 标记）
+    # 与 apply_card 字数统计口径一致（纯正文含标点，不含标题/空行）
+    extracted_title, body_content = _strip_chapter_title(
+        content, fallback_title=f'第{target_chapter_num}章')
     card = {
         'id': str(uuid.uuid4())[:8],
         'type': 'SAVE_CHAPTER',
-        'title': f'第{target_chapter_num}章',
-        'content': content.strip(),
+        'title': extracted_title,
+        'content': body_content,
         'target': '章节正文',
     }
     yield sse({'type': 'card', 'card': card, 'session_id': session.id})
 
-    # 持久化会话
+    # 持久化会话（存纯正文，与卡片口径一致）
     yield from _persist_action_session(session, f'{mode_label}第{target_chapter_num}章：{instruction or ""}',
-                                       {f'chapter_{target_chapter_num}': content},
+                                       {f'chapter_{target_chapter_num}': body_content},
                                        [f'chapter_{target_chapter_num}'])
 
 
@@ -2413,6 +2478,9 @@ def smart_deai():
                 parts.append(f'【{d["label"]}】\n{v}')
         bible_ctx = '\n\n'.join(parts)
 
+    # 统一纯正文字数口径（去空白含标点，与正文写作/润色/落地一致）
+    from app import _count_cn_chars
+    orig_wc = _count_cn_chars(raw_content)
     sys_prompt = f"""你是番茄去AI味审查员。请对以下章节正文做去AI味审校，按规则修改后只输出修改后的正文。
 
 {skill_note}
@@ -2420,9 +2488,10 @@ def smart_deai():
 【全文设定参考】
 {bible_ctx or "（暂无）"}
 
-【硬性约束】修改后字数与原文相近（±10%），保留原章节的剧情走向和钩子，只改文风不改剧情。
-
-请直接输出修改后的完整正文（含章节标题），不要解释，不要加 Markdown 代码块，不要在文末附加字数统计。"""
+【硬性约束】
+1. 只输出纯正文，不要输出章节标题（标题由系统保留，不要重复输出）。
+2. 修改后纯正文（不含标题，去空白含标点）字数与原文 {orig_wc} 字相近（±10%），保留原章节的剧情走向和钩子，只改文风不改剧情。
+3. 不要加 Markdown 代码块，不要解释，不要在文末附加字数统计。"""
 
     messages = [{'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': f'请审校以下章节正文：\n\n{raw_content}'}]
@@ -2441,18 +2510,20 @@ def smart_deai():
             # 去掉可能的 Markdown 代码块包裹
             content = re.sub(r'^```[a-zA-Z]*\n', '', content)
             content = re.sub(r'\n```$', '', content).strip()
+            # 防御性剥离标题行：保证 card.content 为纯正文（与落地字数口径一致）
+            _, body_content = _strip_chapter_title(content, fallback_title=chapter.title or '')
             card = {
                 'id': str(uuid.uuid4())[:8],
                 'type': 'SAVE_CHAPTER',
                 'title': chapter.title,
-                'content': content,
+                'content': body_content,
                 'target': '章节正文',
             }
             yield sse({'type': 'card', 'card': card, 'session_id': session_id,
                        'meta': {'chapter_id': chapter_id, 'replace': True}})
             history = load_session_messages(session)
             history.append({'role': 'user', 'content': f'去AI味：{chapter.title}'})
-            history.append({'role': 'assistant', 'content': content,
+            history.append({'role': 'assistant', 'content': body_content,
                             'cards': [{**card, 'status': 'pending'}]})
             session.messages_json = json.dumps(history, ensure_ascii=False)
             session.updated_at = datetime.now(timezone.utc)
@@ -2664,10 +2735,14 @@ def smart_chapter_replace():
     if not chapter or chapter.book_id != book_id:
         return jsonify({'error': '章节不存在'}), 404
 
-    chapter.content = content
-    chapter.word_count = len(content)
+    # 防御性剥离标题行 + 统一 _count_cn_chars 字数统计（去空白含标点）
+    # 与正文写作/润色/apply_card 口径一致，避免去AI后字数跳变
+    from app import _count_cn_chars
+    _, body_content = _strip_chapter_title(content, fallback_title=chapter.title or '')
+    chapter.content = body_content
+    chapter.word_count = _count_cn_chars(body_content)
     chapter.updated_at = datetime.now(timezone.utc)
     db.session.commit()
     # 持久化去AI卡片状态为 adopted（避免重开聊天又提示替换）
-    _persist_card_status(session_id, card_id, 'adopted', content)
+    _persist_card_status(session_id, card_id, 'adopted', body_content)
     return jsonify({'ok': True, 'chapter_id': chapter_id, 'word_count': chapter.word_count})
