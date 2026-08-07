@@ -1032,6 +1032,7 @@ def _action_master_create(book, session, instruction, gw, sse):
 
     # 构建各维度上下文（已生成维度作为下游上下文）
     generated = {}
+    emitted_cards = []  # 收集已发出的卡片对象（id 与前端一致，用于持久化）
     for dim in dims:
         label = _DIM_LABELS.get(dim, dim)
         card_type = _DIM_TO_CARD.get(dim, 'SAVE_CONCEPT')
@@ -1079,11 +1080,12 @@ def _action_master_create(book, session, instruction, gw, sse):
             'content': content.strip(),
             'target': _CARD_TARGET.get(card_type, label),
         }
+        emitted_cards.append(card)
         yield sse({'type': 'card', 'card': card, 'session_id': session.id})
 
-    # 持久化会话
+    # 持久化会话（用已发出的卡片对象，保留 id 与前端一致）
     yield from _persist_action_session(session, f'批量生成设定：{instruction or "默认五维度"}',
-                                       generated, dims)
+                                       generated, dims, cards_out=emitted_cards)
 
 
 # ============================================================================
@@ -1468,33 +1470,43 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     }
     yield sse({'type': 'card', 'card': card, 'session_id': session.id})
 
-    # 持久化会话（存纯正文，与卡片口径一致）
+    # 持久化会话（用已发出的卡片对象，保留 id 与前端一致，采纳状态可回写）
     yield from _persist_action_session(session, f'{mode_label}第{target_chapter_num}章：{instruction or ""}',
                                        {f'chapter_{target_chapter_num}': body_content},
-                                       [f'chapter_{target_chapter_num}'])
+                                       [f'chapter_{target_chapter_num}'],
+                                       cards_out=[card])
 
 
-def _persist_action_session(session, title, generated, dims):
-    """动作执行完后持久化会话消息。"""
+def _persist_action_session(session, title, generated, dims, cards_out=None):
+    """动作执行完后持久化会话消息。
+
+    cards_out: 动作函数已生成并发给前端的卡片对象列表（含 id/title/type/content/target）。
+               若提供，直接用这些卡片持久化（保留 id，与前端一致，确保采纳状态可回写）；
+               若不提供，回退到旧逻辑（按 dims 从 generated 取内容，重新生成 id）。
+    """
     from app import db
     history = load_session_messages(session)
     history.append({'role': 'user', 'content': title})
-    # 动作产出的卡片也存进会话，便于历史回看
-    cards = []
-    for dim in dims:
-        c = generated.get(dim)
-        if c:
-            card_type = _DIM_TO_CARD.get(dim, 'SAVE_CHAPTER') if dim != dims[0] or 'chapter' not in dim else 'SAVE_CHAPTER'
-            if 'chapter' in dim:
-                card_type = 'SAVE_CHAPTER'
-            cards.append({
-                'id': str(uuid.uuid4())[:8],
-                'type': card_type,
-                'title': _DIM_LABELS.get(dim, dim),
-                'content': c,
-                'target': _CARD_TARGET.get(card_type, dim),
-                'status': 'pending',
-            })
+    # 优先用动作函数已发出的卡片对象（id 与前端一致，采纳/编辑/忽略状态可回写）
+    if cards_out:
+        cards = [{**c, 'status': 'pending'} for c in cards_out if c]
+    else:
+        # 兼容旧调用：按 dims 从 generated 取内容，重新生成 id（不推荐，id 会与前端不一致）
+        cards = []
+        for dim in dims:
+            c = generated.get(dim)
+            if c:
+                card_type = _DIM_TO_CARD.get(dim, 'SAVE_CHAPTER') if dim != dims[0] or 'chapter' not in dim else 'SAVE_CHAPTER'
+                if 'chapter' in dim:
+                    card_type = 'SAVE_CHAPTER'
+                cards.append({
+                    'id': str(uuid.uuid4())[:8],
+                    'type': card_type,
+                    'title': _DIM_LABELS.get(dim, dim),
+                    'content': c,
+                    'target': _CARD_TARGET.get(card_type, dim),
+                    'status': 'pending',
+                })
     history.append({'role': 'assistant', 'content': title, 'cards': cards})
     session.messages_json = json.dumps(history, ensure_ascii=False)
     session.updated_at = datetime.now(timezone.utc)
