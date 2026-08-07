@@ -2564,6 +2564,82 @@ def import_book_zip():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def _natural_sort_key(name):
+    """文件名自然排序键，支持中文数字章节号（第1章 < 第2章 < ... < 第10章）。
+    解析出章节号的按章节号升序排前；无法解析的按文件名字典序排后。"""
+    base = os.path.splitext(name)[0]
+    n = parse_chapter_number(base)
+    if n is not None:
+        return (0, n, base)
+    return (1, 0, base)
+
+
+def _strip_leading_title_line(text, title):
+    """若正文第一行与章节标题（文件名）相同或高度相似，去除该行，避免标题重复。
+    比较前会标准化：去除空格、常见标点、统一阿拉伯/中文数字。
+    仅当第一行较短（≤40字）且与标题高度匹配时才去除，避免误删正文。"""
+    if not text or not title:
+        return text
+    lines = text.split('\n')
+    if not lines:
+        return text
+    first = lines[0].strip()
+    if not first or len(first) > 40:
+        return text
+
+    def _norm(s):
+        # 去除空格、常见标点
+        s = re.sub(r'[\s·，。：:、\-_—()（）\[\]【】]+', '', s or '')
+        # 中文数字转阿拉伯（仅单位级别，便于 第1章/第一章 匹配）
+        cn_map = {'零': '0', '一': '1', '二': '2', '两': '2', '三': '3', '四': '4',
+                  '五': '5', '六': '6', '七': '7', '八': '8', '九': '9', '十': '10'}
+        for cn, ar in cn_map.items():
+            s = s.replace(cn, ar)
+        return s
+
+    nf, nt = _norm(first), _norm(title)
+    if not nf or not nt:
+        return text
+    # 完全相同 或 一方包含另一方 → 视为重复标题行
+    if nf == nt or nt in nf or nf in nt:
+        return '\n'.join(lines[1:]).strip()
+    return text
+
+
+def _extract_zip_chapters(zippath):
+    """解压 zip，若含多个文本文件，返回 [{'title','content'}, ...] 按文件名自然排序，
+    每个内嵌文件=一章节，文件名（去扩展名）作为章节标题。
+    若 zip 内只有 ≤1 个文本文件，返回 None（让调用方走单文件拆分）。"""
+    items = []  # [(inner_name, decoded_text)]
+    try:
+        with zipfile.ZipFile(zippath, 'r') as zf:
+            for name in zf.namelist():
+                if name.endswith(('/', '\\')):
+                    continue
+                inner_ext = name.rsplit('.', 1)[1].lower() if '.' in name else ''
+                if inner_ext not in ('txt', 'md', 'markdown', 'json'):
+                    continue
+                try:
+                    content = zf.read(name)
+                    decoded = _detect_and_decode(content)
+                    if decoded.strip():
+                        items.append((name, decoded))
+                except Exception:
+                    pass
+    except Exception:
+        return None
+    if len(items) <= 1:
+        return None
+    # 按文件名自然排序
+    items.sort(key=lambda x: _natural_sort_key(x[0]))
+    result = []
+    for name, text in items:
+        ch_title = os.path.splitext(os.path.basename(name))[0][:100]
+        body = _strip_leading_title_line(text, ch_title)
+        result.append({'title': ch_title, 'content': body})
+    return result
+
+
 def split_into_chapters(text):
     """将纯文本按章节标记拆分为多个章节，支持多种章节标题格式。
     会自动合并"同章双标题"（如 第20章 / 第二十章 紧挨出现，前者为空）产生的空章。"""
@@ -2664,7 +2740,12 @@ def _merge_empty_chapters(chapters):
 @app.route('/api/books/import-files', methods=['POST'])
 @login_required
 def import_book_files():
-    """从多个文本文件导入创建新作品，支持 txt/md/docx/zip"""
+    """从多个文本文件导入创建新作品，支持 txt/md/docx/zip
+    导入模式自动识别：
+    - 多文件模式（≥2个文件）：每个文件 = 一个章节，文件名作为章节标题，按文件名排序
+    - 单文件模式（1个文件）：调用 split_into_chapters 拆分为多个章节
+    - zip 模式：解压后若含多个文本文件，按多文件模式处理；否则按单文件拆分
+    """
     files = request.files.getlist('files')
     if not files or len(files) == 0:
         return jsonify({'error': '未选择文件'}), 400
@@ -2676,40 +2757,66 @@ def import_book_files():
     tmpdir = tempfile.mkdtemp()
     try:
         all_chapters = []
-
+        # 收集有效文件（保存到临时目录，记录原始文件名）
+        collected = []  # [(original_name, filepath, ext)]
         for f in files:
             if not f or not f.filename:
                 continue
-            # 用原始文件名检测扩展名，避免 secure_filename 移除中文后丢失扩展名
             original_name = f.filename
             ext = original_name.rsplit('.', 1)[1].lower() if '.' in original_name else ''
             if ext not in ('txt', 'md', 'markdown', 'docx', 'zip', 'json'):
                 continue
-
-            # 保存到临时文件，用 uuid 避免文件名冲突
             safe_name = f'{uuid.uuid4()}.{ext}'
             filepath = os.path.join(tmpdir, safe_name)
             f.save(filepath)
-            text = extract_text_from_file(filepath, safe_name)
+            collected.append((original_name, filepath, ext))
 
-            if not text.strip():
-                continue
+        if not collected:
+            return jsonify({'error': '未选择有效文件'}), 400
 
-            # 尝试拆分章节
-            chapters = split_into_chapters(text)
-            if chapters:
-                all_chapters.extend(chapters)
+        # 判断导入模式
+        # 情况1：单个 zip 文件 → 解压，若含多个文本文件则按多文件模式（每内嵌文件=一章节）
+        if len(collected) == 1 and collected[0][2] == 'zip':
+            zip_chapters = _extract_zip_chapters(collected[0][1])
+            if zip_chapters:
+                all_chapters.extend(zip_chapters)
             else:
-                # 作为单个章节，用原始文件名作为章节标题
-                ch_title = os.path.splitext(original_name)[0]
-                all_chapters.append({'title': ch_title[:100], 'content': text})
+                # zip 内无法按文件拆分，回退到单文件拆分
+                text = extract_text_from_file(collected[0][1], collected[0][0])
+                if text.strip():
+                    chapters = split_into_chapters(text)
+                    if chapters:
+                        all_chapters.extend(chapters)
+                    else:
+                        all_chapters.append({'title': os.path.splitext(collected[0][0])[0][:100], 'content': text})
+        # 情况2：多个文件 → 多文件模式（每个文件=一章节，文件名作为标题，按文件名自然排序）
+        elif len(collected) >= 2:
+            collected.sort(key=lambda x: _natural_sort_key(x[0]))
+            for original_name, filepath, ext in collected:
+                text = extract_text_from_file(filepath, original_name)
+                if not text.strip():
+                    continue
+                ch_title = os.path.splitext(original_name)[0][:100]
+                # 去除正文开头的重复标题行（若文件第一行与文件名相同，避免标题重复）
+                body = _strip_leading_title_line(text, ch_title)
+                all_chapters.append({'title': ch_title, 'content': body})
+        # 情况3：单个文件 → 单文件拆分模式
+        else:
+            original_name, filepath, ext = collected[0]
+            text = extract_text_from_file(filepath, original_name)
+            if text.strip():
+                chapters = split_into_chapters(text)
+                if chapters:
+                    all_chapters.extend(chapters)
+                else:
+                    all_chapters.append({'title': os.path.splitext(original_name)[0][:100], 'content': text})
 
         if not all_chapters:
             return jsonify({'error': '未能从文件中提取到有效内容，请检查文件格式或编码'}), 400
 
         # 从第一个文件名推断标题
         if not title:
-            first_file = files[0].filename or '导入作品'
+            first_file = (collected[0][0] if collected else '导入作品') or '导入作品'
             title = os.path.splitext(first_file)[0][:50]
 
         book = Book(

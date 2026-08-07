@@ -500,6 +500,11 @@ export default function WorkbenchPage() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h2>📥 导入作品</h2>
             <p className="text-muted" style={{marginBottom:12}}>支持导入 txt/md/docx/zip 文件，或选择整个文件夹批量导入。系统会自动识别章节并创建作品。</p>
+            <div style={{background:'#f6f8fa',borderRadius:6,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#555',lineHeight:1.7}}>
+              <b style={{color:'#5b8def'}}>导入模式（自动识别）</b><br/>
+              · <b>多文件/文件夹</b>：每个文件 = 一个章节，<b>文件名作为章节标题</b>，按文件名排序（如 第1章.txt、第2章.txt…）<br/>
+              · <b>单文件</b>：整本小说在一个 txt/md/docx 文件中，系统自动按章节标题（第N章等）拆分
+            </div>
 
             <div className="import-file-zone">
               <input ref={fileImportRef} type="file" accept=".txt,.md,.docx,.zip,.json" multiple onChange={handleFilePick} style={{display:'none'}} id="import-file-input" />
@@ -514,7 +519,7 @@ export default function WorkbenchPage() {
                   <span>选择文件夹</span>
                 </label>
               </div>
-              <p className="text-muted" style={{fontSize:11,textAlign:'center',marginTop:6}}>可多选，文件夹将导入其中所有 txt/md 文件</p>
+              <p className="text-muted" style={{fontSize:11,textAlign:'center',marginTop:6}}>多选/文件夹：每文件=一章（文件名作标题）；单文件：自动拆分章节</p>
             </div>
 
             {importFiles.length > 0 && (
