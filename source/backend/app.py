@@ -84,7 +84,7 @@ except ImportError:
 
 # P3：LLM Gateway 统一入口（错误分类 + 智能重试 + 空内容检测）
 try:
-    from llm_gateway import LLMGateway, ModelResult, FailureClass, LLMError, get_llm_config, create_gateway
+    from llm_gateway import LLMGateway, ModelResult, FailureClass, LLMError, get_llm_config, create_gateway, build_auth_headers
 except ImportError:
     LLMGateway = None
     ModelResult = None
@@ -92,6 +92,12 @@ except ImportError:
     LLMError = None
     get_llm_config = None
     create_gateway = None
+    def build_auth_headers(api_key: str, content_type: bool = True) -> dict:
+        """导入失败时的回退实现：仅下发 Authorization: Bearer（标准 OpenAI 兼容）。"""
+        headers = {'Authorization': f'Bearer {api_key}'}
+        if content_type:
+            headers['Content-Type'] = 'application/json'
+        return headers
 
 # P3：Context Manifest（章节生成前记录上下文来源 + hash + token 预算）
 try:
@@ -852,7 +858,7 @@ def _llm_chat(messages, api_key=None, base_url=None, model=None,
         # gateway 不可用时回退到直接 requests.post（兼容旧环境）
         try:
             resp = requests.post(f'{base_url}/chat/completions',
-                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                headers=build_auth_headers(api_key),
                 json={'model': model, 'messages': messages,
                       'temperature': temperature, 'max_tokens': max_tokens},
                 timeout=timeout)
@@ -909,7 +915,7 @@ def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chap
 只输出修正后的完整正文，不输出任何说明或前缀。"""
     try:
         rewrite_resp = requests.post(f'{base_url}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json={'model': model,
                   'messages': [{'role': 'system', 'content': rewrite_system},
                                {'role': 'user', 'content': f'请修正以下章节正文字数：\n\n{content}'}],
@@ -1955,7 +1961,7 @@ def _do_fetch_models(base_url, api_key):
         base += '/v1'
     resp = req.get(
         f"{base}/models",
-        headers={'Authorization': f'Bearer {api_key}'},
+        headers=build_auth_headers(api_key, content_type=False),
         timeout=15
     )
     if resp.status_code != 200:
@@ -1981,10 +1987,7 @@ def _do_test_connection(base_url, api_key, model):
         base += '/v1'
     resp = req.post(
         f"{base}/chat/completions",
-        headers={
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json'
-        },
+        headers=build_auth_headers(api_key),
         json={
             'model': model,
             'messages': [{'role': 'user', 'content': '你好，请回复"连接成功"四个字。'}],
@@ -2101,10 +2104,7 @@ def ai_chat():
             base += '/v1'
         resp = req.post(
             f"{base}/chat/completions",
-            headers={
-                'Authorization': f'Bearer {cfg.api_key}',
-                'Content-Type': 'application/json'
-            },
+            headers=build_auth_headers(cfg.api_key),
             json={
                 'model': cfg.model,
                 'messages': messages,
@@ -2142,10 +2142,7 @@ def ai_chat_stream():
                 base += '/v1'
             resp = req.post(
                 f"{base}/chat/completions",
-                headers={
-                    'Authorization': f'Bearer {cfg.api_key}',
-                    'Content-Type': 'application/json'
-                },
+                headers=build_auth_headers(cfg.api_key),
                 json={
                     'model': cfg.model,
                     'messages': messages,
@@ -3913,7 +3910,7 @@ def review_book(book_id):
 
     try:
         resp = requests.post(f'{base_url}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':text}],
                   'temperature': 0.3, 'max_tokens': 2000, 'response_format': {'type': 'json_object'}},
             timeout=120)
@@ -4847,7 +4844,7 @@ def analyze_book():
 
     try:
         resp = requests.post(f'{base_url}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':text}],
                   'temperature': 0.3, 'max_tokens': 1500, 'response_format': {'type': 'json_object'}},
             timeout=120)
@@ -6425,7 +6422,7 @@ def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_in
 
     try:
         resp = requests.post(f'{base_url}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json={'model': model, 'messages': [{'role': 'system', 'content': plan_system},
                                                 {'role': 'user', 'content': f'请为第 {current_chapter_num} 章生成计划'}],
                   'temperature': 0.5, 'max_tokens': max_tokens},
@@ -6516,7 +6513,7 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
 
     try:
         resp = requests.post(f'{base_url}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json={'model': model, 'messages': [{'role': 'system', 'content': check_system},
                                                 {'role': 'user', 'content': '请检查一致性与计划执行度，返回JSON'}],
                   'temperature': 0.2, 'max_tokens': max_tokens},
@@ -7034,7 +7031,7 @@ def ai_continue(book_id):
 
                 try:
                     deai_resp = requests.post(f'{base_url}/chat/completions',
-                        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                        headers=build_auth_headers(api_key),
                         json={'model': model,
                               'messages': [{'role':'system','content':deai_system},
                                            {'role':'user','content':f'请审校以下章节正文：\n\n{draft_content}'}],
@@ -7193,7 +7190,7 @@ def ai_continue(book_id):
                 # 3. 构建 llm_call_fn：封装 requests.post
                 def _llm_call_fn(sys_prompt, user_prompt, _api_key=api_key, _base_url=base_url, _model=model):
                     resp = requests.post(f'{_base_url}/chat/completions',
-                        headers={'Authorization': f'Bearer {_api_key}', 'Content-Type': 'application/json'},
+                        headers=build_auth_headers(_api_key),
                         json={'model': _model,
                               'messages': [{'role': 'system', 'content': sys_prompt},
                                            {'role': 'user', 'content': user_prompt}],
@@ -7364,7 +7361,7 @@ def ai_spot_fix(book_id):
 
     try:
         resp = requests.post(f'{base_url}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json={'model': model,
                   'messages': [{'role': 'system', 'content': sys_prompt},
                                {'role': 'user', 'content': user_prompt}],
@@ -7447,7 +7444,7 @@ def ai_continue_stream(book_id):
             # 流式生成正文初稿，同时收集完整内容用于后写校验（P0-1）
             full_content_parts = []
             resp = requests.post(f'{base_url}/chat/completions',
-                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                headers=build_auth_headers(api_key),
                 json={'model': model,
                       'messages': [{'role': 'system', 'content': system_prompt},
                                    {'role': 'user', 'content': ctx['user_prompt']}],
@@ -7650,7 +7647,7 @@ def ai_continue_batch(book_id):
             # Bug3 修复：LLM 调用添加状态码与结构检查，避免 KeyError 静默失败
             try:
                 resp = requests.post(f'{base_url}/chat/completions',
-                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    headers=build_auth_headers(api_key),
                     json={'model': model, 'messages': [{'role':'system','content':system_prompt},
                                                         {'role':'user','content':ctx['user_prompt']}],
                           'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens']},
@@ -8022,7 +8019,7 @@ def ai_continue_batch_stream(book_id):
                 last_heartbeat = _time.time()
                 try:
                     resp = requests.post(f'{base_url}/chat/completions',
-                        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                        headers=build_auth_headers(api_key),
                         json={'model': model, 'messages': [{'role':'system','content':system_prompt},
                                                             {'role':'user','content':ctx['user_prompt']}],
                               'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens'],
@@ -8126,7 +8123,7 @@ def ai_continue_batch_stream(book_id):
                             deai_hb = f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在去AI味审校第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
                             deai_resp = yield from _run_blocking_with_heartbeat(
                                 lambda: requests.post(f'{base_url}/chat/completions',
-                                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                                    headers=build_auth_headers(api_key),
                                     json={'model': model,
                                           'messages': [{'role':'system','content':deai_system},
                                                        {'role':'user','content':f'请审校以下章节正文：\n\n{polished_content}'}],
@@ -8519,7 +8516,7 @@ def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation')
         else:
             payload['max_tokens'] = cfg.max_tokens
         resp = requests.post(f'{base}/chat/completions',
-            headers={'Authorization': f'Bearer {cfg.api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(cfg.api_key),
             json=payload, timeout=180)
         result = resp.json()
         if 'choices' in result and len(result['choices']) > 0:
@@ -10338,7 +10335,7 @@ def ai_master_create_stream(book_id):
                 if not base.endswith('/v1'):
                     base += '/v1'
                 resp = requests.post(f'{base}/chat/completions',
-                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    headers=build_auth_headers(api_key),
                     json={'model': model,
                           'messages': [{'role': 'system', 'content': system_prompt},
                                        {'role': 'user', 'content': user_prompt}],
@@ -10537,7 +10534,7 @@ def ai_brainstorm(book_id):
         if not base.endswith('/v1'):
             base += '/v1'
         resp = requests.post(f'{base}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json={
                 'model': model,
                 'messages': [
@@ -10608,7 +10605,7 @@ def ai_analyze_content(book_id):
         if not base.endswith('/v1'):
             base += '/v1'
         resp = requests.post(f'{base}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json={
                 'model': model,
                 'messages': [
@@ -10774,7 +10771,7 @@ def ai_analyze_dimension(book_id):
 
         # 第一次尝试带 response_format；不支持则去掉重试
         resp = requests.post(f'{base}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json=req_body,
             timeout=90)
 
@@ -10785,7 +10782,7 @@ def ai_analyze_dimension(book_id):
             if 'response_format' in err_msg or 'json_object' in err_msg or 'unrecognized' in err_msg:
                 req_body.pop('response_format', None)
                 resp = requests.post(f'{base}/chat/completions',
-                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    headers=build_auth_headers(api_key),
                     json=req_body,
                     timeout=90)
 
@@ -10922,7 +10919,7 @@ def ai_analyze_character(book_id):
         if not base.endswith('/v1'):
             base += '/v1'
         resp = requests.post(f'{base}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json={
                 'model': model,
                 'messages': [
@@ -11140,7 +11137,7 @@ def ai_analyze_plot_volume(book_id):
         }
 
         resp = requests.post(f'{base}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json=req_body,
             timeout=90)
 
@@ -11151,7 +11148,7 @@ def ai_analyze_plot_volume(book_id):
             if 'response_format' in err_msg or 'json_object' in err_msg or 'unrecognized' in err_msg:
                 req_body.pop('response_format', None)
                 resp = requests.post(f'{base}/chat/completions',
-                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    headers=build_auth_headers(api_key),
                     json=req_body,
                     timeout=90)
 
@@ -12145,7 +12142,7 @@ def ai_generate_dynamic_memory(book_id):
         if not base.endswith('/v1'):
             base += '/v1'
         resp = requests.post(f'{base}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json={
                 'model': model,
                 'messages': [
@@ -12277,7 +12274,7 @@ def _generate_dynamic_report_content(book_id, chapter_start, chapter_end, skill_
         for attempt in range(max_retries + 1):
             try:
                 resp = requests.post(f'{base}/chat/completions',
-                    headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                    headers=build_auth_headers(api_key),
                     json={
                         'model': model,
                         'messages': [
@@ -12827,7 +12824,7 @@ def ai_analyze_from_reports(book_id):
             req_body['response_format'] = {'type': 'json_object'}
 
         resp = requests.post(f'{base}/chat/completions',
-            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            headers=build_auth_headers(api_key),
             json=req_body,
             timeout=120)
 

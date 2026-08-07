@@ -45,6 +45,23 @@ _RETRYABLE = {FailureClass.TIMEOUT, FailureClass.UNAVAILABLE, FailureClass.EMPTY
               FailureClass.FORMAT_ERROR, FailureClass.UNKNOWN}
 
 
+def build_auth_headers(api_key: str, content_type: bool = True) -> dict:
+    """构造 LLM 请求认证头。
+
+    同时下发 Authorization: Bearer 与 x-api-key 两种认证头，兼容：
+    - 标准 OpenAI 兼容服务（deepseek/qwen/glm 等认 Authorization，忽略 x-api-key）
+    - OpenCode Zen 免费模型端点（认 x-api-key）
+    对任一 provider 均无副作用：HTTP 服务通常忽略未识别的 header。
+    """
+    headers: dict[str, str] = {
+        "Authorization": f"Bearer {api_key}",
+        "x-api-key": api_key,
+    }
+    if content_type:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
 class LLMError(Exception):
     """LLM 调用异常，携带 failure_class。"""
     def __init__(self, message: str, failure_class: FailureClass = FailureClass.UNKNOWN):
@@ -147,10 +164,7 @@ class LLMGateway:
         """
         result = ModelResult()
         url = f"{self.base_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = build_auth_headers(self.api_key)
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -229,10 +243,7 @@ class LLMGateway:
         兼容多种 chunk 格式（标准 OpenAI / 简化 delta / 直接 content）。
         """
         url = f"{self.base_url}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = build_auth_headers(self.api_key)
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
