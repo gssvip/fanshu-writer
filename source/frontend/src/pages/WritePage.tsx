@@ -2627,6 +2627,8 @@ function ChapterPanel(props: {
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [langStyleExpanded, setLangStyleExpanded] = useState(false);
   const [expandedVolumes, setExpandedVolumes] = useState<Record<string, boolean>>({});
+  // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
+  const chapterCollapseInitRef = useRef(false);
   const [renamingVolId, setRenamingVolId] = useState<string | null>(null);
   const [renameVolTitle, setRenameVolTitle] = useState('');
   const selectedCount = selectedSkillPackIds.length;
@@ -2753,6 +2755,17 @@ function ChapterPanel(props: {
     map['__orphan__'] = orphans;
     return map;
   }, [chapters, volumes]);
+
+  // 首次有卷数据时默认折叠全部卷（每次切换到该维度 tab 重新挂载，ref 重置，实现每次进入默认折叠）
+  useEffect(() => {
+    if (chapterCollapseInitRef.current) return;
+    if (volumes.length > 0) {
+      chapterCollapseInitRef.current = true;
+      const init: Record<string, boolean> = { '__orphan__': false };
+      for (const v of volumes) init[v.id] = false;
+      setExpandedVolumes(init);
+    }
+  }, [volumes]);
 
   async function handleRebinVolumes() {
     if (!bookId) return;
