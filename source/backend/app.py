@@ -8807,6 +8807,19 @@ def ai_outline_volume(book_id):
     volume_index = data.get('volume_index', 1)
     volume_title = data.get('volume_title', f'第{volume_index}卷')
     chapters_per_volume = data.get('chapters_per_volume', 50)
+    # 节点设计模式：已有卷剧情时只细化 nodes，不覆盖 main_plot 等字段
+    node_only = bool(data.get('node_only', False))
+
+    # 节点设计模式：取本卷已有的卷剧情作为节点拆分依据
+    current_vol_existing = None
+    if node_only:
+        for v in existing_volumes_for_ctx:
+            if not isinstance(v, dict):
+                continue
+            v_idx = v.get('volume_index') or _extract_volume_index(v.get('volume', v.get('volume_id', '')))
+            if str(v_idx) == str(volume_index):
+                current_vol_existing = v
+                break
 
     skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['volume_breakdown', 'chapter_plan', 'tomato_outline'])
 
@@ -8947,11 +8960,151 @@ def ai_outline_volume(book_id):
 - 本卷开头必须承接上一卷的结尾场景与悬念，不得凭空跳跃
 - 本卷第一个情节节点的起始章号必须为 {start_chapter}"""
 
-    system_prompt = f"""你是番茄小说金番作者级别的卷纲设计师。
+    # ===== 【爽点设计系统】8种爽点类型 + 4层爽点周期 + 钩子系统 =====
+    cool_system_prompt = """
+【爽点设计系统】小说不能只走主线/打打杀杀，每个情节节点必须内置爽点。每节点必须从以下维度设计：
+
+■ 八种爽点类型（cool_type 必须为其中之一）：
+  ① 实力碾压爽：弱者挑衅→主角展示实力→对手/围观者震惊→主角嘴贱收尾
+  ② 信息差爽：读者+主角共享秘密→其他角色不知情→揭晓时双重爽感
+  ③ 扮猪吃虎爽：主角隐藏实力→对手轻视→暗中布局→一击翻盘
+  ④ 荒诞反差爽：预期A→实际B→反差制造笑点和爽感
+  ⑤ 打脸装逼爽：被嘲/被踩（≤1章）→立刻打脸→嘴炮补刀→围观震惊
+  ⑥ 社会认同爽：主角做了某事→第三方震惊反应→放大主角厉害
+  ⑦ 升级蜕变爽：突破瓶颈→实力质变→标志性能力解锁→展示新力量
+  ⑧ 守护爆发爽：重要之人遇险→平时怂的主角彻底暴走→碾压式保护
+
+■ 爽点结构（cool_structure 必须为其中之一）：
+  · 先抑后扬：先压制主角→蓄力→爆发碾压（适合中爽/大爽）
+  · 直接碾压：开局即压制→不给喘息→碾压收尾（适合实力碾压爽）
+  · 默默装完逼：低调做事→他人发现→事后佩服（适合扮猪吃虎/信息差爽）
+
+■ 衬托方式（cool_contrast 必须为其中之一）：
+  · 旁人震惊：围观者实时倒吸凉气、议论纷纷
+  · 不敢置信：对手/熟人难以接受、反复确认
+  · 事后佩服：事件平息后他人复盘主角的手段
+
+■ 四层爽点周期（每卷50章参考，按本卷章数等比缩放）：
+  · 微爽：每章内数次，每400字≥1个，不能连续3次同类型，高潮段密度加倍
+    微爽库：①一句话打脸 ②嘴炮/吐槽 ③反差反应 ④小信息差 ⑤荒诞细节 ⑥拟声词即时爽感
+  · 小爽：每5章一次，小打脸/小出气/小收获
+  · 中爽：每17章一次，大反转/大翻身/配角高光
+  · 大爽：每50章一次，全场震惊/彻底翻盘/量级跃迁（卷末必有）
+
+■ 节奏心跳公式（50章卷内参考）：
+  第1-8章：铺垫+小爽 → 9-16章：蓄力+小爽 → 17-25章：中爽爆发
+  → 26-33章：过渡+小爽 → 34-42章：蓄力+小爽 → 43-50章：大爽+卷末钩子
+
+■ 爽点弧线（全书阶段，按当前进度匹配）：
+  1-50章：即时打脸、荒诞反差（解气、好笑）
+  50-150章：升级展示、扮猪吃虎（优越感）
+  150章后：信息差博弈、守护爆发（智力/羁绊感）
+
+■ 钩子系统（每个节点至少带1个钩子，近5章不重复）：
+  七种钩子：身份揭露 / 新危机 / 荒诞反转 / 悬念 / 角色危机 / 能力突破 / 世界异常
+  优先用升级钩子：反常识断章 / 情绪断章 / 信息炸弹 / 视角断章 / 系统异常
+  进化路线：前期(1-50)悬念型 → 中期(50-150)期待型 → 后期(150+)情感型
+"""
+
+    if node_only and current_vol_existing:
+        # ===== 节点设计模式：基于已有卷剧情详细拆分本卷情节节点 =====
+        # 已有卷剧情信息（作为节点拆分依据，不重新生成卷主线）
+        existing_main_plot = current_vol_existing.get('main_plot') or current_vol_existing.get('core_goal') or ''
+        existing_key_events = current_vol_existing.get('key_events') or current_vol_existing.get('turning_points') or []
+        existing_climax = current_vol_existing.get('climax') or ''
+        existing_ending = current_vol_existing.get('ending') or current_vol_existing.get('ending_hook') or ''
+        existing_foreshadowing = current_vol_existing.get('foreshadowing') or []
+        existing_core_conflict = current_vol_existing.get('core_conflict') or ''
+        existing_emotion = current_vol_existing.get('emotion_driver') or ''
+
+        system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
+任务：基于第 {volume_index} 卷「{volume_title}」已有的卷剧情，详细拆分为情节节点。
+
+【模式说明】本卷已有完整卷剧情，你的任务是把本卷剧情详细拆分为 5-8 个情节节点。
+- 不要修改本卷的 main_plot / key_events / turning_points / climax / ending / foreshadowing 等卷级字段
+- 只输出 nodes 数组（保留原卷级字段由后端合并）
+- 各情节节点之间必须剧情连贯：上一节点的结尾要自然衔接到下一节点的开头
+- 卷与卷之间的情节节点更要连贯：本卷第一个节点必须承接上一卷卷尾钩子，本卷最后一个节点必须埋下下一卷的钩子
+- 每个节点必须符合本卷卷剧情的设定（核心目标、关键事件、转折点），不得脱离卷剧情自创主线
+
+【五幕模型对齐】本卷对应五幕中的「{current_act}」幕：{act_descriptions.get(current_act, '')}
+节点设计必须服务于该幕的核心目标。
+
+{cool_system_prompt}
+
+【输出格式】严格输出以下JSON（不要包裹在markdown代码块中，只输出 nodes 数组与必要元信息）：
+{{
+  "volume_index": {volume_index},
+  "volume_title": "{volume_title}",
+  "nodes": [
+    {{
+      "title": "节点标题（动宾结构，如：街市遭袭反杀三名劫修）",
+      "chapters": "{start_chapter}-{start_chapter+9}",
+      "type": "M（M主线/C角色/W世界观/D日常/F伏笔）",
+      "summary": "本节点详细剧情概要（200-400字，包含起因→发展→高潮→收尾→钩子，须支撑 chapters 范围内的字数容量）",
+      "cool_type": "爽点类型（八选一）",
+      "cool_structure": "爽点结构（先抑后扬/直接碾压/默默装完逼）",
+      "cool_contrast": "衬托方式（旁人震惊/不敢置信/事后佩服）",
+      "cool_level": "爽点层级（微爽/小爽/中爽/大爽）",
+      "hook": "本节点章尾钩子（七种钩子之一）"
+    }}
+  ]
+}}
+{cohesion_constraint}
+
+【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
+【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
+本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），分5-8个情节节点。节点 chapters 必须从 {start_chapter} 开始连续递增。
+【节点容量铁律】每个情节节点的 summary 必须足够支撑其 chapters 范围内的字数容量（按每章2400字估算），不得过于简略。
+【节点连贯铁律】各节点 summary 末尾必须自然过渡到下一节点开头；本卷最后一个节点必须埋下卷尾钩子，承接本卷 ending 设定。
+
+{skill_note}"""
+
+        user_prompt = f"""书名：{book.title}
+
+{_build_core_params_block(bb, book)}
+
+【五幕式总纲】
+{master_outline if has_master else '（暂无）'}
+
+【已有剧情】（含已生成卷纲，本卷节点需与之衔接）
+{existing_timeline or '（暂无）'}
+
+【本卷已有卷剧情】（节点拆分的唯一依据，必须严格符合）
+- 卷名：第{volume_index}卷「{volume_title}」
+- 核心目标（main_plot）：{existing_main_plot or '（无）'}
+- 核心冲突：{existing_core_conflict or '（无）'}
+- 情感驱动：{existing_emotion or '（无）'}
+- 关键事件：{', '.join(existing_key_events) if existing_key_events else '（无）'}
+- 高潮：{existing_climax or '（无）'}
+- 结局/卷尾钩子：{existing_ending or '（无）'}
+- 新埋伏笔：{', '.join(existing_foreshadowing) if existing_foreshadowing else '（无）'}
+
+请基于以上本卷卷剧情，详细拆分为 5-8 个情节节点，节点之间剧情连贯，并按爽点系统为每个节点配置爽点。
+
+【世界观设定】
+{worldbuilding_ctx or '（暂无）'}
+
+【核心规则】
+{key_rules_ctx or '（暂无）'}
+
+【人物档案】
+{characters_ctx or '（暂无）'}
+
+【上一卷结尾章节正文】（卷间衔接依据，本卷第一个节点必须承接）
+{prev_volume_end_summary or '（本卷为第一卷，无前文）'}
+
+请为第 {volume_index} 卷设计情节节点。"""
+
+    else:
+        # ===== 整卷生成模式（默认）：生成完整卷大纲+情节节点 =====
+        system_prompt = f"""你是番茄小说金番作者级别的卷纲设计师。
 任务：为第 {volume_index} 卷「{volume_title}」生成详细大纲+情节节点。
 
 【五幕模型对齐】本卷对应五幕中的「{current_act}」幕：{act_descriptions.get(current_act, '')}
 本卷情节设计必须服务于该幕的核心目标，不得脱离五幕结构。
+
+{cool_system_prompt}
 
 【输出格式】严格输出以下JSON（不要包裹在markdown代码块中）：
 {{
@@ -8968,7 +9121,17 @@ def ai_outline_volume(book_id):
   "hook_type": "卷尾钩子类型",
   "ending_hook": "本卷卷尾钩子具体内容（下一卷开头需承接此钩子）",
   "nodes": [
-    {{"title": "节点1", "chapters": "{start_chapter}-{start_chapter+9}", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
+    {{
+      "title": "节点标题（动宾结构）",
+      "chapters": "{start_chapter}-{start_chapter+9}",
+      "type": "M（M主线/C角色/W世界观/D日常/F伏笔）",
+      "summary": "本节点详细剧情概要（200-400字）",
+      "cool_type": "爽点类型（八选一）",
+      "cool_structure": "爽点结构（先抑后扬/直接碾压/默默装完逼）",
+      "cool_contrast": "衬托方式（旁人震惊/不敢置信/事后佩服）",
+      "cool_level": "爽点层级（微爽/小爽/中爽/大爽）",
+      "hook": "本节点章尾钩子（七种钩子之一）"
+    }}
   ]
 }}
 {cohesion_constraint}
@@ -8977,10 +9140,11 @@ def ai_outline_volume(book_id):
 【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
 本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），分5-8个情节节点。节点 chapters 必须从 {start_chapter} 开始连续递增。
 【节点容量铁律】每个情节节点的 summary 必须足够支撑其 chapters 范围内的字数容量（按每章2400字估算），不得过于简略；各节点剧情须与上下卷节点连贯，避免剧情断裂。
+【节点连贯铁律】各节点 summary 末尾必须自然过渡到下一节点开头；本卷最后一个节点必须埋下卷尾钩子。
 
 {skill_note}"""
 
-    user_prompt = f"""书名：{book.title}
+        user_prompt = f"""书名：{book.title}
 
 {_build_core_params_block(bb, book)}
 
@@ -9040,22 +9204,32 @@ BOSS：{volume_data.get('boss', '')}
             # 旧文本格式，丢弃重建（已在 volume_text 中保留可读副本，但优先用 JSON）
             volumes_list = []
     # 构造与 PlotPanel 兼容的卷对象
-    vol_obj = {
-        'volume_id': str(volume_index),
-        'volume': volume_data.get('volume_title', volume_title),
-        'volume_index': volume_index,
-        'main_plot': volume_data.get('core_goal', ''),
-        'core_conflict': volume_data.get('core_conflict', ''),
-        'emotion_driver': volume_data.get('emotion_driver', ''),
-        'key_events': volume_data.get('key_turns', []),
-        'turning_points': volume_data.get('key_turns', []),
-        'climax': volume_data.get('boss', ''),
-        'ending': volume_data.get('hook_type', ''),
-        'foreshadowing': volume_data.get('foreshadow_new', []),
-        'foreshadow_recycle': volume_data.get('foreshadow_recycle', []),
-        'nodes': volume_data.get('nodes', []),
-        'raw_text': volume_text,  # 保留可读文本副本
-    }
+    if node_only and current_vol_existing:
+        # 节点设计模式：保留已有卷的非节点字段（main_plot/key_events/turning_points/climax/ending/foreshadowing 等），
+        # 仅用新生成的 nodes 替换原 nodes；volume_id/volume/volume_index 也保留原值，避免前端索引错位
+        new_nodes = volume_data.get('nodes', []) or []
+        vol_obj = dict(current_vol_existing)  # 浅拷贝保留所有原字段
+        vol_obj['nodes'] = new_nodes  # 仅替换 nodes
+        # 保留可读文本副本（追加节点信息，便于人工查看）
+        vol_obj['raw_text'] = (current_vol_existing.get('raw_text') or '') + '\n\n【节点设计更新】\n' + '\n'.join([f"  {n.get('chapters','')}: {n.get('title','')}（{n.get('type','M')}）- {n.get('summary','')}" for n in new_nodes])
+    else:
+        # 整卷生成模式：用 AI 返回的完整卷数据构造卷对象
+        vol_obj = {
+            'volume_id': str(volume_index),
+            'volume': volume_data.get('volume_title', volume_title),
+            'volume_index': volume_index,
+            'main_plot': volume_data.get('core_goal', ''),
+            'core_conflict': volume_data.get('core_conflict', ''),
+            'emotion_driver': volume_data.get('emotion_driver', ''),
+            'key_events': volume_data.get('key_turns', []),
+            'turning_points': volume_data.get('key_turns', []),
+            'climax': volume_data.get('boss', ''),
+            'ending': volume_data.get('hook_type', ''),
+            'foreshadowing': volume_data.get('foreshadow_new', []),
+            'foreshadow_recycle': volume_data.get('foreshadow_recycle', []),
+            'nodes': volume_data.get('nodes', []),
+            'raw_text': volume_text,  # 保留可读文本副本
+        }
     # 按 volume_index 替换或追加
     replaced = False
     for i, v in enumerate(volumes_list):

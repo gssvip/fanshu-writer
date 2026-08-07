@@ -4284,7 +4284,9 @@ function PlotPanel(props: {
   const { bookId, bible, onBibleUpdate, totalVolumes, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept, onRefreshChapters } = props;
   const [volumes, setVolumes] = useState<any[]>([]);
   const [editingVol, setEditingVol] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState('');
+  // editForm 持有完整卷对象的所有可编辑字段（main_plot/key_events/turning_points/climax/ending/foreshadowing）
+  // 数组字段（key_events/turning_points/foreshadowing）在编辑框中以换行分隔的文本展示与编辑
+  const [editForm, setEditForm] = useState<any>({});
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [aiMode, setAiMode] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -4380,15 +4382,99 @@ function PlotPanel(props: {
     }
   }
 
-  function startEditVol(volId: string, content: string) {
+  function startEditVol(volId: string, vol: any) {
     setEditingVol(volId);
-    setEditForm(content);
+    // 数组字段转为换行分隔的文本，便于在 textarea 中编辑
+    const arrToText = (arr: any) => Array.isArray(arr) ? arr.join('\n') : (arr || '');
+    setEditForm({
+      main_plot: vol?.main_plot || vol?.core_goal || '',
+      core_conflict: vol?.core_conflict || '',
+      emotion_driver: vol?.emotion_driver || '',
+      key_events: arrToText(vol?.key_events),
+      turning_points: arrToText(vol?.turning_points),
+      climax: vol?.climax || '',
+      ending: vol?.ending || '',
+      foreshadowing: arrToText(vol?.foreshadowing),
+      foreshadow_recycle: arrToText(vol?.foreshadow_recycle),
+    });
+  }
+
+  // ==== 节点单独编辑 ====
+  const [editingNode, setEditingNode] = useState<{ volId: string; nodeIdx: number } | null>(null);
+  const [editNodeForm, setEditNodeForm] = useState<any>({});
+  function startEditNode(volId: string, nodeIdx: number, node: any) {
+    setEditingNode({ volId, nodeIdx });
+    setEditNodeForm({
+      title: node?.title || node?.coreEvent || '',
+      chapters: node?.chapters || node?.chRange || '',
+      type: node?.type || 'M',
+      summary: node?.summary || '',
+      cool_type: node?.cool_type || node?.coolType || '',
+      cool_structure: node?.cool_structure || '',
+      cool_contrast: node?.cool_contrast || '',
+      cool_level: node?.cool_level || '',
+      hook: node?.hook || '',
+    });
+  }
+  async function saveEditNode() {
+    if (!editingNode) return;
+    const { volId, nodeIdx } = editingNode;
+    const newVols = volumes.map(v => {
+      if ((v.volume_id || '') === volId || v.volume === volId) {
+        const newNodes = [...(v.nodes || [])];
+        newNodes[nodeIdx] = {
+          ...(newNodes[nodeIdx] || {}),
+          title: editNodeForm.title || '',
+          chapters: editNodeForm.chapters || '',
+          type: editNodeForm.type || 'M',
+          summary: editNodeForm.summary || '',
+          cool_type: editNodeForm.cool_type || '',
+          cool_structure: editNodeForm.cool_structure || '',
+          cool_contrast: editNodeForm.cool_contrast || '',
+          cool_level: editNodeForm.cool_level || '',
+          hook: editNodeForm.hook || '',
+        };
+        return { ...v, nodes: newNodes };
+      }
+      return v;
+    });
+    await saveVolumes(newVols);
+    setEditingNode(null);
+  }
+  async function deleteEditNode() {
+    if (!editingNode) return;
+    const { volId, nodeIdx } = editingNode;
+    showConfirm('确定删除此情节节点？', async () => {
+      const newVols = volumes.map(v => {
+        if ((v.volume_id || '') === volId || v.volume === volId) {
+          const newNodes = [...(v.nodes || [])];
+          newNodes.splice(nodeIdx, 1);
+          return { ...v, nodes: newNodes };
+        }
+        return v;
+      });
+      await saveVolumes(newVols);
+      setEditingNode(null);
+    });
   }
 
   async function saveEditVol(volId: string) {
+    // 文本转数组：按换行切分，去空，去重
+    const textToArr = (text: string) => (text || '').split('\n').map(s => s.trim()).filter(Boolean);
     const newVols = volumes.map(v => {
       if ((v.volume_id || '') === volId || v.volume === volId) {
-        return { ...v, main_plot: editForm };
+        return {
+          ...v,
+          main_plot: editForm.main_plot || '',
+          core_conflict: editForm.core_conflict || '',
+          emotion_driver: editForm.emotion_driver || '',
+          key_events: textToArr(editForm.key_events),
+          turning_points: textToArr(editForm.turning_points),
+          climax: editForm.climax || '',
+          ending: editForm.ending || '',
+          foreshadowing: textToArr(editForm.foreshadowing),
+          foreshadow_recycle: textToArr(editForm.foreshadow_recycle),
+        };
       }
       return v;
     });
@@ -4401,7 +4487,7 @@ function PlotPanel(props: {
     const newVol = { volume: volName, volume_id: '', main_plot: '', key_events: [], turning_points: [], climax: '', ending: '', foreshadowing: [] };
     await saveVolumes([...volumes, newVol]);
     setEditingVol(volName);
-    setEditForm('');
+    setEditForm({ main_plot: '', core_conflict: '', emotion_driver: '', key_events: '', turning_points: '', climax: '', ending: '', foreshadowing: '', foreshadow_recycle: '' });
   }
 
   async function deleteVolume(idx: number) {
@@ -4477,14 +4563,18 @@ function PlotPanel(props: {
   // AI情节节点设计：基于总纲(若有)+卷剧情+设定，为指定卷生成5-8个情节节点（非强制，无总纲也能用）
   const [nodeDesigning, setNodeDesigning] = useState<string>('');
   async function handleDesignNodes(volId: string, volTitle: string, volIndex: number) {
-    const hasMaster = !!(bible?.plot_design && bible.plot_design.trim());
-    const hint = hasMaster
-      ? `将基于五幕式总纲+设定+人物，为「${volTitle}」设计 5-8 个情节节点（含章型配额/爽点/钩子）。是否继续？`
-      : `暂无五幕式总纲，将基于本卷已有剧情+设定+人物，为「${volTitle}」设计 5-8 个情节节点。是否继续？`;
+    // 节点设计模式：若本卷已有卷剧情（main_plot 等），仅细化 nodes 不覆盖卷级字段
+    const targetVol = volumes.find((v: any) => (v.volume_id || '') === volId || v.volume === volTitle);
+    const hasVolPlot = !!(targetVol && (targetVol.main_plot || targetVol.core_goal || (targetVol.key_events && targetVol.key_events.length)));
+    const hint = hasVolPlot
+      ? `将基于本卷「${volTitle}」已有卷剧情，详细拆分为情节节点（保留原卷主线/关键事件/转折点/高潮/结局/伏笔，仅细化节点）。每个节点会配置爽点类型/结构/衬托方式和章尾钩子。是否继续？`
+      : (bible?.plot_design && bible.plot_design.trim()
+        ? `将基于五幕式总纲+设定+人物，为「${volTitle}」生成完整卷大纲+情节节点（含章型配额/爽点/钩子）。是否继续？`
+        : `暂无五幕式总纲，将基于设定+人物，为「${volTitle}」生成完整卷大纲+情节节点。是否继续？`);
     showConfirm(hint, async () => {
       setNodeDesigning(volId || volTitle);
       try {
-        const result = await api.aiOutlineVolume(bookId, volIndex, volTitle, selectedSkillPackIds, 50);
+        const result = await api.aiOutlineVolume(bookId, volIndex, volTitle, selectedSkillPackIds, 50, hasVolPlot);
         if (result.bible) onBibleUpdate(result.bible);
         alert(`情节节点设计完成！已为「${volTitle}」生成 ${result.volume_data?.nodes?.length || 0} 个情节节点`);
       } catch (e: any) {
@@ -4895,6 +4985,86 @@ ${existingVols || '（暂无）'}
 
   return (
     <div className="bible-edit-panel">
+      {/* 节点单独编辑浮层 */}
+      {editingNode && (
+        <div style={{position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.5)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:16}} onClick={() => setEditingNode(null)}>
+          <div style={{background:'#fff', borderRadius:8, padding:16, maxWidth:560, width:'100%', maxHeight:'90vh', overflowY:'auto'}} onClick={e => e.stopPropagation()}>
+            <h4 style={{margin:'0 0 12px', color:'#5b8def'}}>✏️ 编辑情节节点</h4>
+            <div style={{display:'flex', flexDirection:'column', gap:10}}>
+              <div>
+                <label style={{fontSize:13, color:'#5b8def', fontWeight:600}}>节点标题</label>
+                <input className="input" value={editNodeForm.title || ''} onChange={e => setEditNodeForm({...editNodeForm, title: e.target.value})} placeholder="动宾结构，如：街市遭袭反杀三名劫修" />
+              </div>
+              <div style={{display:'flex', gap:8}}>
+                <div style={{flex:1}}>
+                  <label style={{fontSize:13, color:'#5b8def', fontWeight:600}}>章节范围</label>
+                  <input className="input" value={editNodeForm.chapters || ''} onChange={e => setEditNodeForm({...editNodeForm, chapters: e.target.value})} placeholder="如：1-10" />
+                </div>
+                <div style={{width:120}}>
+                  <label style={{fontSize:13, color:'#5b8def', fontWeight:600}}>章型</label>
+                  <select className="input" value={editNodeForm.type || 'M'} onChange={e => setEditNodeForm({...editNodeForm, type: e.target.value})}>
+                    <option value="M">M 主线</option>
+                    <option value="C">C 角色</option>
+                    <option value="W">W 世界观</option>
+                    <option value="D">D 日常</option>
+                    <option value="F">F 伏笔</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={{fontSize:13, color:'#666', fontWeight:600}}>节点剧情概要（summary）</label>
+                <textarea className="input" rows={5} value={editNodeForm.summary || ''} onChange={e => setEditNodeForm({...editNodeForm, summary: e.target.value})} placeholder="起因→发展→高潮→收尾→钩子（200-400字）" />
+              </div>
+              <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+                <div style={{flex:1, minWidth:120}}>
+                  <label style={{fontSize:13, color:'#e87d3e', fontWeight:600}}>爽点类型</label>
+                  <select className="input" value={editNodeForm.cool_type || ''} onChange={e => setEditNodeForm({...editNodeForm, cool_type: e.target.value})}>
+                    <option value="">—</option>
+                    {COOL_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div style={{flex:1, minWidth:120}}>
+                  <label style={{fontSize:13, color:'#d97706', fontWeight:600}}>爽点结构</label>
+                  <select className="input" value={editNodeForm.cool_structure || ''} onChange={e => setEditNodeForm({...editNodeForm, cool_structure: e.target.value})}>
+                    <option value="">—</option>
+                    <option value="先抑后扬">先抑后扬</option>
+                    <option value="直接碾压">直接碾压</option>
+                    <option value="默默装完逼">默默装完逼</option>
+                  </select>
+                </div>
+                <div style={{flex:1, minWidth:120}}>
+                  <label style={{fontSize:13, color:'#9b59b6', fontWeight:600}}>衬托方式</label>
+                  <select className="input" value={editNodeForm.cool_contrast || ''} onChange={e => setEditNodeForm({...editNodeForm, cool_contrast: e.target.value})}>
+                    <option value="">—</option>
+                    <option value="旁人震惊">旁人震惊</option>
+                    <option value="不敢置信">不敢置信</option>
+                    <option value="事后佩服">事后佩服</option>
+                  </select>
+                </div>
+                <div style={{flex:1, minWidth:120}}>
+                  <label style={{fontSize:13, color:'#e74c3c', fontWeight:600}}>爽点层级</label>
+                  <select className="input" value={editNodeForm.cool_level || ''} onChange={e => setEditNodeForm({...editNodeForm, cool_level: e.target.value})}>
+                    <option value="">—</option>
+                    <option value="微爽">微爽</option>
+                    <option value="小爽">小爽</option>
+                    <option value="中爽">中爽</option>
+                    <option value="大爽">大爽</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={{fontSize:13, color:'#27ae60', fontWeight:600}}>章尾钩子（hook）</label>
+                <input className="input" value={editNodeForm.hook || ''} onChange={e => setEditNodeForm({...editNodeForm, hook: e.target.value})} placeholder="如：身份揭露/新危机/能力突破..." />
+              </div>
+              <div style={{display:'flex', gap:8, marginTop:4}}>
+                <button className="btn-primary-sm" onClick={saveEditNode}>💾 保存</button>
+                <button className="btn-ghost-sm" onClick={() => setEditingNode(null)}>取消</button>
+                <button className="btn-ghost-sm" style={{color:'#e74c3c', marginLeft:'auto'}} onClick={deleteEditNode}>🗑️ 删除节点</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="bible-edit-header">
         <div className="bible-edit-actions" style={{flexShrink:0}}>
           {displayVolumes.length > 0 && (
@@ -5161,14 +5331,49 @@ ${existingVols || '（暂无）'}
                   <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume) || !hasChapters} title={hasChapters ? 'AI识别此卷剧情' : '需要先创建章节才能AI识别'}>
                     {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}
                   </button>
-                  <button className="btn-ghost-sm" onClick={() => startEditVol(vol.volume_id || vol.volume, vol.main_plot || '')}>✏️ 编辑</button>
+                  <button className="btn-ghost-sm" onClick={() => startEditVol(vol.volume_id || vol.volume, vol)}>✏️ 编辑</button>
                   <button className="btn-ghost-sm" onClick={() => deleteVolume(idx)} style={{color:'#e74c3c'}}>🗑️</button>
                 </div>
               </div>
               {!collapsedVols.has(idx) && (editingVol === (vol.volume_id || vol.volume) ? (
-                <div style={{marginTop:8}}>
-                  <textarea className="input" rows={6} value={editForm} onChange={e => setEditForm(e.target.value)} placeholder="该卷主线剧情..." autoFocus />
-                  <div style={{display:'flex',gap:8,marginTop:8}}>
+                <div style={{marginTop:8, display:'flex', flexDirection:'column', gap:10}}>
+                  <div>
+                    <label style={{fontSize:13, color:'#5b8def', fontWeight:600}}>主线剧情（main_plot）</label>
+                    <textarea className="input" rows={4} value={editForm.main_plot || ''} onChange={e => setEditForm({...editForm, main_plot: e.target.value})} placeholder="该卷主线剧情..." autoFocus />
+                  </div>
+                  <div>
+                    <label style={{fontSize:13, color:'#5b8def', fontWeight:600}}>核心冲突（core_conflict）</label>
+                    <input className="input" value={editForm.core_conflict || ''} onChange={e => setEditForm({...editForm, core_conflict: e.target.value})} placeholder="如：主角与XX势力的对立" />
+                  </div>
+                  <div>
+                    <label style={{fontSize:13, color:'#5b8def', fontWeight:600}}>情感驱动力（emotion_driver）</label>
+                    <input className="input" value={editForm.emotion_driver || ''} onChange={e => setEditForm({...editForm, emotion_driver: e.target.value})} placeholder="如：复仇/守护/求道" />
+                  </div>
+                  <div>
+                    <label style={{fontSize:13, color:'#e87d3e', fontWeight:600}}>关键事件（每行一条）</label>
+                    <textarea className="input" rows={3} value={editForm.key_events || ''} onChange={e => setEditForm({...editForm, key_events: e.target.value})} placeholder="每行一个关键事件..." />
+                  </div>
+                  <div>
+                    <label style={{fontSize:13, color:'#e87d3e', fontWeight:600}}>转折点（每行一条）</label>
+                    <textarea className="input" rows={3} value={editForm.turning_points || ''} onChange={e => setEditForm({...editForm, turning_points: e.target.value})} placeholder="每行一个转折点..." />
+                  </div>
+                  <div>
+                    <label style={{fontSize:13, color:'#e74c3c', fontWeight:600}}>高潮（climax）</label>
+                    <textarea className="input" rows={2} value={editForm.climax || ''} onChange={e => setEditForm({...editForm, climax: e.target.value})} placeholder="本卷高潮场景..." />
+                  </div>
+                  <div>
+                    <label style={{fontSize:13, color:'#27ae60', fontWeight:600}}>结局/卷尾钩子（ending）</label>
+                    <textarea className="input" rows={2} value={editForm.ending || ''} onChange={e => setEditForm({...editForm, ending: e.target.value})} placeholder="本卷结局与下一卷钩子..." />
+                  </div>
+                  <div>
+                    <label style={{fontSize:13, color:'#9b59b6', fontWeight:600}}>新埋伏笔（每行一条）</label>
+                    <textarea className="input" rows={2} value={editForm.foreshadowing || ''} onChange={e => setEditForm({...editForm, foreshadowing: e.target.value})} placeholder="每行一个新埋伏笔..." />
+                  </div>
+                  <div>
+                    <label style={{fontSize:13, color:'#9b59b6', fontWeight:600}}>回收伏笔（每行一条）</label>
+                    <textarea className="input" rows={2} value={editForm.foreshadow_recycle || ''} onChange={e => setEditForm({...editForm, foreshadow_recycle: e.target.value})} placeholder="每行一个回收伏笔..." />
+                  </div>
+                  <div style={{display:'flex',gap:8}}>
                     <button className="btn-primary-sm" onClick={() => saveEditVol(vol.volume_id || vol.volume)}>💾 保存</button>
                     <button className="btn-ghost-sm" onClick={() => setEditingVol(null)}>取消</button>
                   </div>
@@ -5176,6 +5381,8 @@ ${existingVols || '（暂无）'}
               ) : (
                 <div className="plot-volume-body">
                   {vol.main_plot ? <p>{safeText(vol.main_plot)}</p> : <p className="text-muted" style={{fontSize:13}}>暂无剧情，点击「编辑」或「识别」添加</p>}
+                  {vol.core_conflict && <p><b>核心冲突：</b>{safeText(vol.core_conflict)}</p>}
+                  {vol.emotion_driver && <p><b>情感驱动：</b>{safeText(vol.emotion_driver)}</p>}
                   {vol.key_events && vol.key_events.length > 0 && (
                     <div className="plot-events">
                       <b>关键事件：</b>
@@ -5196,18 +5403,28 @@ ${existingVols || '（暂无）'}
                       <ul>{vol.foreshadowing.map((f: any, i: number) => <li key={i}>{safeText(f)}</li>)}</ul>
                     </div>
                   )}
+                  {vol.foreshadow_recycle && vol.foreshadow_recycle.length > 0 && (
+                    <div className="plot-events">
+                      <b>回收伏笔：</b>
+                      <ul>{vol.foreshadow_recycle.map((f: any, i: number) => <li key={i}>{safeText(f)}</li>)}</ul>
+                    </div>
+                  )}
                   {vol.nodes && vol.nodes.length > 0 && (
                     <div className="plot-events">
                       <b>情节节点（{vol.nodes.length}个）：</b>
                       <ul>
                         {vol.nodes.map((n: any, i: number) => (
-                          <li key={i}>
+                          <li key={i} style={{marginBottom:6}}>
                             <span style={{color:'#5b8def',fontWeight:600}}>[{safeText(n.type) || 'M'}]</span>{' '}
                             {n.chapters && <span style={{color:'#888'}}>{safeText(n.chapters)}章：</span>}
                             {safeText(n.title) || safeText(n.coreEvent) || '节点'}
-                            {n.cool_type && <span style={{color:'#e87d3e'}}> · {safeText(n.cool_type)}</span>}
-                            {n.summary && <span style={{color:'#666'}}> — {safeText(n.summary)}</span>}
-                            {n.hook && <span style={{color:'#27ae60'}}> · 钩子:{safeText(n.hook)}</span>}
+                            {n.cool_type && <span style={{color:'#e87d3e'}}> · 爽点:{safeText(n.cool_type)}</span>}
+                            {n.cool_structure && <span style={{color:'#d97706'}}> · 结构:{safeText(n.cool_structure)}</span>}
+                            {n.cool_contrast && <span style={{color:'#9b59b6'}}> · 衬托:{safeText(n.cool_contrast)}</span>}
+                            {n.cool_level && <span style={{color:'#e74c3c'}}> · {safeText(n.cool_level)}</span>}
+                            {n.summary && <span style={{color:'#666', display:'block', marginTop:2}}> — {safeText(n.summary)}</span>}
+                            {n.hook && <span style={{color:'#27ae60', display:'block'}}> 🪝 钩子:{safeText(n.hook)}</span>}
+                            <button className="btn-ghost-sm" style={{marginLeft:6, padding:'0 6px', fontSize:11}} onClick={() => startEditNode(vol.volume_id || vol.volume, i, n)} title="编辑此节点">✏️</button>
                           </li>
                         ))}
                       </ul>
