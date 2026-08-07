@@ -874,15 +874,22 @@ def _llm_chat(messages, api_key=None, base_url=None, model=None,
     return '', result.error or 'LLM 返回空内容'
 
 
-def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chapter_num=0):
+def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chapter_num=0, count_fn=None):
     """【字数铁律】公共字数修正函数：初稿字数不在 2300-2500 区间时调 AI 重写。
     四种创作模式（多Agent/流式/连续/连续流式）统一调用此函数。
     返回 (修正后内容, 备注)。
-    备注：空串表示未触发修正或修正成功无异常；非空串表示修正过程的备注信息。"""
+    备注：空串表示未触发修正或修正成功无异常；非空串表示修正过程的备注信息。
+
+    count_fn: 字数统计函数，默认 _count_cn_chars（去空白含所有标点）。
+              传入 count_words 可与章节保存/列表显示口径一致（中文+中文标点+英文单词+数字串）。
+    """
     if not content or not content.strip():
         return content, ''
 
-    draft_len = _count_cn_chars(content)
+    if count_fn is None:
+        count_fn = _count_cn_chars
+
+    draft_len = count_fn(content)
     if 2300 <= draft_len <= 2500:
         return content, ''  # 字数达标，无需修正
 
@@ -910,7 +917,7 @@ def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chap
             timeout=180)
         rewrite_result = rewrite_resp.json()
         rewritten = rewrite_result['choices'][0]['message']['content'].strip()
-        rewritten_len = _count_cn_chars(rewritten)
+        rewritten_len = count_fn(rewritten)
         if rewritten and 2300 <= rewritten_len <= 2500:
             return rewritten, f'[字数铁律] 初稿{draft_len}字，AI修正至{rewritten_len}字。'
         elif rewritten and rewritten_len > 500:

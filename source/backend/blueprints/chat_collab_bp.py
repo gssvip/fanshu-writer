@@ -242,7 +242,7 @@ _CARD_INSTRUCTIONS = """
 
 注意：
 - 卡片内容必须具体、可直接写入设定库或作为正文保存，不要写"建议讨论XXX"这种空话
-- SAVE_CHAPTER 仅在用户明确要求"写一章""接着写正文"时产出，内容必须是完整的章节正文，且严格遵循【字数绝对铁律】：2400字±100（即 2300-2500 字区间，含标点）。低于 2300 字须扩写场景细节补足；超过 2500 字须精简删减。这是不可违反的硬约束。
+- SAVE_CHAPTER 仅在用户明确要求"写一章""接着写正文"时产出，内容必须是完整的章节正文，且严格遵循【字数绝对铁律】：2400字±100（即 2300-2500 字区间，字数口径为中文字符+中文标点，不含标题）。低于 2300 字须扩写场景细节补足；超过 2500 字须精简删减。这是不可违反的硬约束。
 - 不要每条回复都产卡片，只在确实有可落地结论时才产
 - 先用对话讨论，达成共识后再产卡片
 """.strip()
@@ -597,14 +597,15 @@ def apply_card():
 
     # 章节正文卡：落地到 Chapter 表（覆盖同章节号/同标题，自动分卷排序）
     if spec['mode'] == 'chapter':
-        from app import _count_cn_chars
-        # 防御性剥离标题行：保证 chapter.content 为纯正文（与字数统计口径一致）
+        # 防御性剥离标题行：保证 chapter.content 为纯正文
         # 兜底场景：chat_smart 产出的 SAVE_CHAPTER 卡片或历史会话恢复的卡片可能仍含标题
         stripped_title, body_content = _strip_chapter_title(content, fallback_title=title)
         # 若剥离出更具体的标题（含章节名），优先用剥离结果
         if stripped_title and stripped_title != title:
             title = stripped_title
-        wc = _count_cn_chars(body_content)
+        # 字数统计与章节保存 API（app.py count_words）口径一致，避免落地后字数跳变
+        from app import count_words
+        wc = count_words(body_content)
         ch_num = parse_chapter_number(title)
         existing_ch = None
         # 优先按章节号匹配（覆盖同章节号的章节）
@@ -1004,10 +1005,12 @@ def chat_smart_action():
                 yield from _action_master_create(book, session, instruction, gw, sse)
             elif action == 'continue':
                 yield from _action_chapter(book, session, instruction, gw, sse,
-                                           target_chapter_num, prev_chapter_content, mode='continue')
+                                           target_chapter_num, prev_chapter_content, mode='continue',
+                                           base_url=base_url, api_key=api_key, model=model)
             elif action == 'polish':
                 yield from _action_chapter(book, session, instruction, gw, sse,
-                                           target_chapter_num, prev_chapter_content, mode='polish')
+                                           target_chapter_num, prev_chapter_content, mode='polish',
+                                           base_url=base_url, api_key=api_key, model=model)
         except Exception as e:
             yield sse({'type': 'error', 'error': str(e)})
         finally:
@@ -1277,7 +1280,8 @@ def _filter_dynamic_reports_for_chapter(book_id, target_chapter_num, limit=5):
 
 
 
-def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, prev_chapter_content, mode):
+def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, prev_chapter_content, mode,
+                    base_url=None, api_key=None, model=None):
     """续写/润色本章正文：产 SAVE_CHAPTER 卡。
     视点感知注入（第三人称有限视角）：只给AI看POV角色能知道的信息，减少token + 防剧透。
     - 人物：只注入POV + POV关系网 + 主角
@@ -1392,8 +1396,9 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'\n要求：保持剧情和人物不变，优化文笔节奏，提升画面感。'
             f'\n用户要求：{instruction or "无"}'
             f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
-            f'\n【字数绝对铁律】纯正文（不含标题行）必须严格控制在 2400字±100（即 2300-2500 字区间，含标点，不含标题）。'
-            f'当前原文 {cur_len} 字：若不足 2300 字须扩写场景细节补足；若超过 2500 字须精简删减；'
+            f'\n【字数绝对铁律】纯正文（不含标题行）必须严格控制在 2400字±100（即 2300-2500 字区间）。'
+            f'字数统计口径：中文字符+中文标点（全角标点如，。！？：；""均计入，半角标点如,.!?:;不计入，英文按单词、数字按串）。'
+            f'请务必用全角中文标点写作。当前原文 {cur_len} 字：若不足 2300 字须扩写场景细节补足；若超过 2500 字须精简删减；'
             f'落在区间内则保持篇幅不变。这是不可违反的硬约束。'
             f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【原文】\n{cur.content}'
@@ -1410,8 +1415,9 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
             f'\n用户要求：{instruction or "自然推进剧情"}'
             f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
-            f'\n【字数绝对铁律】纯正文（不含标题行）必须严格控制在 2400字±100（即 2300-2500 字区间，含标点，不含标题）。'
-            f'低于 2300 字=内容不足，须扩展场景细节、对话和心理描写补足；'
+            f'\n【字数绝对铁律】纯正文（不含标题行）必须严格控制在 2400字±100（即 2300-2500 字区间）。'
+            f'字数统计口径：中文字符+中文标点（全角标点如，。！？：；""均计入，半角标点如,.!?:;不计入，英文按单词、数字按串）。'
+            f'请务必用全角中文标点写作。低于 2300 字=内容不足，须扩展场景细节、对话和心理描写补足；'
             f'超过 2500 字=冗余，须精简枝节删减。这是不可违反的硬约束，优先级高于所有其他要求。'
             f'{anti_spoiler_rule}'
             f'\n\n{DEAI_RULES}'
@@ -1430,9 +1436,29 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         return
 
     # 剥离标题行：card.content 只存纯正文，card.title 用 AI 生成的章节名（去 # 标记）
-    # 与 apply_card 字数统计口径一致（纯正文含标点，不含标题/空行）
     extracted_title, body_content = _strip_chapter_title(
         content, fallback_title=f'第{target_chapter_num}章')
+
+    # 【字数铁律】用 count_words 校验纯正文字数（与章节保存/列表显示口径一致）
+    # AI 自数字数往往偏高（把半角标点/空白也算进去），实际 count_words 常偏低约 200 字
+    # 不在 2300-2500 区间则调 _ensure_word_count 重写补正
+    from app import count_words, _ensure_word_count
+    draft_wc = count_words(body_content)
+    if (draft_wc < 2300 or draft_wc > 2500) and api_key and base_url and model:
+        yield sse({'type': 'delta', 'content': f'\n\n[字数校验] 初稿 {draft_wc} 字，正在修正至 2400±100…'})
+        corrected, wc_note = _ensure_word_count(
+            body_content, api_key=api_key, base_url=base_url,
+            model=model, max_tokens=4096, chapter_num=target_chapter_num,
+            count_fn=count_words)
+        if corrected and corrected.strip() and count_words(corrected) != draft_wc:
+            # 修正后字数更接近目标，采用修正版（再剥一次标题防御）
+            _, body_content = _strip_chapter_title(
+                corrected, fallback_title=extracted_title)
+            final_wc = count_words(body_content)
+            yield sse({'type': 'delta', 'content': f'\n[字数校验] 已修正至 {final_wc} 字。'})
+        elif wc_note:
+            yield sse({'type': 'delta', 'content': f'\n[字数校验] {wc_note}'})
+
     card = {
         'id': str(uuid.uuid4())[:8],
         'type': 'SAVE_CHAPTER',
@@ -2478,9 +2504,9 @@ def smart_deai():
                 parts.append(f'【{d["label"]}】\n{v}')
         bible_ctx = '\n\n'.join(parts)
 
-    # 统一纯正文字数口径（去空白含标点，与正文写作/润色/落地一致）
-    from app import _count_cn_chars
-    orig_wc = _count_cn_chars(raw_content)
+    # 统一纯正文字数口径（与章节保存 API count_words 一致：中文+中文标点+英文单词+数字串）
+    from app import count_words
+    orig_wc = count_words(raw_content)
     sys_prompt = f"""你是番茄去AI味审查员。请对以下章节正文做去AI味审校，按规则修改后只输出修改后的正文。
 
 {skill_note}
@@ -2490,7 +2516,8 @@ def smart_deai():
 
 【硬性约束】
 1. 只输出纯正文，不要输出章节标题（标题由系统保留，不要重复输出）。
-2. 修改后纯正文（不含标题，去空白含标点）字数与原文 {orig_wc} 字相近（±10%），保留原章节的剧情走向和钩子，只改文风不改剧情。
+2. 修改后纯正文字数与原文 {orig_wc} 字相近（±10%），保留原章节的剧情走向和钩子，只改文风不改剧情。
+   字数统计口径：中文字符+中文标点（全角标点计入，半角标点不计入，英文按单词、数字按串）。请用全角中文标点。
 3. 不要加 Markdown 代码块，不要解释，不要在文末附加字数统计。"""
 
     messages = [{'role': 'system', 'content': sys_prompt},
@@ -2735,12 +2762,12 @@ def smart_chapter_replace():
     if not chapter or chapter.book_id != book_id:
         return jsonify({'error': '章节不存在'}), 404
 
-    # 防御性剥离标题行 + 统一 _count_cn_chars 字数统计（去空白含标点）
-    # 与正文写作/润色/apply_card 口径一致，避免去AI后字数跳变
-    from app import _count_cn_chars
+    # 防御性剥离标题行 + 统一 count_words 字数统计（与章节保存 API 口径一致）
+    # 避免去AI后字数跳变
+    from app import count_words
     _, body_content = _strip_chapter_title(content, fallback_title=chapter.title or '')
     chapter.content = body_content
-    chapter.word_count = _count_cn_chars(body_content)
+    chapter.word_count = count_words(body_content)
     chapter.updated_at = datetime.now(timezone.utc)
     db.session.commit()
     # 持久化去AI卡片状态为 adopted（避免重开聊天又提示替换）
