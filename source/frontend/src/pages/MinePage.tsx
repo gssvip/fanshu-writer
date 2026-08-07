@@ -516,29 +516,6 @@ export default function MinePage() {
               />
             </div>
 
-            {/* OpenCode Zen 免费模型快速选择（无需付费，开箱即用） */}
-            <div className="opencode-free-models">
-              <div className="section-title">⚡ OpenCode Zen 免费模型（端点：https://opencode.ai/zen/v1）</div>
-              <div className="provider-presets">
-                {OPENCODE_FREE_MODELS.map(m => (
-                  <button
-                    key={m.model}
-                    className={`provider-chip ${aiConfig.provider === 'opencode' && aiConfig.model === m.model ? 'active' : ''}`}
-                    onClick={() => setAIConfig((prev: AIConfig) => ({
-                      ...prev,
-                      provider: 'opencode',
-                      base_url: 'https://opencode.ai/zen/v1',
-                      model: m.model,
-                    }))}
-                    title={m.model}
-                  >
-                    <span className="provider-chip-icon">🆓</span>
-                    <span>{m.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* 自定义大模型 */}
             {customModels.length > 0 && (
               <div className="custom-models-section">
@@ -996,13 +973,4 @@ const AI_PROVIDERS = [
   { value: 'hunyuan', label: '腾讯混元', icon: '🔷', base_url: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-pro' },
   { value: 'openai', label: 'OpenAI', icon: '🤖', base_url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   { value: 'opencode', label: 'OpenCode Zen 免费', icon: '⚡', base_url: 'https://opencode.ai/zen/v1', model: 'glm-4.7-free' },
-];
-
-/** OpenCode Zen 免费模型快速选择（统一端点 https://opencode.ai/zen/v1） */
-const OPENCODE_FREE_MODELS = [
-  { name: 'GLM 4.7 Free', model: 'glm-4.7-free' },
-  { name: 'MiMo-V2.5 Free', model: 'mimo-v2.5-free' },
-  { name: 'North Mini Code Free', model: 'north-mini-code-free' },
-  { name: 'Nemotron 3 Ultra Free', model: 'nemotron-3-ultra-free' },
-  { name: 'Big Pickle', model: 'big-pickle' },
 ];

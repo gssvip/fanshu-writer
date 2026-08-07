@@ -562,11 +562,6 @@ textarea{resize:vertical;line-height:1.8}
 .provider-chip.active{border-color:var(--accent);background:var(--accent-light);color:var(--accent);font-weight:600}
 .provider-chip-icon{font-size:16px}
 
-/* OpenCode Zen 免费模型快速选择区 */
-.opencode-free-models{margin:8px 0 12px;padding:12px;background:var(--bg-tertiary);border-radius:10px;border:1px dashed var(--border)}
-.opencode-free-models .section-title{font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;display:flex;align-items:center;gap:4px}
-.opencode-free-models .provider-presets{margin:8px 0 0}
-
 /* AI 高级参数折叠 */
 .ai-advanced{margin:12px 0;padding:12px;background:var(--bg-tertiary);border-radius:8px}
 .ai-advanced summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--text-secondary);padding:4px 0;user-select:none}
