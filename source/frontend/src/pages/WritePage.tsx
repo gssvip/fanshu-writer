@@ -3515,6 +3515,8 @@ function CharacterPanel(props: {
   const [charVolumes, setCharVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [collapsedVolChars, setCollapsedVolChars] = useState<Set<number>>(new Set());
+  // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
+  const charCollapseInitRef = useRef(false);
   // 卷选择器
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
   // 按卷编辑：editingVolIdx 为正在编辑的卷索引，editVolJson 为编辑中的 JSON 文本
@@ -3595,6 +3597,15 @@ function CharacterPanel(props: {
     }
     return result;
   }, [volumeChapters, charVolumes, chapters]);
+
+  // 首次有卷数据时默认折叠全部卷（每次切换到该维度 tab 重新挂载，ref 重置，实现每次进入默认折叠）
+  useEffect(() => {
+    if (charCollapseInitRef.current) return;
+    if (displayCharVolumes.length > 0) {
+      charCollapseInitRef.current = true;
+      setCollapsedVolChars(new Set(displayCharVolumes.map((_, idx) => idx)));
+    }
+  }, [displayCharVolumes]);
 
   function toggleVolChar(idx: number) {
     setCollapsedVolChars(prev => {
@@ -4294,6 +4305,8 @@ function PlotPanel(props: {
   const [aiError, setAiError] = useState('');
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
+  // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
+  const plotCollapseInitRef = useRef(false);
   const [editingVolName, setEditingVolName] = useState<string | null>(null);
   const [editVolName, setEditVolName] = useState('');
 
@@ -4946,6 +4959,15 @@ ${existingVols || '（暂无）'}
     return result;
   }, [volumeChapters, volumes, chapters]);
 
+  // 首次有卷数据时默认折叠全部卷（每次切换到该维度 tab 重新挂载，ref 重置，实现每次进入默认折叠）
+  useEffect(() => {
+    if (plotCollapseInitRef.current) return;
+    if (displayVolumes.length > 0) {
+      plotCollapseInitRef.current = true;
+      setCollapsedVols(new Set(displayVolumes.map((_, idx) => idx)));
+    }
+  }, [displayVolumes]);
+
   // AI协同创作模式
   if (aiMode) {
     return (
@@ -5458,6 +5480,8 @@ function InventoryPanel(props: {
   const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks } = props;
   const [inventory, setInventory] = useState<any[]>([]);
   const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
+  // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
+  const invCollapseInitRef = useRef(false);
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [aiMode, setAiMode] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
@@ -5527,6 +5551,15 @@ function InventoryPanel(props: {
     }
     return result;
   }, [volumeChapters, inventory, chapters]);
+
+  // 首次有卷数据时默认折叠全部卷（每次切换到该维度 tab 重新挂载，ref 重置，实现每次进入默认折叠）
+  useEffect(() => {
+    if (invCollapseInitRef.current) return;
+    if (displayVolumes.length > 0) {
+      invCollapseInitRef.current = true;
+      setCollapsedVols(new Set(displayVolumes.map((_, idx) => idx)));
+    }
+  }, [displayVolumes]);
 
   // AI识别指定卷的物资
   async function handleAnalyzeVolume(volId: string, volTitle: string) {
@@ -6327,6 +6360,8 @@ function DynamicMemoryPanel(props: {
   const [dynVolumes, setDynVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [collapsedVolDyn, setCollapsedVolDyn] = useState<Set<number>>(new Set());
+  // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
+  const dynCollapseInitRef = useRef(false);
   // 卷选择器
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
   // 按卷编辑
@@ -6411,6 +6446,15 @@ function DynamicMemoryPanel(props: {
     return result;
   }, [volumeChapters, dynVolumes, chapters]);
 
+  // 首次有卷数据时默认折叠全部卷（每次切换到该维度 tab 重新挂载，ref 重置，实现每次进入默认折叠）
+  useEffect(() => {
+    if (dynCollapseInitRef.current) return;
+    if (displayDynVolumes.length > 0) {
+      dynCollapseInitRef.current = true;
+      setCollapsedVolDyn(new Set(displayDynVolumes.map((_, idx) => idx)));
+    }
+  }, [displayDynVolumes]);
+
   // 【按卷分组报告】将扁平报告列表按卷归类，用于"动态文件按卷分类"展示。
   // 每个卷计算其下属章节的 order_index 范围（即 chapter_start 语义），
   // 报告 chapter_start 落在该范围则归入该卷；未归入任何卷的报告放入"未分卷"组。
@@ -6447,6 +6491,15 @@ function DynamicMemoryPanel(props: {
 
   // 按卷分组折叠状态
   const [collapsedReportVols, setCollapsedReportVols] = useState<Set<string>>(new Set());
+  // 首次有卷分组数据时默认折叠全部卷（每次进入维度重新挂载，ref 重置）
+  const dynReportCollapseInitRef = useRef(false);
+  useEffect(() => {
+    if (dynReportCollapseInitRef.current) return;
+    if (reportsByVolume.length > 0) {
+      dynReportCollapseInitRef.current = true;
+      setCollapsedReportVols(new Set(reportsByVolume.map(g => g.key)));
+    }
+  }, [reportsByVolume]);
   function toggleReportVol(key: string) {
     setCollapsedReportVols(prev => {
       const next = new Set(prev);
@@ -7631,6 +7684,8 @@ function LocationsPanel(props: {
   const [locVolumes, setLocVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [collapsedVols, setCollapsedVols] = useState<Set<number>>(new Set());
+  // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
+  const locCollapseInitRef = useRef(false);
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
   const [editingVolIdx, setEditingVolIdx] = useState<number | null>(null);
   const [editVolJson, setEditVolJson] = useState('');
@@ -7673,6 +7728,15 @@ function LocationsPanel(props: {
     }
     return result;
   }, [volumeChapters, locVolumes, chapters]);
+
+  // 首次有卷数据时默认折叠全部卷（每次切换到该维度 tab 重新挂载，ref 重置，实现每次进入默认折叠）
+  useEffect(() => {
+    if (locCollapseInitRef.current) return;
+    if (displayVolumes.length > 0) {
+      locCollapseInitRef.current = true;
+      setCollapsedVols(new Set(displayVolumes.map((_, idx) => idx)));
+    }
+  }, [displayVolumes]);
 
   function toggleVol(idx: number) {
     setCollapsedVols(prev => {
