@@ -367,12 +367,17 @@ def chat_smart():
 def apply_card():
     """采纳 Action Card，落地到对应维度。
 
-    SAVE_CHAPTER 模式：落地到 Chapter 表，作为新章节追加。
+    SAVE_CHAPTER 模式：落地到 Chapter 表。
+      - 自动识别章节号（parse_chapter_number）
+      - 同章节号（或同标题）的章节存在 → 覆盖内容，不再追加
+      - 不存在 → 新建章节
+      - 落地后调用 resort_chapters_by_title(rebin_volumes=True)
+        按章节号自动排序，按 50 章/卷自动新建/归入卷
     其他维度：
       - status='edited'（编辑后落地）→ 覆盖该维度原内容
       - status='adopted' 或默认（直接采纳）→ 追加到该维度原内容后
     """
-    from app import db, BookBible, Character, Chapter
+    from app import db, BookBible, Character, Chapter, parse_chapter_number, resort_chapters_by_title
     data = request.json or {}
     book_id = data.get('book_id')
     card = data.get('card', {})
@@ -388,26 +393,61 @@ def apply_card():
     spec = CARD_REGISTRY[ctype]
     result_extra = {}
 
-    # 章节正文卡：落地到 Chapter 表
+    # 章节正文卡：落地到 Chapter 表（覆盖同章节号/同标题，自动分卷排序）
     if spec['mode'] == 'chapter':
-        # 计算 order_index：当前书最大 order_index + 1
-        max_idx = db.session.query(db.func.max(Chapter.order_index)) \
-            .filter_by(book_id=book_id, is_volume=False).scalar() or 0
-        # 计算字数（中英文混合估算）
         wc = len(content)
-        ch = Chapter(
-            book_id=book_id,
-            title=title or f'第{max_idx + 1}章',
-            content=content,
-            order_index=max_idx + 1,
-            word_count=wc,
-            status='draft',
-            is_volume=False,
-            parent_id='',
-        )
-        db.session.add(ch)
+        ch_num = parse_chapter_number(title)
+        existing_ch = None
+        # 优先按章节号匹配（覆盖同章节号的章节）
+        if ch_num is not None:
+            candidates = Chapter.query.filter_by(
+                book_id=book_id, is_volume=False
+            ).all()
+            for c in candidates:
+                if parse_chapter_number(c.title or '') == ch_num:
+                    existing_ch = c
+                    break
+        # 兜底：按完全相同标题匹配（覆盖同章节名的章节）
+        if not existing_ch and title:
+            existing_ch = Chapter.query.filter_by(
+                book_id=book_id, is_volume=False, title=title
+            ).first()
+
+        if existing_ch:
+            # 覆盖模式：同章节号/同标题存在，更新内容、标题、字数
+            existing_ch.title = title or existing_ch.title
+            existing_ch.content = content
+            existing_ch.word_count = wc
+            existing_ch.updated_at = datetime.now(timezone.utc)
+            ch = existing_ch
+            action = 'updated'
+        else:
+            # 新增模式：不存在同章节号/同标题，追加新章节
+            max_idx = db.session.query(db.func.max(Chapter.order_index)) \
+                .filter_by(book_id=book_id, is_volume=False).scalar() or 0
+            ch = Chapter(
+                book_id=book_id,
+                title=title or f'第{max_idx + 1}章',
+                content=content,
+                order_index=max_idx + 1,
+                word_count=wc,
+                status='draft',
+                is_volume=False,
+                parent_id='',
+            )
+            db.session.add(ch)
+            action = 'created'
         db.session.commit()
+
+        # 自动按章节号排序 + 按 50 章/卷重新归入卷（新建卷及章节归属）
+        try:
+            resort_chapters_by_title(book_id, rebin_volumes=True)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
         result_extra = {
+            'action': action,
             'chapter_id': ch.id,
             'chapter_title': ch.title,
             'word_count': wc,

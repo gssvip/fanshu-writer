@@ -146,11 +146,11 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
               </button>
             ) : (
               <button className="chat-card-btn primary" onClick={() => onAdopt(card)} disabled={applying}>
-                {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '保存为新章节' : '采纳(追加)')}
+                {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '采纳(覆盖同章)' : '采纳(追加)')}
               </button>
             )}
             <button className="chat-card-btn" onClick={() => setEditing(true)} disabled={applying}>
-              {card.type === 'SAVE_CHAPTER' ? '编辑后保存' : '编辑后覆盖'}
+              编辑后覆盖
             </button>
             <button className="chat-card-btn ghost" onClick={() => onIgnore(card)} disabled={applying}>
               忽略
@@ -967,10 +967,11 @@ export default function ChatPanel() {
       refreshProgress();
       if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
         const ch = r as any;
+        const actionLabel = ch.action === 'updated' ? '已覆盖同章号章节' : '已新建章节';
         setStreamError('');
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: `✅ 章节已保存：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。可在「章节」Tab 查看。`,
+          content: `✅ ${actionLabel}：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。可在「章节」Tab 查看。`,
         }]);
         // 刷新章节列表
         api.smartLatestChapter(bookId).then(rr => {
@@ -999,9 +1000,10 @@ export default function ChatPanel() {
       refreshProgress();
       if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
         const ch = r as any;
+        const actionLabel = ch.action === 'updated' ? '已覆盖同章号章节' : '已新建章节';
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: `✅ 章节已保存：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。`,
+          content: `✅ ${actionLabel}：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。`,
         }]);
         api.smartLatestChapter(bookId).then(rr => {
           setLatestChapter(rr.latest);
