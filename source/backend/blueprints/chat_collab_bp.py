@@ -1330,14 +1330,15 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'你是资深网文润色编辑。请润色《{book.title}》第 {target_chapter_num} 章正文。'
             f'\n要求：保持剧情和人物不变，优化文笔节奏，提升画面感。'
             f'\n用户要求：{instruction or "无"}'
-            f'\n\n【字数绝对铁律】润色后正文必须严格控制在 2400字±100（即 2300-2500 字区间，含标点）。'
+            f'\n\n【输出格式】第一行输出章节标题，第二行空行，第三行起输出纯正文。'
+            f'\n【字数绝对铁律】纯正文（不含标题行）必须严格控制在 2400字±100（即 2300-2500 字区间，含标点，不含标题）。'
             f'当前原文 {cur_len} 字：若不足 2300 字须扩写场景细节补足；若超过 2500 字须精简删减；'
             f'落在区间内则保持篇幅不变。这是不可违反的硬约束。'
             f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【原文】\n{cur.content}'
             f'{anti_spoiler_rule}'
             f'\n\n{DEAI_RULES}'
-            f'\n\n请直接输出润色后的完整正文（含章节标题），不要解释，不要在文末附加字数统计。'
+            f'\n\n请直接输出（标题+空行+正文），不要解释，不要在文末附加字数统计。'
         )
         user_msg = f'请润色第 {target_chapter_num} 章'
     else:
@@ -1347,12 +1348,13 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
             f'\n用户要求：{instruction or "自然推进剧情"}'
-            f'\n\n【字数绝对铁律】本章正文必须严格控制在 2400字±100（即 2300-2500 字区间，含标点）。'
+            f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"），第二行空行，第三行起输出纯正文。'
+            f'\n【字数绝对铁律】纯正文（不含标题行）必须严格控制在 2400字±100（即 2300-2500 字区间，含标点，不含标题）。'
             f'低于 2300 字=内容不足，须扩展场景细节、对话和心理描写补足；'
             f'超过 2500 字=冗余，须精简枝节删减。这是不可违反的硬约束，优先级高于所有其他要求。'
             f'{anti_spoiler_rule}'
             f'\n\n{DEAI_RULES}'
-            f'\n\n请直接输出完整章节正文（含标题），不要解释，不要在文末附加字数统计。'
+            f'\n\n请直接输出（标题+空行+正文），不要解释，不要在文末附加字数统计。'
         )
         user_msg = f'请续写第 {target_chapter_num} 章'
 
