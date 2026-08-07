@@ -615,7 +615,7 @@ export default function ChatPanel() {
   }, [chatPanelOpen, bookId, chatPanelSessionId, refreshProgress, refreshHistory]);
 
   // 正文写作默认要求（切到正文Tab且输入框为空/为旧默认值时自动填入）
-  const CHAPTER_DEFAULT_INPUT = '接上一章节剧情，保证剧情连贯、逻辑清晰。极致模仿人的写作习惯，自然没ai味儿。写事为主，景一笔带过，非必要不用比喻/拟人等修辞，句子阅读感强及顺畅。';
+  const CHAPTER_DEFAULT_INPUT = '接上一章剧情，读取剧情维度本章剧情，保证剧情连贯、逻辑清晰。极致模仿人的写作习惯，自然没ai味儿。写事为主，景一笔带过，非必要不用比喻/拟人等修辞，句子阅读感强及顺畅。';
 
   // 切换 Tab 时清空选中章节（各Tab独立）；切到正文Tab时填入默认写作要求
   const switchTab = useCallback((tab: SmartTab) => {

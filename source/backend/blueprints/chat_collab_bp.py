@@ -1249,6 +1249,85 @@ def _filter_timeline_for_chapter(timeline_raw, target_chapter_num):
         return text, False
 
 
+def _get_chapter_plot_node(timeline_raw, outline_hierarchy_raw, target_chapter_num):
+    """精确命中本章情节节点（写作/润色时注入，让AI知道"本章该写什么剧情"）。
+
+    优先级：
+    1. outline_hierarchy（四级层级，精确到单章+戏剧位置起/承/转/合）
+    2. timeline JSON（卷>情节节点，按 nodes.chapters 章节范围匹配单个节点）
+    3. 都拿不到 → 返回空串（由调用方走 _filter_timeline_for_chapter 卷级注入兜底）
+
+    返回：拼好的"本章剧情"文本块（含所属卷/节点标题/摘要/戏剧位置），空串表示未命中。
+    """
+    if not target_chapter_num:
+        return ''
+
+    # ---- 优先级1：outline_hierarchy 精确到单章 ----
+    if outline_hierarchy_raw and outline_hierarchy_raw.strip():
+        try:
+            from outline_hierarchy_builder import get_dramatic_context, build_dramatic_position_prompt
+            hierarchy = json.loads(outline_hierarchy_raw)
+            ctx = get_dramatic_context(hierarchy, target_chapter_num)
+            if ctx:
+                lines = []
+                ch = ctx.get('chapter') or {}
+                sec = ctx.get('section') or {}
+                arc = ctx.get('arc') or {}
+                if arc.get('arc_name'):
+                    lines.append(f'所属卷：{arc["arc_name"]}')
+                if arc.get('arc_theme'):
+                    lines.append(f'卷主题：{str(arc["arc_theme"])[:60]}')
+                if sec.get('purpose') or sec.get('title'):
+                    lines.append(f'所属情节节点：{sec.get("purpose") or sec.get("title")}')
+                if sec.get('summary') or sec.get('section_emotional_arc'):
+                    lines.append(f'节点概要：{sec.get("summary") or sec.get("section_emotional_arc")}')
+                if ch.get('dramatic_position'):
+                    lines.append(f'本章戏剧位置：{ch["dramatic_position"]}')
+                if ch.get('content_focus'):
+                    lines.append(f'本章重点：{ch["content_focus"]}')
+                if lines:
+                    return '\n'.join(lines)
+        except Exception:
+            pass  # 降级到 timeline 匹配
+
+    # ---- 优先级2：timeline JSON 按章号范围匹配单节点 ----
+    if not timeline_raw or not timeline_raw.strip():
+        return ''
+    try:
+        vols = json.loads(timeline_raw.strip())
+        if not isinstance(vols, list):
+            return ''
+        for v in vols:
+            if not isinstance(v, dict):
+                continue
+            nodes = v.get('nodes') or []
+            for n in nodes:
+                if not isinstance(n, dict):
+                    continue
+                ch_range = str(n.get('chapters', ''))
+                nums = re.findall(r'\d+', ch_range)
+                if len(nums) >= 2 and int(nums[0]) <= target_chapter_num <= int(nums[-1]):
+                    # 命中该节点
+                    lines = []
+                    vol_name = v.get('volume', f'第{v.get("volume_index","?")}卷')
+                    lines.append(f'所属卷：{vol_name}')
+                    if v.get('main_plot'):
+                        lines.append(f'卷主线：{str(v["main_plot"])[:80]}')
+                    node_title = n.get('title', '未命名节点')
+                    lines.append(f'所属情节节点：{node_title}（{ch_range}章）')
+                    summary = n.get('summary') or n.get('plot') or ''
+                    if summary:
+                        lines.append(f'节点概要：{summary}')
+                    if n.get('cool_type'):
+                        lines.append(f'爽点类型：{n["cool_type"]}')
+                    if v.get('ending_hook') and int(nums[-1]) == target_chapter_num:
+                        lines.append(f'卷尾钩子：{v["ending_hook"]}')
+                    return '\n'.join(lines)
+        return ''  # 没命中任何节点
+    except (json.JSONDecodeError, ValueError):
+        return ''
+
+
 def _filter_foreshadowing_for_chapter(foreshadow_raw, target_chapter_num):
     """伏笔维度过滤：注入伏笔但加防剧透指令。
     纯文本伏笔难以按章节精确过滤，采用"注入+强约束"策略：
@@ -1325,7 +1404,14 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         else:
             char_ctx = cp
 
-    # 2. 剧情维度：只注入当前卷及之前卷（防后续卷剧透）
+    # 2. 剧情维度：
+    #    2a. 精确命中本章情节节点（让AI知道"本章该写什么"）
+    #    2b. 当前卷及之前卷的剧情脉络（宏观补充，防后续卷剧透）
+    chapter_plot_ctx = ''
+    if bb:
+        chapter_plot_ctx = _get_chapter_plot_node(
+            bb.timeline, bb.outline_hierarchy, target_chapter_num)
+
     timeline_ctx, timeline_truncated = '', False
     if bb and bb.timeline:
         timeline_ctx, timeline_truncated = _filter_timeline_for_chapter(bb.timeline, target_chapter_num)
@@ -1355,9 +1441,11 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     if char_ctx:
         pov_note = f'（本章视点人物：{pov_name}，第三人称有限视角，只写{pov_name}能感知到的事物）' if pov_name else '（第三人称有限视角）'
         ctx_blocks.append(f'【人物档案·视点感知】{pov_note}\n{char_ctx}')
+    if chapter_plot_ctx:
+        ctx_blocks.append(f'【本章剧情·精确命中】\n{chapter_plot_ctx}\n（请严格按此情节节点推进本章剧情，不得跳过或偏移）')
     if timeline_ctx:
         trunc_note = '\n（注：后续卷剧情已省略，防剧透）' if timeline_truncated else ''
-        ctx_blocks.append(f'【本卷及过往剧情】{trunc_note}\n{timeline_ctx}')
+        ctx_blocks.append(f'【本卷及过往剧情脉络】{trunc_note}\n{timeline_ctx}')
     if foreshadow_ctx:
         ctx_blocks.append(f'【伏笔线索】\n{foreshadow_ctx}')
     if dynamic_reports_ctx:
@@ -1416,7 +1504,8 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
             f'\n用户要求：{instruction or "自然推进剧情"}'
-            f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
+            + ('\n\n【写作铁律】上方【本章剧情·精确命中】已给出本章应写的情节节点，必须严格按该节点推进剧情，不得跳过节点、不得偏移到其他节点的剧情。' if chapter_plot_ctx else '')
+            + f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
             f'\n【字数绝对铁律】纯正文（不含标题行）必须严格控制在 2400字±100（即 2300-2500 字区间）。'
             f'字数统计口径：中文字符+中文标点（全角标点如，。！？：；""均计入，半角标点如,.!?:;不计入，英文按单词、数字按串）。'
             f'请务必用全角中文标点写作。低于 2300 字=内容不足，须扩展场景细节、对话和心理描写补足；'
