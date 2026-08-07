@@ -614,9 +614,23 @@ export default function ChatPanel() {
     }
   }, [chatPanelOpen, bookId, chatPanelSessionId, refreshProgress, refreshHistory]);
 
-  // 切换 Tab 时清空选中章节（各Tab独立）
+  // 正文写作默认要求（切到正文Tab且输入框为空/为旧默认值时自动填入）
+  const CHAPTER_DEFAULT_INPUT = '接上一章节剧情，保证剧情连贯、逻辑清晰。极致模仿人的写作习惯，自然没ai味儿。写事为主，景一笔带过，非必要不用比喻/拟人等修辞，句子阅读感强及顺畅。';
+
+  // 切换 Tab 时清空选中章节（各Tab独立）；切到正文Tab时填入默认写作要求
   const switchTab = useCallback((tab: SmartTab) => {
     setActiveTab(tab);
+    setInput(prev => {
+      // 进入正文Tab：若输入为空或是正文默认值，填入默认要求；已有自定义内容则保留
+      if (tab === 'chapter' && (!prev.trim() || prev.trim() === CHAPTER_DEFAULT_INPUT)) {
+        return CHAPTER_DEFAULT_INPUT;
+      }
+      // 离开正文Tab：若仍是默认值则清空，避免带到其他Tab
+      if (tab !== 'chapter' && prev.trim() === CHAPTER_DEFAULT_INPUT) {
+        return '';
+      }
+      return prev;
+    });
   }, []);
 
   // 各 Tab 独立的技能包切换
@@ -806,7 +820,8 @@ export default function ChatPanel() {
     const label = action === 'continue' ? `写作第 ${nextChapterNum} 章` : `修改第 ${targetNum} 章`;
     const userNote = (instruction || input.trim());
     appendUserAi(userNote ? `${label}（${userNote.slice(0, 60)}）` : label);
-    if (userNote) setInput('');
+    // 发送后重置为正文默认写作要求（而非清空），便于连续写作
+    if (userNote) setInput(CHAPTER_DEFAULT_INPUT);
     setStreaming(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
