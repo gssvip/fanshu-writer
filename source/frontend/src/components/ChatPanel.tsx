@@ -73,6 +73,29 @@ const CARD_ICON: Record<string, string> = {
   SAVE_RULE: '⚙️', APPLY_STYLE: '✍️', SAVE_CONCEPT: '💡', SAVE_CHAPTER: '📚',
 };
 
+// 已落地卡片（adopted/edited）：默认折叠，点击展开查看内容
+const AdoptedCardCollapsed = memo(function AdoptedCardCollapsed({ card }: { card: ActionCard }) {
+  const [expanded, setExpanded] = useState(false);
+  const wc = (card.content || '').length;
+  return (
+    <div className="chat-card chat-card-adopted">
+      <div
+        className="chat-card-head"
+        onClick={() => setExpanded(e => !e)}
+        style={{ cursor: 'pointer' }}
+      >
+        <span className="chat-card-icon">{CARD_ICON[card.type] || '📌'}</span>
+        <span className="chat-card-title">{card.title}</span>
+        <span className="chat-card-status">✓ 已落地 · {card.target}{wc > 0 ? ` · ${wc}字` : ''}</span>
+        <span className="chat-card-toggle" style={{ marginLeft: 'auto', fontSize: 12, color: '#999' }}>
+          {expanded ? '收起 ▲' : '展开 ▼'}
+        </span>
+      </div>
+      {expanded && <div className="chat-card-body">{card.content}</div>}
+    </div>
+  );
+});
+
 const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onIgnore, applying, onReplaceChapter }: CardViewProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(card.content);
@@ -100,16 +123,8 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
   }
 
   if (status === 'adopted' || status === 'edited') {
-    return (
-      <div className="chat-card chat-card-adopted">
-        <div className="chat-card-head">
-          <span className="chat-card-icon">{CARD_ICON[card.type] || '📌'}</span>
-          <span className="chat-card-title">{card.title}</span>
-          <span className="chat-card-status">✓ 已落地 · {card.target}</span>
-        </div>
-        <div className="chat-card-body">{card.content}</div>
-      </div>
-    );
+    // 已落地卡片默认折叠，点击展开/收起（避免重开聊天时已采纳内容占满屏幕）
+    return <AdoptedCardCollapsed card={card} />;
   }
 
   return (
@@ -959,7 +974,7 @@ export default function ChatPanel() {
     if (!bookId) return;
     setApplyingCardId(card.id);
     try {
-      const r = await api.applyChatCard(bookId, card);
+      const r = await api.applyChatCard(bookId, card, sessionId || undefined);
       setMessages(prev => prev.map(m => {
         if (m.role !== 'assistant' || !m.cards) return m;
         return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...c, status: 'adopted' as const } : c) };
@@ -985,14 +1000,14 @@ export default function ChatPanel() {
     } finally {
       setApplyingCardId(null);
     }
-  }, [bookId, refreshProgress]);
+  }, [bookId, sessionId, refreshProgress]);
 
   const handleEdit = useCallback(async (card: ActionCard, newContent: string) => {
     if (!bookId) return;
     setApplyingCardId(card.id);
     try {
       const editedCard = { ...card, content: newContent };
-      const r = await api.applyChatCard(bookId, editedCard);
+      const r = await api.applyChatCard(bookId, editedCard, sessionId || undefined);
       setMessages(prev => prev.map(m => {
         if (m.role !== 'assistant' || !m.cards) return m;
         return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...editedCard, status: 'edited' as const } : c) };
@@ -1016,21 +1031,25 @@ export default function ChatPanel() {
     } finally {
       setApplyingCardId(null);
     }
-  }, [bookId, refreshProgress]);
+  }, [bookId, sessionId, refreshProgress]);
 
   const handleIgnore = useCallback((card: ActionCard) => {
     setMessages(prev => prev.map(m => {
       if (m.role !== 'assistant' || !m.cards) return m;
       return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...c, status: 'ignored' as const } : c) };
     }));
-  }, []);
+    // 持久化忽略状态（避免重开聊天又提示采纳）
+    if (sessionId) {
+      api.updateCardStatus(sessionId, card.id, 'ignored').catch(() => {});
+    }
+  }, [sessionId]);
 
   // 去AI味卡片：替换原章节正文
   const handleReplaceChapter = useCallback(async (card: ActionCard, meta: any) => {
     if (!bookId || !meta?.chapter_id) return;
     setApplyingCardId(card.id);
     try {
-      await api.smartChapterReplace(bookId, meta.chapter_id, card.content);
+      await api.smartChapterReplace(bookId, meta.chapter_id, card.content, sessionId || undefined, card.id);
       setMessages(prev => prev.map(m => {
         if (m.role !== 'assistant' || !m.cards) return m;
         return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...c, status: 'adopted' as const } : c) };
@@ -1046,7 +1065,7 @@ export default function ChatPanel() {
     } finally {
       setApplyingCardId(null);
     }
-  }, [bookId]);
+  }, [bookId, sessionId]);
 
   // ========== 历史会话 ==========
   const handleSelectSession = useCallback(async (sid: string) => {

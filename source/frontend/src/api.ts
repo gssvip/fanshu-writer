@@ -758,10 +758,10 @@ export const api = {
     return fetch(`${getApiBaseUrl()}/ai/chat/smart`, cfg);
   },
   // 采纳 Action Card，落地到对应维度
-  applyChatCard: (bookId: string, card: ActionCard) =>
+  applyChatCard: (bookId: string, card: ActionCard, sessionId?: string) =>
     request<{ ok: boolean; field: string; label: string; progress: ProgressMap }>(
       '/ai/chat/smart/apply-card',
-      { method: 'POST', body: JSON.stringify({ book_id: bookId, card }) }
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, card, session_id: sessionId }) }
     ),
   // 创作进度地图
   getProgressMap: (bookId: string) => request<ProgressMap>(`/books/${bookId}/ai/progress`),
@@ -905,9 +905,15 @@ export const api = {
       `/ai/smart/chapters?book_id=${bookId}`
     ),
   // 用去AI味后的内容替换原章节正文
-  smartChapterReplace: (bookId: string, chapterId: string, content: string) =>
+  smartChapterReplace: (bookId: string, chapterId: string, content: string, sessionId?: string, cardId?: string) =>
     request<{ ok: boolean; chapter_id: string; word_count: number }>(
       '/ai/smart/chapter-replace',
-      { method: 'POST', body: JSON.stringify({ book_id: bookId, chapter_id: chapterId, content }) }
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, chapter_id: chapterId, content, session_id: sessionId, card_id: cardId }) }
+    ),
+  // 更新卡片状态（忽略等不落地操作持久化）
+  updateCardStatus: (sessionId: string, cardId: string, status: 'ignored' | 'adopted' | 'edited') =>
+    request<{ ok: boolean }>(
+      '/ai/chat/smart/update-card-status',
+      { method: 'POST', body: JSON.stringify({ session_id: sessionId, card_id: cardId, status }) }
     ),
 };

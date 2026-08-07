@@ -363,6 +363,41 @@ def chat_smart():
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
+def _persist_card_status(session_id, card_id, new_status, new_content=None):
+    """更新会话 messages_json 中指定卡片的 status（采纳/编辑/忽略后持久化）。
+
+    用于解决：重新打开聊天界面时卡片又恢复为 pending 的问题。
+    """
+    if not session_id or not card_id:
+        return
+    try:
+        from app import db, AISession
+        session = AISession.query.get(session_id)
+        if not session:
+            return
+        msgs = load_session_messages(session)
+        changed = False
+        for m in msgs:
+            if m.get('role') != 'assistant' or not m.get('cards'):
+                continue
+            for c in m['cards']:
+                if c.get('id') == card_id:
+                    c['status'] = new_status
+                    if new_content is not None:
+                        c['content'] = new_content
+                    changed = True
+        if changed:
+            session.messages_json = json.dumps(msgs, ensure_ascii=False)
+            session.updated_at = datetime.now(timezone.utc)
+            db.session.commit()
+    except Exception:
+        try:
+            from app import db
+            db.session.rollback()
+        except Exception:
+            pass
+
+
 @chat_collab_bp.route('/api/ai/chat/smart/apply-card', methods=['POST'])
 def apply_card():
     """采纳 Action Card，落地到对应维度。
@@ -376,16 +411,21 @@ def apply_card():
     其他维度：
       - status='edited'（编辑后落地）→ 覆盖该维度原内容
       - status='adopted' 或默认（直接采纳）→ 追加到该维度原内容后
+    落地成功后会持久化卡片 status（adopted/edited），避免重开聊天又提示采纳。
     """
-    from app import db, BookBible, Character, Chapter, parse_chapter_number, resort_chapters_by_title
+    from app import db, BookBible, Character, Chapter, parse_chapter_number, resort_chapters_by_title, AISession
     data = request.json or {}
     book_id = data.get('book_id')
     card = data.get('card', {})
     ctype = card.get('type', '')
     content = (card.get('content') or '').strip()
     title = card.get('title', '')
+    card_id = card.get('id', '')
+    session_id = data.get('session_id')
     # 编辑后落地用覆盖模式，直接采纳用追加模式
     is_edit_overwrite = (card.get('status') == 'edited')
+    # 落地后要回写的卡片状态（采纳=adopted，编辑后落地=edited）
+    new_card_status = 'edited' if is_edit_overwrite else 'adopted'
 
     if ctype not in CARD_REGISTRY or not content:
         return jsonify({'error': '无效的卡片或内容为空'}), 400
@@ -453,6 +493,8 @@ def apply_card():
             'word_count': wc,
             'order_index': ch.order_index,
         }
+        # 持久化卡片状态（避免重开聊天又提示采纳/保存为新章节）
+        _persist_card_status(session_id, card_id, new_card_status, content)
         # bible 可能不存在，但 progress 仍要返回
         bb = BookBible.query.filter_by(book_id=book_id).first()
         return jsonify({'ok': True, 'field': spec['field'], 'label': spec['label'],
@@ -520,6 +562,8 @@ def apply_card():
         traceback.print_exc()
         return jsonify({'error': f'落地失败：{str(e)}'}), 500
 
+    # 持久化卡片状态（避免重开聊天又提示采纳）
+    _persist_card_status(session_id, card_id, new_card_status, content)
     return jsonify({'ok': True, 'field': spec['field'], 'label': spec['label'],
                     'progress': build_progress_map(bb),
                     **result_extra})
@@ -640,6 +684,25 @@ def _parse_character_card(title, content):
     if '主角' in (title or '') or '主角' in text:
         result['role'] = '主角'
     return result
+
+
+@chat_collab_bp.route('/api/ai/chat/smart/update-card-status', methods=['POST'])
+def update_card_status():
+    """更新卡片状态（用于忽略等不落地的操作持久化）。
+
+    body: { session_id, card_id, status: 'ignored'|'adopted'|'edited' }
+    返回: { ok: true }
+    """
+    data = request.json or {}
+    session_id = data.get('session_id')
+    card_id = data.get('card_id')
+    new_status = data.get('status', 'ignored')
+    if not session_id or not card_id:
+        return jsonify({'error': '缺少 session_id 或 card_id'}), 400
+    if new_status not in ('ignored', 'adopted', 'edited'):
+        return jsonify({'error': '无效的 status'}), 400
+    _persist_card_status(session_id, card_id, new_status)
+    return jsonify({'ok': True})
 
 
 @chat_collab_bp.route('/api/books/<book_id>/ai/progress', methods=['GET'])
@@ -2461,7 +2524,7 @@ def smart_chapters():
 def smart_chapter_replace():
     """用去AI味后的内容替换原章节正文（落地）。
 
-    body: { book_id, chapter_id, content }
+    body: { book_id, chapter_id, content, session_id?, card_id? }
     返回: { ok, chapter_id, word_count }
     """
     from app import db, Chapter
@@ -2469,6 +2532,8 @@ def smart_chapter_replace():
     book_id = data.get('book_id')
     chapter_id = data.get('chapter_id')
     content = (data.get('content') or '').strip()
+    session_id = data.get('session_id')
+    card_id = data.get('card_id')
 
     if not book_id or not chapter_id or not content:
         return jsonify({'error': '参数无效'}), 400
@@ -2481,4 +2546,6 @@ def smart_chapter_replace():
     chapter.word_count = len(content)
     chapter.updated_at = datetime.now(timezone.utc)
     db.session.commit()
+    # 持久化去AI卡片状态为 adopted（避免重开聊天又提示替换）
+    _persist_card_status(session_id, card_id, 'adopted', content)
     return jsonify({'ok': True, 'chapter_id': chapter_id, 'word_count': chapter.word_count})
