@@ -155,11 +155,8 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # ============================================================================
 
 DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
-# 本地开发显式标志：FANSHU_DEV=1 时强制视为本地开发，绕过生产环境铁律。
-# 仅供本地启动脚本（start.sh）使用；生产部署绝不设置此变量，铁律照常生效。
-_FANSHU_DEV = os.environ.get('FANSHU_DEV', '').lower() in ('true', '1', 'yes', 'on')
 # 检测生产环境：Render 自动设置 RENDER=true；其他云平台通常设置 PORT 或 CI=true
-_IS_PROD_ENV = not _FANSHU_DEV and (
+_IS_PROD_ENV = (
     os.environ.get('RENDER', '').lower() in ('true', '1', 'yes')
     or os.environ.get('PORT', '').strip() != ''
     or os.environ.get('HF_SPACE_ID', '').strip() != ''
