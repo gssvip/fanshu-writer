@@ -516,21 +516,6 @@ export default function MinePage() {
               />
             </div>
 
-            {/* 快捷预设：国产提供商一键填充 */}
-            <div className="provider-presets">
-              {AI_PROVIDERS.map(p => (
-                <button
-                  key={p.value}
-                  className={`provider-chip ${aiConfig.provider === p.value ? 'active' : ''}`}
-                  onClick={() => setAIConfig((prev: AIConfig) => ({ ...prev, provider: p.value, base_url: p.base_url, model: p.model }))}
-                  title={p.base_url}
-                >
-                  <span className="provider-chip-icon">{p.icon}</span>
-                  <span>{p.label}</span>
-                </button>
-              ))}
-            </div>
-
             {/* OpenCode Zen 免费模型快速选择（无需付费，开箱即用） */}
             <div className="opencode-free-models">
               <div className="section-title">⚡ OpenCode Zen 免费模型（端点：https://opencode.ai/zen/v1）</div>
