@@ -89,12 +89,13 @@ def _smart_truncate(text: str, limit: int) -> str:
     return (cut[:last_break] if last_break > limit // 2 else cut) + '\n…（已截断）'
 
 
-def build_chat_system_prompt(book, bb, recent_chapters: list = None) -> str:
+def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapter_num: int = None) -> str:
     """构建维度感知的聊天 system_prompt。
 
     注入当前书的全部 bible 维度 + 最近章节 + Action Card 使用说明 + 创作进度。
     维度内容完整注入，不做截断（避免信息缺失导致错乱）。
     recent_chapters: 最近章节列表（dict: title/word_count/order_index），由 chat_smart 注入
+    next_chapter_num: 下一章应使用的章节号（与写作/修改/去AI统一口径），用于约束 SAVE_CHAPTER 卡片标题
     """
     parts = [
         '你是一位资深网文创作副驾，正在和作者协作创作一部小说。你的职责：',
@@ -113,6 +114,15 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None) -> str:
             wc = ch.get('word_count', 0)
             parts.append(f'- {title}（{wc}字）')
         parts.append('作者可能在写最新章节的后续，讨论时可结合上文衔接。')
+
+    # 注入下一章应使用的章节号（与写作/修改/去AI统一口径，避免产出重复章号的卡片）
+    if next_chapter_num is not None:
+        parts.append(
+            f'\n【章节号铁律】当前正文章节维度下最新章节号已到第{next_chapter_num - 1}章。'
+            f'产出 SAVE_CHAPTER 卡片时，新章节标题必须用「第{next_chapter_num}章」开头'
+            f'（如：第{next_chapter_num}章 章节名），不得重复使用已有的章节号。'
+            f'修改已有章节时，保持原章节号不变。'
+        )
 
     # 注入 bible 维度（完整注入，不截断，避免信息缺失导致错乱）
     if bb:
@@ -266,6 +276,37 @@ def build_context_messages(system_prompt: str, history: list[dict], user_msg: st
 
 
 # ============================================================================
+# 章节号统一口径：写作 / 修改 / 去AI 三者共用
+# ============================================================================
+
+def _get_latest_chapter_info(book_id):
+    """获取最新章节的统一口径信息（写作/修改/去AI共用）。
+
+    返回: { latest_num, next_num, latest_chapter }
+      - latest_num: 最新章节号（优先 parse_chapter_number(title)，回退 order_index+1）
+      - next_num:   下一章应使用的章节号 = latest_num + 1（无章节时为 1）
+      - latest_chapter: 最新章节对象（按章节号/ order_index 排序的最后一章）
+
+    解决问题：order_index 与标题章节号不一致时，三者用不同口径导致
+    "已有第1章，写作又生成第1章"。
+    """
+    from app import Chapter, parse_chapter_number
+    chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+    if not chs:
+        return {'latest_num': 0, 'next_num': 1, 'latest_chapter': None}
+    # 优先按标题章节号排序；无章节号者回退 order_index
+    def sort_key(c):
+        n = parse_chapter_number(c.title or '')
+        return (0, n) if n is not None else (1, c.order_index)
+    chs_sorted = sorted(chs, key=sort_key)
+    latest = chs_sorted[-1]
+    latest_num = parse_chapter_number(latest.title or '')
+    if latest_num is None:
+        latest_num = latest.order_index + 1
+    return {'latest_num': latest_num, 'next_num': latest_num + 1, 'latest_chapter': latest}
+
+
+# ============================================================================
 # 路由
 # ============================================================================
 
@@ -296,13 +337,22 @@ def chat_smart():
         return jsonify({'error': '书籍不存在'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
-    # P4：加载最近 5 章标题（让 AI 懂作者正在写哪一章）
+    # P4：加载最近 5 章标题（让 AI 懂作者正在写哪一章）+ 统一口径下一章号
     recent_chapters = []
+    next_chapter_num = None
     try:
-        recent = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
-            .order_by(Chapter.order_index.desc()).limit(5).all()
+        # 统一口径：从章节表提取最新章节号（与写作/修改/去AI共用）
+        ch_info = _get_latest_chapter_info(book_id)
+        next_chapter_num = ch_info['next_num']
+        # 最近 5 章：按章节号排序（与统一口径一致）
+        from app import parse_chapter_number
+        recent = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+        def _recent_key(c):
+            n = parse_chapter_number(c.title or '')
+            return (0, n) if n is not None else (1, c.order_index)
+        recent = sorted(recent, key=_recent_key)[-5:]
         recent_chapters = [{'title': c.title, 'word_count': c.word_count or 0,
-                            'order_index': c.order_index} for c in reversed(recent)]
+                            'order_index': c.order_index} for c in recent]
     except Exception:
         pass
 
@@ -317,7 +367,7 @@ def chat_smart():
     session_id = session.id
 
     # 构建 system_prompt + 上下文
-    system_prompt = build_chat_system_prompt(book, bb, recent_chapters)
+    system_prompt = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num)
     history = load_session_messages(session)
     messages = build_context_messages(system_prompt, history, message)
 
@@ -1121,15 +1171,19 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     book_id = book.id
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
+    # 统一口径：从章节表提取最新章节号（写作/修改/去AI共用）
+    ch_info = _get_latest_chapter_info(book_id)
     # 确定当前章号 + 上一章内容
     if not target_chapter_num:
-        max_idx = db.session.query(db.func.max(Chapter.order_index)) \
-            .filter_by(book_id=book_id, is_volume=False).scalar() or 0
-        target_chapter_num = max_idx + 1
+        # 续写用「最新章节号+1」，润色用「最新章节号」
+        target_chapter_num = ch_info['next_num'] if mode == 'continue' else ch_info['latest_num']
     if not prev_chapter_content:
         prev = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
             .filter(Chapter.order_index < target_chapter_num) \
             .order_by(Chapter.order_index.desc()).first()
+        # 回退：若按 order_index 取不到，用统一口径的最新章节
+        if not prev and ch_info['latest_chapter'] and mode == 'continue':
+            prev = ch_info['latest_chapter']
         prev_chapter_content = (prev.content or '')[:2000] if prev else ''
 
     # 推断POV视点人物
@@ -1198,9 +1252,18 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     yield sse({'type': 'delta', 'content': f'正在{mode_label}第 {target_chapter_num} 章…\n\n'})
 
     if mode == 'polish':
-        # 润色：需要有原文
-        cur = Chapter.query.filter_by(book_id=book_id, is_volume=False,
-                                       order_index=target_chapter_num).first()
+        # 润色：按章节号定位原文（与 apply_card 覆盖口径一致）
+        from app import parse_chapter_number
+        cur = None
+        candidates = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+        for c in candidates:
+            if parse_chapter_number(c.title or '') == target_chapter_num:
+                cur = c
+                break
+        # 回退：按 order_index
+        if not cur:
+            cur = Chapter.query.filter_by(book_id=book_id, is_volume=False,
+                                           order_index=target_chapter_num).first()
         if not cur or not (cur.content or '').strip():
             yield sse({'type': 'error', 'error': f'第 {target_chapter_num} 章无正文，无法润色'})
             return
@@ -1246,7 +1309,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     card = {
         'id': str(uuid.uuid4())[:8],
         'type': 'SAVE_CHAPTER',
-        'title': f'第 {target_chapter_num} 章（AI{mode_label}）',
+        'title': f'第{target_chapter_num}章',
         'content': content.strip(),
         'target': '章节正文',
     }
@@ -2170,13 +2233,10 @@ def smart_latest_chapter():
     """获取最新章节信息（供正文Tab自动定位）。
 
     返回: { latest: {id, title, order_index, word_count, status}|null, next_chapter_num }
+    章节号统一口径：优先 parse_chapter_number(title)，与写作/修改/去AI一致。
     """
-    from app import Chapter
-    book_id = request.args.get('book_id')
-    if not book_id:
-        return jsonify({'error': '缺少 book_id'}), 400
-    latest = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
-        .order_by(Chapter.order_index.desc()).first()
+    info = _get_latest_chapter_info(request.args.get('book_id') or '')
+    latest = info['latest_chapter']
     if latest:
         return jsonify({
             'latest': {
@@ -2186,7 +2246,7 @@ def smart_latest_chapter():
                 'word_count': latest.word_count or 0,
                 'status': latest.status,
             },
-            'next_chapter_num': latest.order_index + 1,
+            'next_chapter_num': info['next_num'],
         })
     return jsonify({'latest': None, 'next_chapter_num': 1})
 
@@ -2506,13 +2566,17 @@ def smart_chapters():
     """列出书的所有章节（供去AI/校审Tab选择章节）。
 
     返回: { chapters: [{id, title, order_index, word_count, status}] }
+    排序统一口径：按标题章节号升序（与写作/修改/去AI一致），无章节号者按 order_index 排后。
     """
-    from app import Chapter
+    from app import Chapter, parse_chapter_number
     book_id = request.args.get('book_id')
     if not book_id:
         return jsonify({'error': '缺少 book_id'}), 400
-    chs = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
-        .order_by(Chapter.order_index.asc()).all()
+    chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+    def _key(c):
+        n = parse_chapter_number(c.title or '')
+        return (0, n) if n is not None else (1, c.order_index)
+    chs = sorted(chs, key=_key)
     return jsonify({'chapters': [
         {'id': c.id, 'title': c.title, 'order_index': c.order_index,
          'word_count': c.word_count or 0, 'status': c.status}

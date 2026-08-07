@@ -56,6 +56,55 @@ async function* parseSSE(response: Response): AsyncGenerator<SseEvent> {
 }
 
 // ============================================================================
+// 章节号解析（与后端 parse_chapter_number 口径对齐，写作/修改/去AI共用）
+// ============================================================================
+function parseChapterNumber(title?: string): number | null {
+  if (!title) return null;
+  const t = title.trim();
+  // 第N章/第N回/第N节...（取最后一个匹配，如 第3卷第5章 → 5）
+  const suffix = '章节回卷部篇话集幕折更段讲课夜日年季场';
+  const re1 = new RegExp(`第\\s*([0-9零一二三四五六七八九十百千万亿两〇]+)\\s*[${suffix}]`, 'g');
+  const matches = [...t.matchAll(re1)].map(m => m[1]);
+  if (matches.length) {
+    const n = chineseToInt(matches[matches.length - 1]);
+    if (n !== null) return n;
+  }
+  // Chapter N / Ch.N
+  const m2 = t.match(/(?:chapter|ch|episode|ep)\.?\s*(\d+)/i);
+  if (m2) return parseInt(m2[1]);
+  // 行首数字 + 分隔
+  const m3 = t.match(/^\s*(\d+)(?:\s*[\.、:：\-\)\]】，;；]|\s+|\s*(?=[\u4e00-\u9fffA-Za-z]))/);
+  if (m3) {
+    const rest = t.slice(m3[1].length);
+    if (!rest || (rest[0] !== '年' && rest[0] !== '月' && rest[0] !== '日' && rest[0] !== '时' && rest[0] !== '分' && rest[0] !== '秒' && rest[0] !== '号')) {
+      return parseInt(m3[1]);
+    }
+  }
+  return null;
+}
+
+// 中文数字转 int（简化版，覆盖常见范围）
+function chineseToInt(s: string): number | null {
+  if (/^\d+$/.test(s)) return parseInt(s);
+  const digitMap: Record<string, number> = { '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10, '百': 100, '千': 1000, '万': 10000, '亿': 100000000 };
+  if (!s) return null;
+  let total = 0, section = 0, num = 0;
+  for (const ch of s) {
+    const v = digitMap[ch];
+    if (v === undefined) return null;
+    if (v >= 10) {
+      section = (num || 1) * v;
+      total += section;
+      num = 0;
+      if (v >= 10000) { total = section; section = 0; }
+    } else {
+      num = v;
+    }
+  }
+  return total + num;
+}
+
+// ============================================================================
 // Action Card 单卡渲染（采纳 / 编辑 / 忽略）
 // ============================================================================
 interface CardViewProps {
@@ -744,9 +793,16 @@ export default function ChatPanel() {
     if (!bookId || streaming) return;
     setStreamError('');
     streamBufferRef.current = '';
-    const targetNum = action === 'continue'
-      ? nextChapterNum
-      : (chapters.find(c => c.id === targetChapterId)?.order_index || latestChapter?.order_index || nextChapterNum - 1);
+    // 统一口径：target_chapter_num 优先从标题解析章节号，回退 order_index
+    // 写作=下一章号；修改=所选章节的章节号
+    let targetNum: number;
+    if (action === 'continue') {
+      targetNum = nextChapterNum;
+    } else {
+      const targetCh = targetChapterId ? chapters.find(c => c.id === targetChapterId) : null;
+      const fallback = latestChapter ? (parseChapterNumber(latestChapter.title) ?? latestChapter.order_index) : (nextChapterNum - 1);
+      targetNum = targetCh ? (parseChapterNumber(targetCh.title) ?? targetCh.order_index) : fallback;
+    }
     const label = action === 'continue' ? `写作第 ${nextChapterNum} 章` : `修改第 ${targetNum} 章`;
     const userNote = (instruction || input.trim());
     appendUserAi(userNote ? `${label}（${userNote.slice(0, 60)}）` : label);
@@ -799,8 +855,9 @@ export default function ChatPanel() {
     const hasModifyKeyword = /修改|润色|改一?下|调整|增加|删掉|删除|替换|优化|扩充|精简/.test(text);
     if ((hasChapterNum || hasModifyKeyword) && chapters.length > 0) {
       const numMatch = text.match(/第?\s*(\d+)\s*章/);
-      const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter?.order_index || 1);
-      const ch = chapters.find(c => c.order_index === targetNum);
+      // 统一口径：用章节号从标题解析匹配章节（与后端 parse_chapter_number 一致）
+      const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter ? (parseChapterNumber(latestChapter.title) ?? latestChapter.order_index) : 1);
+      const ch = chapters.find(c => (parseChapterNumber(c.title) ?? c.order_index) === targetNum);
       if (ch) {
         doChapterActionWithNote('polish', ch.id, text);
       } else {
