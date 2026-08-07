@@ -197,6 +197,9 @@ start_backend() {
   title "4/4 启动后端 (端口 $PORT)"
   cd "$BACKEND_DIR"
   export PORT="$PORT"
+  # 本地开发标志：绕过 app.py 的生产环境铁律（无 DATABASE_URL 时允许 SQLite）。
+  # 生产部署绝不设置此变量，铁律照常生效。
+  export FANSHU_DEV=1
   log "启动: python app.py  (工作目录: $BACKEND_DIR)"
   # 后台运行，日志直接输出到当前终端
   python app.py &
