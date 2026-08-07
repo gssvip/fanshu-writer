@@ -1159,6 +1159,30 @@ export default function ChatPanel() {
     }
   }, [streaming]);
 
+  // 删除历史会话：删除后刷新列表；若删的是当前会话，切到最新或新建
+  const handleDeleteSession = useCallback(async (sid: string, e: React.MouseEvent) => {
+    e.stopPropagation();  // 阻止冒泡触发 handleSelectSession
+    if (!window.confirm('确定删除该会话？此操作不可撤销。')) return;
+    try {
+      await api.deleteAISession(sid);
+      // 刷新历史列表
+      const r = await api.listBookChatSessions(bookId!);
+      const remaining = r.sessions || [];
+      setHistorySessions(remaining);
+      // 若删的是当前会话，切到最新或清空
+      if (sid === sessionId) {
+        if (remaining.length > 0) {
+          await handleSelectSession(remaining[0].id);
+        } else {
+          setSessionId(null);
+          setMessages([]);
+        }
+      }
+    } catch (err: any) {
+      alert('删除失败：' + (err.message || '未知错误'));
+    }
+  }, [bookId, sessionId, handleSelectSession]);
+
   const handleNewSession = useCallback(() => {
     if (streaming) stopStream();
     setMessages([]);
@@ -1297,10 +1321,15 @@ export default function ChatPanel() {
                     <div className="chat-history-empty">还没有历史会话</div>
                   ) : (
                     historySessions.map(s => (
-                      <button key={s.id} className={`chat-history-item ${s.id === sessionId ? 'active' : ''}`} onClick={() => handleSelectSession(s.id)}>
+                      <div key={s.id} className={`chat-history-item ${s.id === sessionId ? 'active' : ''}`} onClick={() => handleSelectSession(s.id)}>
                         <div className="chat-history-title">{s.title || '未命名'}</div>
                         <div className="chat-history-meta">{s.message_count} 条 · {s.updated_at ? new Date(s.updated_at).toLocaleString() : ''}</div>
-                      </button>
+                        <button
+                          className="chat-history-del"
+                          title="删除会话"
+                          onClick={(e) => handleDeleteSession(s.id, e)}
+                        >×</button>
+                      </div>
                     ))
                   )}
                 </div>
