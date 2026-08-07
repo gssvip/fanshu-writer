@@ -2051,6 +2051,18 @@ textarea{resize:vertical;line-height:1.8}
   display: flex; align-items: center; gap: 8px;
 }
 .smart-chapter-info-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 手机端：章节信息行允许换行，避免"第X章 章节名"被挤成竖排一列 */
+@media (max-width: 768px) {
+  .smart-chapter-info-row { flex-wrap: wrap; gap: 4px 8px; }
+  .smart-chapter-info-text {
+    flex: 1 1 100%;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.4;
+  }
+  .smart-chapter-refresh { align-self: flex-end; }
+}
 .smart-chapter-refresh {
   flex-shrink: 0; border: none; background: transparent; cursor: pointer;
   font-size: 13px; line-height: 1; padding: 4px 6px; border-radius: 6px;
