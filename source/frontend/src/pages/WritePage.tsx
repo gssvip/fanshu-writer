@@ -7260,6 +7260,12 @@ function ForeshadowingPanel(props: {
   const [textFixes, setTextFixes] = useState<Array<{ chapter_id: string; chapter_title: string; paragraph_index: number; original: string; rewritten: string; reason: string; violation_desc: string; report_id: string; selected?: boolean }>>([]);
   const [textFixReportTitle, setTextFixReportTitle] = useState('');
   const [textFixApplying, setTextFixApplying] = useState(false);
+  // 修正面板可见性：分析完成后保持显示（即使结果为空），用户手动关闭才消失，避免"闪退"
+  const [fixPanelOpen, setFixPanelOpen] = useState(false);
+  const [textFixPanelOpen, setTextFixPanelOpen] = useState(false);
+  // 结果为空时的提示（区分"AI未发现问题"和"出错"）
+  const [fixEmptyMsg, setFixEmptyMsg] = useState('');
+  const [textFixEmptyMsg, setTextFixEmptyMsg] = useState('');
 
   // 解析全局伏笔
   useEffect(() => {
@@ -7480,6 +7486,8 @@ function ForeshadowingPanel(props: {
     setFixPlan([]);
     setFixSelected(new Set());
     setFixExpandedIdx(null);
+    setFixEmptyMsg('');
+    setFixPanelOpen(true); // 打开面板，分析期间持续显示
     // 180 秒超时：LLM 分析报告+生成方案通常需要 20-90 秒，避免无限等待
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 180000);
@@ -7492,15 +7500,16 @@ function ForeshadowingPanel(props: {
       // 默认全选
       setFixSelected(new Set((data.plan || []).map((_, i) => i)));
       if (!data.plan || data.plan.length === 0) {
-        alert('AI 未发现需要修正的设定项，可能报告诊断的问题不涉及设定维度');
+        // 面板保持打开，显示提示而非 alert 后消失
+        setFixEmptyMsg('AI 未发现需要修正的设定项，可能报告诊断的问题不涉及设定维度。可关闭此面板或重新检查。');
       }
     } catch (e: any) {
       clearTimeout(timeoutId);
       const msg = e.message || '未知错误';
       if (msg === '请求已取消' || msg.includes('aborted') || msg.includes('Abort')) {
-        alert('生成修正方案超时（90秒）。报告较大或模型响应慢，请稍后再试，或换一个响应更快的模型。');
+        setFixEmptyMsg('生成修正方案超时（180秒）。报告较大或模型响应慢，请稍后再试，或换一个响应更快的模型。');
       } else {
-        alert('生成修正方案失败：' + msg);
+        setFixEmptyMsg('生成修正方案失败：' + msg);
       }
     }
     setFixLoading(false);
@@ -7579,6 +7588,8 @@ function ForeshadowingPanel(props: {
       setFixReportId(reportId);
       setFixSelected(new Set(r.fix_draft.map((_: any, i: number) => i)));
       setFixExpandedIdx(null);
+      setFixEmptyMsg('');
+      setFixPanelOpen(true); // 打开面板显示草稿
       // 标记为已审阅
       if (r.status === 'pending') {
         api.updateAntiForgetReport(bookId, reportId, { status: 'reviewed' }).then(() => {
@@ -7595,6 +7606,8 @@ function ForeshadowingPanel(props: {
     setTextFixLoading(true);
     setTextFixes([]);
     setTextFixReportTitle('');
+    setTextFixEmptyMsg('');
+    setTextFixPanelOpen(true); // 打开面板，分析期间持续显示
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 180000);
     try {
@@ -7604,11 +7617,12 @@ function ForeshadowingPanel(props: {
       setTextFixes(fixes);
       setTextFixReportTitle(data.report_title || '');
       if (fixes.length === 0) {
-        alert('AI 未定位到需要改写的正文段落，可能违规项缺少明确位置信息');
+        // 面板保持打开，显示提示而非 alert 后消失
+        setTextFixEmptyMsg('AI 未定位到需要改写的正文段落，可能违规项缺少明确位置信息。可关闭此面板或重新检查。');
       }
     } catch (e: any) {
       clearTimeout(timeoutId);
-      alert('生成正文改写补丁失败：' + (e.message || '未知错误'));
+      setTextFixEmptyMsg('生成正文改写补丁失败：' + (e.message || '未知错误'));
     }
     setTextFixLoading(false);
   }
@@ -7621,8 +7635,10 @@ function ForeshadowingPanel(props: {
       try {
         const data = await api.smartApplyTextFix(bookId, fixes);
         alert(`已应用 ${data.applied.reduce((sum: number, a: any) => sum + (a.count || 0), 0)} 处改写：${data.applied.map((a: any) => a.chapter_title).join('、')}`);
+        setTextFixPanelOpen(false);
         setTextFixes([]);
         setTextFixReportTitle('');
+        setTextFixEmptyMsg('');
       } catch (e: any) {
         alert('应用正文改写失败：' + (e.message || '未知错误'));
       }
@@ -7918,16 +7934,18 @@ function ForeshadowingPanel(props: {
       </div>
 
       {/* ===== AI修正方案面板（基于防遗忘报告）===== */}
-      {(fixLoading || fixPlan.length > 0) && (
+      {fixPanelOpen && (fixLoading || fixPlan.length > 0 || fixEmptyMsg) && (
         <div style={{marginTop:12, border:'1px solid #6c5ce7', borderRadius:8, padding:10, background:'var(--bg-card)'}}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
             <h4 style={{margin:0, color:'#6c5ce7'}}>🔧 AI设定修正方案{fixReportTitle ? ` · 基于「${fixReportTitle}」` : ''}</h4>
-            {fixPlan.length > 0 && (
-              <button className="btn-ghost-sm" onClick={() => { setFixPlan([]); setFixSelected(new Set()); }} title="关闭">✕</button>
-            )}
+            <button className="btn-ghost-sm" onClick={() => { setFixPanelOpen(false); setFixPlan([]); setFixSelected(new Set()); setFixEmptyMsg(''); }} title="关闭">✕</button>
           </div>
           {fixLoading ? (
             <p className="text-muted">⏳ AI 正在分析报告并生成修正方案...</p>
+          ) : fixEmptyMsg ? (
+            <div style={{padding:10, background:'var(--bg-tertiary)', borderRadius:6, color:'var(--text-secondary)', fontSize:13}}>
+              ℹ️ {fixEmptyMsg}
+            </div>
           ) : (
             <>
               <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
@@ -7975,16 +7993,18 @@ function ForeshadowingPanel(props: {
       )}
 
       {/* ===== AI正文改写补丁面板（第三阶段） ===== */}
-      {(textFixLoading || textFixes.length > 0) && (
+      {textFixPanelOpen && (textFixLoading || textFixes.length > 0 || textFixEmptyMsg) && (
         <div style={{marginTop:12, border:'1px solid #00b894', borderRadius:8, padding:10, background:'var(--bg-card)'}}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
             <h4 style={{margin:0, color:'#00b894'}}>📝 AI正文改写补丁{textFixReportTitle ? ` · 基于「${textFixReportTitle}」` : ''}</h4>
-            {textFixes.length > 0 && (
-              <button className="btn-ghost-sm" onClick={() => { setTextFixes([]); }} title="关闭">✕</button>
-            )}
+            <button className="btn-ghost-sm" onClick={() => { setTextFixPanelOpen(false); setTextFixes([]); setTextFixEmptyMsg(''); }} title="关闭">✕</button>
           </div>
           {textFixLoading ? (
             <p className="text-muted">⏳ AI 正在定位违规段落并生成改写...</p>
+          ) : textFixEmptyMsg ? (
+            <div style={{padding:10, background:'var(--bg-tertiary)', borderRadius:6, color:'var(--text-secondary)', fontSize:13}}>
+              ℹ️ {textFixEmptyMsg}
+            </div>
           ) : (
             <>
               <p className="text-muted" style={{fontSize:12, marginBottom:8}}>

@@ -44,6 +44,12 @@ button:active{opacity:0.7}
 input,textarea,select{font-family:inherit;font-size:16px;border:1px solid var(--border-color);border-radius:var(--radius-sm);padding:10px 14px;background:var(--bg-secondary);color:var(--text-primary);outline:none}
 input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 textarea{resize:vertical;line-height:1.8}
+/* 复选框：修复自定义主题下透明不可见的问题 */
+input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:18px;height:18px;border:2px solid var(--border-color);border-radius:4px;background:var(--bg-secondary);cursor:pointer;position:relative;flex-shrink:0;transition:all .15s;vertical-align:middle;padding:0;margin:0}
+input[type="checkbox"]:hover{border-color:var(--accent)}
+input[type="checkbox"]:checked{background:var(--accent);border-color:var(--accent)}
+input[type="checkbox"]:checked::after{content:'';position:absolute;left:5px;top:1px;width:5px;height:10px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border-color);border-radius:2px}
 ::placeholder{color:var(--text-muted);opacity:0.6}
 
