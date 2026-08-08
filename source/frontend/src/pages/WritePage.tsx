@@ -195,6 +195,32 @@ export default function WritePage() {
   const [bible, setBible] = useState<BookBible | null>(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
 
+  // 防遗忘检查红点和通知（由 ForeshadowingPanel 回调更新 + 顶层轮询兜底）
+  const [afPendingCount, setAfPendingCount] = useState(0);
+  const [afAlert, setAfAlert] = useState<{ reportId: string; title: string; score?: number; auto?: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!bookId) return;
+    function computeStatus(list: any[]) {
+      const pending = list.filter(r => r.status === 'pending' || (!r.status && (r.fix_draft?.length > 0 || (typeof r.health_score === 'number' && r.health_score < 80))));
+      const count = pending.length;
+      const top = pending.find(r => r.auto_generated && !r.notified && (r.fix_draft?.length > 0 || (typeof r.health_score === 'number' && r.health_score < 80)));
+      const alert = top ? { reportId: top.id, title: top.title, score: top.health_score, auto: true } : null;
+      return { count, alert };
+    }
+    function check() {
+      api.listAntiForgetReports(bookId || '').then(data => {
+        const list = Array.isArray(data.reports) ? data.reports : [];
+        const { count, alert } = computeStatus(list);
+        setAfPendingCount(count);
+        setAfAlert(alert);
+      }).catch(() => {});
+    }
+    check();
+    const id = setInterval(check, 30000);
+    return () => clearInterval(id);
+  }, [bookId]);
+
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1779,6 +1805,9 @@ ${chapterEditContent}`;
               >
                 <span className="write-tab-icon">{tab.icon}</span>
                 <span className="write-tab-label">{tab.label}</span>
+                {tab.key === 'foreshadowing' && afPendingCount > 0 && (
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff4757', marginLeft: 4, display: 'inline-block' }} />
+                )}
               </button>
             ))}
           </div>
@@ -1791,8 +1820,26 @@ ${chapterEditContent}`;
               >
                 <span className="write-tab-icon">{tab.icon}</span>
                 <span className="write-tab-label">{tab.label}</span>
+                {tab.key === 'foreshadowing' && afPendingCount > 0 && (
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff4757', marginLeft: 4, display: 'inline-block' }} />
+                )}
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {afAlert && (
+        <div style={{ background: '#fff3cd', borderBottom: '1px solid #ffeaa7', padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
+          <div>
+            <b>🛡️ 防遗忘检查提醒</b>：「{afAlert.title}」{typeof afAlert.score === 'number' ? `健康度 ${afAlert.score}` : ''}，AI 已生成修正草稿，请审阅后决定是否应用。
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button className="btn-primary-sm" onClick={() => setActiveTab('foreshadowing')}>立即查看</button>
+            <button className="btn-ghost-sm" onClick={() => {
+              if (bookId) api.updateAntiForgetReport(bookId, afAlert.reportId, { notified: true }).catch(() => {});
+              setAfAlert(null);
+            }}>忽略</button>
           </div>
         </div>
       )}
@@ -1860,6 +1907,10 @@ ${chapterEditContent}`;
             selectedSkillPackIds={selectedSkillPackIds}
             selectedSkillPacks={selectedSkillPacks}
             onOpenAiCreate={() => setAiCreateModalState({ mode: 'single', dimension: 'foreshadowing' })}
+            onAfStatusChange={(pendingCount, alert) => {
+              setAfPendingCount(pendingCount);
+              setAfAlert(alert);
+            }}
           />
         ) : isChapterTab ? (
           <ChapterPanel
@@ -7159,8 +7210,9 @@ function ForeshadowingPanel(props: {
   selectedSkillPackIds: string[];
   selectedSkillPacks: SkillPack[];
   onOpenAiCreate: () => void;
+  onAfStatusChange?: (pendingCount: number, alert: { reportId: string; title: string; score?: number; auto?: boolean } | null) => void;
 }) {
-  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks } = props;
+  const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks, onAfStatusChange } = props;
   const [foreshadowing, setForeshadowing] = useState('');
   const [foreVolumes, setForeVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
@@ -7190,9 +7242,16 @@ function ForeshadowingPanel(props: {
   const [fixLoading, setFixLoading] = useState(false);
   const [fixPlan, setFixPlan] = useState<Array<{ dim: string; label: string; issues: string[]; action: string; new_content: string }>>([]);
   const [fixReportTitle, setFixReportTitle] = useState('');
+  const [fixReportId, setFixReportId] = useState('');
   const [fixSelected, setFixSelected] = useState<Set<number>>(new Set()); // 勾选要应用的修正项索引
   const [fixExpandedIdx, setFixExpandedIdx] = useState<number | null>(null); // 展开查看修正后内容的项索引
   const [fixApplying, setFixApplying] = useState(false);
+
+  // ===== 正文修正（第三阶段） =====
+  const [textFixLoading, setTextFixLoading] = useState(false);
+  const [textFixes, setTextFixes] = useState<Array<{ chapter_id: string; chapter_title: string; paragraph_index: number; original: string; rewritten: string; reason: string; violation_desc: string; report_id: string; selected?: boolean }>>([]);
+  const [textFixReportTitle, setTextFixReportTitle] = useState('');
+  const [textFixApplying, setTextFixApplying] = useState(false);
 
   // 解析全局伏笔
   useEffect(() => {
@@ -7262,17 +7321,29 @@ function ForeshadowingPanel(props: {
   function sortAfReports(list: any[]): any[] {
     return [...list].sort((a, b) => (b.seq || 0) - (a.seq || 0));
   }
+  function computeAfStatus(list: any[]) {
+    const pending = list.filter(r => r.status === 'pending' || (!r.status && (r.fix_draft?.length > 0 || (typeof r.health_score === 'number' && r.health_score < 80))));
+    const count = pending.length;
+    const top = pending.find(r => r.auto_generated && !r.notified && (r.fix_draft?.length > 0 || (typeof r.health_score === 'number' && r.health_score < 80)));
+    const alert = top ? { reportId: top.id, title: top.title, score: top.health_score, auto: true } : null;
+    return { count, alert };
+  }
   function loadAfReports() {
     if (!bookId) return;
     setAfLoading(true);
     api.listAntiForgetReports(bookId).then(data => {
-      setAfReports(sortAfReports(Array.isArray(data.reports) ? data.reports : []));
-    }).catch(() => { setAfReports([]); })
+      const list = sortAfReports(Array.isArray(data.reports) ? data.reports : []);
+      setAfReports(list);
+      const { count, alert } = computeAfStatus(list);
+      if (onAfStatusChange) onAfStatusChange(count, alert);
+    }).catch(() => { setAfReports([]); if (onAfStatusChange) onAfStatusChange(0, null); })
       .finally(() => setAfLoading(false));
   }
 
   useEffect(() => {
     loadAfReports();
+    const id = setInterval(loadAfReports, 30000);
+    return () => clearInterval(id);
   }, [bookId]);
 
   // 点击「防遗忘检查」按钮：弹出分卷选择
@@ -7381,6 +7452,7 @@ function ForeshadowingPanel(props: {
       clearTimeout(timeoutId);
       setFixPlan(data.plan || []);
       setFixReportTitle(data.report_title || '');
+      setFixReportId(data.report_id || reportId || '');
       // 默认全选
       setFixSelected(new Set((data.plan || []).map((_, i) => i)));
       if (!data.plan || data.plan.length === 0) {
@@ -7425,13 +7497,105 @@ function ForeshadowingPanel(props: {
           }
           onBibleUpdate(updated);
         }
+        // 标记报告为已应用
+        if (fixReportId) {
+          await api.updateAntiForgetReport(bookId, fixReportId, { status: 'applied', fix_draft: null }).catch(() => {});
+          setAfReports(prev => prev.map(r => r.id === fixReportId ? { ...r, status: 'applied', fix_draft: null } : r));
+          if (onAfStatusChange) {
+            const next = afReports.map(r => r.id === fixReportId ? { ...r, status: 'applied', fix_draft: null } : r);
+            onAfStatusChange(computeAfStatus(next).count, computeAfStatus(next).alert);
+          }
+        }
         setFixPlan([]);
         setFixSelected(new Set());
+        setFixReportId('');
       } catch (e: any) {
         alert('应用修正失败：' + (e.message || '未知错误'));
       }
       setFixApplying(false);
     });
+  }
+
+  async function ignoreFixDraft(reportId: string) {
+    if (!reportId) return;
+    try {
+      await api.updateAntiForgetReport(bookId, reportId, { status: 'ignored', fix_draft: null });
+      setAfReports(prev => prev.map(r => r.id === reportId ? { ...r, status: 'ignored', fix_draft: null } : r));
+      if (fixReportId === reportId) {
+        setFixPlan([]);
+        setFixSelected(new Set());
+        setFixReportId('');
+      }
+      if (onAfStatusChange) {
+        const next = afReports.map(r => r.id === reportId ? { ...r, status: 'ignored', fix_draft: null } : r);
+        onAfStatusChange(computeAfStatus(next).count, computeAfStatus(next).alert);
+      }
+    } catch (e: any) {
+      alert('标记忽略失败：' + (e.message || '未知错误'));
+    }
+  }
+
+  async function loadFixDraftFromReport(reportId: string) {
+    const r = afReports.find(x => x.id === reportId);
+    if (r && Array.isArray(r.fix_draft) && r.fix_draft.length > 0) {
+      setFixPlan(r.fix_draft);
+      setFixReportTitle(r.title || '');
+      setFixReportId(reportId);
+      setFixSelected(new Set(r.fix_draft.map((_: any, i: number) => i)));
+      setFixExpandedIdx(null);
+      // 标记为已审阅
+      if (r.status === 'pending') {
+        api.updateAntiForgetReport(bookId, reportId, { status: 'reviewed' }).then(() => {
+          setAfReports(prev => prev.map(x => x.id === reportId ? { ...x, status: 'reviewed' } : x));
+        }).catch(() => {});
+      }
+    } else {
+      generateFixFromReport(reportId);
+    }
+  }
+
+  // ===== 正文修正（第三阶段）函数 =====
+  async function generateTextFixFromReport(reportId?: string) {
+    setTextFixLoading(true);
+    setTextFixes([]);
+    setTextFixReportTitle('');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    try {
+      const data = await api.smartFixTextFromReport(bookId, reportId, selectedSkillPackIds, controller.signal);
+      clearTimeout(timeoutId);
+      const fixes = (data.fixes || []).map(f => ({ ...f, selected: true }));
+      setTextFixes(fixes);
+      setTextFixReportTitle(data.report_title || '');
+      if (fixes.length === 0) {
+        alert('AI 未定位到需要改写的正文段落，可能违规项缺少明确位置信息');
+      }
+    } catch (e: any) {
+      clearTimeout(timeoutId);
+      alert('生成正文改写补丁失败：' + (e.message || '未知错误'));
+    }
+    setTextFixLoading(false);
+  }
+
+  async function applySelectedTextFixes() {
+    const fixes = textFixes.filter(f => f.selected).map(f => ({ chapter_id: f.chapter_id, paragraph_index: f.paragraph_index, original: f.original, rewritten: f.rewritten }));
+    if (fixes.length === 0) { alert('请至少勾选一项正文补丁'); return; }
+    showConfirm(`确认将 ${fixes.length} 处正文改写补丁应用到对应章节？此操作会直接覆盖原文段落。`, async () => {
+      setTextFixApplying(true);
+      try {
+        const data = await api.smartApplyTextFix(bookId, fixes);
+        alert(`已应用 ${data.applied.reduce((sum: number, a: any) => sum + (a.count || 0), 0)} 处改写：${data.applied.map((a: any) => a.chapter_title).join('、')}`);
+        setTextFixes([]);
+        setTextFixReportTitle('');
+      } catch (e: any) {
+        alert('应用正文改写失败：' + (e.message || '未知错误'));
+      }
+      setTextFixApplying(false);
+    });
+  }
+
+  function toggleTextFixSelected(idx: number) {
+    setTextFixes(prev => prev.map((f, i) => i === idx ? { ...f, selected: !f.selected } : f));
   }
 
   async function executeAi() {
@@ -7539,7 +7703,7 @@ function ForeshadowingPanel(props: {
       <div className="bible-edit-section" style={{marginTop:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
           <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <h4 style={{margin:0}}>🛡️ 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}</h4>
+            <h4 style={{margin:0}}>🛡️ 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}{(() => { const c = afReports.filter((r: any) => r.status === 'pending' || (!r.status && r.fix_draft?.length > 0)).length; return c > 0 ? <span style={{fontSize:11,background:'#ff4757',color:'#fff',borderRadius:10,padding:'2px 8px',marginLeft:6}}>待审阅 {c}</span> : null; })()}</h4>
             <button
               className="btn-primary-sm"
               onClick={openAfVolPicker}
@@ -7575,7 +7739,15 @@ function ForeshadowingPanel(props: {
                 ? '当前：动态文件模式——检查所有动态报告，扫描一致性/伏笔/叙事债务。'
                 : '当前：仅维度模式——查阅除构思、章节外所有维度。'}
               点击「开始检查」按卷选择检查范围，报告按"检查01/02..."自动命名存档，可折叠查看、编辑、重命名、删除。
+              {chapters.filter(c => !c.is_volume).length > 0 && chapters.filter(c => !c.is_volume).length % 10 === 0 && <span style={{color:'var(--accent)',fontWeight:600}}> · 每10章自动检查已启用</span>}
             </p>
+
+            {/* 自动检查草稿提示 */}
+            {afReports.some((r: any) => r.status === 'pending' && r.auto_generated && r.fix_draft?.length > 0) && (
+              <div style={{background:'#fff3cd',border:'1px solid #ffeaa7',borderRadius:6,padding:'8px 10px',marginBottom:10,fontSize:13}}>
+                <b>🤖 AI 自动检查提醒</b>：检测到 {afReports.filter((r: any) => r.status === 'pending' && r.auto_generated && r.fix_draft?.length > 0).length} 份自动检查报告已生成修正草稿，请展开报告后点击「查看修正草稿」审阅并决定是否应用。
+              </div>
+            )}
 
             {/* 报告列表 */}
             {afLoading ? (
@@ -7613,6 +7785,10 @@ function ForeshadowingPanel(props: {
                           <span style={{fontSize:12,fontWeight:600,color: score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--accent)' : 'var(--danger)'}}>健康度 {score}</span>
                         )}
                         {!isRenaming && !isEditing && <span className="text-muted" style={{fontSize:11}}>{scopeLabel}{r.ch_count ? ` · ${r.ch_count}章` : ''}</span>}
+                        {!isRenaming && !isEditing && r.status === 'pending' && <span style={{fontSize:11,background:'#ff4757',color:'#fff',borderRadius:10,padding:'1px 6px'}}>待审阅</span>}
+                        {!isRenaming && !isEditing && r.status === 'reviewed' && <span style={{fontSize:11,background:'#74b9ff',color:'#fff',borderRadius:10,padding:'1px 6px'}}>已审阅</span>}
+                        {!isRenaming && !isEditing && r.status === 'applied' && <span style={{fontSize:11,background:'#55efc4',color:'#006266',borderRadius:10,padding:'1px 6px'}}>已应用</span>}
+                        {!isRenaming && !isEditing && r.status === 'ignored' && <span style={{fontSize:11,background:'#b2bec3',color:'#fff',borderRadius:10,padding:'1px 6px'}}>已忽略</span>}
                         <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
                           {isRenaming ? (
                             <>
@@ -7627,9 +7803,19 @@ function ForeshadowingPanel(props: {
                           ) : (
                             <>
                               <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? '📥 拉取' : '📂 折叠'}</button>
-                              <button className="btn-primary-sm" onClick={() => generateFixFromReport(r.id)} disabled={fixLoading} title="让AI基于本报告修正设定" style={{color:'#fff',background:'#6c5ce7',opacity:fixLoading?0.7:1}}>
-                                {fixLoading ? '⏳ AI分析中...' : '🔧 让AI修正'}
-                              </button>
+                              {(r.status === 'pending' || r.status === 'reviewed') && Array.isArray(r.fix_draft) && r.fix_draft.length > 0 ? (
+                                <button className="btn-primary-sm" onClick={() => loadFixDraftFromReport(r.id)} title="AI已生成设定修正草稿，点击查看" style={{color:'#fff',background:'#6c5ce7'}}>
+                                  📋 查看修正草稿
+                                </button>
+                              ) : (
+                                <button className="btn-primary-sm" onClick={() => generateFixFromReport(r.id)} disabled={fixLoading} title="让AI基于本报告修正设定" style={{color:'#fff',background:'#6c5ce7',opacity:fixLoading?0.7:1}}>
+                                  {fixLoading ? '⏳ AI分析中...' : '🔧 让AI修正'}
+                                </button>
+                              )}
+                              <button className="btn-ghost-sm" onClick={() => generateTextFixFromReport(r.id)} disabled={textFixLoading} title="AI定位正文段落并生成改写补丁">{textFixLoading ? '⏳ 正文分析中...' : '📝 修正正文'}</button>
+                              {r.status === 'pending' && (
+                                <button className="btn-ghost-sm" onClick={() => ignoreFixDraft(r.id)} title="忽略此报告的修正草稿">🚫 忽略</button>
+                              )}
                               <button className="btn-ghost-sm" onClick={() => startAfEdit(r)} title="编辑报告内容">✏️</button>
                               <button className="btn-ghost-sm" onClick={() => startAfRename(r)} title="重命名">🏷️</button>
                               <button className="btn-ghost-sm" onClick={() => deleteAfReport(r)} style={{color:'#e74c3c'}} title="删除">🗑️</button>
@@ -7749,6 +7935,60 @@ function ForeshadowingPanel(props: {
                   </button>
                   <button className="btn-ghost-sm" onClick={() => setFixSelected(new Set(fixPlan.map((_, i) => i)))}>全选</button>
                   <button className="btn-ghost-sm" onClick={() => setFixSelected(new Set())}>全不选</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ===== AI正文改写补丁面板（第三阶段） ===== */}
+      {(textFixLoading || textFixes.length > 0) && (
+        <div style={{marginTop:12, border:'1px solid #00b894', borderRadius:8, padding:10, background:'var(--bg-card)'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+            <h4 style={{margin:0, color:'#00b894'}}>📝 AI正文改写补丁{textFixReportTitle ? ` · 基于「${textFixReportTitle}」` : ''}</h4>
+            {textFixes.length > 0 && (
+              <button className="btn-ghost-sm" onClick={() => { setTextFixes([]); }} title="关闭">✕</button>
+            )}
+          </div>
+          {textFixLoading ? (
+            <p className="text-muted">⏳ AI 正在定位违规段落并生成改写...</p>
+          ) : (
+            <>
+              <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
+                AI 基于报告中的违规位置，定位到具体章节段落并生成改写。勾选要应用的补丁，点击「应用所选改写」即可覆盖原文。建议先核对再应用。
+              </p>
+              {textFixes.map((f, idx) => (
+                <div key={idx} style={{marginBottom:8, padding:8, border:'1px solid var(--border)', borderRadius:6, background:'var(--bg)'}}>
+                  <div style={{display:'flex', alignItems:'flex-start', gap:8}}>
+                    <input type="checkbox" checked={!!f.selected} onChange={() => toggleTextFixSelected(idx)} style={{marginTop:4}} />
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600, fontSize:13}}>
+                        <span style={{color:'#00b894'}}>{f.chapter_title}</span>
+                        <span style={{color:'#666', fontWeight:400, marginLeft:8}}>· {f.reason}</span>
+                      </div>
+                      <div style={{fontSize:12, color:'#888', marginTop:4}}>违规：{f.violation_desc}</div>
+                      <div style={{marginTop:6, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
+                        <div>
+                          <div style={{fontSize:11, color:'#888', marginBottom:2}}>原文</div>
+                          <pre style={{margin:0, maxHeight:120, overflow:'auto', whiteSpace:'pre-wrap', wordBreak:'break-word', fontSize:12, padding:6, background:'var(--bg-elevated)', borderRadius:4, border:'1px solid var(--border)'}}>{f.original}</pre>
+                        </div>
+                        <div>
+                          <div style={{fontSize:11, color:'#888', marginBottom:2}}>改写</div>
+                          <pre style={{margin:0, maxHeight:120, overflow:'auto', whiteSpace:'pre-wrap', wordBreak:'break-word', fontSize:12, padding:6, background:'#e8f8f5', borderRadius:4, border:'1px solid #00b894'}}>{f.rewritten}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {textFixes.length > 0 && (
+                <div style={{display:'flex', gap:8, marginTop:8}}>
+                  <button className="btn-primary-sm" onClick={applySelectedTextFixes} disabled={textFixApplying || textFixes.filter(f => f.selected).length === 0}>
+                    {textFixApplying ? '⏳ 应用中...' : `✅ 应用所选改写（${textFixes.filter(f => f.selected).length}/${textFixes.length}）`}
+                  </button>
+                  <button className="btn-ghost-sm" onClick={() => setTextFixes(prev => prev.map(f => ({ ...f, selected: true })))}>全选</button>
+                  <button className="btn-ghost-sm" onClick={() => setTextFixes(prev => prev.map(f => ({ ...f, selected: false })))}>全不选</button>
                 </div>
               )}
             </>

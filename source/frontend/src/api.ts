@@ -528,7 +528,7 @@ export const api = {
   // 防遗忘检查报告 CRUD
   listAntiForgetReports: (bookId: string) =>
     request<{ reports: any[] }>(`/books/${bookId}/anti-forget-reports`),
-  updateAntiForgetReport: (bookId: string, reportId: string, data: { title?: string; report?: any; summary?: string; health_score?: number }) =>
+  updateAntiForgetReport: (bookId: string, reportId: string, data: { title?: string; report?: any; summary?: string; health_score?: number; status?: 'pending' | 'reviewed' | 'applied' | 'ignored'; fix_draft?: any[] | null; text_fix_draft?: any[] | null; notified?: boolean }) =>
     request<{ success: boolean; reports: any[] }>(`/books/${bookId}/anti-forget-reports/${reportId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -929,6 +929,21 @@ export const api = {
   smartApplyFix: (bookId: string, fixes: Array<{ dim: string; new_content: string }>) =>
     request<{ ok: boolean; applied: Array<{ dim: string; label: string }> }>(
       '/ai/smart/apply-fix',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, fixes }) }
+    ),
+
+  // 基于防遗忘检查报告生成正文改写补丁（定位章节段落，不落地）
+  smartFixTextFromReport: (bookId: string, reportId?: string, skillPackIds: string[] = [], signal?: AbortSignal) =>
+    request<{ fixes: Array<{ chapter_id: string; chapter_title: string; paragraph_index: number; original: string; rewritten: string; reason: string; violation_desc: string; report_id: string }>; report_title: string; report_id: string }>(
+      '/ai/smart/fix-text-from-report',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, report_id: reportId, skill_pack_ids: skillPackIds }) },
+      signal
+    ),
+
+  // 应用用户确认的正文改写补丁到对应章节（落地）
+  smartApplyTextFix: (bookId: string, fixes: Array<{ chapter_id: string; paragraph_index?: number; original: string; rewritten: string }>) =>
+    request<{ ok: boolean; applied: Array<{ chapter_id: string; chapter_title: string; count: number }> }>(
+      '/ai/smart/apply-text-fix',
       { method: 'POST', body: JSON.stringify({ book_id: bookId, fixes }) }
     ),
 };

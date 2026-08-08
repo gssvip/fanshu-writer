@@ -3169,3 +3169,251 @@ def smart_apply_fix():
         db.session.commit()
 
     return jsonify({'ok': True, 'applied': applied})
+
+
+# ============================================================================
+# 第三阶段：基于防遗忘报告自动定位章节段落并生成正文改写补丁
+# ============================================================================
+
+def _locate_chapter_by_location(location: str, chapters: list):
+    """根据违规位置字符串定位章节。支持「第N章」或标题匹配。"""
+    if not location:
+        return None
+    # 优先匹配「第N章」
+    nums = re.findall(r'第\s*(\d+)\s*章', str(location))
+    if nums:
+        idx = int(nums[0]) - 1
+        non_vol = [c for c in chapters if not getattr(c, 'is_volume', False)]
+        if 0 <= idx < len(non_vol):
+            return non_vol[idx]
+    #  fallback：匹配章节标题
+    for c in chapters:
+        title = getattr(c, 'title', '') or ''
+        if title and title in str(location):
+            return c
+    return None
+
+
+@chat_collab_bp.route('/api/ai/smart/fix-text-from-report', methods=['POST'])
+def smart_fix_text_from_report():
+    """基于防遗忘检查报告，定位具体章节段落并生成正文改写补丁。
+
+    body: { book_id, report_id?, skill_pack_ids? }
+    返回: { fixes: [{ chapter_id, chapter_title, paragraph_index, original, rewritten, reason, violation_desc }] }
+    """
+    from app import db, Book, BookBible, Chapter
+    from llm_gateway import get_llm_config
+    import app as app_module
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    report_id = data.get('report_id')
+    skill_pack_ids = data.get('skill_pack_ids') or []
+
+    if not book_id:
+        return jsonify({'error': '缺少 book_id'}), 400
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': '请先创建设定'}), 400
+
+    cfg = AIConfig.get_active()
+    if not cfg or not cfg.api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    try:
+        reports = json.loads(bb.anti_forget_reports) if bb.anti_forget_reports else []
+    except Exception:
+        reports = []
+    if not isinstance(reports, list) or not reports:
+        return jsonify({'error': '暂无防遗忘检查报告'}), 400
+
+    target_rec = None
+    target_report = {}
+    if report_id:
+        for r in reports:
+            if isinstance(r, dict) and r.get('id') == report_id:
+                target_rec = r
+                target_report = r.get('report') or {}
+                break
+        if not target_rec:
+            return jsonify({'error': '未找到指定报告'}), 404
+    else:
+        recent = sorted([r for r in reports if isinstance(r, dict)], key=lambda x: x.get('checked_at', ''), reverse=True)
+        if not recent:
+            return jsonify({'error': '暂无防遗忘检查报告'}), 400
+        target_rec = recent[0]
+        target_report = target_rec.get('report') or {}
+        report_id = target_rec.get('id')
+
+    violations = target_report.get('violations') or []
+    if not isinstance(violations, list):
+        violations = []
+    # 只处理有明确位置的前 6 条严重/警告违规
+    filtered = [v for v in violations if isinstance(v, dict) and v.get('location')][:6]
+    if not filtered:
+        return jsonify({'fixes': []})
+
+    chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+
+    skill_note = ''
+    try:
+        from app import _get_skill_prompts_by_category
+        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'review', mode='agent') or ''
+    except Exception:
+        pass
+
+    fixes = []
+    for v in filtered:
+        location = v.get('location') or ''
+        desc = v.get('desc') or ''
+        fix_hint = v.get('fix') or ''
+        severity = v.get('severity') or ''
+        ch = _locate_chapter_by_location(location, chapters)
+        if not ch or not ch.content:
+            continue
+        paragraphs = [p.strip() for p in str(ch.content).split('\n\n') if p.strip()]
+        if not paragraphs:
+            continue
+        # 截取章节前 80% 内容作为上下文，避免 token 爆炸
+        context = '\n\n'.join(paragraphs[:max(3, len(paragraphs) * 8 // 10)])
+
+        system_prompt = f"""你是资深网文正文修正师。任务：根据防遗忘检查报告诊断出的具体违规，定位章节中需要改写的段落，并给出改写后的正文。
+
+【违规信息】
+- 位置：{location}
+- 严重程度：{severity}
+- 问题描述：{desc}
+- 修正建议：{fix_hint}
+
+【待改写章节上下文】
+{context[:2500]}
+{chr(10) + chr(10) + '【技能包指引】' + chr(10) + skill_note if skill_note else ''}
+
+【输出格式铁律】严格输出 JSON 对象（不要 markdown 代码块、不要解释）：
+{{
+  "fixes": [
+    {{
+      "paragraph_index": 0,
+      "original": "需要改写的原文完整段落（必须和原文一字不差，长度 50-400 字）",
+      "rewritten": "改写后的段落（只修正设定/逻辑错误，保留原文风格、剧情、语气，不扩写成新剧情）",
+      "reason": "一句话说明为什么改写"
+    }}
+  ]
+}}
+如果违规涉及多个段落，可输出多个 fixes。如果无法定位或无需改写，返回空数组。"""
+
+        try:
+            base_url, api_key, model = get_llm_config(app_module)
+        except Exception as e:
+            return jsonify({'error': f'AI 配置异常：{e}'}), 400
+
+        from app import _call_llm
+        content, err = _call_llm(
+            [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': '请生成正文改写补丁'}],
+            max_tokens=0, temperature=0.4, task_type='creation'
+        )
+        if err:
+            continue
+        try:
+            import re as _re_txt
+            m = _re_txt.search(r'\{{[\s\S]*\}}', content or '')
+            if not m:
+                continue
+            parsed = json.loads(m.group())
+            arr = parsed.get('fixes') or []
+            if not isinstance(arr, list):
+                continue
+            for fx in arr:
+                if not isinstance(fx, dict):
+                    continue
+                original = (fx.get('original') or '').strip()
+                rewritten = (fx.get('rewritten') or '').strip()
+                if not original or not rewritten or original == rewritten:
+                    continue
+                fixes.append({
+                    'chapter_id': ch.id,
+                    'chapter_title': ch.title or f'第{chapters.index(ch) + 1}章',
+                    'paragraph_index': int(fx.get('paragraph_index', 0)) if str(fx.get('paragraph_index')).isdigit() else 0,
+                    'original': original,
+                    'rewritten': rewritten,
+                    'reason': (fx.get('reason') or '').strip() or f'修正：{desc}',
+                    'violation_desc': desc,
+                    'report_id': report_id,
+                })
+        except Exception:
+            continue
+
+    return jsonify({'fixes': fixes, 'report_title': target_rec.get('title', ''), 'report_id': report_id})
+
+
+@chat_collab_bp.route('/api/ai/smart/apply-text-fix', methods=['POST'])
+def smart_apply_text_fix():
+    """应用用户确认的正文改写补丁到对应章节。
+
+    body: { book_id, fixes: [{ chapter_id, paragraph_index?, original, rewritten }] }
+    返回: { ok, applied: [{ chapter_id, chapter_title, count }] }
+    """
+    from app import db, BookBible, Chapter
+    data = request.json or {}
+    book_id = data.get('book_id')
+    fixes = data.get('fixes') or []
+
+    if not book_id or not isinstance(fixes, list) or not fixes:
+        return jsonify({'error': '参数无效：需要 book_id 和非空 fixes'}), 400
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': '请先创建设定'}), 400
+
+    # 按章节分组，同章节按 paragraph_index 降序处理，避免索引漂移
+    by_chapter: dict[str, list] = {}
+    for f in fixes:
+        if not isinstance(f, dict):
+            continue
+        cid = f.get('chapter_id')
+        original = (f.get('original') or '').strip()
+        rewritten = (f.get('rewritten') or '').strip()
+        if not cid or not original or not rewritten:
+            continue
+        by_chapter.setdefault(cid, []).append(f)
+
+    applied = []
+    for cid, ch_fixes in by_chapter.items():
+        ch = Chapter.query.filter_by(id=cid, book_id=book_id, is_volume=False).first()
+        if not ch:
+            continue
+        content = ch.content or ''
+        # 优先按整段替换；如果原文不在内容中，尝试按 paragraph_index 替换
+        count = 0
+        # 先尝试直接字符串替换（original 为完整段落）
+        for f in ch_fixes:
+            original = f.get('original')
+            rewritten = f.get('rewritten')
+            if original in content:
+                content = content.replace(original, rewritten, 1)
+                count += 1
+        # 对于未直接替换成功的，尝试按段落索引
+        paragraphs = [p for p in content.split('\n\n')]
+        for f in sorted(ch_fixes, key=lambda x: int(x.get('paragraph_index', 0) or 0), reverse=True):
+            if f.get('original') in (ch.content or ''):
+                # 已在上一步替换
+                continue
+            idx = int(f.get('paragraph_index', 0) or 0)
+            if 0 <= idx < len(paragraphs):
+                old_para = paragraphs[idx].strip()
+                if old_para and old_para != f.get('rewritten'):
+                    paragraphs[idx] = f.get('rewritten')
+                    count += 1
+        if count > 0:
+            ch.content = '\n\n'.join(paragraphs)
+            ch.updated_at = datetime.now(timezone.utc)
+            db.session.commit()
+            applied.append({'chapter_id': cid, 'chapter_title': ch.title or '', 'count': count})
+
+    if applied:
+        bb.updated_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+    return jsonify({'ok': True, 'applied': applied})

@@ -3001,17 +3001,18 @@ def ai_import_recognize(book_id):
 
 
 def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
-    """【P0-3】防遗忘报告自动触发：每 20 章自动跑一次防遗忘检查。
+    """【P0-3】防遗忘报告自动触发：每 10 章自动跑一次防遗忘检查。
     在 create_chapter / update_chapter / ai_continue_batch / ai_continue_batch_stream 章节落库后调用。
-    - 条件：本书非卷章数为 20 的倍数（且 >0）；本书已有 BookBible；已配置 AI API Key。
+    - 条件：本书非卷章数为 10 的倍数（且 >0）；本书已有 BookBible；已配置 AI API Key。
     - 执行：在 daemon 线程中跑（防遗忘检查会调 LLM，30-60s），不阻塞主响应。
+    - 失败后自动尝试生成设定修正草稿（健康度<80时），并标记为待审阅。
     - 失败：捕获所有异常，不影响主创作流程。
     """
     try:
         # 计算章号：优先用传入的 chapter_num，否则用实际章数
         if not chapter_num:
             chapter_num = Chapter.query.filter_by(book_id=book_id, is_volume=False).count()
-        if not chapter_num or chapter_num % 20 != 0:
+        if not chapter_num or chapter_num % 10 != 0:
             return None
         book = Book.query.get(book_id)
         if not book:
@@ -3043,11 +3044,55 @@ def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
                         json={'scope': 'reports', 'volume_ids': [], 'skill_pack_ids': []},
                         headers={'Authorization': f'Bearer {at.token}'}
                     ):
-                        ai_anti_forget_check(book_id)
+                        check_resp = ai_anti_forget_check(book_id)
                     try:
                         app.logger.info(f'[auto] 防遗忘检查自动触发完成：第{chapter_num}章')
                     except Exception:
                         pass
+
+                    # ===== 自动生成设定修正草稿（健康度<80时） =====
+                    try:
+                        if check_resp and getattr(check_resp, 'status_code', None) == 200:
+                            check_data = json.loads(check_resp.get_data(as_text=True)) if hasattr(check_resp, 'get_data') else {}
+                            report_rec = check_data.get('report_record') or {}
+                            report_json = check_data.get('report') or {}
+                            health_score = report_json.get('health_score')
+                            report_id = report_rec.get('id')
+                            if report_id and (health_score is None or health_score < 80):
+                                from blueprints.chat_collab_bp import smart_fix_from_report
+                                with app.test_request_context(
+                                    '/api/ai/smart/fix-from-report',
+                                    method='POST',
+                                    json={'book_id': book_id, 'report_id': report_id, 'skill_pack_ids': []},
+                                    headers={'Authorization': f'Bearer {at.token}'}
+                                ):
+                                    fix_resp = smart_fix_from_report()
+                                if fix_resp and getattr(fix_resp, 'status_code', None) == 200:
+                                    fix_data = json.loads(fix_resp.get_data(as_text=True)) if hasattr(fix_resp, 'get_data') else {}
+                                    plan = fix_data.get('plan') or []
+                                    if plan:
+                                        bb2 = BookBible.query.filter_by(book_id=book_id).first()
+                                        if bb2 and bb2.anti_forget_reports:
+                                            reports = json.loads(bb2.anti_forget_reports)
+                                            for r in reports:
+                                                if isinstance(r, dict) and r.get('id') == report_id:
+                                                    r['status'] = 'pending'
+                                                    r['auto_generated'] = True
+                                                    r['fix_draft'] = plan
+                                                    r['notified'] = False
+                                                    r['draft_generated_at'] = datetime.now(timezone.utc).isoformat()
+                                                    break
+                                            bb2.anti_forget_reports = json.dumps(reports, ensure_ascii=False, indent=2)
+                                            db.session.commit()
+                                            try:
+                                                app.logger.info(f'[auto] 已生成设定修正草稿：报告 {report_id}，健康度 {health_score}')
+                                            except Exception:
+                                                pass
+                    except Exception as e:
+                        try:
+                            app.logger.error(f'[auto] 生成修正草稿失败：{str(e)[:200]}')
+                        except Exception:
+                            pass
                 except Exception as e:
                     try:
                         app.logger.error(f'[auto] 防遗忘自动触发失败：{str(e)[:200]}')
@@ -3399,6 +3444,11 @@ def ai_anti_forget_check(book_id):
         'health_score': report.get('health_score'),
         'summary': report.get('summary', ''),
         'report': report,  # 完整报告 JSON
+        'status': 'pending',          # pending / reviewed / applied / ignored
+        'auto_generated': False,
+        'fix_draft': None,
+        'text_fix_draft': None,
+        'notified': False,
     }
     existing_reports.append(new_report_record)
     # 限制最多保留 200 份历史报告（百万字长篇需保留更多历史诊断供回注与回溯），超出则删除最早的
@@ -3440,8 +3490,16 @@ def list_anti_forget_reports(book_id):
 @app.route('/api/books/<book_id>/anti-forget-reports/<report_id>', methods=['PUT'])
 @login_required
 def update_anti_forget_report(book_id, report_id):
-    """编辑/重命名防遗忘检查报告。
-    请求体：{"title": "新标题"} 重命名；{"report": {...}} 替换报告内容；{"summary": "..."} 更新摘要。"""
+    """编辑/重命名/状态流转防遗忘检查报告。
+    请求体：
+      {"title": "新标题"} 重命名
+      {"report": {...}} 替换报告内容
+      {"summary": "..."} 更新摘要
+      {"status": "pending|reviewed|applied|ignored"} 状态流转
+      {"fix_draft": [...]} 覆盖/清空设定修正草稿
+      {"text_fix_draft": [...]} 覆盖/清空正文修正草稿
+      {"notified": true} 标记已通知
+    """
     bb = BookBible.query.filter_by(book_id=book_id).first()
     if not bb:
         return jsonify({'error': 'Not found'}), 404
@@ -3453,6 +3511,7 @@ def update_anti_forget_report(book_id, report_id):
     except (json.JSONDecodeError, ValueError, TypeError):
         reports = []
 
+    VALID_STATUSES = {'pending', 'reviewed', 'applied', 'ignored'}
     found = False
     for r in reports:
         if isinstance(r, dict) and r.get('id') == report_id:
@@ -3469,6 +3528,17 @@ def update_anti_forget_report(book_id, report_id):
                     r['report']['summary'] = str(data['summary'])
             if 'health_score' in data:
                 r['health_score'] = data['health_score']
+            if 'status' in data:
+                st = str(data['status']).strip().lower()
+                if st not in VALID_STATUSES:
+                    return jsonify({'error': f'无效状态：{st}'}), 400
+                r['status'] = st
+            if 'fix_draft' in data:
+                r['fix_draft'] = data['fix_draft'] if isinstance(data['fix_draft'], list) else None
+            if 'text_fix_draft' in data:
+                r['text_fix_draft'] = data['text_fix_draft'] if isinstance(data['text_fix_draft'], list) else None
+            if 'notified' in data:
+                r['notified'] = bool(data['notified'])
             r['updated_at'] = datetime.now(timezone.utc).isoformat()
             found = True
             break
