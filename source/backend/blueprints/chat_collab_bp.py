@@ -3227,7 +3227,7 @@ def smart_fix_text_from_report():
     返回: { fixes: [{ chapter_id, chapter_title, paragraph_index, original, rewritten, reason, violation_desc }] }
     """
     try:
-        from app import db, Book, BookBible, Chapter
+        from app import db, Book, BookBible, Chapter, AIConfig
         from llm_gateway import get_llm_config
         import app as app_module
 
