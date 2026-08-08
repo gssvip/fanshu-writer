@@ -7735,11 +7735,7 @@ function ForeshadowingPanel(props: {
               >📐 仅维度</button>
             </div>
             <p className="text-muted" style={{fontSize:12,marginBottom:10}}>
-              {afScope === 'reports'
-                ? '当前：动态文件模式——检查所有动态报告，扫描一致性/伏笔/叙事债务。'
-                : '当前：仅维度模式——查阅除构思、章节外所有维度。'}
-              点击「开始检查」按卷选择检查范围，报告按"检查01/02..."自动命名存档，可折叠查看、编辑、重命名、删除。
-              {chapters.filter(c => !c.is_volume).length > 0 && chapters.filter(c => !c.is_volume).length % 10 === 0 && <span style={{color:'var(--accent)',fontWeight:600}}> · 每10章自动检查已启用</span>}
+              选择范围后点击「开始检查」生成报告；AI 会在章节数达到 10 的倍数时自动检查。
             </p>
 
             {/* 自动检查草稿提示 */}
