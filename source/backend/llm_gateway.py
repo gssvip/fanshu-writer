@@ -294,7 +294,8 @@ def get_llm_config(app_module=None):
         import app as app_module
 
     with app_module.app.app_context():
-        config = app_module.AIConfig.query.first()
+        # 必须取激活配置，否则多配置场景下 query.first() 会取到旧配置导致 api_key 为空
+        config = app_module.AIConfig.get_active()
         api_key = config.api_key if config and config.api_key else os.environ.get("USER_LLM_API_KEY", "")
         base_url = config.base_url if config else os.environ.get("USER_LLM_BASE_URL", "https://api.deepseek.com/v1")
         model = config.model if config else os.environ.get("USER_LLM_MODEL", "deepseek-chat")
