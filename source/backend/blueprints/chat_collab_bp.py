@@ -3016,7 +3016,7 @@ def smart_fix_from_report():
         if isinstance(items, list) and items:
             diag_parts.append(f'■ {label}（{len(items)}项）')
             # 诊断项截断：避免报告过大导致 LLM 上下文超限或响应极慢
-            limit = 8 if key == 'violations' else 5
+            limit = 5 if key == 'violations' else 3
             for it in items[:limit]:
                 if isinstance(it, dict):
                     msg = it.get('desc') or it.get('message') or it.get('issue') or \
@@ -3043,7 +3043,7 @@ def smart_fix_from_report():
                     val = _character_profiles_to_text(val)
                 except Exception:
                     pass
-            dim_now_parts.append(f'【{label}·当前内容】\n{val[:800]}')
+            dim_now_parts.append(f'【{label}·当前内容】\n{val[:500]}')
     dim_now_text = '\n\n'.join(dim_now_parts) or '（各维度暂无内容）'
 
     skill_note = ''
@@ -3227,9 +3227,7 @@ def smart_fix_text_from_report():
     返回: { fixes: [{ chapter_id, chapter_title, paragraph_index, original, rewritten, reason, violation_desc }] }
     """
     try:
-        from app import db, Book, BookBible, Chapter, AIConfig
-        from llm_gateway import get_llm_config
-        import app as app_module
+        from app import db, Book, BookBible, Chapter, AIConfig, _call_llm
 
         data = request.json or {}
         book_id = data.get('book_id')
@@ -3277,8 +3275,20 @@ def smart_fix_text_from_report():
         violations = target_report.get('violations') or []
         if not isinstance(violations, list):
             violations = []
-        # 只处理有明确位置的前 6 条严重/警告违规
-        filtered = [v for v in violations if isinstance(v, dict) and v.get('location')][:6]
+
+        def _severity_key(v):
+            sev = (v.get('severity') or '').strip()
+            if sev == '严重':
+                return 0
+            if sev == '警告':
+                return 1
+            return 2
+
+        # 只保留有 location 的 dict 违规，按严重程度排序，取前 5
+        filtered = sorted(
+            [v for v in violations if isinstance(v, dict) and v.get('location')],
+            key=_severity_key
+        )[:5]
         if not filtered:
             return jsonify({'fixes': []})
 
@@ -3291,7 +3301,8 @@ def smart_fix_text_from_report():
         except Exception:
             pass
 
-        fixes = []
+        cases = []
+        case_chapters = []
         for v in filtered:
             location = v.get('location') or ''
             desc = v.get('desc') or ''
@@ -3300,72 +3311,96 @@ def smart_fix_text_from_report():
             ch = _locate_chapter_by_location(location, chapters)
             if not ch or not ch.content:
                 continue
-            paragraphs = [p.strip() for p in str(ch.content).split('\n\n') if p.strip()]
-            if not paragraphs:
-                continue
-            # 截取章节前 80% 内容作为上下文，避免 token 爆炸
-            context = '\n\n'.join(paragraphs[:max(3, len(paragraphs) * 8 // 10)])
+            cases.append({
+                'case_index': len(cases),
+                'chapter_id': ch.id,
+                'chapter_title': ch.title or f'第{chapters.index(ch) + 1}章',
+                'location': location,
+                'severity': severity,
+                'desc': desc,
+                'fix_hint': fix_hint,
+                'context': str(ch.content)[:1200],
+            })
+            case_chapters.append(ch)
 
-            system_prompt = f"""你是资深网文正文修正师。任务：根据防遗忘检查报告诊断出的具体违规，定位章节中需要改写的段落，并给出改写后的正文。
+        if not cases:
+            return jsonify({'fixes': []})
 
-【违规信息】
-- 位置：{location}
-- 严重程度：{severity}
-- 问题描述：{desc}
-- 修正建议：{fix_hint}
+        case_blocks = []
+        for case in cases:
+            case_blocks.append(f"""【违规案例 {case['case_index']}】
+位置：{case['location']}
+严重程度：{case['severity']}
+问题描述：{case['desc']}
+修正建议：{case['fix_hint']}
+章节上下文：
+{case['context']}""")
+        cases_text = '\n\n'.join(case_blocks)
 
-【待改写章节上下文】
-{context[:2500]}
-{chr(10) + chr(10) + '【技能包指引】' + chr(10) + skill_note if skill_note else ''}
+        skill_section = f"【技能包指引】\n{skill_note}\n" if skill_note else ''
 
-【输出格式铁律】严格输出 JSON 对象（不要 markdown 代码块、不要解释）：
+        system_prompt = f"""你是资深网文正文修正师。下面有 {len(cases)} 处违规，每处包含位置、问题描述、修正建议和对应章节上下文。
+请逐条分析，只改写确实需要修正的原文段落，保持文风、剧情、语气不变，不扩写。
+
+{skill_section}{cases_text}
+
+【输出格式铁律】严格输出 JSON 对象，不要 markdown 代码块、不要解释：
 {{
   "fixes": [
     {{
+      "case_index": 0,
       "paragraph_index": 0,
-      "original": "需要改写的原文完整段落（必须和原文一字不差，长度 50-400 字）",
-      "rewritten": "改写后的段落（只修正设定/逻辑错误，保留原文风格、剧情、语气，不扩写成新剧情）",
+      "original": "需要改写的原文完整段落（50-400字）",
+      "rewritten": "改写后的段落",
       "reason": "一句话说明为什么改写"
     }}
   ]
 }}
-如果违规涉及多个段落，可输出多个 fixes。如果无法定位或无需改写，返回空数组。"""
+如果某条违规无法定位或无需改写，可以不输出对应 fix。"""
 
+        content, err = _call_llm(
+            [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': '请生成正文改写补丁'}],
+            max_tokens=0, temperature=0.4, task_type='creation'
+        )
+        if err:
+            return jsonify({'error': f'生成正文改写补丁失败：{err}'}), 500
+
+        parsed = _extract_json_from_llm_text(content)
+        if parsed is None:
+            return jsonify({'fixes': []})
+        arr = parsed.get('fixes') or []
+        if not isinstance(arr, list):
+            return jsonify({'fixes': []})
+
+        fixes = []
+        for fx in arr:
+            if not isinstance(fx, dict):
+                continue
+            case_index = fx.get('case_index')
+            if not isinstance(case_index, int) or case_index < 0 or case_index >= len(cases):
+                continue
+            case = cases[case_index]
+            ch = case_chapters[case_index]
+            original = (fx.get('original') or '').strip()
+            rewritten = (fx.get('rewritten') or '').strip()
+            if not original or not rewritten or original == rewritten:
+                continue
+            if original not in str(ch.content):
+                continue
             try:
-                base_url, api_key, model = get_llm_config(app_module)
-            except Exception as e:
-                return jsonify({'error': f'AI 配置异常：{e}'}), 400
-
-            from app import _call_llm
-            content, err = _call_llm(
-                [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': '请生成正文改写补丁'}],
-                max_tokens=0, temperature=0.4, task_type='creation'
-            )
-            if err:
-                continue
-            parsed = _extract_json_from_llm_text(content)
-            if parsed is None:
-                continue
-            arr = parsed.get('fixes') or []
-            if not isinstance(arr, list):
-                continue
-            for fx in arr:
-                if not isinstance(fx, dict):
-                    continue
-                original = (fx.get('original') or '').strip()
-                rewritten = (fx.get('rewritten') or '').strip()
-                if not original or not rewritten or original == rewritten:
-                    continue
-                fixes.append({
-                    'chapter_id': ch.id,
-                    'chapter_title': ch.title or f'第{chapters.index(ch) + 1}章',
-                    'paragraph_index': int(fx.get('paragraph_index', 0)) if str(fx.get('paragraph_index')).isdigit() else 0,
-                    'original': original,
-                    'rewritten': rewritten,
-                    'reason': (fx.get('reason') or '').strip() or f'修正：{desc}',
-                    'violation_desc': desc,
-                    'report_id': report_id,
-                })
+                paragraph_index = int(fx.get('paragraph_index', 0))
+            except Exception:
+                paragraph_index = 0
+            fixes.append({
+                'chapter_id': case['chapter_id'],
+                'chapter_title': case['chapter_title'],
+                'paragraph_index': paragraph_index,
+                'original': original,
+                'rewritten': rewritten,
+                'reason': (fx.get('reason') or '').strip() or f"修正：{case['desc']}",
+                'violation_desc': case['desc'],
+                'report_id': report_id,
+            })
 
         return jsonify({'fixes': fixes, 'report_title': target_rec.get('title', ''), 'report_id': report_id})
     except Exception as e:

@@ -7444,11 +7444,11 @@ function ForeshadowingPanel(props: {
     setFixPlan([]);
     setFixSelected(new Set());
     setFixExpandedIdx(null);
-    // 90 秒超时：LLM 分析报告+生成方案通常需要 20-60 秒，避免无限等待
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
-    try {
-      const data = await api.smartFixFromReport(bookId, reportId, selectedSkillPackIds, controller.signal);
+    // 180 秒超时：LLM 分析报告+生成方案通常需要 20-90 秒，避免无限等待
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 180000);
+      try {
+        const data = await api.smartFixFromReport(bookId, reportId, selectedSkillPackIds, controller.signal);
       clearTimeout(timeoutId);
       setFixPlan(data.plan || []);
       setFixReportTitle(data.report_title || '');
@@ -7560,7 +7560,7 @@ function ForeshadowingPanel(props: {
     setTextFixes([]);
     setTextFixReportTitle('');
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
     try {
       const data = await api.smartFixTextFromReport(bookId, reportId, selectedSkillPackIds, controller.signal);
       clearTimeout(timeoutId);
