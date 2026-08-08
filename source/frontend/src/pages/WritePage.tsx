@@ -7618,7 +7618,7 @@ function ForeshadowingPanel(props: {
       setTextFixReportTitle(data.report_title || '');
       if (fixes.length === 0) {
         // 面板保持打开，显示提示而非 alert 后消失
-        setTextFixEmptyMsg('AI 未定位到需要改写的正文段落，可能违规项缺少明确位置信息。可关闭此面板或重新检查。');
+        setTextFixEmptyMsg(data.empty_reason || 'AI 未定位到需要改写的正文段落，可能违规项缺少明确位置信息。可关闭此面板或重新检查。');
       }
     } catch (e: any) {
       clearTimeout(timeoutId);

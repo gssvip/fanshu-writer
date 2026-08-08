@@ -3313,7 +3313,10 @@ def smart_fix_text_from_report():
             key=_severity_key
         )[:5]
         if not filtered:
-            return jsonify({'fixes': []})
+            no_loc = [v for v in violations if isinstance(v, dict) and not v.get('location')]
+            if no_loc:
+                return jsonify({'fixes': [], 'empty_reason': '报告中的违规项缺少位置信息（location 字段为空），无法定位到具体章节。请重新运行防遗忘检查，确保违规项包含「第N章」或章节标题。'})
+            return jsonify({'fixes': [], 'empty_reason': '报告中没有违规项，无需修正正文。'})
 
         chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
 
@@ -3326,6 +3329,8 @@ def smart_fix_text_from_report():
 
         cases = []
         case_chapters = []
+        located_but_filtered_out = 0
+        not_located = 0
         for v in filtered:
             location = v.get('location') or ''
             desc = v.get('desc') or ''
@@ -3333,8 +3338,10 @@ def smart_fix_text_from_report():
             severity = v.get('severity') or ''
             ch = _locate_chapter_by_location(location, chapters)
             if not ch or not ch.content:
+                not_located += 1
                 continue
             if volume_ids and getattr(ch, 'parent_id', None) not in volume_ids:
+                located_but_filtered_out += 1
                 continue
             cases.append({
                 'case_index': len(cases),
@@ -3349,7 +3356,11 @@ def smart_fix_text_from_report():
             case_chapters.append(ch)
 
         if not cases:
-            return jsonify({'fixes': []})
+            if volume_ids and located_but_filtered_out > 0 and not_located == 0:
+                return jsonify({'fixes': [], 'empty_reason': f'共 {located_but_filtered_out} 处违规已定位到章节，但均不在所选分卷内。请选择包含违规章节的分卷，或不限分卷重新检查。'})
+            if not_located > 0 and located_but_filtered_out == 0:
+                return jsonify({'fixes': [], 'empty_reason': f'共 {not_located} 处违规的位置无法匹配到已有章节（位置格式需为「第N章」或章节标题）。请检查违规位置描述，或重新运行防遗忘检查。'})
+            return jsonify({'fixes': [], 'empty_reason': f'共 {len(filtered)} 处违规均无法生成可修正案例（{not_located} 处定位失败，{located_but_filtered_out} 处不在所选分卷）。请检查违规位置或重新选择分卷。'})
 
         case_blocks = []
         for case in cases:
@@ -3395,12 +3406,13 @@ def smart_fix_text_from_report():
 
         parsed = _extract_json_from_llm_text(content)
         if parsed is None:
-            return jsonify({'fixes': []})
+            return jsonify({'fixes': [], 'empty_reason': 'AI 返回内容无法解析为有效 JSON 补丁（可能模型未按格式输出）。请重试，或在 AI 配置中换一个响应更稳定的模型。'})
         arr = parsed.get('fixes') or []
         if not isinstance(arr, list):
-            return jsonify({'fixes': []})
+            return jsonify({'fixes': [], 'empty_reason': 'AI 返回的 fixes 字段格式异常（非数组）。请重试，或换一个模型。'})
 
         fixes = []
+        dropped_no_match = 0
         for fx in arr:
             if not isinstance(fx, dict):
                 continue
@@ -3414,6 +3426,7 @@ def smart_fix_text_from_report():
             if not original or not rewritten or original == rewritten:
                 continue
             if original not in str(ch.content):
+                dropped_no_match += 1
                 continue
             try:
                 paragraph_index = int(fx.get('paragraph_index', 0))
@@ -3430,6 +3443,8 @@ def smart_fix_text_from_report():
                 'report_id': report_id,
             })
 
+        if not fixes and dropped_no_match > 0:
+            return jsonify({'fixes': [], 'empty_reason': f'AI 生成了 {len(arr)} 条补丁，但原文片段均无法在章节内容中精确匹配（{dropped_no_match} 处对不上）。可能是模型对原文的复述偏差较大，建议重试或换一个模型。'})
         return jsonify({'fixes': fixes, 'report_title': target_rec.get('title', ''), 'report_id': report_id})
     except Exception as e:
         import traceback

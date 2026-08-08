@@ -934,7 +934,7 @@ export const api = {
 
   // 基于防遗忘检查报告生成正文改写补丁（定位章节段落，不落地）
   smartFixTextFromReport: (bookId: string, reportId?: string, skillPackIds: string[] = [], volumeIds?: string[], signal?: AbortSignal) =>
-    request<{ fixes: Array<{ chapter_id: string; chapter_title: string; paragraph_index: number; original: string; rewritten: string; reason: string; violation_desc: string; report_id: string }>; report_title: string; report_id: string }>(
+    request<{ fixes: Array<{ chapter_id: string; chapter_title: string; paragraph_index: number; original: string; rewritten: string; reason: string; violation_desc: string; report_id: string }>; report_title: string; report_id: string; empty_reason?: string }>(
       '/ai/smart/fix-text-from-report',
       { method: 'POST', body: JSON.stringify({ book_id: bookId, report_id: reportId, skill_pack_ids: skillPackIds, volume_ids: volumeIds || [] }) },
       signal
