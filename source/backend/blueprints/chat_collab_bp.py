@@ -2956,7 +2956,7 @@ def smart_fix_from_report():
     返回: { plan: [{ dim, label, issues:[..], action, new_content }], report_title, report_id }
     每个 plan 项对应一个维度的修正：列出该维度涉及的诊断问题、修正动作、修正后的完整设定内容
     """
-    from app import db, Book, BookBible, AIConfig
+    from app import db, Book, BookBible, Chapter, AIConfig
     from llm_gateway import get_llm_config
     import app as app_module
 
@@ -2964,6 +2964,9 @@ def smart_fix_from_report():
     book_id = data.get('book_id')
     report_id = data.get('report_id')
     skill_pack_ids = data.get('skill_pack_ids') or []
+    volume_ids = data.get('volume_ids') or []
+    if not isinstance(volume_ids, list):
+        volume_ids = []
 
     if not book_id:
         return jsonify({'error': '缺少 book_id'}), 400
@@ -3008,29 +3011,42 @@ def smart_fix_from_report():
         report_id = target_rec.get('id')
 
     # 构建诊断要点文本 + 各维度当前内容
+    chapters = None
+    if volume_ids:
+        chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+
     diag_parts = []
     for key, label in [('violations', '一致性违规'), ('pending_foreshadowing', '待回收伏笔'),
                        ('narrative_debt', '叙事债务'), ('suggestions', '改进建议'),
                        ('character_cognition_issues', '角色认知问题')]:
         items = target_report.get(key) or []
-        if isinstance(items, list) and items:
+        if not isinstance(items, list) or not items:
+            continue
+        # 诊断项截断：避免报告过大导致 LLM 上下文超限或响应极慢
+        limit = 5 if key == 'violations' else 3
+        kept_lines = []
+        for it in items[:limit]:
+            if isinstance(it, dict) and volume_ids and chapters:
+                loc = it.get('location') or ''
+                ch = _locate_chapter_by_location(loc, chapters)
+                if ch and getattr(ch, 'parent_id', None) not in volume_ids:
+                    continue
+            if isinstance(it, dict):
+                msg = it.get('desc') or it.get('message') or it.get('issue') or \
+                      it.get('promise') or it.get('content') or it.get('suggestion') or str(it)
+                fix = it.get('fix') or ''
+                loc = it.get('location') or ''
+                line = f'  - {msg[:120]}'
+                if loc:
+                    line += f'（位置：{loc[:60]}）'
+                if fix:
+                    line += f' 💡修正：{fix[:120]}'
+                kept_lines.append(line)
+            else:
+                kept_lines.append(f'  - {str(it)[:120]}')
+        if kept_lines:
             diag_parts.append(f'■ {label}（{len(items)}项）')
-            # 诊断项截断：避免报告过大导致 LLM 上下文超限或响应极慢
-            limit = 5 if key == 'violations' else 3
-            for it in items[:limit]:
-                if isinstance(it, dict):
-                    msg = it.get('desc') or it.get('message') or it.get('issue') or \
-                          it.get('promise') or it.get('content') or it.get('suggestion') or str(it)
-                    fix = it.get('fix') or ''
-                    loc = it.get('location') or ''
-                    line = f'  - {msg[:120]}'
-                    if loc:
-                        line += f'（位置：{loc[:60]}）'
-                    if fix:
-                        line += f' 💡修正：{fix[:120]}'
-                    diag_parts.append(line)
-                else:
-                    diag_parts.append(f'  - {str(it)[:120]}')
+            diag_parts.extend(kept_lines)
     diag_text = '\n'.join(diag_parts) or '（报告无明确诊断项）'
 
     # 各维度当前内容（供AI参考，避免修正时凭空臆造）
@@ -3053,10 +3069,14 @@ def smart_fix_from_report():
     except Exception:
         pass
 
+    volume_section = ''
+    if volume_ids:
+        volume_section = f"\n\n【本次只处理以下卷】\n卷ID: {volume_ids}\n请只针对这些卷涉及的问题生成修正方案"
+
     system_prompt = f"""你是资深网文设定修正师。任务：基于防遗忘检查报告的诊断，对小说设定维度内容生成修正方案。
 
 【防遗忘检查报告诊断要点】
-{diag_text}
+{diag_text}{volume_section}
 
 【各维度当前内容】
 {dim_now_text}
@@ -3233,6 +3253,9 @@ def smart_fix_text_from_report():
         book_id = data.get('book_id')
         report_id = data.get('report_id')
         skill_pack_ids = data.get('skill_pack_ids') or []
+        volume_ids = data.get('volume_ids') or []
+        if not isinstance(volume_ids, list):
+            volume_ids = []
 
         if not book_id:
             return jsonify({'error': '缺少 book_id'}), 400
@@ -3311,6 +3334,8 @@ def smart_fix_text_from_report():
             ch = _locate_chapter_by_location(location, chapters)
             if not ch or not ch.content:
                 continue
+            if volume_ids and getattr(ch, 'parent_id', None) not in volume_ids:
+                continue
             cases.append({
                 'case_index': len(cases),
                 'chapter_id': ch.id,
@@ -3338,11 +3363,14 @@ def smart_fix_text_from_report():
         cases_text = '\n\n'.join(case_blocks)
 
         skill_section = f"【技能包指引】\n{skill_note}\n" if skill_note else ''
+        volume_section = ''
+        if volume_ids:
+            volume_section = f"【本次只处理以下卷】\n卷ID: {volume_ids}\n请只从这些卷中定位需要改写的段落。\n"
 
         system_prompt = f"""你是资深网文正文修正师。下面有 {len(cases)} 处违规，每处包含位置、问题描述、修正建议和对应章节上下文。
 请逐条分析，只改写确实需要修正的原文段落，保持文风、剧情、语气不变，不扩写。
 
-{skill_section}{cases_text}
+{skill_section}{volume_section}{cases_text}
 
 【输出格式铁律】严格输出 JSON 对象，不要 markdown 代码块、不要解释：
 {{

@@ -7218,6 +7218,14 @@ function ForeshadowingPanel(props: {
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
   const [aiMode, setAiMode] = useState(false);
+
+  // 修正方案按卷分批选择
+  const [fixVolSelectorOpen, setFixVolSelectorOpen] = useState(false);
+  const [fixVolSelectorMode, setFixVolSelectorMode] = useState<'setting' | 'text' | null>(null);
+  const [fixVolSelectorReportId, setFixVolSelectorReportId] = useState('');
+  const [availableVolumes, setAvailableVolumes] = useState<Array<{ id: string; title: string; chapter_count: number }>>([]);
+  const [selectedFixVolumeIds, setSelectedFixVolumeIds] = useState<string[]>([]);
+
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiAssisting, setAiAssisting] = useState(false);
   const [aiError, setAiError] = useState('');
@@ -7438,17 +7446,45 @@ function ForeshadowingPanel(props: {
     });
   }
 
-  // 基于防遗忘报告让AI生成设定修正方案
-  async function generateFixFromReport(reportId?: string) {
+  // 打开按卷分批选择弹窗
+  async function openFixVolumeSelector(mode: 'setting' | 'text', reportId: string) {
+    setFixVolSelectorMode(mode);
+    setFixVolSelectorReportId(reportId);
+    setSelectedFixVolumeIds([]);
+    setFixVolSelectorOpen(true);
+    try {
+      const data = await api.smartVolumes(bookId);
+      setAvailableVolumes((data.volumes || []).map((v: any) => ({ id: v.id, title: v.title || `第${v.order_index + 1}卷`, chapter_count: v.chapter_count || 0 })));
+    } catch (e: any) {
+      alert('加载分卷列表失败：' + (e.message || '未知错误'));
+      setFixVolSelectorOpen(false);
+    }
+  }
+
+  function toggleFixVolumeSelection(volId: string) {
+    setSelectedFixVolumeIds(prev => prev.includes(volId) ? prev.filter(id => id !== volId) : [...prev, volId]);
+  }
+
+  function confirmFixVolumeSelection() {
+    if (!fixVolSelectorMode || !fixVolSelectorReportId) return;
+    setFixVolSelectorOpen(false);
+    if (fixVolSelectorMode === 'setting') {
+      generateFixFromReport(fixVolSelectorReportId, selectedFixVolumeIds.length > 0 ? selectedFixVolumeIds : undefined);
+    } else {
+      generateTextFixFromReport(fixVolSelectorReportId, selectedFixVolumeIds.length > 0 ? selectedFixVolumeIds : undefined);
+    }
+  }
+
+  async function generateFixFromReport(reportId?: string, volumeIds?: string[]) {
     setFixLoading(true);
     setFixPlan([]);
     setFixSelected(new Set());
     setFixExpandedIdx(null);
     // 180 秒超时：LLM 分析报告+生成方案通常需要 20-90 秒，避免无限等待
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 180000);
-      try {
-        const data = await api.smartFixFromReport(bookId, reportId, selectedSkillPackIds, controller.signal);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
+    try {
+      const data = await api.smartFixFromReport(bookId, reportId, selectedSkillPackIds, volumeIds, controller.signal);
       clearTimeout(timeoutId);
       setFixPlan(data.plan || []);
       setFixReportTitle(data.report_title || '');
@@ -7555,14 +7591,14 @@ function ForeshadowingPanel(props: {
   }
 
   // ===== 正文修正（第三阶段）函数 =====
-  async function generateTextFixFromReport(reportId?: string) {
+  async function generateTextFixFromReport(reportId?: string, volumeIds?: string[]) {
     setTextFixLoading(true);
     setTextFixes([]);
     setTextFixReportTitle('');
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 180000);
     try {
-      const data = await api.smartFixTextFromReport(bookId, reportId, selectedSkillPackIds, controller.signal);
+      const data = await api.smartFixTextFromReport(bookId, reportId, selectedSkillPackIds, volumeIds, controller.signal);
       clearTimeout(timeoutId);
       const fixes = (data.fixes || []).map(f => ({ ...f, selected: true }));
       setTextFixes(fixes);
@@ -7804,11 +7840,11 @@ function ForeshadowingPanel(props: {
                                   📋 查看修正草稿
                                 </button>
                               ) : (
-                                <button className="btn-primary-sm" onClick={() => generateFixFromReport(r.id)} disabled={fixLoading} title="让AI基于本报告修正设定" style={{color:'#fff',background:'#6c5ce7',opacity:fixLoading?0.7:1}}>
+                                <button className="btn-primary-sm" onClick={() => openFixVolumeSelector('setting', r.id)} disabled={fixLoading} title="让AI基于本报告按卷修正设定" style={{color:'#fff',background:'#6c5ce7',opacity:fixLoading?0.7:1}}>
                                   {fixLoading ? '⏳ AI分析中...' : '🔧 让AI修正'}
                                 </button>
                               )}
-                              <button className="btn-ghost-sm" onClick={() => generateTextFixFromReport(r.id)} disabled={textFixLoading} title="AI定位正文段落并生成改写补丁">{textFixLoading ? '⏳ 正文分析中...' : '📝 修正正文'}</button>
+                              <button className="btn-ghost-sm" onClick={() => openFixVolumeSelector('text', r.id)} disabled={textFixLoading} title="AI按卷定位正文段落并生成改写补丁">{textFixLoading ? '⏳ 正文分析中...' : '📝 修正正文'}</button>
                               {r.status === 'pending' && (
                                 <button className="btn-ghost-sm" onClick={() => ignoreFixDraft(r.id)} title="忽略此报告的修正草稿">🚫 忽略</button>
                               )}
@@ -8038,6 +8074,33 @@ function ForeshadowingPanel(props: {
               <button className="btn-ghost-sm" onClick={() => setAfVolPickerOpen(false)}>取消</button>
               <button className="btn-primary-sm" onClick={confirmAfVolPicker} disabled={afChecking}>
                 {afChecking ? '⏳ 检查中...' : '🚀 开始检查'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {fixVolSelectorOpen && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}} onClick={() => setFixVolSelectorOpen(false)}>
+          <div style={{background:'var(--bg)',borderRadius:8,padding:16,width:'100%',maxWidth:420,boxShadow:'0 4px 20px rgba(0,0,0,0.3)'}} onClick={e => e.stopPropagation()}>
+            <h4 style={{marginTop:0}}>按卷分批修正</h4>
+            <p className="text-muted" style={{fontSize:12,marginBottom:12}}>不选则处理全部章节；选择后只修正所选卷涉及的问题。</p>
+            {availableVolumes.length === 0 ? (
+              <p style={{fontSize:13}}>加载分卷列表中...</p>
+            ) : (
+              <div style={{maxHeight:'50vh',overflowY:'auto',border:'1px solid var(--border)',borderRadius:6,padding:4}}>
+                {availableVolumes.map(vol => (
+                  <label key={vol.id} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',cursor:'pointer',fontSize:13}}>
+                    <input type="checkbox" checked={selectedFixVolumeIds.includes(vol.id)} onChange={() => toggleFixVolumeSelection(vol.id)} />
+                    📖 {vol.title}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}
+                  </label>
+                ))}
+              </div>
+            )}
+            <div style={{marginTop:16,display:'flex',justifyContent:'flex-end',gap:8}}>
+              <button className="btn-ghost-sm" onClick={() => setFixVolSelectorOpen(false)}>取消</button>
+              <button className="btn-primary-sm" onClick={confirmFixVolumeSelection}>
+                {fixVolSelectorMode === 'text' ? '📝 修正正文' : '🔧 生成设定修正'}
               </button>
             </div>
           </div>
