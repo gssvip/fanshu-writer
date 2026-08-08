@@ -3194,6 +3194,31 @@ def _locate_chapter_by_location(location: str, chapters: list):
     return None
 
 
+def _extract_json_from_llm_text(text: str):
+    """从 LLM 返回的文本中提取 JSON 对象（兼容代码块和普通文本）。"""
+    if not text:
+        return None
+    # 优先尝试去掉 markdown 代码块
+    fenced = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
+    if fenced:
+        candidate = fenced.group(1).strip()
+    else:
+        candidate = text.strip()
+    # 取第一个 { 到最后一个 } 之间的内容
+    m = re.search(r'\{[\s\S]*\}', candidate)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group())
+    except Exception:
+        # 尝试修复尾部多余逗号
+        try:
+            fixed = re.sub(r',\s*([}\]])', r'\1', m.group())
+            return json.loads(fixed)
+        except Exception:
+            return None
+
+
 @chat_collab_bp.route('/api/ai/smart/fix-text-from-report', methods=['POST'])
 def smart_fix_text_from_report():
     """基于防遗忘检查报告，定位具体章节段落并生成正文改写补丁。
@@ -3201,86 +3226,87 @@ def smart_fix_text_from_report():
     body: { book_id, report_id?, skill_pack_ids? }
     返回: { fixes: [{ chapter_id, chapter_title, paragraph_index, original, rewritten, reason, violation_desc }] }
     """
-    from app import db, Book, BookBible, Chapter
-    from llm_gateway import get_llm_config
-    import app as app_module
-
-    data = request.json or {}
-    book_id = data.get('book_id')
-    report_id = data.get('report_id')
-    skill_pack_ids = data.get('skill_pack_ids') or []
-
-    if not book_id:
-        return jsonify({'error': '缺少 book_id'}), 400
-    book = Book.query.get(book_id)
-    if not book:
-        return jsonify({'error': '书籍不存在'}), 404
-    bb = BookBible.query.filter_by(book_id=book_id).first()
-    if not bb:
-        return jsonify({'error': '请先创建设定'}), 400
-
-    cfg = AIConfig.get_active()
-    if not cfg or not cfg.api_key:
-        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
-
     try:
-        reports = json.loads(bb.anti_forget_reports) if bb.anti_forget_reports else []
-    except Exception:
-        reports = []
-    if not isinstance(reports, list) or not reports:
-        return jsonify({'error': '暂无防遗忘检查报告'}), 400
+        from app import db, Book, BookBible, Chapter
+        from llm_gateway import get_llm_config
+        import app as app_module
 
-    target_rec = None
-    target_report = {}
-    if report_id:
-        for r in reports:
-            if isinstance(r, dict) and r.get('id') == report_id:
-                target_rec = r
-                target_report = r.get('report') or {}
-                break
-        if not target_rec:
-            return jsonify({'error': '未找到指定报告'}), 404
-    else:
-        recent = sorted([r for r in reports if isinstance(r, dict)], key=lambda x: x.get('checked_at', ''), reverse=True)
-        if not recent:
+        data = request.json or {}
+        book_id = data.get('book_id')
+        report_id = data.get('report_id')
+        skill_pack_ids = data.get('skill_pack_ids') or []
+
+        if not book_id:
+            return jsonify({'error': '缺少 book_id'}), 400
+        book = Book.query.get(book_id)
+        if not book:
+            return jsonify({'error': '书籍不存在'}), 404
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+        if not bb:
+            return jsonify({'error': '请先创建设定'}), 400
+
+        cfg = AIConfig.get_active()
+        if not cfg or not cfg.api_key:
+            return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+        try:
+            reports = json.loads(bb.anti_forget_reports) if bb.anti_forget_reports else []
+        except Exception:
+            reports = []
+        if not isinstance(reports, list) or not reports:
             return jsonify({'error': '暂无防遗忘检查报告'}), 400
-        target_rec = recent[0]
-        target_report = target_rec.get('report') or {}
-        report_id = target_rec.get('id')
 
-    violations = target_report.get('violations') or []
-    if not isinstance(violations, list):
-        violations = []
-    # 只处理有明确位置的前 6 条严重/警告违规
-    filtered = [v for v in violations if isinstance(v, dict) and v.get('location')][:6]
-    if not filtered:
-        return jsonify({'fixes': []})
+        target_rec = None
+        target_report = {}
+        if report_id:
+            for r in reports:
+                if isinstance(r, dict) and r.get('id') == report_id:
+                    target_rec = r
+                    target_report = r.get('report') or {}
+                    break
+            if not target_rec:
+                return jsonify({'error': '未找到指定报告'}), 404
+        else:
+            recent = sorted([r for r in reports if isinstance(r, dict)], key=lambda x: x.get('checked_at', ''), reverse=True)
+            if not recent:
+                return jsonify({'error': '暂无防遗忘检查报告'}), 400
+            target_rec = recent[0]
+            target_report = target_rec.get('report') or {}
+            report_id = target_rec.get('id')
 
-    chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+        violations = target_report.get('violations') or []
+        if not isinstance(violations, list):
+            violations = []
+        # 只处理有明确位置的前 6 条严重/警告违规
+        filtered = [v for v in violations if isinstance(v, dict) and v.get('location')][:6]
+        if not filtered:
+            return jsonify({'fixes': []})
 
-    skill_note = ''
-    try:
-        from app import _get_skill_prompts_by_category
-        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'review', mode='agent') or ''
-    except Exception:
-        pass
+        chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
 
-    fixes = []
-    for v in filtered:
-        location = v.get('location') or ''
-        desc = v.get('desc') or ''
-        fix_hint = v.get('fix') or ''
-        severity = v.get('severity') or ''
-        ch = _locate_chapter_by_location(location, chapters)
-        if not ch or not ch.content:
-            continue
-        paragraphs = [p.strip() for p in str(ch.content).split('\n\n') if p.strip()]
-        if not paragraphs:
-            continue
-        # 截取章节前 80% 内容作为上下文，避免 token 爆炸
-        context = '\n\n'.join(paragraphs[:max(3, len(paragraphs) * 8 // 10)])
+        skill_note = ''
+        try:
+            from app import _get_skill_prompts_by_category
+            skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'review', mode='agent') or ''
+        except Exception:
+            pass
 
-        system_prompt = f"""你是资深网文正文修正师。任务：根据防遗忘检查报告诊断出的具体违规，定位章节中需要改写的段落，并给出改写后的正文。
+        fixes = []
+        for v in filtered:
+            location = v.get('location') or ''
+            desc = v.get('desc') or ''
+            fix_hint = v.get('fix') or ''
+            severity = v.get('severity') or ''
+            ch = _locate_chapter_by_location(location, chapters)
+            if not ch or not ch.content:
+                continue
+            paragraphs = [p.strip() for p in str(ch.content).split('\n\n') if p.strip()]
+            if not paragraphs:
+                continue
+            # 截取章节前 80% 内容作为上下文，避免 token 爆炸
+            context = '\n\n'.join(paragraphs[:max(3, len(paragraphs) * 8 // 10)])
+
+            system_prompt = f"""你是资深网文正文修正师。任务：根据防遗忘检查报告诊断出的具体违规，定位章节中需要改写的段落，并给出改写后的正文。
 
 【违规信息】
 - 位置：{location}
@@ -3305,24 +3331,21 @@ def smart_fix_text_from_report():
 }}
 如果违规涉及多个段落，可输出多个 fixes。如果无法定位或无需改写，返回空数组。"""
 
-        try:
-            base_url, api_key, model = get_llm_config(app_module)
-        except Exception as e:
-            return jsonify({'error': f'AI 配置异常：{e}'}), 400
+            try:
+                base_url, api_key, model = get_llm_config(app_module)
+            except Exception as e:
+                return jsonify({'error': f'AI 配置异常：{e}'}), 400
 
-        from app import _call_llm
-        content, err = _call_llm(
-            [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': '请生成正文改写补丁'}],
-            max_tokens=0, temperature=0.4, task_type='creation'
-        )
-        if err:
-            continue
-        try:
-            import re as _re_txt
-            m = _re_txt.search(r'\{{[\s\S]*\}}', content or '')
-            if not m:
+            from app import _call_llm
+            content, err = _call_llm(
+                [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': '请生成正文改写补丁'}],
+                max_tokens=0, temperature=0.4, task_type='creation'
+            )
+            if err:
                 continue
-            parsed = json.loads(m.group())
+            parsed = _extract_json_from_llm_text(content)
+            if parsed is None:
+                continue
             arr = parsed.get('fixes') or []
             if not isinstance(arr, list):
                 continue
@@ -3343,10 +3366,12 @@ def smart_fix_text_from_report():
                     'violation_desc': desc,
                     'report_id': report_id,
                 })
-        except Exception:
-            continue
 
-    return jsonify({'fixes': fixes, 'report_title': target_rec.get('title', ''), 'report_id': report_id})
+        return jsonify({'fixes': fixes, 'report_title': target_rec.get('title', ''), 'report_id': report_id})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'生成正文改写补丁失败：{e}'}), 500
 
 
 @chat_collab_bp.route('/api/ai/smart/apply-text-fix', methods=['POST'])
