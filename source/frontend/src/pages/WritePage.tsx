@@ -7934,7 +7934,7 @@ function ForeshadowingPanel(props: {
                 AI 基于防遗忘检查报告的诊断，针对以下设定维度生成修正方案。勾选要应用的项，点击「应用所选修正」即可写入设定（覆盖现有内容）。点击「查看修正内容」可展开核对。
               </p>
               {fixPlan.map((p, idx) => (
-                <div key={idx} style={{marginBottom:8, padding:8, border:'1px solid var(--border)', borderRadius:6, background:'var(--bg)'}}>
+                <div key={idx} style={{marginBottom:8, padding:8, border:'1px solid var(--border)', borderRadius:6, background:'var(--bg-card)'}}>
                   <div style={{display:'flex', alignItems:'flex-start', gap:8}}>
                     <input type="checkbox" checked={fixSelected.has(idx)} onChange={() => toggleFixSelected(idx)} style={{marginTop:4}} />
                     <div style={{flex:1}}>
@@ -7991,7 +7991,7 @@ function ForeshadowingPanel(props: {
                 AI 基于报告中的违规位置，定位到具体章节段落并生成改写。勾选要应用的补丁，点击「应用所选改写」即可覆盖原文。建议先核对再应用。
               </p>
               {textFixes.map((f, idx) => (
-                <div key={idx} style={{marginBottom:8, padding:8, border:'1px solid var(--border)', borderRadius:6, background:'var(--bg)'}}>
+                <div key={idx} style={{marginBottom:8, padding:8, border:'1px solid var(--border)', borderRadius:6, background:'var(--bg-card)'}}>
                   <div style={{display:'flex', alignItems:'flex-start', gap:8}}>
                     <input type="checkbox" checked={!!f.selected} onChange={() => toggleTextFixSelected(idx)} style={{marginTop:4}} />
                     <div style={{flex:1}}>
@@ -8081,9 +8081,12 @@ function ForeshadowingPanel(props: {
       )}
 
       {fixVolSelectorOpen && (
-        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}} onClick={() => setFixVolSelectorOpen(false)}>
-          <div style={{background:'var(--bg)',borderRadius:8,padding:16,width:'100%',maxWidth:420,boxShadow:'0 4px 20px rgba(0,0,0,0.3)'}} onClick={e => e.stopPropagation()}>
-            <h4 style={{marginTop:0}}>按卷分批修正</h4>
+        <div className="modal-overlay" onClick={() => setFixVolSelectorOpen(false)}>
+          <div className="modal-content" style={{maxWidth:420, border:'1px solid var(--border-color)'}} onClick={e => e.stopPropagation()}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+              <h3 style={{margin:0}}>按卷分批修正</h3>
+              <button className="btn-ghost-sm" onClick={() => setFixVolSelectorOpen(false)}>✕</button>
+            </div>
             <p className="text-muted" style={{fontSize:12,marginBottom:12}}>不选则处理全部章节；选择后只修正所选卷涉及的问题。</p>
             {availableVolumes.length === 0 ? (
               <p style={{fontSize:13}}>加载分卷列表中...</p>
