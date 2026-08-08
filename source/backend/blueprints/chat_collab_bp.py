@@ -214,6 +214,16 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
             parts.append(f'\n【创作进度】已完成维度：{"、".join(filled)}')
             if empty:
                 parts.append(f'待补充维度：{"、".join(empty)}（可引导作者讨论这些）')
+
+        # 防遗忘检查报告回注：让智驾聊天也能感知已诊断出的一致性违规/待回收伏笔/叙事债务
+        try:
+            from app import _collect_anti_forget_alerts
+            _af = _collect_anti_forget_alerts(bb, max_reports=2, max_alerts=8)
+            if _af:
+                parts.append('\n【防遗忘检查诊断】（最近检查发现的问题，讨论与产出卡片时必须主动规避，不可重犯）')
+                parts.append(_af)
+        except Exception:
+            pass
     else:
         parts.append('\n【创作状态】这是一本新书，还没有任何设定，需要从头讨论。')
 
@@ -1957,6 +1967,16 @@ def smart_suggest():
         except Exception:
             pass
 
+    # 防遗忘检查报告回注：让方案生成也感知已诊断出的一致性违规/待回收伏笔/叙事债务
+    af_alerts_suggest = ''
+    try:
+        from app import _collect_anti_forget_alerts
+        _af = _collect_anti_forget_alerts(bb, max_reports=2, max_alerts=8)
+        if _af:
+            af_alerts_suggest = f'\n\n【防遗忘检查诊断】（最近检查发现的问题，生成方案时必须主动规避/修正）\n{_af}'
+    except Exception:
+        pass
+
     sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》的「{spec['label']}」维度生成 3-5 个差异化的创意方案供作者选择。
 
 题材：{book.genre or "未指定"}
@@ -1971,7 +1991,7 @@ def smart_suggest():
 
 【作者需求】
 {requirement or f"请帮我生成{spec['label']}的设定"}
-{outline_extra}
+{outline_extra}{af_alerts_suggest}
 
 {("【技能包指引】\n" + skill_note) if skill_note else ""}
 
@@ -2144,6 +2164,16 @@ def smart_generate():
         except Exception:
             pass
 
+    # 防遗忘检查报告回注：让设定生成也感知已诊断出的问题并主动规避/修正
+    af_alerts_gen = ''
+    try:
+        from app import _collect_anti_forget_alerts
+        _af = _collect_anti_forget_alerts(bb, max_reports=2, max_alerts=8)
+        if _af:
+            af_alerts_gen = f'\n\n【防遗忘检查诊断】（最近检查发现的问题，本次生成必须保持一致、主动规避，不可重犯）\n{_af}'
+    except Exception:
+        pass
+
     sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{spec['label']}」维度的完整设定内容。
 
 题材：{book.genre or "未指定"}
@@ -2161,7 +2191,7 @@ def smart_generate():
 
 【选中方案】
 {suggestion}
-{outline_extra}{timeline_extra}{character_extra}
+{outline_extra}{timeline_extra}{character_extra}{af_alerts_gen}
 
 {("【技能包指引】\n" + skill_note) if skill_note else ""}
 
@@ -2901,3 +2931,239 @@ def smart_chapter_replace():
     # 持久化去AI卡片状态为 adopted（避免重开聊天又提示替换）
     _persist_card_status(session_id, card_id, 'adopted', body_content)
     return jsonify({'ok': True, 'chapter_id': chapter_id, 'word_count': chapter.word_count})
+
+
+# ============================================================================
+# 防遗忘报告 → AI智驾 修正闭环
+# 把防遗忘检查报告（violations/suggestions/pending_foreshadowing/narrative_debt）
+# 打通给AI，让AI基于报告对设定维度内容生成修正方案，用户确认后落地。
+# ============================================================================
+
+# 可被修正的设定维度字段白名单（与 BookBible 维度字段一一对应）
+_FIXABLE_DIM_FIELDS = {
+    'concept': '核心构思', 'key_rules': '设定/规则', 'worldbuilding': '世界观',
+    'character_profiles': '人物档案', 'plot_design': '大纲', 'timeline': '剧情时间线',
+    'foreshadowing': '伏笔', 'locations': '地点', 'style_guide': '文风指南',
+}
+
+
+@chat_collab_bp.route('/api/ai/smart/fix-from-report', methods=['POST'])
+def smart_fix_from_report():
+    """基于防遗忘检查报告生成设定修正方案（不直接落地，返回给用户确认）。
+
+    body: { book_id, report_id?, skill_pack_ids? }
+    - report_id 为空时取最近一份防遗忘报告
+    返回: { plan: [{ dim, label, issues:[..], action, new_content }], report_title, report_id }
+    每个 plan 项对应一个维度的修正：列出该维度涉及的诊断问题、修正动作、修正后的完整设定内容
+    """
+    from app import db, Book, BookBible, AIConfig
+    from llm_gateway import get_llm_config
+    import app as app_module
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    report_id = data.get('report_id')
+    skill_pack_ids = data.get('skill_pack_ids') or []
+
+    if not book_id:
+        return jsonify({'error': '缺少 book_id'}), 400
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': '请先创建设定'}), 400
+
+    cfg = AIConfig.get_active()
+    if not cfg or not cfg.api_key:
+        return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
+
+    # 取指定报告（默认最近一份）
+    target_report = None
+    target_rec = None
+    try:
+        reports = json.loads(bb.anti_forget_reports) if bb.anti_forget_reports else []
+    except Exception:
+        reports = []
+    if not isinstance(reports, list) or not reports:
+        return jsonify({'error': '暂无防遗忘检查报告，请先执行检查'}), 400
+
+    if report_id:
+        for r in reports:
+            if isinstance(r, dict) and r.get('id') == report_id:
+                target_rec = r
+                target_report = r.get('report') or {}
+                break
+        if not target_rec:
+            return jsonify({'error': '未找到指定报告'}), 404
+    else:
+        # 取最近一份（按 checked_at 降序）
+        def _ts(r):
+            return r.get('checked_at', '') or ''
+        recent = sorted([r for r in reports if isinstance(r, dict)], key=_ts, reverse=True)
+        if not recent:
+            return jsonify({'error': '暂无防遗忘检查报告'}), 400
+        target_rec = recent[0]
+        target_report = target_rec.get('report') or {}
+        report_id = target_rec.get('id')
+
+    # 构建诊断要点文本 + 各维度当前内容
+    diag_parts = []
+    for key, label in [('violations', '一致性违规'), ('pending_foreshadowing', '待回收伏笔'),
+                       ('narrative_debt', '叙事债务'), ('suggestions', '改进建议'),
+                       ('character_cognition_issues', '角色认知问题')]:
+        items = target_report.get(key) or []
+        if isinstance(items, list) and items:
+            diag_parts.append(f'■ {label}（{len(items)}项）')
+            for it in items[:12]:
+                if isinstance(it, dict):
+                    msg = it.get('desc') or it.get('message') or it.get('issue') or \
+                          it.get('promise') or it.get('content') or it.get('suggestion') or str(it)
+                    fix = it.get('fix') or ''
+                    loc = it.get('location') or ''
+                    line = f'  - {msg[:150]}'
+                    if loc:
+                        line += f'（位置：{loc}）'
+                    if fix:
+                        line += f' 💡修正：{fix[:150]}'
+                    diag_parts.append(line)
+                else:
+                    diag_parts.append(f'  - {str(it)[:150]}')
+    diag_text = '\n'.join(diag_parts) or '（报告无明确诊断项）'
+
+    # 各维度当前内容（供AI参考，避免修正时凭空臆造）
+    dim_now_parts = []
+    for field, label in _FIXABLE_DIM_FIELDS.items():
+        val = (getattr(bb, field, '') or '').strip()
+        if val:
+            if field == 'character_profiles' and val.startswith('['):
+                try:
+                    val = _character_profiles_to_text(val)
+                except Exception:
+                    pass
+            dim_now_parts.append(f'【{label}·当前内容】\n{val[:1500]}')
+    dim_now_text = '\n\n'.join(dim_now_parts) or '（各维度暂无内容）'
+
+    skill_note = ''
+    try:
+        from app import _get_skill_prompts_by_category
+        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'review', mode='agent') or ''
+    except Exception:
+        pass
+
+    system_prompt = f"""你是资深网文设定修正师。任务：基于防遗忘检查报告的诊断，对小说设定维度内容生成修正方案。
+
+【防遗忘检查报告诊断要点】
+{diag_text}
+
+【各维度当前内容】
+{dim_now_text}
+{chr(10) + chr(10) + '【技能包指引】' + chr(10) + skill_note if skill_note else ''}
+
+【你的任务】
+针对报告诊断出的问题，逐维度生成「修正方案」。每个维度一个修正项，包含：
+1. issues：该维度涉及的诊断问题（从上方诊断中归纳）
+2. action：一句话说明怎么改（如：补全主角境界突破条件、修正时间线倒流）
+3. new_content：修正后的完整设定内容（必须是可直接落地的完整内容，不是片段说明）
+
+【输出格式铁律】严格输出 JSON 数组（不要 markdown 代码块、不要任何解释文字），结构：
+[
+  {{
+    "dim": "维度字段名（concept/key_rules/worldbuilding/character_profiles/plot_design/timeline/foreshadowing/locations/style_guide 之一）",
+    "label": "维度中文名",
+    "issues": ["该维度涉及的诊断问题1", "问题2"],
+    "action": "修正动作说明",
+    "new_content": "修正后的完整设定内容（300-800字，保持与其它维度一致）"
+  }}
+]
+只输出确实需要修正的维度，没有问题的维度不要输出。最多输出6个维度。"""
+
+    try:
+        base_url, api_key, model = get_llm_config(app_module)
+    except Exception as e:
+        return jsonify({'error': f'AI 配置异常：{e}'}), 400
+
+    from app import _call_llm
+    content, err = _call_llm(
+        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': '请基于报告诊断生成设定修正方案'}],
+        max_tokens=0, temperature=0.5, task_type='creation'
+    )
+    if err:
+        return jsonify({'error': f'生成修正方案失败：{err}'}), 500
+
+    # 解析 JSON 数组
+    plan = []
+    try:
+        import re as _re_fix
+        m = _re_fix.search(r'\[[\s\S]*\]', content or '')
+        if m:
+            plan = json.loads(m.group())
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # 兜底：若解析失败，把整段作为单项返回
+    if not isinstance(plan, list) or not plan:
+        plan = [{'dim': 'foreshadowing', 'label': '伏笔',
+                 'issues': ['AI 输出未按 JSON 格式，请查看 new_content 原文'],
+                 'action': '请人工核对', 'new_content': content or ''}]
+
+    # 清洗：只保留白名单维度，字段补全
+    cleaned = []
+    for p in plan:
+        if not isinstance(p, dict):
+            continue
+        dim = (p.get('dim') or '').strip()
+        if dim not in _FIXABLE_DIM_FIELDS:
+            continue
+        item = {
+            'dim': dim,
+            'label': p.get('label') or _FIXABLE_DIM_FIELDS[dim],
+            'issues': p.get('issues') if isinstance(p.get('issues'), list) else ([str(p.get('issues'))] if p.get('issues') else []),
+            'action': (p.get('action') or '').strip(),
+            'new_content': (p.get('new_content') or '').strip(),
+        }
+        if item['new_content']:
+            cleaned.append(item)
+
+    return jsonify({
+        'plan': cleaned,
+        'report_title': target_rec.get('title', '防遗忘检查报告'),
+        'report_id': report_id,
+    })
+
+
+@chat_collab_bp.route('/api/ai/smart/apply-fix', methods=['POST'])
+def smart_apply_fix():
+    """应用用户确认的修正方案到对应 bible 维度字段（落地）。
+
+    body: { book_id, fixes: [{ dim, new_content }] }
+    仅写入用户勾选的维度，未勾选的不动。
+    返回: { ok, applied: [{ dim, label }] }
+    """
+    from app import db, BookBible
+    data = request.json or {}
+    book_id = data.get('book_id')
+    fixes = data.get('fixes') or []
+
+    if not book_id or not isinstance(fixes, list) or not fixes:
+        return jsonify({'error': '参数无效：需要 book_id 和非空 fixes'}), 400
+
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': '请先创建设定'}), 400
+
+    applied = []
+    for f in fixes:
+        if not isinstance(f, dict):
+            continue
+        dim = (f.get('dim') or '').strip()
+        new_content = (f.get('new_content') or '').strip()
+        if dim not in _FIXABLE_DIM_FIELDS or not new_content:
+            continue
+        setattr(bb, dim, new_content)
+        applied.append({'dim': dim, 'label': _FIXABLE_DIM_FIELDS[dim]})
+
+    if applied:
+        bb.updated_at = datetime.now(timezone.utc)
+        db.session.commit()
+
+    return jsonify({'ok': True, 'applied': applied})

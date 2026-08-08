@@ -7186,6 +7186,15 @@ function ForeshadowingPanel(props: {
   const [afScope, setAfScope] = useState<'reports' | 'dimensions'>('reports'); // 检查范围：动态文件/仅维度
   const [foreCollapsed, setForeCollapsed] = useState(false); // 伏笔按卷区折叠状态
 
+  // ===== 防遗忘报告 → AI修正闭环 =====
+  const [fixLoading, setFixLoading] = useState(false);
+  const [fixPlan, setFixPlan] = useState<Array<{ dim: string; label: string; issues: string[]; action: string; new_content: string }>>([]);
+  const [fixReportTitle, setFixReportTitle] = useState('');
+  const [fixSelected, setFixSelected] = useState<Set<number>>(new Set()); // 勾选要应用的修正项索引
+  const [fixSourceReportId, setFixSourceReportId] = useState<string | null>(null);
+  const [fixExpandedIdx, setFixExpandedIdx] = useState<number | null>(null); // 展开查看修正后内容的项索引
+  const [fixApplying, setFixApplying] = useState(false);
+
   // 解析全局伏笔
   useEffect(() => {
     setForeshadowing(bible?.foreshadowing || '');
@@ -7356,6 +7365,65 @@ function ForeshadowingPanel(props: {
       } catch (e: any) {
         alert('删除失败：' + e.message);
       }
+    });
+  }
+
+  // 基于防遗忘报告让AI生成设定修正方案
+  async function generateFixFromReport(reportId?: string) {
+    setFixLoading(true);
+    setFixPlan([]);
+    setFixSelected(new Set());
+    setFixExpandedIdx(null);
+    setFixSourceReportId(reportId || null);
+    try {
+      const data = await api.smartFixFromReport(bookId, reportId, selectedSkillPackIds);
+      setFixPlan(data.plan || []);
+      setFixReportTitle(data.report_title || '');
+      setFixSourceReportId(data.report_id || reportId || null);
+      // 默认全选
+      setFixSelected(new Set((data.plan || []).map((_, i) => i)));
+      if (!data.plan || data.plan.length === 0) {
+        alert('AI 未发现需要修正的设定项，可能报告诊断的问题不涉及设定维度');
+      }
+    } catch (e: any) {
+      alert('生成修正方案失败：' + (e.message || '未知错误'));
+    }
+    setFixLoading(false);
+  }
+
+  function toggleFixSelected(idx: number) {
+    setFixSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }
+
+  // 应用勾选的修正到设定维度
+  async function applySelectedFixes() {
+    if (fixSelected.size === 0) { alert('请至少勾选一项修正'); return; }
+    const fixes = fixPlan.filter((_, i) => fixSelected.has(i)).map(p => ({ dim: p.dim, new_content: p.new_content }));
+    const dimLabels = fixPlan.filter((_, i) => fixSelected.has(i)).map(p => p.label).join('、');
+    showConfirm(`确认将修正方案应用到以下设定维度？此操作会覆盖对应维度的现有内容：\n${dimLabels}`, async () => {
+      setFixApplying(true);
+      try {
+        const data = await api.smartApplyFix(bookId, fixes);
+        alert(`已应用 ${data.applied.length} 项修正：${data.applied.map(a => a.label).join('、')}`);
+        // 刷新 bible
+        if (bible) {
+          const updated = { ...bible };
+          for (const f of fixes) {
+            (updated as any)[f.dim] = f.new_content;
+          }
+          onBibleUpdate(updated);
+        }
+        setFixPlan([]);
+        setFixSelected(new Set());
+      } catch (e: any) {
+        alert('应用修正失败：' + (e.message || '未知错误'));
+      }
+      setFixApplying(false);
     });
   }
 
@@ -7552,6 +7620,7 @@ function ForeshadowingPanel(props: {
                           ) : (
                             <>
                               <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? '📥 拉取' : '📂 折叠'}</button>
+                              <button className="btn-primary-sm" onClick={() => generateFixFromReport(r.id)} title="让AI基于本报告修正设定" style={{color:'#fff',background:'#6c5ce7'}}>🔧 让AI修正</button>
                               <button className="btn-ghost-sm" onClick={() => startAfEdit(r)} title="编辑报告内容">✏️</button>
                               <button className="btn-ghost-sm" onClick={() => startAfRename(r)} title="重命名">🏷️</button>
                               <button className="btn-ghost-sm" onClick={() => deleteAfReport(r)} style={{color:'#e74c3c'}} title="删除">🗑️</button>
@@ -7620,6 +7689,63 @@ function ForeshadowingPanel(props: {
           </>
         )}
       </div>
+
+      {/* ===== AI修正方案面板（基于防遗忘报告）===== */}
+      {(fixLoading || fixPlan.length > 0) && (
+        <div style={{marginTop:12, border:'1px solid #6c5ce7', borderRadius:8, padding:10, background:'var(--bg-card)'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+            <h4 style={{margin:0, color:'#6c5ce7'}}>🔧 AI设定修正方案{fixReportTitle ? ` · 基于「${fixReportTitle}」` : ''}</h4>
+            {fixPlan.length > 0 && (
+              <button className="btn-ghost-sm" onClick={() => { setFixPlan([]); setFixSelected(new Set()); }} title="关闭">✕</button>
+            )}
+          </div>
+          {fixLoading ? (
+            <p className="text-muted">⏳ AI 正在分析报告并生成修正方案...</p>
+          ) : (
+            <>
+              <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
+                AI 基于防遗忘检查报告的诊断，针对以下设定维度生成修正方案。勾选要应用的项，点击「应用所选修正」即可写入设定（覆盖现有内容）。点击「查看修正内容」可展开核对。
+              </p>
+              {fixPlan.map((p, idx) => (
+                <div key={idx} style={{marginBottom:8, padding:8, border:'1px solid var(--border)', borderRadius:6, background:'var(--bg)'}}>
+                  <div style={{display:'flex', alignItems:'flex-start', gap:8}}>
+                    <input type="checkbox" checked={fixSelected.has(idx)} onChange={() => toggleFixSelected(idx)} style={{marginTop:4}} />
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600}}>
+                        <span style={{color:'#6c5ce7'}}>{p.label}</span>
+                        {p.action && <span style={{color:'#666', fontWeight:400, marginLeft:8}}>→ {p.action}</span>}
+                      </div>
+                      {Array.isArray(p.issues) && p.issues.length > 0 && (
+                        <ul style={{margin:'4px 0 0', paddingLeft:18, fontSize:12, color:'#888'}}>
+                          {p.issues.map((iss, i) => <li key={i}>{iss}</li>)}
+                        </ul>
+                      )}
+                      <button className="btn-ghost-sm" style={{marginTop:4, fontSize:12}} onClick={() => setFixExpandedIdx(fixExpandedIdx === idx ? null : idx)}>
+                        {fixExpandedIdx === idx ? '📂 收起修正内容' : '📥 查看修正内容'}
+                      </button>
+                      {fixExpandedIdx === idx && (
+                        <pre style={{marginTop:6, maxHeight:260, overflow:'auto', whiteSpace:'pre-wrap', wordBreak:'break-word',
+                                     fontSize:12, lineHeight:1.5, padding:8, background:'var(--bg-elevated)', borderRadius:4, border:'1px solid var(--border)'}}>
+{p.new_content}
+                        </pre>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {fixPlan.length > 0 && (
+                <div style={{display:'flex', gap:8, marginTop:8}}>
+                  <button className="btn-primary-sm" onClick={applySelectedFixes} disabled={fixApplying || fixSelected.size === 0}>
+                    {fixApplying ? '⏳ 应用中...' : `✅ 应用所选修正（${fixSelected.size}/${fixPlan.length}）`}
+                  </button>
+                  <button className="btn-ghost-sm" onClick={() => setFixSelected(new Set(fixPlan.map((_, i) => i)))}>全选</button>
+                  <button className="btn-ghost-sm" onClick={() => setFixSelected(new Set())}>全不选</button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
         </>
       )}
 
