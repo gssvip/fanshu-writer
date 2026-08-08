@@ -7191,7 +7191,6 @@ function ForeshadowingPanel(props: {
   const [fixPlan, setFixPlan] = useState<Array<{ dim: string; label: string; issues: string[]; action: string; new_content: string }>>([]);
   const [fixReportTitle, setFixReportTitle] = useState('');
   const [fixSelected, setFixSelected] = useState<Set<number>>(new Set()); // 勾选要应用的修正项索引
-  const [fixSourceReportId, setFixSourceReportId] = useState<string | null>(null);
   const [fixExpandedIdx, setFixExpandedIdx] = useState<number | null>(null); // 展开查看修正后内容的项索引
   const [fixApplying, setFixApplying] = useState(false);
 
@@ -7374,12 +7373,10 @@ function ForeshadowingPanel(props: {
     setFixPlan([]);
     setFixSelected(new Set());
     setFixExpandedIdx(null);
-    setFixSourceReportId(reportId || null);
     try {
       const data = await api.smartFixFromReport(bookId, reportId, selectedSkillPackIds);
       setFixPlan(data.plan || []);
       setFixReportTitle(data.report_title || '');
-      setFixSourceReportId(data.report_id || reportId || null);
       // 默认全选
       setFixSelected(new Set((data.plan || []).map((_, i) => i)));
       if (!data.plan || data.plan.length === 0) {
