@@ -3288,6 +3288,10 @@ def ai_anti_forget_check(book_id):
 
     structured_ctx = '\n\n'.join(structured_ctx_parts)
 
+    # 修炼体系小说额外检查项：境界突破条件/越级战斗/年龄与境界进度/时间线与修炼进度/修炼天赋一致性
+    af_cult_check = ('\n- 修炼体系：境界突破违反已建立突破条件/越级战斗不合理/年龄与境界进度不匹配/'
+                     '时间线与修炼进度矛盾/修炼天赋前后不一致') if is_cultivation_novel(book) else ''
+
     system_prompt = f"""你是「长篇小说防遗忘与一致性审查员」，整合多个防遗忘技能协同工作：
 1. 设定锁定员(lock_facts)：从各维度提取不可变核心事实清单
 2. 一致性审查员(consistency_check)：检查近期章节是否违反已锁定设定
@@ -3303,7 +3307,7 @@ def ai_anti_forget_check(book_id):
 - 时间线：时间倒流/年龄错误/事件顺序混乱
 - 角色认知：角色知道了不该知道的信息（信息差破坏）
 - 伏笔状态：已回收伏笔又被当作未回收/待回收伏笔遗忘过久
-- 物资/能力：物品/功法/境界前后不一致（跳变/重复获得）
+- 物资/能力：物品/功法/境界前后不一致（跳变/重复获得）{af_cult_check}
 
 严格按JSON格式输出（不要任何其他文字）：
 {{
@@ -5831,6 +5835,84 @@ def _get_genre_label(book=None, bb=None):
     if not genre:
         return '通用'
     return GENRE_LABELS.get(genre, genre)
+
+
+# 修炼体系小说题材关键词（玄幻/仙侠/都市异能/高武/历史脑洞等带修炼体系的小说）
+# 命中任一关键词即视为修炼体系小说，用于在人物/大纲/剧情维度注入修炼天赋/境界变化区间/
+# 年龄变化区间/时间线字段，并在防遗忘检查中加入境界/年龄/时间线一致性检查，防止正文跑偏
+_CULTIVATION_GENRE_KEYWORDS = (
+    # 大类码
+    'fantasy', 'xianxia',
+    # 玄幻子类
+    'dongfang', 'yishi', 'gaowu', 'wangchao', 'honghuang', 'fanren', 'feichai',
+    'qiangzhong', 'qiandao', 'shenchong', 'dihua', 'shenshu',
+    # 仙侠子类
+    'gudian', 'xiuzhen', 'huanxiang', 'shenhua', 'fengshen',
+    'goudao', 'changsheng', 'jiazu', 'jianxiu', 'liandan', 'liangi',
+    # 都市/都市奇幻 子类
+    'yishu', 'dushi_xz', 'dushi_gw', 'guidze', 'dushi_nr', 'lingyi',
+    # 中文词
+    '玄幻', '仙侠', '修真', '修仙', '修炼', '异能', '高武', '武道', '洪荒',
+    '封神', '凡人流', '废柴', '东方玄幻', '异世大陆', '高武世界', '都市修真',
+    '都市高武', '异术超能', '规则怪谈', '灵异', '神话', '长生', '剑修',
+    '炼丹', '炼器', '家族修仙', '苟道', '修真文明', '幻想修仙', '现代修真',
+    '神话修真', '洪荒封神', '都市脑洞', '境界', '灵根', '丹田', '经脉', '功法',
+)
+
+
+def is_cultivation_novel(book=None, bb=None):
+    """判断是否为修炼体系小说（玄幻/仙侠/都市异能/高武/历史脑洞等）。
+
+    基于 genre/book_type/novel_styles 关键词判断，命中任一即视为修炼体系小说。
+    """
+    texts = []
+    if book is not None:
+        texts.append(getattr(book, 'genre', '') or '')
+        texts.append(getattr(book, 'book_type', '') or '')
+        texts.append(getattr(book, 'novel_styles', '') or '')
+    if bb is not None:
+        texts.append(getattr(bb, 'genre', '') or '')
+        texts.append(getattr(bb, 'book_type', '') or '')
+    blob = ' '.join(t for t in texts if t).lower()
+    if not blob:
+        return False
+    for kw in _CULTIVATION_GENRE_KEYWORDS:
+        if kw.lower() in blob:
+            return True
+    return False
+
+
+def _cultivation_dimension_hint(dim, book=None, bb=None):
+    """返回修炼体系小说在各维度的专属输出要求（非修炼体系小说返回空串）。
+
+    在人物/五幕式大纲/剧情与情节节点维度注入修炼天赋/境界变化区间/年龄变化区间/时间线，
+    防止正文写作时境界/年龄/时间线跑偏。
+    """
+    if not is_cultivation_novel(book, bb):
+        return ''
+    if dim == 'character_profiles':
+        return ('\n\n【修炼体系小说·人物维度专属要求·必读】\n'
+                '每个角色除原有字段外，必须额外输出以下两行（纯中文，每字段一行，与姓名/身份同级）：\n'
+                '   修炼天赋：<灵根/体质/血脉/亲和度等天赋评级及特点，如：剑心通明，骨纹亲和度甲级，修炼速度常人三倍>\n'
+                '   境界：<当前境界及潜力上限，如：骨纹三阶，潜力上限骨纹九阶；注明突破条件与代价>\n'
+                '天赋决定修炼速度与上限，境界须与已建立的力量体系一致，不得越级或凭空突破。')
+    if dim == 'plot_design':
+        return ('\n\n【修炼体系小说·五幕式大纲专属要求·必读】\n'
+                '每幕除原有字段外，必须标注以下四项，防止正文写作时境界/年龄/时间线跑偏：\n'
+                '- 主要角色修炼天赋（须与人物档案一致）\n'
+                '- 本幕境界变化区间（如：第1幕主角从凡人→练气三层）\n'
+                '- 本幕年龄变化区间（如：16-18岁）\n'
+                '- 本幕时间线节点（关键时间锚点，如：开篇第1年冬至→第2年春）\n'
+                '各幕境界区间须全书连续递进，不得跳变；年龄与时间线须与境界进度匹配。')
+    if dim == 'timeline':
+        return ('\n\n【修炼体系小说·剧情与情节节点专属要求·必读】\n'
+                '每卷 nodes 数组中每个情节节点除原有字段外，必须额外包含以下四个字段：\n'
+                '   "cultivation": "本节点主要角色修炼进展，如：主角突破筑基，配角陨落"\n'
+                '   "realm_range": "本节点境界变化区间，如：练气七层→筑基初期"\n'
+                '   "age_range": "本节点年龄区间，如：18-19岁"\n'
+                '   "timeline_node": "本节点时间线锚点，如：开篇第3年夏"\n'
+                '各节点境界/年龄/时间线须全书连续递进，不得跳变或倒流。')
+    return ''
 
 
 def _sync_book_meta_to_bible(book, bb):
@@ -8749,7 +8831,7 @@ def ai_outline_master(book_id):
 全书约 {total_chapters} 章，分 {volume_count} 卷（每卷约 {chapters_per_volume} 章）。
 为每卷输出：卷号与卷名、所属幕、本卷核心目标（一句话）、主要冲突、关键转折点（2-3个）、卷尾高潮与悬念。
 只输出总纲文本，不要输出各卷的详细情节节点（详细节点在卷纲滚动生成阶段产生）。
-
+{_cultivation_dimension_hint('plot_design', book, bb)}
 {skill_note}"""
 
     user_prompt = f"""书名：{book.title}
@@ -10079,6 +10161,7 @@ def ai_master_create(book_id):
 ]
 
 【分卷章节分配】全书 {total_chapters} 章 → {tv_for_timeline} 卷（每卷 {chapters_per_vol} 章）：第1卷 1-{chapters_per_vol}、第2卷 {chapters_per_vol+1}-{chapters_per_vol*2}、... 第{tv_for_timeline}卷 {(tv_for_timeline-1)*chapters_per_vol+1}-{total_chapters}；每卷 nodes 章节连续不重叠。
+{_cultivation_dimension_hint(dim, book, bb)}
 直接输出 JSON 数组，不要任何解释性文字。"""
             user_prompt = instruction or f'请为这本小说生成分卷剧情JSON数组，**共 {tv_for_timeline} 卷，每卷约 {chapters_per_vol} 章**，与已确认的上游维度保持一致，各卷符合五幕模型且卷间严格衔接。'
         else:
@@ -10095,6 +10178,7 @@ def ai_master_create(book_id):
 {upstream_ctx}
 {storyline_block}{af_block_master}
 {skill_note}{format_integration_note}
+{_cultivation_dimension_hint(dim, book, bb)}
 
 直接输出{info['label']}内容（严格按任务要求的格式铁律输出）。确保与上游维度衔接一致。"""
             user_prompt = instruction or f'请为这本小说生成{info["label"]}，与已确认的上游维度保持一致，并严格按输出格式铁律输出。'
@@ -10306,6 +10390,7 @@ def ai_master_create_stream(book_id):
 【分卷铁律·必读】**全书共 {tv_for_timeline} 卷，每卷约 {chapters_per_vol} 章，全书约 {total_chapters} 章**。卷序号从 1 开始连续递增到 {tv_for_timeline}。卷名格式"第N卷 副标题"。必须覆盖全部 {tv_for_timeline} 卷，不得多不得少。
 
 {skill_note}{format_integration_note}
+{_cultivation_dimension_hint(dim, book, bb)}
 
 【输出格式铁律】严格输出 JSON 数组（不要包裹在 markdown 代码块中）。直接输出 JSON 数组，不要任何解释性文字。"""
                     user_prompt = instruction or f'请为这本小说生成分卷剧情JSON数组，**共 {tv_for_timeline} 卷，每卷约 {chapters_per_vol} 章**，与已确认的上游维度保持一致，各卷符合五幕模型且卷间严格衔接。'
@@ -10323,6 +10408,7 @@ def ai_master_create_stream(book_id):
 {upstream_ctx}
 {storyline_block}{af_block_master}
 {skill_note}{format_integration_note}
+{_cultivation_dimension_hint(dim, book, bb)}
 
 直接输出{info['label']}内容（严格按任务要求的格式铁律输出）。确保与上游维度衔接一致。"""
                     user_prompt = instruction or f'请为这本小说生成{info["label"]}，与已确认的上游维度保持一致，并严格按输出格式铁律输出。'

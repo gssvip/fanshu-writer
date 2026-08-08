@@ -1694,7 +1694,8 @@ def _character_profiles_to_text(json_str):
                 ('name', '姓名'), ('role', '角色'), ('identity', '身份'),
                 ('personality', '性格'), ('motivation', '动机'),
                 ('background', '背景'), ('relationships', '关系'),
-                ('abilities', '能力'), ('items', '物品'),
+                ('abilities', '能力'), ('cultivation_talent', '修炼天赋'),
+                ('realm', '境界'), ('items', '物品'),
             ]
             for f, label in field_labels:
                 val = (c.get(f) or '').strip()
@@ -1948,6 +1949,11 @@ def smart_suggest():
             from app import _get_total_volumes
             tv = _get_total_volumes(bb, book)
             outline_extra = f'\n\n【大纲维度专属要求】请生成「五幕式总纲」，全书严格 {tv} 卷，每卷约50章12万字。五幕模型：立身(1-5%)/立足(5-25%)/立势(25-50%)/立威(50-75%)/立命(75-100%)。为每卷输出：卷号卷名、所属幕、本卷核心目标、主要冲突、关键转折点(2-3个)、卷尾高潮与悬念。只输出总纲文本，不输出详细情节节点。'
+            try:
+                from app import _cultivation_dimension_hint
+                outline_extra += _cultivation_dimension_hint('plot_design', book, bb)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -2069,6 +2075,11 @@ def smart_generate():
             from app import _get_total_volumes
             tv = _get_total_volumes(bb, book)
             outline_extra = f'\n\n【大纲维度专属要求】请生成「五幕式总纲」，全书严格 {tv} 卷，每卷约50章12万字。五幕模型：立身(1-5%)/立足(5-25%)/立势(25-50%)/立威(50-75%)/立命(75-100%)。为每卷输出：卷号卷名、所属幕、本卷核心目标、主要冲突、关键转折点(2-3个)、卷尾高潮与悬念。只输出总纲文本，不输出详细情节节点。'
+            try:
+                from app import _cultivation_dimension_hint
+                outline_extra += _cultivation_dimension_hint('plot_design', book, bb)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -2096,6 +2107,12 @@ def smart_generate():
             timeline_extra = f'\n\n【剧情维度专属要求】全书严格 {tv} 卷，每卷约50章12万字。请基于五幕式总纲生成全部 {tv} 卷的剧情，各卷剧情连贯、卷间衔接（ending_hook与下一卷开头承接），每卷剧情须支撑50章12万字容量。'
             if existing_volumes:
                 timeline_extra += f'\n\n【已有卷剧情（须保持连贯，可在其基础上完善）】\n{existing_volumes}'
+            # 修炼体系小说：节点须含修炼进展/境界区间/年龄区间/时间线锚点
+            try:
+                from app import _cultivation_dimension_hint
+                timeline_extra += _cultivation_dimension_hint('timeline', book, bb)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -2120,6 +2137,12 @@ def smart_generate():
    物品：残骨刀
 5. 多个角色之间用空行分隔，每个角色都按上述格式。
 6. 每个字段内容充实具体，至少30字。"""
+        # 修炼体系小说：额外要求输出修炼天赋/境界字段
+        try:
+            from app import _cultivation_dimension_hint
+            character_extra += _cultivation_dimension_hint('character_profiles', book, bb)
+        except Exception:
+            pass
 
     sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{spec['label']}」维度的完整设定内容。
 
