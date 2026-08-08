@@ -3015,20 +3015,22 @@ def smart_fix_from_report():
         items = target_report.get(key) or []
         if isinstance(items, list) and items:
             diag_parts.append(f'■ {label}（{len(items)}项）')
-            for it in items[:12]:
+            # 诊断项截断：避免报告过大导致 LLM 上下文超限或响应极慢
+            limit = 8 if key == 'violations' else 5
+            for it in items[:limit]:
                 if isinstance(it, dict):
                     msg = it.get('desc') or it.get('message') or it.get('issue') or \
                           it.get('promise') or it.get('content') or it.get('suggestion') or str(it)
                     fix = it.get('fix') or ''
                     loc = it.get('location') or ''
-                    line = f'  - {msg[:150]}'
+                    line = f'  - {msg[:120]}'
                     if loc:
-                        line += f'（位置：{loc}）'
+                        line += f'（位置：{loc[:60]}）'
                     if fix:
-                        line += f' 💡修正：{fix[:150]}'
+                        line += f' 💡修正：{fix[:120]}'
                     diag_parts.append(line)
                 else:
-                    diag_parts.append(f'  - {str(it)[:150]}')
+                    diag_parts.append(f'  - {str(it)[:120]}')
     diag_text = '\n'.join(diag_parts) or '（报告无明确诊断项）'
 
     # 各维度当前内容（供AI参考，避免修正时凭空臆造）
@@ -3041,7 +3043,7 @@ def smart_fix_from_report():
                     val = _character_profiles_to_text(val)
                 except Exception:
                     pass
-            dim_now_parts.append(f'【{label}·当前内容】\n{val[:1500]}')
+            dim_now_parts.append(f'【{label}·当前内容】\n{val[:800]}')
     dim_now_text = '\n\n'.join(dim_now_parts) or '（各维度暂无内容）'
 
     skill_note = ''

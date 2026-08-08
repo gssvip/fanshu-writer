@@ -7373,8 +7373,12 @@ function ForeshadowingPanel(props: {
     setFixPlan([]);
     setFixSelected(new Set());
     setFixExpandedIdx(null);
+    // 90 秒超时：LLM 分析报告+生成方案通常需要 20-60 秒，避免无限等待
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
     try {
-      const data = await api.smartFixFromReport(bookId, reportId, selectedSkillPackIds);
+      const data = await api.smartFixFromReport(bookId, reportId, selectedSkillPackIds, controller.signal);
+      clearTimeout(timeoutId);
       setFixPlan(data.plan || []);
       setFixReportTitle(data.report_title || '');
       // 默认全选
@@ -7383,7 +7387,13 @@ function ForeshadowingPanel(props: {
         alert('AI 未发现需要修正的设定项，可能报告诊断的问题不涉及设定维度');
       }
     } catch (e: any) {
-      alert('生成修正方案失败：' + (e.message || '未知错误'));
+      clearTimeout(timeoutId);
+      const msg = e.message || '未知错误';
+      if (msg === '请求已取消' || msg.includes('aborted') || msg.includes('Abort')) {
+        alert('生成修正方案超时（90秒）。报告较大或模型响应慢，请稍后再试，或换一个响应更快的模型。');
+      } else {
+        alert('生成修正方案失败：' + msg);
+      }
     }
     setFixLoading(false);
   }
@@ -7617,7 +7627,9 @@ function ForeshadowingPanel(props: {
                           ) : (
                             <>
                               <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? '📥 拉取' : '📂 折叠'}</button>
-                              <button className="btn-primary-sm" onClick={() => generateFixFromReport(r.id)} title="让AI基于本报告修正设定" style={{color:'#fff',background:'#6c5ce7'}}>🔧 让AI修正</button>
+                              <button className="btn-primary-sm" onClick={() => generateFixFromReport(r.id)} disabled={fixLoading} title="让AI基于本报告修正设定" style={{color:'#fff',background:'#6c5ce7',opacity:fixLoading?0.7:1}}>
+                                {fixLoading ? '⏳ AI分析中...' : '🔧 让AI修正'}
+                              </button>
                               <button className="btn-ghost-sm" onClick={() => startAfEdit(r)} title="编辑报告内容">✏️</button>
                               <button className="btn-ghost-sm" onClick={() => startAfRename(r)} title="重命名">🏷️</button>
                               <button className="btn-ghost-sm" onClick={() => deleteAfReport(r)} style={{color:'#e74c3c'}} title="删除">🗑️</button>
