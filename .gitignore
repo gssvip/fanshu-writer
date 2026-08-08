@@ -8,6 +8,9 @@ venv/
 
 # Build output
 dist/
+# 前端构建产物纳入版本控制，用于 GitHub Pages / Render 直接托管
+!source/frontend/dist/
+!source/frontend/dist/**
 # docs/ is used for GitHub Pages - do NOT ignore
 
 # IDE

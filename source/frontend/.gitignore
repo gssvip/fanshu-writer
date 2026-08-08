@@ -8,7 +8,8 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+# dist 已纳入版本控制，用于 GitHub Pages / Render 直接托管前端构建产物
+# dist
 dist-ssr
 *.local
 
