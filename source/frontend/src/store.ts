@@ -36,6 +36,8 @@ interface AppStore {
   // 打开时预设的 Tab 与输入框内容（用于从其它入口跳转预填，如「修正正文」从防遗忘报告跳入）
   chatPanelPresetTab: 'setting' | 'chapter' | 'deai' | 'review' | null;
   chatPanelPresetInput: string | null;
+  // 预设的修正任务清单（从防遗忘报告违规项带入，支持多章连续修正并追踪进度）
+  chatPanelPresetFixTasks: Array<{ location: string; desc: string; fix: string; severity?: string }> | null;
 
   setBooks: (books: Book[]) => void;
   setCurrentBook: (book: Book | null) => void;
@@ -48,7 +50,7 @@ interface AppStore {
   setRightPanel: (panel: 'ai' | 'characters' | 'outline' | 'stats' | null) => void;
   setRightPanelWidth: (width: number) => void;
   setLoading: (loading: boolean) => void;
-  openChatPanel: (bookId: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string }) => void;
+  openChatPanel: (bookId: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string }> }) => void;
   closeChatPanel: () => void;
   logout: () => void;
 }
@@ -94,6 +96,7 @@ export const useStore = create<AppStore>((set) => ({
   chatPanelSessionId: null,
   chatPanelPresetTab: null,
   chatPanelPresetInput: null,
+  chatPanelPresetFixTasks: null,
 
   setBooks: (books) => set({ books }),
   setCurrentBook: (book) => set({ currentBook: book }),
@@ -121,8 +124,9 @@ export const useStore = create<AppStore>((set) => ({
     chatPanelSessionId: sessionId ?? null,
     chatPanelPresetTab: preset?.tab ?? null,
     chatPanelPresetInput: preset?.input ?? null,
+    chatPanelPresetFixTasks: preset?.fixTasks ?? null,
   }),
-  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelPresetTab: null, chatPanelPresetInput: null }),
+  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelPresetTab: null, chatPanelPresetInput: null, chatPanelPresetFixTasks: null }),
   logout: () => {
     localStorage.removeItem('fanshu-token');
     set({ currentUser: null, books: [], currentBook: null });

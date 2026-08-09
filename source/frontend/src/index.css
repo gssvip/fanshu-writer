@@ -2113,6 +2113,70 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   background: var(--accent-light); border-radius: 4px;
 }
 
+/* 修正任务清单（多章连续修正 + 进度追踪） */
+.fix-tasks-panel {
+  margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border-color);
+  border-radius: 8px; background: var(--bg-tertiary);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.fix-tasks-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; color: var(--text-secondary);
+}
+.fix-tasks-title { font-weight: 600; color: var(--text-primary); }
+.fix-tasks-progress {
+  font-size: 11px; padding: 2px 8px; border-radius: 10px;
+  background: var(--accent-light); color: var(--accent);
+}
+.fix-tasks-list { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
+.fix-task-item {
+  display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px;
+  border: 1px solid var(--border-color); border-radius: 6px;
+  background: var(--bg-secondary); transition: all 0.15s;
+}
+.fix-task-item.fix-task-done {
+  opacity: 0.55; background: var(--bg-tertiary);
+}
+.fix-task-check { display: flex; align-items: flex-start; padding-top: 2px; }
+.fix-task-check input { width: 14px; height: 14px; cursor: pointer; }
+.fix-task-content { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.fix-task-location {
+  font-size: 12px; font-weight: 600; color: var(--text-primary);
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.fix-task-sev {
+  font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 500;
+}
+.fix-task-sev.sev-high { background: #fee2e2; color: #dc2626; }
+.fix-task-sev.sev-medium { background: #fef3c7; color: #d97706; }
+.fix-task-sev.sev-low { background: #dbeafe; color: #2563eb; }
+.fix-task-unmatch {
+  font-size: 10px; padding: 1px 6px; border-radius: 8px;
+  background: #f3f4f6; color: #6b7280;
+}
+.fix-task-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
+.fix-task-fix { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+.fix-task-action {
+  flex-shrink: 0; padding: 5px 12px; font-size: 11px; font-weight: 500;
+  border: 1px solid var(--accent); border-radius: 6px;
+  background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap;
+}
+.fix-task-action:hover { opacity: 0.9; }
+.fix-task-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.fix-task-done-tag {
+  flex-shrink: 0; font-size: 11px; color: #16a34a; font-weight: 500; white-space: nowrap;
+}
+.fix-tasks-continue {
+  width: 100%; padding: 8px; font-size: 12px; font-weight: 500;
+  border: 1px dashed var(--accent); border-radius: 6px;
+  background: transparent; color: var(--accent); cursor: pointer;
+}
+.fix-tasks-continue:hover { background: var(--accent-light); }
+.fix-tasks-continue:disabled { opacity: 0.5; cursor: not-allowed; }
+.fix-tasks-all-done {
+  text-align: center; font-size: 12px; color: #16a34a; font-weight: 500; padding: 6px;
+}
+
 /* 多选意见列表（设定Tab） */
 .smart-suggestions {
   padding: 10px 12px; border-bottom: 1px solid var(--border-color);

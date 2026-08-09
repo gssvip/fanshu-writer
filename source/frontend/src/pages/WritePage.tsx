@@ -186,7 +186,7 @@ export default function WritePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const bookId = searchParams.get('book');
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string }) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string }> }) => void;
 
   const [book, setBook] = useState<Book | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -2186,7 +2186,7 @@ function ConceptPanel(props: {
     onExecuteConceptAi, onCancelConceptAi, onEditConceptAiPrompt,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
     bookId, aiSessions, onRefreshSessions, onDeleteAiSessions, onRenameAiSession, onResumeAiSession } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string }) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string }> }) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const selectedCount = selectedSkillPackIds.length;
@@ -2673,7 +2673,7 @@ function ChapterPanel(props: {
     chapterLangStyles: langStyles, onToggleChapterLangStyle,
     batchCount, onBatchCountChange, batchCreating, batchProgress, onBatchCreate,
   } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string }) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string }> }) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [langStyleExpanded, setLangStyleExpanded] = useState(false);
@@ -7213,7 +7213,7 @@ function ForeshadowingPanel(props: {
   onAfStatusChange?: (pendingCount: number, alert: { reportId: string; title: string; score?: number; auto?: boolean } | null) => void;
 }) {
   const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks, onAfStatusChange } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string }) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string }> }) => void;
   const [foreshadowing, setForeshadowing] = useState('');
   const [foreVolumes, setForeVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
@@ -7431,20 +7431,21 @@ function ForeshadowingPanel(props: {
 
   // 按卷分批选择弹窗已随 AI修正/修正正文 改为跳转 AI智驾而移除
 
-  // 「修正正文」改为跳转 AI智驾·正文Tab，提示违规项供用户参考，由用户选章+写意见协同改写
+  // 「修正正文」改为跳转 AI智驾·正文Tab，带结构化任务清单，由用户逐章协同改写并追踪进度
   function jumpToChatForTextFix(reportId: string) {
     const rec = afReports.find((r: any) => r.id === reportId);
     const rep = rec?.report || {};
     const violations = Array.isArray(rep.violations) ? rep.violations : [];
-    const title = rec?.title ? `「${rec.title}」` : '防遗忘检查报告';
-    // 预填简明引导：列出违规项位置，提示用户在下拉选章 + 输入框写修改意见
-    const locs = violations.slice(0, 5)
+    // 只带有 location 的违规项（能定位到章节的），最多 8 条
+    const fixTasks = violations
       .filter((v: any) => v.location)
-      .map((v: any) => `${v.location}：${v.desc || ''}${v.fix ? `（建议${v.fix}）` : ''}`);
-    const presetInput = locs.length > 0
-      ? `参考${title}违规项，逐章修正：\n${locs.join('\n')}\n\n请在上方下拉选择章节，输入框写明修改意见后点「✨ 修改」`
-      : `参考${title}，请检查并修正正文设定一致性问题。请在上方下拉选择章节，输入框写明修改意见后点「✨ 修改」`;
-    openChatPanel(bookId, null, { tab: 'chapter', input: presetInput });
+      .slice(0, 8)
+      .map((v: any) => ({ location: String(v.location || ''), desc: String(v.desc || ''), fix: String(v.fix || ''), severity: v.severity }));
+    const title = rec?.title ? `「${rec.title}」` : '防遗忘检查报告';
+    const presetInput = fixTasks.length > 0
+      ? `基于${title}的 ${fixTasks.length} 处违规，请在下方任务清单逐条「去修改」`
+      : `参考${title}，请选择章节并说明修改意见后点「✨ 修改」`;
+    openChatPanel(bookId, null, { tab: 'chapter', input: presetInput, fixTasks: fixTasks.length > 0 ? fixTasks : undefined });
   }
 
   // 「AI修正」改为跳转 AI智驾·设定Tab，预填诊断要点，由 AI 协同产出设定维度卡片后采纳

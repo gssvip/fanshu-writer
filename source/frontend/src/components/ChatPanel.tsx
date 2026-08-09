@@ -501,7 +501,7 @@ function SkillPackSelector({ packs, selected, onToggle, compact }: {
 // 主组件：AI 智驾
 // ============================================================================
 export default function ChatPanel() {
-  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, closeChatPanel } = useStore() as any;
+  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetFixTasks, closeChatPanel } = useStore() as any;
   const [activeTab, setActiveTab] = useState<SmartTab>('setting');
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState('');
@@ -536,11 +536,15 @@ export default function ChatPanel() {
   const [reviewVolumeIds, setReviewVolumeIds] = useState<string[]>([]);          // 校审Tab：按卷检查
   const [deaiPacks, setDeaiPacks] = useState<Array<{ id: string; name: string; description: string; icon: string; priority: number }>>([]);
   const [reviewing, setReviewing] = useState(false);
+  // 修正任务清单（从防遗忘报告违规项带入，支持多章连续修正并追踪进度）
+  const [fixTasks, setFixTasks] = useState<Array<{ location: string; desc: string; fix: string; severity?: string; done?: boolean; chapterId?: string | null }>>([]);
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef<string>('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 追踪正在修改的章节（用于修改完成后自动标记任务清单 done）
+  const polishingChapterIdRef = useRef<string | null>(null);
 
   const bookId = chatPanelBookId;
 
@@ -615,12 +619,42 @@ export default function ChatPanel() {
     }
   }, [chatPanelOpen, bookId, chatPanelSessionId, refreshProgress, refreshHistory]);
 
-  // 应用预设：从其它入口（如「修正正文」）跳转进来时切到指定 Tab 并预填输入框
+  // 应用预设：从其它入口（如「修正正文」）跳转进来时切到指定 Tab 并预填输入框/任务清单
   useEffect(() => {
     if (!chatPanelOpen) return;
     if (chatPanelPresetTab) setActiveTab(chatPanelPresetTab);
     if (chatPanelPresetInput) setInput(chatPanelPresetInput);
-  }, [chatPanelOpen, chatPanelPresetTab, chatPanelPresetInput]);
+    if (chatPanelPresetFixTasks) setFixTasks(chatPanelPresetFixTasks.map((t: any) => ({ ...t, done: false, chapterId: null })));
+  }, [chatPanelOpen, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetFixTasks]);
+
+  // 章节加载后，为 fixTasks 匹配对应 chapterId（按 location 中的章号/标题匹配）
+  useEffect(() => {
+    if (fixTasks.length === 0 || chapters.length === 0) return;
+    setFixTasks(prev => prev.map(t => {
+      if (t.chapterId) return t; // 已匹配过的跳过
+      const numMatch = t.location.match(/第?\s*(\d+)\s*章/);
+      let ch = null;
+      if (numMatch) {
+        const num = parseInt(numMatch[1]);
+        ch = chapters.find(c => (parseChapterNumber(c.title) ?? c.order_index) === num) || null;
+      }
+      if (!ch) {
+        // 回退：用 location 文本模糊匹配标题
+        const loc = t.location.replace(/^第?\s*\d+\s*章\s*/, '').trim();
+        if (loc) ch = chapters.find(c => c.title.includes(loc)) || null;
+      }
+      return { ...t, chapterId: ch ? ch.id : null };
+    }));
+  }, [chapters, fixTasks.length]);
+
+  // 修改完成后自动标记对应任务为 done（streaming 从 true→false 且有记录的章节）
+  useEffect(() => {
+    if (streaming) return;
+    const chId = polishingChapterIdRef.current;
+    if (!chId || fixTasks.length === 0) return;
+    polishingChapterIdRef.current = null;
+    setFixTasks(prev => prev.map(t => (t.chapterId === chId && !t.done) ? { ...t, done: true } : t));
+  }, [streaming, fixTasks.length]);
 
   // 正文写作默认要求（切到正文Tab且输入框为空/为旧默认值时自动填入）
   const CHAPTER_DEFAULT_INPUT = '接上一章剧情，读取剧情维度本章剧情，保证剧情连贯、逻辑清晰。极致模仿人的写作习惯，自然没ai味儿。写事为主，景一笔带过，非必要不用比喻/拟人等修辞，句子阅读感强及顺畅。';
@@ -815,6 +849,8 @@ export default function ChatPanel() {
     if (!bookId || streaming) return;
     setStreamError('');
     streamBufferRef.current = '';
+    // 记录正在修改的章节（修改完成后自动标记任务清单 done）
+    polishingChapterIdRef.current = (action === 'polish' && targetChapterId) ? targetChapterId : null;
     // 统一口径：target_chapter_num 优先从标题解析章节号，回退 order_index
     // 写作=下一章号；修改=所选章节的章节号
     let targetNum: number;
@@ -1413,12 +1449,75 @@ export default function ChatPanel() {
                         disabled={streaming}
                       >
                         <option value="">从输入框解析章节号</option>
-                        {[...chapters].sort((a, b) => b.order_index - a.order_index).slice(0, 30).map(c => (
+                        {[...chapters].sort((a, b) => b.order_index - a.order_index).map(c => (
                           <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}（{c.word_count}字）</option>
                         ))}
                       </select>
                     )}
                   </div>
+                  {/* 修正任务清单（从防遗忘报告违规项带入，支持多章连续修正并追踪进度） */}
+                  {fixTasks.length > 0 && (
+                    <div className="fix-tasks-panel">
+                      <div className="fix-tasks-head">
+                        <span className="fix-tasks-title">📋 修正任务清单</span>
+                        <span className="fix-tasks-progress">
+                          {fixTasks.filter(t => t.done).length}/{fixTasks.length} 已完成
+                        </span>
+                      </div>
+                      <div className="fix-tasks-list">
+                        {fixTasks.map((task, idx) => (
+                          <div key={idx} className={`fix-task-item ${task.done ? 'fix-task-done' : ''}`}>
+                            <label className="fix-task-check">
+                              <input
+                                type="checkbox"
+                                checked={!!task.done}
+                                onChange={() => setFixTasks(prev => prev.map((t, i) => i === idx ? { ...t, done: !t.done } : t))}
+                                disabled={streaming}
+                              />
+                            </label>
+                            <div className="fix-task-content">
+                              <div className="fix-task-location">
+                                {task.location}
+                                {task.severity && <span className={`fix-task-sev sev-${task.severity}`}>{task.severity}</span>}
+                                {!task.chapterId && <span className="fix-task-unmatch">未匹配章节</span>}
+                              </div>
+                              <div className="fix-task-desc">{task.desc}</div>
+                              {task.fix && <div className="fix-task-fix">建议：{task.fix}</div>}
+                            </div>
+                            {task.chapterId && !task.done && (
+                              <button
+                                className="fix-task-action"
+                                disabled={streaming}
+                                onClick={() => {
+                                  setChapterTargetId(task.chapterId);
+                                  setInput(`修改意见：${task.desc}${task.fix ? `（${task.fix}）` : ''}`);
+                                }}
+                                title="定位到该章节并填充修改意见"
+                              >去修改</button>
+                            )}
+                            {task.done && <span className="fix-task-done-tag">✓ 已处理</span>}
+                          </div>
+                        ))}
+                      </div>
+                      {/* 一键继续下一个未完成任务 */}
+                      {fixTasks.some(t => !t.done) && (
+                        <button
+                          className="fix-tasks-continue"
+                          disabled={streaming}
+                          onClick={() => {
+                            const next = fixTasks.find(t => !t.done && t.chapterId);
+                            if (!next) return;
+                            setChapterTargetId(next.chapterId!);
+                            setInput(`修改意见：${next.desc}${next.fix ? `（${next.fix}）` : ''}`);
+                          }}
+                          title="自动定位到第一个未完成的章节并填充意见"
+                        >▶ 继续下一个未完成</button>
+                      )}
+                      {fixTasks.every(t => t.done) && (
+                        <div className="fix-tasks-all-done">🎉 全部修正任务已完成</div>
+                      )}
+                    </div>
+                  )}
                   {/* 写作 / 修改 两按钮一排（直接执行，无需切换模式） */}
                   <div className="smart-chapter-actions smart-chapter-actions-row">
                     <button
