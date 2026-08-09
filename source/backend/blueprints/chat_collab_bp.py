@@ -2024,11 +2024,13 @@ def _detect_dim_from_text(text):
 @chat_collab_bp.route('/api/ai/smart/general', methods=['POST'])
 def smart_general():
     """AI智驾·设定·通用聊天：自由讨论小说/剧情，流式回复，关键词触发产维度卡片。
+    已升级：复用 chat_smart 级别的定位铁律 + 章节目录 + 自动上下文注入，
+    严禁回复"请把资料发给我"类话术。
 
     body: { book_id, message, history?, skill_pack_ids?, session_id? }
-    返回 SSE：delta / card / done / error
+    返回 SSE：delta / card / done / error / meta(auto_context)
     """
-    from app import db, AISession, Book, BookBible
+    from app import db, AISession, Book, BookBible, Chapter, parse_chapter_number
     from llm_gateway import LLMGateway, get_llm_config
     import app as app_module
 
@@ -2046,21 +2048,26 @@ def smart_general():
         return jsonify({'error': '书籍不存在'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
-    # 构建上下文：所有维度完整注入（不截断，避免信息缺失导致错乱）
-    ctx_parts = []
-    if bb:
-        for d in SMART_DIMENSIONS:
-            v = (getattr(bb, d['field'], '') or '').strip()
-            if v:
-                # 人物维度：character_profiles 是 JSON 数组，注入前转自然语言，避免 AI 模仿 JSON
-                if d['key'] == 'character_profiles' and v.startswith('['):
-                    v = _character_profiles_to_text(v)
-                ctx_parts.append(f'【{d["label"]}】\n{v}')
-    ctx = '\n\n'.join(ctx_parts) if ctx_parts else '（暂无设定）'
+    # ===== 最近章节 + 下一章号（与 chat_smart 口径一致）=====
+    recent_chapters = []
+    next_chapter_num = None
+    try:
+        ch_info = _get_latest_chapter_info(book_id)
+        next_chapter_num = ch_info['next_num']
+        recent = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+        def _recent_key(c):
+            n = parse_chapter_number(c.title or '')
+            return (0, n) if n is not None else (1, c.order_index)
+        recent = sorted(recent, key=_recent_key)[-5:]
+        recent_chapters = [{'title': c.title, 'word_count': c.word_count or 0,
+                            'order_index': c.order_index} for c in recent]
+    except Exception:
+        pass
 
-    # 检测关键词，决定是否产卡片
+    # ===== 关键词命中（卡片产出用）=====
     detected = _detect_dim_from_text(message)
 
+    # ===== 技能包 =====
     skill_note = ''
     try:
         from app import _get_skill_prompts_by_category
@@ -2068,6 +2075,7 @@ def smart_general():
     except Exception:
         pass
 
+    # ===== 会话 =====
     session = None
     if session_id:
         session = AISession.query.get(session_id)
@@ -2078,6 +2086,52 @@ def smart_general():
         db.session.commit()
     session_id = session.id
 
+    # ===== 复用 chat_smart 的 system prompt + TOC + 定位铁律（核心）=====
+    toc_block = _build_toc_block(book_id)
+    base_system = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block)
+
+    # 通用聊天专属追加：关键词命中卡片产出提示 + 技能包指引 + 增强索要资料禁令（第二保险）
+    extra_parts = []
+    if skill_note:
+        extra_parts.append(f'\n【技能包指引】\n{skill_note}')
+    dim_hint = ''
+    if detected:
+        dim_labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k, _ in detected)
+        dim_hint = f'\n\n【关键词触发】用户讨论涉及维度：{dim_labels}。若你的回复中产出了可落地的设定内容，请用卡片标记输出（每个维度一张）：\n[[CARD:卡片类型|标题|内容]]\n卡片类型对照：SAVE_CONCEPT=构思, SAVE_RULE=设定, SAVE_WORLDSETTING=世界观, SAVE_OUTLINE_NODE=大纲, SAVE_PLOT=剧情, SAVE_CHARACTER=人物, SAVE_FORESHADOW=伏笔, SAVE_LOCATION=地图, APPLY_STYLE=文风。无则不输出卡片。'
+        if any(k == 'character_profiles' for k, _ in detected):
+            dim_hint += '\n\n【人物卡片内容格式·铁律】绝对禁止 JSON 符号 [ ] { } " : 和英文字段名。卡片内容必须用纯中文，按「姓名：xxx\\n身份：xxx\\n性格：xxx\\n动机：xxx\\n背景：xxx\\n关系：xxx\\n能力：xxx」分行输出，每字段至少30字。'
+    # 叠加一条更强的禁令（第二保险，避免模型偶尔无视 base 的铁律）
+    extra_parts.append("""
+【禁止索要资料·二次强制（如与上面铁律冲突，以本条目为准）】
+如果用户的原话里包含以下任何表达，你必须直接按要求产出方案/修改建议/分析，严禁再说要资料：
+  "帮我改/修改/调整/修订/润色/优化 + 大纲/设定/人物/世界观/剧情/伏笔/文风/第X章"
+  "给我写/生成/出 + 大纲/设定/剧情/人物"
+正确做法：
+  - 用户说"修改/调整大纲/剧情/人物…"且对应维度为空 → 直接从零给方案（分点/分幕/分卷），不要反问要大纲原文
+  - 用户说"修改/调整 第X章" → 直接给修改方案或产出 SAVE_CHAPTER 卡片（系统已自动注入该章原文），不要说"你还没给我第X章内容"
+  - 只有当缺少非常具体的修改目标时（如"第5章改一下"又不说改什么），只问"你想侧重改剧情/对白/节奏/人物哪方面？"，不要要资料
+  - 任何场景下都禁止出现这些句子或同义改写：请把大纲/设定/人物/章节资料发给我 / 你需要先提供 / 先把XXX发我 / 我需要你提供 / 期待您的大纲
+""".strip())
+    extra_parts.append(dim_hint)
+    sys_prompt = base_system + '\n\n' + '\n\n'.join(p for p in extra_parts if p)
+
+    # ===== 自动上下文注入：章节原文/维度内容引用块前置 =====
+    auto_ctx_block, auto_ctx_info = _build_auto_context_block(message, book_id, bb)
+    enriched_user_message = message
+    if auto_ctx_block:
+        enriched_user_message = (
+            '（以下为系统根据作者输入自动从当前书库载入的引用资料，用于辅助回答；作者原话为最后的"【作者原话】"段。\n'
+            '回答时直接基于这些资料讨论/修改，严禁再让作者"把资料发给我"；若引用中的某维度为空，直接说明为空并从零给方案。）\n\n'
+            f'{auto_ctx_block}\n\n'
+            '——————————————————\n'
+            '【作者原话】\n'
+            f'{message}'
+        )
+
+    # ===== 组装 LLM messages（含会话滑窗历史）=====
+    history = load_session_messages(session)
+    messages = build_context_messages(sys_prompt, history, enriched_user_message)
+
     try:
         base_url, api_key, model = get_llm_config(app_module)
     except Exception as e:
@@ -2087,38 +2141,17 @@ def smart_general():
 
     gw = LLMGateway(base_url, api_key, model)
 
-    dim_hint = ''
-    if detected:
-        dim_labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k, _ in detected)
-        dim_hint = f'\n\n【关键词触发】用户讨论涉及维度：{dim_labels}。若你的回复中产出了可落地的设定内容，请用卡片标记输出（每个维度一张）：\n[[CARD:卡片类型|标题|内容]]\n卡片类型对照：SAVE_CONCEPT=构思, SAVE_RULE=设定, SAVE_WORLDSETTING=世界观, SAVE_OUTLINE_NODE=大纲, SAVE_PLOT=剧情, SAVE_CHARACTER=人物, SAVE_FORESHADOW=伏笔, SAVE_LOCATION=地图, APPLY_STYLE=文风。无则不输出卡片。'
-        # 涉及人物维度时，强制约束卡片内容为自然语言，禁止 JSON 符号
-        if any(k == 'character_profiles' for k, _ in detected):
-            dim_hint += '\n\n【人物卡片内容格式·铁律】绝对禁止 JSON 符号 [ ] { } " : 和英文字段名。卡片内容必须用纯中文，按「姓名：xxx\\n身份：xxx\\n性格：xxx\\n动机：xxx\\n背景：xxx\\n关系：xxx\\n能力：xxx」分行输出，每字段至少30字。'
-
-    sys_prompt = f"""你是资深网文创作智驾，正在与作者自由讨论《{book.title or "未命名"}》。
-
-题材：{book.genre or "未指定"}  类型：{book.book_type or "未指定"}
-
-【已有设定参考】
-{ctx}
-
-{("【技能包指引】\n" + skill_note) if skill_note else ""}
-
-请与作者自然对话：讨论剧情、分析人物、推演走向、解答创作疑问。回复简洁有洞察力。
-若作者明确要求生成某维度设定，或讨论中形成了可落地的设定内容，可输出对应卡片。
-{dim_hint}
-"""
-
-    messages = [{'role': 'system', 'content': sys_prompt},
-                {'role': 'user', 'content': message}]
-
     def sse(payload):
         return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
     def generate():
         full = []
         try:
-            for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=2500):
+            # SSE 首帧 meta：命中章节/维度（前端提示"已定位并注入"）
+            if auto_ctx_info['chapters'] or auto_ctx_info['dims']:
+                yield sse({'type': 'meta', 'kind': 'auto_context', 'info': auto_ctx_info})
+
+            for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=4096):
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
@@ -2132,6 +2165,7 @@ def smart_general():
                     if c.startswith('[') or c.startswith('{'):
                         card['content'] = _character_profiles_to_text(c) if c.startswith('[') else _character_profiles_to_text('[' + c + ']')
                 yield sse({'type': 'card', 'card': card, 'session_id': session_id})
+            # 历史里保存作者原话（不保存注入引用块，避免多轮重复上下文）
             history = load_session_messages(session)
             history.append({'role': 'user', 'content': message})
             history.append({'role': 'assistant', 'content': clean_content,
