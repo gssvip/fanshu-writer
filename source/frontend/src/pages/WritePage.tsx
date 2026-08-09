@@ -7214,6 +7214,18 @@ function ForeshadowingPanel(props: {
 }) {
   const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks, onAfStatusChange } = props;
   const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
+  // 从 chapters 派生卷列表和按卷分组的章节（供修正入口的卷选择弹窗使用）
+  const volumes = useMemo(() => chapters.filter(c => c.is_volume).sort((a, b) => a.order_index - b.order_index), [chapters]);
+  const chaptersByVolume = useMemo(() => {
+    const map: Record<string, Chapter[]> = {};
+    for (const v of volumes) map[v.id] = [];
+    for (const c of chapters) {
+      if (c.is_volume) continue;
+      const pid = c.parent_id;
+      if (pid && map[pid]) map[pid].push(c);
+    }
+    return map;
+  }, [chapters, volumes]);
   const [foreshadowing, setForeshadowing] = useState('');
   const [foreVolumes, setForeVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
@@ -7233,6 +7245,9 @@ function ForeshadowingPanel(props: {
   const [afChecking, setAfChecking] = useState(false);
   const [afVolPickerOpen, setAfVolPickerOpen] = useState(false); // 分卷选择弹窗
   const [afSelectedVolIds, setAfSelectedVolIds] = useState<string[]>([]); // 多选分卷
+  // 修正入口的卷选择弹窗：从「AI修正/修正正文」点击时弹出，选定后按卷过滤违规项再跳转智驾
+  const [fixVolPicker, setFixVolPicker] = useState<{ reportId: string; mode: 'setting' | 'chapter' } | null>(null);
+  const [fixSelectedVolId, setFixSelectedVolId] = useState<string>(''); // '' = 全部
   const [afCollapsed, setAfCollapsed] = useState<Set<string>>(new Set()); // 报告折叠状态
   const [afEditingId, setAfEditingId] = useState<string | null>(null); // 正在编辑内容的报告 id
   const [afEditValue, setAfEditValue] = useState('');
@@ -7431,17 +7446,37 @@ function ForeshadowingPanel(props: {
 
   // 按卷分批选择弹窗已随 AI修正/修正正文 改为跳转 AI智驾而移除
 
+  // 从违规项 location 解析章节号（与 ChatPanel 口径一致）
+  function parseLocChapterNum(loc: string): number | null {
+    if (!loc) return null;
+    const m = loc.match(/第?\s*(\d+)\s*章/);
+    return m ? parseInt(m[1]) : null;
+  }
+
   // 「修正正文」改为跳转 AI智驾·正文Tab，带结构化任务清单，由用户逐章协同改写并追踪进度
-  function jumpToChatForTextFix(reportId: string) {
+  function jumpToChatForTextFix(reportId: string, volumeId?: string) {
     const rec = afReports.find((r: any) => r.id === reportId);
     const rep = rec?.report || {};
-    const violations = Array.isArray(rep.violations) ? rep.violations : [];
-    // 只带有 location 的违规项（能定位到章节的），最多 8 条
-    const fixTasks = violations
-      .filter((v: any) => v.location)
-      .slice(0, 8)
-      .map((v: any) => ({ location: String(v.location || ''), desc: String(v.desc || ''), fix: String(v.fix || ''), severity: v.severity }));
-    const title = rec?.title ? `「${rec.title}」` : '防遗忘检查报告';
+    const allViolations = Array.isArray(rep.violations) ? rep.violations : [];
+    // 按卷过滤：若指定卷，则只保留 location 章节号落在该卷章节范围内的违规项
+    let violations = allViolations;
+    if (volumeId) {
+      const volChapters = chaptersByVolume[volumeId] || [];
+      const volNums = new Set(volChapters.map(c => c.order_index));
+      violations = allViolations.filter((v: any) => {
+        const n = parseLocChapterNum(String(v.location || ''));
+        return n !== null && volNums.has(n);
+      });
+    }
+    // 全部违规项转为任务（不限制条数，location 为空时用 type 作为位置标识）
+    const fixTasks = violations.map((v: any) => ({
+      location: String(v.location || v.type || '未指定位置'),
+      desc: String(v.desc || ''),
+      fix: String(v.fix || ''),
+      severity: v.severity,
+    }));
+    const volLabel = volumeId ? `·${volumes.find(v => v.id === volumeId)?.title || ''}·` : '';
+    const title = rec?.title ? `「${rec.title}${volLabel}」` : '防遗忘检查报告';
     const presetInput = fixTasks.length > 0
       ? `基于${title}的 ${fixTasks.length} 处违规，请在下方任务清单逐条「去修改」`
       : `参考${title}，请选择章节并说明修改意见后点「✨ 修改」`;
@@ -7449,18 +7484,30 @@ function ForeshadowingPanel(props: {
   }
 
   // 「AI修正」改为跳转 AI智驾·设定Tab，带结构化任务清单，由用户逐维度协同修正并追踪进度
-  function jumpToChatForSettingFix(reportId: string) {
+  function jumpToChatForSettingFix(reportId: string, volumeId?: string) {
     const rec = afReports.find((r: any) => r.id === reportId);
     const rep = rec?.report || {};
-    const title = rec?.title ? `「${rec.title}」` : '防遗忘检查报告';
-    // 把违规项转为结构化任务清单（每条带 location/desc/fix，由 ChatPanel 自动匹配维度 dimKey）
-    const violations = Array.isArray(rep.violations) ? rep.violations : [];
-    const fixTasks = violations
-      .slice(0, 8)
-      .map((v: any) => ({ location: String(v.location || ''), desc: String(v.desc || ''), fix: String(v.fix || ''), severity: v.severity }));
+    const allViolations = Array.isArray(rep.violations) ? rep.violations : [];
+    // 按卷过滤
+    let violations = allViolations;
+    if (volumeId) {
+      const volChapters = chaptersByVolume[volumeId] || [];
+      const volNums = new Set(volChapters.map(c => c.order_index));
+      violations = allViolations.filter((v: any) => {
+        const n = parseLocChapterNum(String(v.location || ''));
+        return n === null || volNums.has(n);
+      });
+    }
+    // 全部违规项转为任务（不限制条数）
+    const fixTasks: any[] = violations.map((v: any) => ({
+      location: String(v.location || v.type || '未指定位置'),
+      desc: String(v.desc || ''),
+      fix: String(v.fix || ''),
+      severity: v.severity,
+    }));
     // 待回收伏笔单列任务（强制归到 foreshadowing 维度）
     const pf = Array.isArray(rep.pending_foreshadowing) ? rep.pending_foreshadowing : [];
-    pf.slice(0, 3).forEach((f: any) => {
+    pf.forEach((f: any) => {
       fixTasks.push({
         location: '伏笔',
         desc: `待回收伏笔：${f.content || ''}`,
@@ -7471,7 +7518,7 @@ function ForeshadowingPanel(props: {
     });
     // 叙事债务单列任务（归到 plot_design 维度）
     const nd = Array.isArray(rep.narrative_debt) ? rep.narrative_debt : [];
-    nd.slice(0, 3).forEach((d: any) => {
+    nd.forEach((d: any) => {
       fixTasks.push({
         location: '叙事债务',
         desc: `叙事债务：${d.promise || ''}`,
@@ -7480,6 +7527,8 @@ function ForeshadowingPanel(props: {
         dimKey: 'plot_design',
       });
     });
+    const volLabel = volumeId ? `·${volumes.find(v => v.id === volumeId)?.title || ''}·` : '';
+    const title = rec?.title ? `「${rec.title}${volLabel}」` : '防遗忘检查报告';
     const presetInput = fixTasks.length > 0
       ? `基于${title}的 ${fixTasks.length} 项设定诊断，请在下方任务清单逐条「去修正」`
       : `基于${title}，请检查并修正设定维度的一致性问题。`;
@@ -7703,10 +7752,10 @@ function ForeshadowingPanel(props: {
                           ) : (
                             <>
                               <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? '📥 拉取' : '📂 折叠'}</button>
-                              <button className="btn-primary-sm" onClick={() => jumpToChatForSettingFix(r.id)} title="跳转 AI智驾·设定，协同修正设定维度" style={{color:'#fff',background:'#6c5ce7'}}>
+                              <button className="btn-primary-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'setting' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·设定，协同修正设定维度" style={{color:'#fff',background:'#6c5ce7'}}>
                                 🔧 AI修正
                               </button>
-                              <button className="btn-ghost-sm" onClick={() => jumpToChatForTextFix(r.id)} title="跳转 AI智驾·正文，协同修正违规章节">📝 修正正文</button>
+                              <button className="btn-ghost-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'chapter' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·正文，协同修正违规章节">📝 修正正文</button>
                               {r.status === 'pending' && (
                                 <button className="btn-ghost-sm" onClick={() => ignoreFixDraft(r.id)} title="忽略此报告的修正草稿">🚫 忽略</button>
                               )}
@@ -7834,6 +7883,69 @@ function ForeshadowingPanel(props: {
       )}
 
       {/* 按卷分批修正弹窗已移除（改为跳转 AI智驾）*/}
+
+      {/* 修正入口卷选择弹窗：AI修正/修正正文 点击后先选要修正哪一卷 */}
+      {fixVolPicker && (
+        <div className="modal-overlay" onClick={() => setFixVolPicker(null)}>
+          <div className="modal-content" style={{maxWidth:440}} onClick={e => e.stopPropagation()}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+              <h3 style={{margin:0}}>{fixVolPicker.mode === 'setting' ? '🔧 AI修正' : '📝 修正正文'} · 选择卷</h3>
+              <button className="btn-ghost-sm" onClick={() => setFixVolPicker(null)}>✕</button>
+            </div>
+            <p className="text-muted" style={{fontSize:12,marginBottom:10}}>
+              选择要修正的卷范围；选「全部」则修正报告中所有违规项。
+            </p>
+            <div style={{maxHeight:300,overflowY:'auto',border:'1px solid var(--border)',borderRadius:8,padding:6}}>
+              {volumes.length === 0 ? (
+                <p className="text-muted" style={{fontSize:13,padding:8}}>本书暂无分卷，将修正全部违规项。</p>
+              ) : (
+                <>
+                  <label style={{display:'flex',alignItems:'center',gap:8,padding:'6px 8px',cursor:'pointer',borderBottom:'1px dashed var(--border)',marginBottom:4,fontWeight:600,fontSize:13}}>
+                    <input
+                      type="radio"
+                      name="fix-vol"
+                      checked={fixSelectedVolId === ''}
+                      onChange={() => setFixSelectedVolId('')}
+                    />
+                    📚 全部章节
+                  </label>
+                  {volumes.map((vol) => {
+                    const chs = chaptersByVolume[vol.id] || [];
+                    return (
+                      <label key={vol.id} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 8px',cursor:'pointer',fontSize:13}}>
+                        <input
+                          type="radio"
+                          name="fix-vol"
+                          checked={fixSelectedVolId === vol.id}
+                          onChange={() => setFixSelectedVolId(vol.id)}
+                        />
+                        📖 {vol.title}（{chs.length}章）
+                      </label>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+            <div className="confirm-actions" style={{marginTop:12}}>
+              <button className="btn-ghost-sm" onClick={() => setFixVolPicker(null)}>取消</button>
+              <button
+                className="btn-primary-sm"
+                onClick={() => {
+                  if (!fixVolPicker) return;
+                  const { reportId, mode } = fixVolPicker;
+                  const vid = fixSelectedVolId || undefined;
+                  setFixVolPicker(null);
+                  setFixSelectedVolId('');
+                  if (mode === 'setting') jumpToChatForSettingFix(reportId, vid);
+                  else jumpToChatForTextFix(reportId, vid);
+                }}
+              >
+                🚀 开始修正
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
