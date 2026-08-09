@@ -186,7 +186,7 @@ export default function WritePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const bookId = searchParams.get('book');
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string }) => void;
 
   const [book, setBook] = useState<Book | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -2186,7 +2186,7 @@ function ConceptPanel(props: {
     onExecuteConceptAi, onCancelConceptAi, onEditConceptAiPrompt,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
     bookId, aiSessions, onRefreshSessions, onDeleteAiSessions, onRenameAiSession, onResumeAiSession } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string }) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const selectedCount = selectedSkillPackIds.length;
@@ -2673,7 +2673,7 @@ function ChapterPanel(props: {
     chapterLangStyles: langStyles, onToggleChapterLangStyle,
     batchCount, onBatchCountChange, batchCreating, batchProgress, onBatchCreate,
   } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string }) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [langStyleExpanded, setLangStyleExpanded] = useState(false);
@@ -7255,17 +7255,11 @@ function ForeshadowingPanel(props: {
   const [fixExpandedIdx, setFixExpandedIdx] = useState<number | null>(null); // 展开查看修正后内容的项索引
   const [fixApplying, setFixApplying] = useState(false);
 
-  // ===== 正文修正（第三阶段） =====
-  const [textFixLoading, setTextFixLoading] = useState(false);
-  const [textFixes, setTextFixes] = useState<Array<{ chapter_id: string; chapter_title: string; paragraph_index: number; original: string; rewritten: string; reason: string; violation_desc: string; report_id: string; selected?: boolean }>>([]);
-  const [textFixReportTitle, setTextFixReportTitle] = useState('');
-  const [textFixApplying, setTextFixApplying] = useState(false);
   // 修正面板可见性：分析完成后保持显示（即使结果为空），用户手动关闭才消失，避免"闪退"
   const [fixPanelOpen, setFixPanelOpen] = useState(false);
-  const [textFixPanelOpen, setTextFixPanelOpen] = useState(false);
   // 结果为空时的提示（区分"AI未发现问题"和"出错"）
   const [fixEmptyMsg, setFixEmptyMsg] = useState('');
-  const [textFixEmptyMsg, setTextFixEmptyMsg] = useState('');
+  // 「修正正文」改为跳转 AI智驾协同，不再使用独立面板（textFix* 状态已移除）
 
   // 解析全局伏笔
   useEffect(() => {
@@ -7476,9 +7470,29 @@ function ForeshadowingPanel(props: {
     setFixVolSelectorOpen(false);
     if (fixVolSelectorMode === 'setting') {
       generateFixFromReport(fixVolSelectorReportId, selectedFixVolumeIds.length > 0 ? selectedFixVolumeIds : undefined);
-    } else {
-      generateTextFixFromReport(fixVolSelectorReportId, selectedFixVolumeIds.length > 0 ? selectedFixVolumeIds : undefined);
     }
+    // 'text' 模式已改为跳转 AI智驾（jumpToChatForTextFix），不再走此处
+  }
+
+  // 「修正正文」改为跳转 AI智驾·正文Tab，预填违规项作为修改意见，由用户协同改写
+  function jumpToChatForTextFix(reportId: string) {
+    const rec = afReports.find((r: any) => r.id === reportId);
+    const rep = rec?.report || {};
+    const violations = Array.isArray(rep.violations) ? rep.violations : [];
+    const lines: string[] = [];
+    violations.slice(0, 5).forEach((v: any, i: number) => {
+      const loc = v.location ? `【${v.location}】` : '';
+      const sev = v.severity ? `[${v.severity}]` : '';
+      const desc = v.desc ? `${v.desc}` : '';
+      const fix = v.fix ? `（建议：${v.fix}）` : '';
+      lines.push(`${i + 1}. ${sev}${loc} ${desc}${fix}`);
+    });
+    const title = rec?.title ? `「${rec.title}」` : '防遗忘检查报告';
+    const header = violations.length > 0
+      ? `基于${title}的违规项，请逐条修正对应章节正文（保持文风剧情不变，只改写问题段落）：\n`
+      : `基于${title}，请检查并修正正文中的设定一致性问题。`;
+    const presetInput = lines.length > 0 ? header + lines.join('\n') : header;
+    openChatPanel(bookId, null, { tab: 'chapter', input: presetInput });
   }
 
   async function generateFixFromReport(reportId?: string, volumeIds?: string[]) {
@@ -7601,54 +7615,7 @@ function ForeshadowingPanel(props: {
     }
   }
 
-  // ===== 正文修正（第三阶段）函数 =====
-  async function generateTextFixFromReport(reportId?: string, volumeIds?: string[]) {
-    setTextFixLoading(true);
-    setTextFixes([]);
-    setTextFixReportTitle('');
-    setTextFixEmptyMsg('');
-    setTextFixPanelOpen(true); // 打开面板，分析期间持续显示
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000);
-    try {
-      const data = await api.smartFixTextFromReport(bookId, reportId, selectedSkillPackIds, volumeIds, controller.signal);
-      clearTimeout(timeoutId);
-      const fixes = (data.fixes || []).map(f => ({ ...f, selected: true }));
-      setTextFixes(fixes);
-      setTextFixReportTitle(data.report_title || '');
-      if (fixes.length === 0) {
-        // 面板保持打开，显示提示而非 alert 后消失
-        setTextFixEmptyMsg(data.empty_reason || 'AI 未定位到需要改写的正文段落，可能违规项缺少明确位置信息。可关闭此面板或重新检查。');
-      }
-    } catch (e: any) {
-      clearTimeout(timeoutId);
-      setTextFixEmptyMsg('生成正文改写补丁失败：' + (e.message || '未知错误'));
-    }
-    setTextFixLoading(false);
-  }
-
-  async function applySelectedTextFixes() {
-    const fixes = textFixes.filter(f => f.selected).map(f => ({ chapter_id: f.chapter_id, paragraph_index: f.paragraph_index, original: f.original, rewritten: f.rewritten }));
-    if (fixes.length === 0) { alert('请至少勾选一项正文补丁'); return; }
-    showConfirm(`确认将 ${fixes.length} 处正文改写补丁应用到对应章节？此操作会直接覆盖原文段落。`, async () => {
-      setTextFixApplying(true);
-      try {
-        const data = await api.smartApplyTextFix(bookId, fixes);
-        alert(`已应用 ${data.applied.reduce((sum: number, a: any) => sum + (a.count || 0), 0)} 处改写：${data.applied.map((a: any) => a.chapter_title).join('、')}`);
-        setTextFixPanelOpen(false);
-        setTextFixes([]);
-        setTextFixReportTitle('');
-        setTextFixEmptyMsg('');
-      } catch (e: any) {
-        alert('应用正文改写失败：' + (e.message || '未知错误'));
-      }
-      setTextFixApplying(false);
-    });
-  }
-
-  function toggleTextFixSelected(idx: number) {
-    setTextFixes(prev => prev.map((f, i) => i === idx ? { ...f, selected: !f.selected } : f));
-  }
+  // 「修正正文」改为跳转 AI智驾协同，不再使用独立生成/应用函数（已移除）
 
   async function executeAi() {
     if (!aiPrompt.trim()) { alert('请输入创作要求'); return; }
@@ -7860,7 +7827,7 @@ function ForeshadowingPanel(props: {
                                   {fixLoading ? '⏳ AI分析中...' : '🔧 让AI修正'}
                                 </button>
                               )}
-                              <button className="btn-ghost-sm" onClick={() => openFixVolumeSelector('text', r.id)} disabled={textFixLoading} title="AI按卷定位正文段落并生成改写补丁">{textFixLoading ? '⏳ 正文分析中...' : '📝 修正正文'}</button>
+                              <button className="btn-ghost-sm" onClick={() => jumpToChatForTextFix(r.id)} title="跳转 AI智驾·正文，协同修正违规章节">📝 修正正文</button>
                               {r.status === 'pending' && (
                                 <button className="btn-ghost-sm" onClick={() => ignoreFixDraft(r.id)} title="忽略此报告的修正草稿">🚫 忽略</button>
                               )}
@@ -7992,61 +7959,7 @@ function ForeshadowingPanel(props: {
         </div>
       )}
 
-      {/* ===== AI正文改写补丁面板（第三阶段） ===== */}
-      {textFixPanelOpen && (textFixLoading || textFixes.length > 0 || textFixEmptyMsg) && (
-        <div style={{marginTop:12, border:'1px solid #00b894', borderRadius:8, padding:10, background:'var(--bg-card)'}}>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
-            <h4 style={{margin:0, color:'#00b894'}}>📝 AI正文改写补丁{textFixReportTitle ? ` · 基于「${textFixReportTitle}」` : ''}</h4>
-            <button className="btn-ghost-sm" onClick={() => { setTextFixPanelOpen(false); setTextFixes([]); setTextFixEmptyMsg(''); }} title="关闭">✕</button>
-          </div>
-          {textFixLoading ? (
-            <p className="text-muted">⏳ AI 正在定位违规段落并生成改写...</p>
-          ) : textFixEmptyMsg ? (
-            <div style={{padding:10, background:'var(--bg-tertiary)', borderRadius:6, color:'var(--text-secondary)', fontSize:13}}>
-              ℹ️ {textFixEmptyMsg}
-            </div>
-          ) : (
-            <>
-              <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
-                AI 基于报告中的违规位置，定位到具体章节段落并生成改写。勾选要应用的补丁，点击「应用所选改写」即可覆盖原文。建议先核对再应用。
-              </p>
-              {textFixes.map((f, idx) => (
-                <div key={idx} style={{marginBottom:8, padding:8, border:'1px solid var(--border)', borderRadius:6, background:'var(--bg-card)'}}>
-                  <div style={{display:'flex', alignItems:'flex-start', gap:8}}>
-                    <input type="checkbox" checked={!!f.selected} onChange={() => toggleTextFixSelected(idx)} style={{marginTop:4}} />
-                    <div style={{flex:1}}>
-                      <div style={{fontWeight:600, fontSize:13}}>
-                        <span style={{color:'#00b894'}}>{f.chapter_title}</span>
-                        <span style={{color:'#666', fontWeight:400, marginLeft:8}}>· {f.reason}</span>
-                      </div>
-                      <div style={{fontSize:12, color:'#888', marginTop:4}}>违规：{f.violation_desc}</div>
-                      <div style={{marginTop:6, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
-                        <div>
-                          <div style={{fontSize:11, color:'#888', marginBottom:2}}>原文</div>
-                          <pre style={{margin:0, maxHeight:120, overflow:'auto', whiteSpace:'pre-wrap', wordBreak:'break-word', fontSize:12, padding:6, background:'var(--bg-elevated)', borderRadius:4, border:'1px solid var(--border)'}}>{f.original}</pre>
-                        </div>
-                        <div>
-                          <div style={{fontSize:11, color:'#888', marginBottom:2}}>改写</div>
-                          <pre style={{margin:0, maxHeight:120, overflow:'auto', whiteSpace:'pre-wrap', wordBreak:'break-word', fontSize:12, padding:6, background:'#e8f8f5', borderRadius:4, border:'1px solid #00b894'}}>{f.rewritten}</pre>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {textFixes.length > 0 && (
-                <div style={{display:'flex', gap:8, marginTop:8}}>
-                  <button className="btn-primary-sm" onClick={applySelectedTextFixes} disabled={textFixApplying || textFixes.filter(f => f.selected).length === 0}>
-                    {textFixApplying ? '⏳ 应用中...' : `✅ 应用所选改写（${textFixes.filter(f => f.selected).length}/${textFixes.length}）`}
-                  </button>
-                  <button className="btn-ghost-sm" onClick={() => setTextFixes(prev => prev.map(f => ({ ...f, selected: true })))}>全选</button>
-                  <button className="btn-ghost-sm" onClick={() => setTextFixes(prev => prev.map(f => ({ ...f, selected: false })))}>全不选</button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
+      {/* 「修正正文」改为跳转 AI智驾协同，独立正文改写面板已移除 */}
         </>
       )}
 

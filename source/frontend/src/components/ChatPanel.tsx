@@ -501,7 +501,7 @@ function SkillPackSelector({ packs, selected, onToggle, compact }: {
 // 主组件：AI 智驾
 // ============================================================================
 export default function ChatPanel() {
-  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, closeChatPanel } = useStore() as any;
+  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, closeChatPanel } = useStore() as any;
   const [activeTab, setActiveTab] = useState<SmartTab>('setting');
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState('');
@@ -613,6 +613,13 @@ export default function ChatPanel() {
       })();
     }
   }, [chatPanelOpen, bookId, chatPanelSessionId, refreshProgress, refreshHistory]);
+
+  // 应用预设：从其它入口（如「修正正文」）跳转进来时切到指定 Tab 并预填输入框
+  useEffect(() => {
+    if (!chatPanelOpen) return;
+    if (chatPanelPresetTab) setActiveTab(chatPanelPresetTab);
+    if (chatPanelPresetInput) setInput(chatPanelPresetInput);
+  }, [chatPanelOpen, chatPanelPresetTab, chatPanelPresetInput]);
 
   // 正文写作默认要求（切到正文Tab且输入框为空/为旧默认值时自动填入）
   const CHAPTER_DEFAULT_INPUT = '接上一章剧情，读取剧情维度本章剧情，保证剧情连贯、逻辑清晰。极致模仿人的写作习惯，自然没ai味儿。写事为主，景一笔带过，非必要不用比喻/拟人等修辞，句子阅读感强及顺畅。';

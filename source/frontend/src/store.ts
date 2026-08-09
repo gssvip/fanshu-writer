@@ -33,6 +33,9 @@ interface AppStore {
   chatPanelBookId: string | null;
   // 待打开的历史会话 id：从历史对话「继续」按钮传入，ChatPanel 读取后自动加载该会话
   chatPanelSessionId: string | null;
+  // 打开时预设的 Tab 与输入框内容（用于从其它入口跳转预填，如「修正正文」从防遗忘报告跳入）
+  chatPanelPresetTab: 'setting' | 'chapter' | 'deai' | 'review' | null;
+  chatPanelPresetInput: string | null;
 
   setBooks: (books: Book[]) => void;
   setCurrentBook: (book: Book | null) => void;
@@ -45,7 +48,7 @@ interface AppStore {
   setRightPanel: (panel: 'ai' | 'characters' | 'outline' | 'stats' | null) => void;
   setRightPanelWidth: (width: number) => void;
   setLoading: (loading: boolean) => void;
-  openChatPanel: (bookId: string, sessionId?: string | null) => void;
+  openChatPanel: (bookId: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string }) => void;
   closeChatPanel: () => void;
   logout: () => void;
 }
@@ -89,6 +92,8 @@ export const useStore = create<AppStore>((set) => ({
   chatPanelOpen: false,
   chatPanelBookId: null,
   chatPanelSessionId: null,
+  chatPanelPresetTab: null,
+  chatPanelPresetInput: null,
 
   setBooks: (books) => set({ books }),
   setCurrentBook: (book) => set({ currentBook: book }),
@@ -110,8 +115,14 @@ export const useStore = create<AppStore>((set) => ({
   setRightPanel: (panel) => set({ rightPanel: panel }),
   setRightPanelWidth: (width) => set({ rightPanelWidth: width }),
   setLoading: (loading) => set({ loading }),
-  openChatPanel: (bookId, sessionId) => set({ chatPanelOpen: true, chatPanelBookId: bookId, chatPanelSessionId: sessionId ?? null }),
-  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null }),
+  openChatPanel: (bookId, sessionId, preset) => set({
+    chatPanelOpen: true,
+    chatPanelBookId: bookId,
+    chatPanelSessionId: sessionId ?? null,
+    chatPanelPresetTab: preset?.tab ?? null,
+    chatPanelPresetInput: preset?.input ?? null,
+  }),
+  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelPresetTab: null, chatPanelPresetInput: null }),
   logout: () => {
     localStorage.removeItem('fanshu-token');
     set({ currentUser: null, books: [], currentBook: null });
