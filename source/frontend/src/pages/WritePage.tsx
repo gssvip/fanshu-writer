@@ -7213,18 +7213,14 @@ function ForeshadowingPanel(props: {
   onAfStatusChange?: (pendingCount: number, alert: { reportId: string; title: string; score?: number; auto?: boolean } | null) => void;
 }) {
   const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks, onAfStatusChange } = props;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string }) => void;
   const [foreshadowing, setForeshadowing] = useState('');
   const [foreVolumes, setForeVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
   const [volSelectorOpen, setVolSelectorOpen] = useState(false);
   const [aiMode, setAiMode] = useState(false);
 
-  // 修正方案按卷分批选择
-  const [fixVolSelectorOpen, setFixVolSelectorOpen] = useState(false);
-  const [fixVolSelectorMode, setFixVolSelectorMode] = useState<'setting' | 'text' | null>(null);
-  const [fixVolSelectorReportId, setFixVolSelectorReportId] = useState('');
-  const [availableVolumes, setAvailableVolumes] = useState<Array<{ id: string; title: string; chapter_count: number }>>([]);
-  const [selectedFixVolumeIds, setSelectedFixVolumeIds] = useState<string[]>([]);
+  // 按卷分批修正弹窗已随 AI修正/修正正文 改为跳转智驾而移除（fixVolSelector*/availableVolumes 状态已删）
 
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiAssisting, setAiAssisting] = useState(false);
@@ -7246,20 +7242,7 @@ function ForeshadowingPanel(props: {
   const [afScope, setAfScope] = useState<'reports' | 'dimensions'>('reports'); // 检查范围：动态文件/仅维度
   const [foreCollapsed, setForeCollapsed] = useState(false); // 伏笔按卷区折叠状态
 
-  // ===== 防遗忘报告 → AI修正闭环 =====
-  const [fixLoading, setFixLoading] = useState(false);
-  const [fixPlan, setFixPlan] = useState<Array<{ dim: string; label: string; issues: string[]; action: string; new_content: string }>>([]);
-  const [fixReportTitle, setFixReportTitle] = useState('');
-  const [fixReportId, setFixReportId] = useState('');
-  const [fixSelected, setFixSelected] = useState<Set<number>>(new Set()); // 勾选要应用的修正项索引
-  const [fixExpandedIdx, setFixExpandedIdx] = useState<number | null>(null); // 展开查看修正后内容的项索引
-  const [fixApplying, setFixApplying] = useState(false);
-
-  // 修正面板可见性：分析完成后保持显示（即使结果为空），用户手动关闭才消失，避免"闪退"
-  const [fixPanelOpen, setFixPanelOpen] = useState(false);
-  // 结果为空时的提示（区分"AI未发现问题"和"出错"）
-  const [fixEmptyMsg, setFixEmptyMsg] = useState('');
-  // 「修正正文」改为跳转 AI智驾协同，不再使用独立面板（textFix* 状态已移除）
+  // 「AI修正/修正正文」均改为跳转 AI智驾协同，不再使用独立面板（fix*/textFix* 状态已移除）
 
   // 解析全局伏笔
   useEffect(() => {
@@ -7446,33 +7429,7 @@ function ForeshadowingPanel(props: {
     });
   }
 
-  // 打开按卷分批选择弹窗
-  async function openFixVolumeSelector(mode: 'setting' | 'text', reportId: string) {
-    setFixVolSelectorMode(mode);
-    setFixVolSelectorReportId(reportId);
-    setSelectedFixVolumeIds([]);
-    setFixVolSelectorOpen(true);
-    try {
-      const data = await api.smartVolumes(bookId);
-      setAvailableVolumes((data.volumes || []).map((v: any) => ({ id: v.id, title: v.title || `第${v.order_index + 1}卷`, chapter_count: v.chapter_count || 0 })));
-    } catch (e: any) {
-      alert('加载分卷列表失败：' + (e.message || '未知错误'));
-      setFixVolSelectorOpen(false);
-    }
-  }
-
-  function toggleFixVolumeSelection(volId: string) {
-    setSelectedFixVolumeIds(prev => prev.includes(volId) ? prev.filter(id => id !== volId) : [...prev, volId]);
-  }
-
-  function confirmFixVolumeSelection() {
-    if (!fixVolSelectorMode || !fixVolSelectorReportId) return;
-    setFixVolSelectorOpen(false);
-    if (fixVolSelectorMode === 'setting') {
-      generateFixFromReport(fixVolSelectorReportId, selectedFixVolumeIds.length > 0 ? selectedFixVolumeIds : undefined);
-    }
-    // 'text' 模式已改为跳转 AI智驾（jumpToChatForTextFix），不再走此处
-  }
+  // 按卷分批选择弹窗已随 AI修正/修正正文 改为跳转 AI智驾而移除
 
   // 「修正正文」改为跳转 AI智驾·正文Tab，预填违规项作为修改意见，由用户协同改写
   function jumpToChatForTextFix(reportId: string) {
@@ -7495,84 +7452,32 @@ function ForeshadowingPanel(props: {
     openChatPanel(bookId, null, { tab: 'chapter', input: presetInput });
   }
 
-  async function generateFixFromReport(reportId?: string, volumeIds?: string[]) {
-    setFixLoading(true);
-    setFixPlan([]);
-    setFixSelected(new Set());
-    setFixExpandedIdx(null);
-    setFixEmptyMsg('');
-    setFixPanelOpen(true); // 打开面板，分析期间持续显示
-    // 180 秒超时：LLM 分析报告+生成方案通常需要 20-90 秒，避免无限等待
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180000);
-    try {
-      const data = await api.smartFixFromReport(bookId, reportId, selectedSkillPackIds, volumeIds, controller.signal);
-      clearTimeout(timeoutId);
-      setFixPlan(data.plan || []);
-      setFixReportTitle(data.report_title || '');
-      setFixReportId(data.report_id || reportId || '');
-      // 默认全选
-      setFixSelected(new Set((data.plan || []).map((_, i) => i)));
-      if (!data.plan || data.plan.length === 0) {
-        // 面板保持打开，显示提示而非 alert 后消失
-        setFixEmptyMsg('AI 未发现需要修正的设定项，可能报告诊断的问题不涉及设定维度。可关闭此面板或重新检查。');
-      }
-    } catch (e: any) {
-      clearTimeout(timeoutId);
-      const msg = e.message || '未知错误';
-      if (msg === '请求已取消' || msg.includes('aborted') || msg.includes('Abort')) {
-        setFixEmptyMsg('生成修正方案超时（180秒）。报告较大或模型响应慢，请稍后再试，或换一个响应更快的模型。');
-      } else {
-        setFixEmptyMsg('生成修正方案失败：' + msg);
-      }
-    }
-    setFixLoading(false);
-  }
-
-  function toggleFixSelected(idx: number) {
-    setFixSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
-      return next;
+  // 「AI修正」改为跳转 AI智驾·设定Tab，预填诊断要点，由 AI 协同产出设定维度卡片后采纳
+  function jumpToChatForSettingFix(reportId: string) {
+    const rec = afReports.find((r: any) => r.id === reportId);
+    const rep = rec?.report || {};
+    const title = rec?.title ? `「${rec.title}」` : '防遗忘检查报告';
+    const lines: string[] = [];
+    const violations = Array.isArray(rep.violations) ? rep.violations : [];
+    violations.slice(0, 5).forEach((v: any, i: number) => {
+      const loc = v.location ? `【${v.location}】` : '';
+      const desc = v.desc ? `${v.desc}` : '';
+      const fix = v.fix ? `（建议：${v.fix}）` : '';
+      lines.push(`${i + 1}. ${loc} ${desc}${fix}`);
     });
-  }
-
-  // 应用勾选的修正到设定维度
-  async function applySelectedFixes() {
-    if (fixSelected.size === 0) { alert('请至少勾选一项修正'); return; }
-    const fixes = fixPlan.filter((_, i) => fixSelected.has(i)).map(p => ({ dim: p.dim, new_content: p.new_content }));
-    const dimLabels = fixPlan.filter((_, i) => fixSelected.has(i)).map(p => p.label).join('、');
-    showConfirm(`确认将修正方案应用到以下设定维度？此操作会覆盖对应维度的现有内容：\n${dimLabels}`, async () => {
-      setFixApplying(true);
-      try {
-        const data = await api.smartApplyFix(bookId, fixes);
-        alert(`已应用 ${data.applied.length} 项修正：${data.applied.map(a => a.label).join('、')}`);
-        // 刷新 bible
-        if (bible) {
-          const updated = { ...bible };
-          for (const f of fixes) {
-            (updated as any)[f.dim] = f.new_content;
-          }
-          onBibleUpdate(updated);
-        }
-        // 标记报告为已应用
-        if (fixReportId) {
-          await api.updateAntiForgetReport(bookId, fixReportId, { status: 'applied', fix_draft: null }).catch(() => {});
-          setAfReports(prev => prev.map(r => r.id === fixReportId ? { ...r, status: 'applied', fix_draft: null } : r));
-          if (onAfStatusChange) {
-            const next = afReports.map(r => r.id === fixReportId ? { ...r, status: 'applied', fix_draft: null } : r);
-            onAfStatusChange(computeAfStatus(next).count, computeAfStatus(next).alert);
-          }
-        }
-        setFixPlan([]);
-        setFixSelected(new Set());
-        setFixReportId('');
-      } catch (e: any) {
-        alert('应用修正失败：' + (e.message || '未知错误'));
-      }
-      setFixApplying(false);
+    const pf = Array.isArray(rep.pending_foreshadowing) ? rep.pending_foreshadowing : [];
+    pf.slice(0, 3).forEach((f: any) => {
+      lines.push(`· 待回收伏笔：${f.content || ''}${f.suggest_chapter ? `（建议回收于 ${f.suggest_chapter}）` : ''}`);
     });
+    const nd = Array.isArray(rep.narrative_debt) ? rep.narrative_debt : [];
+    nd.slice(0, 3).forEach((d: any) => {
+      lines.push(`· 叙事债务：${d.promise || ''}${d.status ? `（${d.status}）` : ''}`);
+    });
+    const header = lines.length > 0
+      ? `基于${title}的诊断，请修正对应设定维度（人物/世界规则/伏笔/时间线等），保持核心设定不变，只补正不一致项：\n`
+      : `基于${title}，请检查并修正设定维度的一致性问题。`;
+    const presetInput = lines.length > 0 ? header + lines.join('\n') : header;
+    openChatPanel(bookId, null, { tab: 'setting', input: presetInput });
   }
 
   async function ignoreFixDraft(reportId: string) {
@@ -7580,11 +7485,6 @@ function ForeshadowingPanel(props: {
     try {
       await api.updateAntiForgetReport(bookId, reportId, { status: 'ignored', fix_draft: null });
       setAfReports(prev => prev.map(r => r.id === reportId ? { ...r, status: 'ignored', fix_draft: null } : r));
-      if (fixReportId === reportId) {
-        setFixPlan([]);
-        setFixSelected(new Set());
-        setFixReportId('');
-      }
       if (onAfStatusChange) {
         const next = afReports.map(r => r.id === reportId ? { ...r, status: 'ignored', fix_draft: null } : r);
         onAfStatusChange(computeAfStatus(next).count, computeAfStatus(next).alert);
@@ -7594,28 +7494,7 @@ function ForeshadowingPanel(props: {
     }
   }
 
-  async function loadFixDraftFromReport(reportId: string) {
-    const r = afReports.find(x => x.id === reportId);
-    if (r && Array.isArray(r.fix_draft) && r.fix_draft.length > 0) {
-      setFixPlan(r.fix_draft);
-      setFixReportTitle(r.title || '');
-      setFixReportId(reportId);
-      setFixSelected(new Set(r.fix_draft.map((_: any, i: number) => i)));
-      setFixExpandedIdx(null);
-      setFixEmptyMsg('');
-      setFixPanelOpen(true); // 打开面板显示草稿
-      // 标记为已审阅
-      if (r.status === 'pending') {
-        api.updateAntiForgetReport(bookId, reportId, { status: 'reviewed' }).then(() => {
-          setAfReports(prev => prev.map(x => x.id === reportId ? { ...x, status: 'reviewed' } : x));
-        }).catch(() => {});
-      }
-    } else {
-      generateFixFromReport(reportId);
-    }
-  }
-
-  // 「修正正文」改为跳转 AI智驾协同，不再使用独立生成/应用函数（已移除）
+  // 「AI修正/修正正文」均改为跳转 AI智驾协同，独立生成/应用/草稿函数已移除
 
   async function executeAi() {
     if (!aiPrompt.trim()) { alert('请输入创作要求'); return; }
@@ -7818,15 +7697,9 @@ function ForeshadowingPanel(props: {
                           ) : (
                             <>
                               <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? '📥 拉取' : '📂 折叠'}</button>
-                              {(r.status === 'pending' || r.status === 'reviewed') && Array.isArray(r.fix_draft) && r.fix_draft.length > 0 ? (
-                                <button className="btn-primary-sm" onClick={() => loadFixDraftFromReport(r.id)} title="AI已生成设定修正草稿，点击查看" style={{color:'#fff',background:'#6c5ce7'}}>
-                                  📋 查看修正草稿
-                                </button>
-                              ) : (
-                                <button className="btn-primary-sm" onClick={() => openFixVolumeSelector('setting', r.id)} disabled={fixLoading} title="让AI基于本报告按卷修正设定" style={{color:'#fff',background:'#6c5ce7',opacity:fixLoading?0.7:1}}>
-                                  {fixLoading ? '⏳ AI分析中...' : '🔧 让AI修正'}
-                                </button>
-                              )}
+                              <button className="btn-primary-sm" onClick={() => jumpToChatForSettingFix(r.id)} title="跳转 AI智驾·设定，协同修正设定维度" style={{color:'#fff',background:'#6c5ce7'}}>
+                                🔧 AI修正
+                              </button>
                               <button className="btn-ghost-sm" onClick={() => jumpToChatForTextFix(r.id)} title="跳转 AI智驾·正文，协同修正违规章节">📝 修正正文</button>
                               {r.status === 'pending' && (
                                 <button className="btn-ghost-sm" onClick={() => ignoreFixDraft(r.id)} title="忽略此报告的修正草稿">🚫 忽略</button>
@@ -7900,66 +7773,7 @@ function ForeshadowingPanel(props: {
         )}
       </div>
 
-      {/* ===== AI修正方案面板（基于防遗忘报告）===== */}
-      {fixPanelOpen && (fixLoading || fixPlan.length > 0 || fixEmptyMsg) && (
-        <div style={{marginTop:12, border:'1px solid #6c5ce7', borderRadius:8, padding:10, background:'var(--bg-card)'}}>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
-            <h4 style={{margin:0, color:'#6c5ce7'}}>🔧 AI设定修正方案{fixReportTitle ? ` · 基于「${fixReportTitle}」` : ''}</h4>
-            <button className="btn-ghost-sm" onClick={() => { setFixPanelOpen(false); setFixPlan([]); setFixSelected(new Set()); setFixEmptyMsg(''); }} title="关闭">✕</button>
-          </div>
-          {fixLoading ? (
-            <p className="text-muted">⏳ AI 正在分析报告并生成修正方案...</p>
-          ) : fixEmptyMsg ? (
-            <div style={{padding:10, background:'var(--bg-tertiary)', borderRadius:6, color:'var(--text-secondary)', fontSize:13}}>
-              ℹ️ {fixEmptyMsg}
-            </div>
-          ) : (
-            <>
-              <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
-                AI 基于防遗忘检查报告的诊断，针对以下设定维度生成修正方案。勾选要应用的项，点击「应用所选修正」即可写入设定（覆盖现有内容）。点击「查看修正内容」可展开核对。
-              </p>
-              {fixPlan.map((p, idx) => (
-                <div key={idx} style={{marginBottom:8, padding:8, border:'1px solid var(--border)', borderRadius:6, background:'var(--bg-card)'}}>
-                  <div style={{display:'flex', alignItems:'flex-start', gap:8}}>
-                    <input type="checkbox" checked={fixSelected.has(idx)} onChange={() => toggleFixSelected(idx)} style={{marginTop:4}} />
-                    <div style={{flex:1}}>
-                      <div style={{fontWeight:600}}>
-                        <span style={{color:'#6c5ce7'}}>{p.label}</span>
-                        {p.action && <span style={{color:'#666', fontWeight:400, marginLeft:8}}>→ {p.action}</span>}
-                      </div>
-                      {Array.isArray(p.issues) && p.issues.length > 0 && (
-                        <ul style={{margin:'4px 0 0', paddingLeft:18, fontSize:12, color:'#888'}}>
-                          {p.issues.map((iss, i) => <li key={i}>{iss}</li>)}
-                        </ul>
-                      )}
-                      <button className="btn-ghost-sm" style={{marginTop:4, fontSize:12}} onClick={() => setFixExpandedIdx(fixExpandedIdx === idx ? null : idx)}>
-                        {fixExpandedIdx === idx ? '📂 收起修正内容' : '📥 查看修正内容'}
-                      </button>
-                      {fixExpandedIdx === idx && (
-                        <pre style={{marginTop:6, maxHeight:260, overflow:'auto', whiteSpace:'pre-wrap', wordBreak:'break-word',
-                                     fontSize:12, lineHeight:1.5, padding:8, background:'var(--bg-elevated)', borderRadius:4, border:'1px solid var(--border)'}}>
-{p.new_content}
-                        </pre>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {fixPlan.length > 0 && (
-                <div style={{display:'flex', gap:8, marginTop:8}}>
-                  <button className="btn-primary-sm" onClick={applySelectedFixes} disabled={fixApplying || fixSelected.size === 0}>
-                    {fixApplying ? '⏳ 应用中...' : `✅ 应用所选修正（${fixSelected.size}/${fixPlan.length}）`}
-                  </button>
-                  <button className="btn-ghost-sm" onClick={() => setFixSelected(new Set(fixPlan.map((_, i) => i)))}>全选</button>
-                  <button className="btn-ghost-sm" onClick={() => setFixSelected(new Set())}>全不选</button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* 「修正正文」改为跳转 AI智驾协同，独立正文改写面板已移除 */}
+      {/* AI修正/修正正文 均改为跳转 AI智驾协同，独立设定修正面板已移除 */}
         </>
       )}
 
@@ -8013,35 +7827,7 @@ function ForeshadowingPanel(props: {
         </div>
       )}
 
-      {fixVolSelectorOpen && (
-        <div className="modal-overlay" onClick={() => setFixVolSelectorOpen(false)}>
-          <div className="modal-content" style={{maxWidth:420, border:'1px solid var(--border-color)'}} onClick={e => e.stopPropagation()}>
-            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
-              <h3 style={{margin:0}}>按卷分批修正</h3>
-              <button className="btn-ghost-sm" onClick={() => setFixVolSelectorOpen(false)}>✕</button>
-            </div>
-            <p className="text-muted" style={{fontSize:12,marginBottom:12}}>不选则处理全部章节；选择后只修正所选卷涉及的问题。</p>
-            {availableVolumes.length === 0 ? (
-              <p style={{fontSize:13}}>加载分卷列表中...</p>
-            ) : (
-              <div style={{maxHeight:'50vh',overflowY:'auto',border:'1px solid var(--border)',borderRadius:6,padding:4}}>
-                {availableVolumes.map(vol => (
-                  <label key={vol.id} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',cursor:'pointer',fontSize:13}}>
-                    <input type="checkbox" checked={selectedFixVolumeIds.includes(vol.id)} onChange={() => toggleFixVolumeSelection(vol.id)} />
-                    📖 {vol.title}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}
-                  </label>
-                ))}
-              </div>
-            )}
-            <div style={{marginTop:16,display:'flex',justifyContent:'flex-end',gap:8}}>
-              <button className="btn-ghost-sm" onClick={() => setFixVolSelectorOpen(false)}>取消</button>
-              <button className="btn-primary-sm" onClick={confirmFixVolumeSelection}>
-                {fixVolSelectorMode === 'text' ? '📝 修正正文' : '🔧 生成设定修正'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 按卷分批修正弹窗已移除（改为跳转 AI智驾）*/}
     </div>
   );
 }
