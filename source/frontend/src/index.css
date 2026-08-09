@@ -1752,12 +1752,23 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   display: flex; align-items: center; gap: 6px;
   padding: 8px 12px; background: var(--bg-secondary);
   font-size: 13px; font-weight: 600; color: var(--text-primary);
+  min-width: 0;
 }
 .chat-card-adopted .chat-card-head { background: #dcfce7; }
-.chat-card-icon { font-size: 14px; }
-.chat-card-title { flex: 1; }
-.chat-card-target { font-size: 11px; color: var(--text-muted); font-weight: 400; }
-.chat-card-status { font-size: 11px; color: #16a34a; font-weight: 500; }
+.chat-card-icon { font-size: 14px; flex-shrink: 0; }
+.chat-card-title {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-card-target {
+  font-size: 11px; color: var(--text-muted); font-weight: 400;
+  max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1;
+}
+.chat-card-status {
+  font-size: 11px; color: #16a34a; font-weight: 500;
+  max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 1;
+}
+.chat-card-toggle { flex-shrink: 0; }
 .chat-card-body {
   padding: 10px 12px; font-size: 12px; line-height: 1.6;
   color: var(--text-primary); white-space: pre-wrap;

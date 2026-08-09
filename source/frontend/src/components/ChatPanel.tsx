@@ -1506,7 +1506,7 @@ export default function ChatPanel() {
                           onClick={() => {
                             const next = fixTasks.find(t => !t.done && t.dimKey && t.dimKey !== 'general');
                             if (!next || !next.dimKey) return;
-                            setSelectedDim(next.dimKey);
+                            setSelectedDim(next.dimKey!);
                             setSuggestions([]);
                             setInput(`修正意见：${next.desc}${next.fix ? `（${next.fix}）` : ''}`);
                           }}
@@ -1591,7 +1591,7 @@ export default function ChatPanel() {
                                 className="fix-task-action"
                                 disabled={streaming}
                                 onClick={() => {
-                                  setChapterTargetId(task.chapterId);
+                                  setChapterTargetId(task.chapterId!);
                                   setInput(`修改意见：${task.desc}${task.fix ? `（${task.fix}）` : ''}`);
                                 }}
                                 title="定位到该章节并填充修改意见"
