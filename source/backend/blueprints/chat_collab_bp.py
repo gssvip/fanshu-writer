@@ -315,6 +315,9 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
     # Action Card 使用说明
     parts.append(_CARD_INSTRUCTIONS)
 
+    # 平台级纯文字排版铁律（禁止 * 和 #）
+    parts.append(PLAIN_TEXT_LAYOUT_RULES)
+
     return '\n'.join(parts)
 
 
@@ -616,11 +619,16 @@ def chat_smart():
             # 解析卡片
             complete = ''.join(full_text)
             cards = parse_cards(complete)
+            # 统一纯文本清理（卡片内容、卡片标题、回复正文）
+            for c in cards:
+                c['content'] = _clean_text_to_plain(c.get('content', ''))
+                if c.get('title'):
+                    c['title'] = _clean_text_to_plain(c['title'])
             for card in cards:
                 yield f'data: {json.dumps({"type": "card", "card": card, "session_id": session_id}, ensure_ascii=False)}\n\n'
 
             # 持久化对话（剥离卡片标记后存历史，cards 单独存以便历史会话恢复）
-            clean_text = strip_cards(complete)
+            clean_text = _clean_text_to_plain(strip_cards(complete))
             # 卡片持久化时标记为 pending，前端历史会话加载后可继续采纳
             persisted_cards = [{'id': c['id'], 'type': c['type'], 'title': c['title'],
                                 'content': c['content'], 'target': c['target'],
@@ -706,6 +714,10 @@ def apply_card():
 
     if ctype not in CARD_REGISTRY or not content:
         return jsonify({'error': '无效的卡片或内容为空'}), 400
+
+    # 平台级后处理：统一清理 Markdown 符号 * 和 #，保证落地内容为好看的纯文字排版
+    content = _clean_text_to_plain(content)
+    title = _clean_text_to_plain(title) if title else title
 
     spec = CARD_REGISTRY[ctype]
     result_extra = {}
@@ -1171,6 +1183,7 @@ def _action_master_create(book, session, instruction, gw, sse):
             f'\n已有设定参考：\n{ctx_block}'
             f'\n用户补充要求：{instruction or "无"}'
             f'\n请直接输出该维度的设定内容（300-600字），不要寒暄，不要解释。'
+            f'\n\n{PLAIN_TEXT_LAYOUT_RULES}'
         )
         if existing:
             sys_prompt += f'\n\n已有内容（可在其基础上补充完善，不要简单重复）：\n{existing[:400]}'
@@ -1186,13 +1199,14 @@ def _action_master_create(book, session, instruction, gw, sse):
             yield sse({'type': 'error', 'error': f'{label}生成失败：{e}'})
             continue
 
+        content = _clean_text_to_plain(content)
         generated[dim] = content
         # 产出落地卡片
         card = {
             'id': str(uuid.uuid4())[:8],
             'type': card_type,
             'title': f'{label}（AI生成）',
-            'content': content.strip(),
+            'content': content,
             'target': _CARD_TARGET.get(card_type, label),
         }
         emitted_cards.append(card)
@@ -1609,6 +1623,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'\n\n【原文】\n{cur.content}'
             f'{anti_spoiler_rule}'
             f'\n\n{DEAI_RULES}'
+            f'\n\n{PLAIN_TEXT_LAYOUT_RULES}'
             f'\n\n请直接输出（标题+空行+正文），不要解释，不要在文末附加字数统计。'
         )
         user_msg = f'请润色第 {target_chapter_num} 章'
@@ -1627,6 +1642,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'超过 2500 字=冗余，须精简枝节删减。这是不可违反的硬约束，优先级高于所有其他要求。'
             f'{anti_spoiler_rule}'
             f'\n\n{DEAI_RULES}'
+            f'\n\n{PLAIN_TEXT_LAYOUT_RULES}'
             f'\n\n请直接输出（标题+空行+正文），不要解释，不要在文末附加字数统计。'
         )
         user_msg = f'请续写第 {target_chapter_num} 章'
@@ -1642,6 +1658,8 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         return
 
     # 剥离标题行：card.content 只存纯正文，card.title 用 AI 生成的章节名（去 # 标记）
+    # 先执行一次平台级纯文本清理（去 * 和 #），再剥离标题行
+    content = _clean_text_to_plain(content)
     extracted_title, body_content = _strip_chapter_title(
         content, fallback_title=f'第{target_chapter_num}章')
 
@@ -1657,7 +1675,8 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             model=model, max_tokens=4096, chapter_num=target_chapter_num,
             count_fn=count_words)
         if corrected and corrected.strip() and count_words(corrected) != draft_wc:
-            # 修正后字数更接近目标，采用修正版（再剥一次标题防御）
+            # 修正后字数更接近目标，采用修正版（再剥一次标题防御 + 纯文本清理）
+            corrected = _clean_text_to_plain(corrected)
             _, body_content = _strip_chapter_title(
                 corrected, fallback_title=extracted_title)
             final_wc = count_words(body_content)
@@ -1732,6 +1751,67 @@ _CARD_TARGET = {
     'SAVE_LOCATION': '地点', 'APPLY_STYLE': '文风', 'SAVE_CHAPTER': '章节正文',
     'SAVE_FORESHADOW': '伏笔',
 }
+
+
+# ============================================================================
+# 纯文字排版统一约束：平台所有生成内容（正文/大纲/设定/人物/卡片内容）
+# 一律去除 Markdown 符号 * 和 #，保留中文数字+顿号/句号/空格/空行排版
+# ============================================================================
+
+PLAIN_TEXT_LAYOUT_RULES = """
+【纯文字排版铁律·平台级约束·所有输出必须遵守】
+（本条对正文、大纲、设定、人物、世界观、伏笔等所有内容生效；Action Card 内的卡片标题和卡片内容也必须遵守）
+
+1. 绝对禁止任何 Markdown 标记符号，包括：
+   - 禁止 # 开头的标题（不要写 # 标题、## 二级标题这类形式）
+   - 禁止 * 作为强调/列表/斜体/粗体（不要写 *xxx*、**xxx**、行首 * 列表）
+   - 禁止行首 - 短横线列表（" - xxx" / "- xxx" 都不允许）
+   - 禁止行首 > 引用块
+   - 禁止 ``` 代码块
+   - 禁止用 1. / 2. / (1) 这类编号列表符号
+2. 正确的纯文字排版形式：
+   - 分节标题：直接写成「第一幕：XXX」「本卷目标」「第3卷·XX卷」「姜辰」等，前后各空一行即可（不要加#、不要加*）
+   - 条目列表：用「一、二、三、…」「1）2）3）…」「甲、乙、丙…」或中文顿号直接并列，缩进用空格，禁止用 - 或 * 或 1. 开头
+   - 强调/专有名词：直接用书名号《》、引号「」或不加符号即可，不要用 **粗体** 或 *斜体*
+3. 章节正文专属：只输出自然叙述，段落直接用换行/空行分隔。除对话中的正常标点外，正文内容里也不能出现 * 和 # 符号本身。
+4. 检查自检：你输出的完整文本中如果出现了独立的 * 字符（除正常数学乘号含义外，极少用到）或行首 #，一律删掉或改成等价中文形式再输出。
+""".strip()
+
+
+def _clean_text_to_plain(text: str) -> str:
+    """统一后处理：移除 Markdown (#、##、###, **xxx**, *xxx*, 行首 *, 行首 -, 代码块 ```，数字. 列表前缀)
+    同时保留中文顿号数字+顿号排版（一、二、三、1）2））。输出排版好看的纯文字。
+    注意：只做无损清理（如 # 标题 改成 标题；行首 - xxx 改成 　　xxx；**加粗** 去掉加粗符；``` 代码块去掉包裹）。
+    """
+    if not text:
+        return ''
+    s = text
+    # 1) 三重反代码块围栏（整行 ``` 或 ```lang）
+    s = re.sub(r'^```[a-zA-Z0-9_\-]*\s*$', '', s, flags=re.M)
+    # 2) 行首 #/##/### + 空格 → 改成原标题文本（前置空一行 + 标题）
+    s = re.sub(r'^#{1,6}\s+', '', s, flags=re.M)
+    # 3) **粗体** / *斜体* —— 去掉星号保留原文（贪婪匹配，多行安全）
+    s = re.sub(r'\*\*(.+?)\*\*', r'\1', s, flags=re.S)
+    s = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'\1', s, flags=re.S)
+    # 3.1) 移除孤立的 * 字符（Markdown 残留）：所有未被上文成对匹配消耗掉的 *
+    #       —— 只保留极少量确实有语义的 "*123" 这种模式（中文场景极少），其余全部直接去掉
+    #       中文创作环境下基本不会出现合法 *，用户明确要求 * 和 # 都不要，因此整体安全移除
+    s = s.replace('*', '')
+    # 3.2) 移除孤立 # 字符：所有行内未在单词中的 #，以及行首 # 全部去掉
+    s = s.replace('#', '')
+    # 4) 行首 - / * / + 无序列表：替换成两个中文全角空格（缩进保留"列表感"，不丢内容）
+    #    —— 也匹配"先有若干全角/半角空格 + 短横"的情形（case5 带缩进的子列表）
+    s = re.sub(r'^([ \t\u3000]*)[-*+][ \t]+', lambda m: (m.group(1) or '') + '　　', s, flags=re.M)
+    # 5) 行首 > 引用前缀去掉
+    s = re.sub(r'^[ \t]*>[ \t]?', '', s, flags=re.M)
+    # 6) 行首 "1. " / "2) " / "(1) " 这类编号列表转成全角空格 + 同内容（保留序号但避免半角点列表符号）
+    #    - 允许一、二、… 这种中文数字+顿号原样保留（不动）
+    s = re.sub(r'^[ \t]*(\d+)\.[ \t]+', lambda m: '　　' + m.group(1) + '、', s, flags=re.M)
+    s = re.sub(r'^[ \t]*\((\d+)\)[ \t]+', lambda m: '　　(' + m.group(1) + ') ', s, flags=re.M)
+    s = re.sub(r'^[ \t]*(\d+)\)[ \t]+', lambda m: '　　' + m.group(1) + '）', s, flags=re.M)
+    # 7) 连续空行最多保留两行
+    s = re.sub(r'\n{3,}', '\n\n', s)
+    return s.strip()
 
 
 # ============================================================================
@@ -2113,6 +2193,7 @@ def smart_general():
   - 任何场景下都禁止出现这些句子或同义改写：请把大纲/设定/人物/章节资料发给我 / 你需要先提供 / 先把XXX发我 / 我需要你提供 / 期待您的大纲
 """.strip())
     extra_parts.append(dim_hint)
+    extra_parts.append(PLAIN_TEXT_LAYOUT_RULES)
     sys_prompt = base_system + '\n\n' + '\n\n'.join(p for p in extra_parts if p)
 
     # ===== 自动上下文注入：章节原文/维度内容引用块前置 =====
@@ -2155,15 +2236,22 @@ def smart_general():
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
+            # 平台级纯文本清理（先清再解析卡片，避免卡片内残留 Markdown）
+            content = _clean_text_to_plain(content)
             # 解析卡片标记
             cards = _parse_card_markers(content)
-            clean_content = _strip_card_markers(content)
+            clean_content = _clean_text_to_plain(_strip_card_markers(content))
             # 人物卡片兜底：若内容仍为 JSON 数组，转成自然语言
             for card in cards:
                 if card.get('type') == 'SAVE_CHARACTER':
                     c = (card.get('content') or '').strip()
                     if c.startswith('[') or c.startswith('{'):
                         card['content'] = _character_profiles_to_text(c) if c.startswith('[') else _character_profiles_to_text('[' + c + ']')
+                else:
+                    # 统一纯文本清理卡片内容/标题
+                    card['content'] = _clean_text_to_plain(card.get('content', ''))
+                    if card.get('title'):
+                        card['title'] = _clean_text_to_plain(card['title'])
                 yield sse({'type': 'card', 'card': card, 'session_id': session_id})
             # 历史里保存作者原话（不保存注入引用块，避免多轮重复上下文）
             history = load_session_messages(session)
@@ -2301,7 +2389,9 @@ def smart_suggest():
   "suggestions": [
     {{"title": "方案标题（10字内）", "preview": "方案简介（80-150字，说清核心思路和亮点）"}}
   ]
-}}"""
+}}
+
+{PLAIN_TEXT_LAYOUT_RULES}"""
 
     messages = [{'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': f'请生成{spec["label"]}的多选方案'}]
@@ -2496,7 +2586,9 @@ def smart_generate():
 
 {("【技能包指引】\n" + skill_note) if skill_note else ""}
 
-请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。"""
+请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。
+
+{PLAIN_TEXT_LAYOUT_RULES}"""
 
     session = None
     if session_id:
@@ -2538,12 +2630,14 @@ def smart_generate():
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
+            # 平台级纯文本清理（先清再解析卡片）
+            content = _clean_text_to_plain(content)
             # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言，避免带符号英文内容
             if dim_key == 'character_profiles' and content.lstrip().startswith('['):
                 content = _character_profiles_to_text(content)
             # 解析卡片标记（世界观会额外产出地图卡片）
             extra_cards = _parse_card_markers(content)
-            clean_content = _strip_card_markers(content) if extra_cards else content
+            clean_content = _clean_text_to_plain(_strip_card_markers(content)) if extra_cards else content
             card = {
                 'id': str(uuid.uuid4())[:8],
                 'type': spec['card'],
@@ -2553,6 +2647,9 @@ def smart_generate():
             }
             yield sse({'type': 'card', 'card': card, 'session_id': session_id})
             for ec in extra_cards:
+                ec['content'] = _clean_text_to_plain(ec.get('content', ''))
+                if ec.get('title'):
+                    ec['title'] = _clean_text_to_plain(ec['title'])
                 yield sse({'type': 'card', 'card': ec, 'session_id': session_id})
             history = load_session_messages(session)
             history.append({'role': 'user', 'content': f'生成{spec["label"]}：{requirement or suggestion[:50]}'})
@@ -2652,7 +2749,9 @@ def smart_dim_edit():
 {("【技能包指引】\n" + skill_note) if skill_note else ""}
 {character_extra}
 
-请直接输出修订后的完整内容（保留原文中合理的部分，按修改意见调整），不要寒暄，不要解释，不要加 Markdown 标题。"""
+请直接输出修订后的完整内容（保留原文中合理的部分，按修改意见调整），不要寒暄，不要解释，不要加 Markdown 标题。
+
+{PLAIN_TEXT_LAYOUT_RULES}"""
 
     messages = [{'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': f'请修订{spec["label"]}内容'}]
@@ -2667,6 +2766,7 @@ def smart_dim_edit():
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
+            content = _clean_text_to_plain(content)
             # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言
             if dim_key == 'character_profiles' and content.lstrip().startswith('['):
                 content = _character_profiles_to_text(content)
@@ -2777,6 +2877,7 @@ def smart_batch():
                     f'\n\n【作者补充要求】\n{requirement or "无"}'
                     f'{(chr(10) + chr(10) + "【技能包指引】" + chr(10) + skill_note) if skill_note else ""}'
                     f'\n\n请直接输出该维度的设定内容（300-600字），不要寒暄，不要解释。'
+                    f'\n\n{PLAIN_TEXT_LAYOUT_RULES}'
                 )
                 if existing:
                     sys_prompt += f'\n\n【已有内容（可补充完善，不要简单重复）】\n{existing[:400]}'
@@ -2792,7 +2893,7 @@ def smart_batch():
                     yield sse({'type': 'error', 'error': f'{label}生成失败：{e}'})
                     continue
 
-                content = content.strip()
+                content = _clean_text_to_plain(content.strip())
                 generated[dim_key] = content
                 card = {
                     'id': str(uuid.uuid4())[:8],
@@ -2973,7 +3074,9 @@ def smart_deai():
 1. 只输出纯正文，不要输出章节标题（标题由系统保留，不要重复输出）。
 2. 修改后纯正文字数与原文 {orig_wc} 字相近（±10%），保留原章节的剧情走向和钩子，只改文风不改剧情。
    字数统计口径：中文字符+中文标点（全角标点计入，半角标点不计入，英文按单词、数字按串）。请用全角中文标点。
-3. 不要加 Markdown 代码块，不要解释，不要在文末附加字数统计。"""
+3. 不要加 Markdown 代码块，不要解释，不要在文末附加字数统计。
+
+{PLAIN_TEXT_LAYOUT_RULES}"""
 
     messages = [{'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': f'请审校以下章节正文：\n\n{raw_content}'}]
@@ -2989,9 +3092,8 @@ def smart_deai():
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
-            # 去掉可能的 Markdown 代码块包裹
-            content = re.sub(r'^```[a-zA-Z]*\n', '', content)
-            content = re.sub(r'\n```$', '', content).strip()
+            # 平台级纯文本清理（统一去 * 和 #），再处理代码块/标题行
+            content = _clean_text_to_plain(content)
             # 防御性剥离标题行：保证 card.content 为纯正文（与落地字数口径一致）
             _, body_content = _strip_chapter_title(content, fallback_title=chapter.title or '')
             card = {
