@@ -7214,6 +7214,8 @@ function ForeshadowingPanel(props: {
 }) {
   const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks, onAfStatusChange } = props;
   const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
+  // 读取当前智驾会话 id：修正入口首次进入时为 null（新建会话），后续复用同一会话
+  const chatPanelSessionId = useStore((s: any) => s.chatPanelSessionId) as string | null;
   // 从 chapters 派生卷列表和按卷分组的章节（供修正入口的卷选择弹窗使用）
   const volumes = useMemo(() => chapters.filter(c => c.is_volume).sort((a, b) => a.order_index - b.order_index), [chapters]);
   const chaptersByVolume = useMemo(() => {
@@ -7480,7 +7482,8 @@ function ForeshadowingPanel(props: {
     const presetInput = fixTasks.length > 0
       ? `基于${title}的 ${fixTasks.length} 处违规，请在下方任务清单逐条「去修改」`
       : `参考${title}，请选择章节并说明修改意见后点「✨ 修改」`;
-    openChatPanel(bookId, null, { tab: 'chapter', input: presetInput, fixTasks: fixTasks.length > 0 ? fixTasks : undefined });
+    // 首次进入 chatPanelSessionId 为 null（新建会话）；之后复用同一会话延续修正上下文
+    openChatPanel(bookId, chatPanelSessionId, { tab: 'chapter', input: presetInput, fixTasks: fixTasks.length > 0 ? fixTasks : undefined });
   }
 
   // 「AI修正」改为跳转 AI智驾·设定Tab，带结构化任务清单，由用户逐维度协同修正并追踪进度
@@ -7532,7 +7535,8 @@ function ForeshadowingPanel(props: {
     const presetInput = fixTasks.length > 0
       ? `基于${title}的 ${fixTasks.length} 项设定诊断，请在下方任务清单逐条「去修正」`
       : `基于${title}，请检查并修正设定维度的一致性问题。`;
-    openChatPanel(bookId, null, { tab: 'setting', input: presetInput, fixTasks: fixTasks.length > 0 ? fixTasks : undefined });
+    // 首次进入 chatPanelSessionId 为 null（新建会话）；之后复用同一会话延续修正上下文
+    openChatPanel(bookId, chatPanelSessionId, { tab: 'setting', input: presetInput, fixTasks: fixTasks.length > 0 ? fixTasks : undefined });
   }
 
   async function ignoreFixDraft(reportId: string) {

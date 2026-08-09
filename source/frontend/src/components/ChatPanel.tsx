@@ -502,6 +502,7 @@ function SkillPackSelector({ packs, selected, onToggle, compact }: {
 // ============================================================================
 export default function ChatPanel() {
   const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetFixTasks, closeChatPanel } = useStore() as any;
+  const setChatPanelSessionId = useStore((s: any) => s.setChatPanelSessionId) as (id: string | null) => void;
   const [activeTab, setActiveTab] = useState<SmartTab>('setting');
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState('');
@@ -575,50 +576,54 @@ export default function ChatPanel() {
   }, [bookId]);
 
   // 打开时加载基础数据 + 自动加载指定/最新一次聊天会话
-  // 若 store 中有 chatPanelSessionId（从历史对话「继续」按钮传入），优先加载该会话；否则加载最新
+  // 若 store 中有 chatPanelSessionId（从历史对话「继续」按钮或修正入口复用传入），优先加载该会话；否则加载最新
+  // 用 ref 记录上次已加载的 sessionId，避免 sessionId 同步回 store 后重复加载导致消息闪烁
+  const loadedSessionRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    if (chatPanelOpen && bookId) {
-      refreshProgress();
-      refreshHistory();
-      api.smartDimensions().then(r => setDimensions(r.dimensions || [])).catch(() => {});
-      api.listSkillPacks().then(all => setSkillPacks(all || [])).catch(() => {});
-      api.smartDeaiPacks().then(r => setDeaiPacks(r.packs || [])).catch(() => {});
-      api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
-      api.smartVolumes(bookId).then(r => setVolumes(r.volumes || [])).catch(() => {});
-      api.smartLatestChapter(bookId).then(r => {
-        setLatestChapter(r.latest);
-        setNextChapterNum(r.next_chapter_num);
-      }).catch(() => {});
-      // 加载会话：优先 chatPanelSessionId 指定的，否则最新
-      (async () => {
-        try {
-          const r = await api.listBookChatSessions(bookId);
-          const sessions = r.sessions || [];
-          let target = null;
-          if (chatPanelSessionId) {
-            target = sessions.find((s: any) => s.id === chatPanelSessionId) || null;
-          }
-          if (!target && sessions.length > 0) {
-            target = sessions[0];
-          }
-          if (target) {
-            setSessionId(target.id);
-            const msgR = await api.getChatSessionMessages(target.id);
-            const loaded: AIMessage[] = (msgR.messages || []).map((m: any) => ({
-              role: m.role || 'assistant',
-              content: m.content || '',
-              cards: Array.isArray(m.cards) ? m.cards : undefined,
-            }));
-            setMessages(loaded);
-          } else {
-            setMessages([]);
-            setSessionId(null);
-          }
-        } catch {
-          setMessages([]);
+    if (!chatPanelOpen || !bookId) return;
+    // 仅在 chatPanelOpen 从 false→true 切换，或显式传入新会话 id 时加载
+    if (loadedSessionRef.current === chatPanelSessionId) return;
+    loadedSessionRef.current = chatPanelSessionId;
+    refreshProgress();
+    refreshHistory();
+    api.smartDimensions().then(r => setDimensions(r.dimensions || [])).catch(() => {});
+    api.listSkillPacks().then(all => setSkillPacks(all || [])).catch(() => {});
+    api.smartDeaiPacks().then(r => setDeaiPacks(r.packs || [])).catch(() => {});
+    api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
+    api.smartVolumes(bookId).then(r => setVolumes(r.volumes || [])).catch(() => {});
+    api.smartLatestChapter(bookId).then(r => {
+      setLatestChapter(r.latest);
+      setNextChapterNum(r.next_chapter_num);
+    }).catch(() => {});
+    // 加载会话：优先 chatPanelSessionId 指定的，否则最新
+    (async () => {
+      try {
+        const r = await api.listBookChatSessions(bookId);
+        const sessions = r.sessions || [];
+        let target = null;
+        if (chatPanelSessionId) {
+          target = sessions.find((s: any) => s.id === chatPanelSessionId) || null;
         }
-      })();
-    }
+        if (!target && sessions.length > 0) {
+          target = sessions[0];
+        }
+        if (target) {
+          setSessionId(target.id);
+          const msgR = await api.getChatSessionMessages(target.id);
+          const loaded: AIMessage[] = (msgR.messages || []).map((m: any) => ({
+            role: m.role || 'assistant',
+            content: m.content || '',
+            cards: Array.isArray(m.cards) ? m.cards : undefined,
+          }));
+          setMessages(loaded);
+        } else {
+          setMessages([]);
+          setSessionId(null);
+        }
+      } catch {
+        setMessages([]);
+      }
+    })();
   }, [chatPanelOpen, bookId, chatPanelSessionId, refreshProgress, refreshHistory]);
 
   // 应用预设：从其它入口（如「修正正文」）跳转进来时切到指定 Tab 并预填输入框/任务清单
@@ -628,6 +633,13 @@ export default function ChatPanel() {
     if (chatPanelPresetInput) setInput(chatPanelPresetInput);
     if (chatPanelPresetFixTasks) setFixTasks(chatPanelPresetFixTasks.map((t: any) => ({ ...t, done: false, chapterId: null })));
   }, [chatPanelOpen, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetFixTasks]);
+
+  // 把本地 sessionId 同步回 store，供修正入口复用同一会话（首次新建后后续复用）
+  // 同步后立即更新 loadedSessionRef，避免 store 变化触发上面的加载 effect 重复加载当前会话
+  useEffect(() => {
+    setChatPanelSessionId(sessionId);
+    loadedSessionRef.current = sessionId;
+  }, [sessionId, setChatPanelSessionId]);
 
   // 章节加载后，为 fixTasks 匹配对应 chapterId（按 location 中的章号/标题匹配）
   useEffect(() => {
@@ -710,11 +722,12 @@ export default function ChatPanel() {
     setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   }, []);
 
-  // 关闭时取消流
+  // 关闭时取消流并重置会话加载标记（下次打开重新加载）
   useEffect(() => {
     if (!chatPanelOpen && abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
+      loadedSessionRef.current = undefined;
     }
   }, [chatPanelOpen]);
 

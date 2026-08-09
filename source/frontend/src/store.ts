@@ -33,6 +33,8 @@ interface AppStore {
   chatPanelBookId: string | null;
   // 待打开的历史会话 id：从历史对话「继续」按钮传入，ChatPanel 读取后自动加载该会话
   chatPanelSessionId: string | null;
+  // 标记首次跳转：AI修正/修正正文首次进入时新建会话，后续复用 chatPanelSessionId
+  chatPanelFixSessionBound: boolean;
   // 打开时预设的 Tab 与输入框内容（用于从其它入口跳转预填，如「修正正文」从防遗忘报告跳入）
   chatPanelPresetTab: 'setting' | 'chapter' | 'deai' | 'review' | null;
   chatPanelPresetInput: string | null;
@@ -51,6 +53,7 @@ interface AppStore {
   setRightPanelWidth: (width: number) => void;
   setLoading: (loading: boolean) => void;
   openChatPanel: (bookId: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
+  setChatPanelSessionId: (sessionId: string | null) => void;
   closeChatPanel: () => void;
   logout: () => void;
 }
@@ -94,6 +97,7 @@ export const useStore = create<AppStore>((set) => ({
   chatPanelOpen: false,
   chatPanelBookId: null,
   chatPanelSessionId: null,
+  chatPanelFixSessionBound: false,
   chatPanelPresetTab: null,
   chatPanelPresetInput: null,
   chatPanelPresetFixTasks: null,
@@ -126,7 +130,8 @@ export const useStore = create<AppStore>((set) => ({
     chatPanelPresetInput: preset?.input ?? null,
     chatPanelPresetFixTasks: preset?.fixTasks ?? null,
   }),
-  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelPresetTab: null, chatPanelPresetInput: null, chatPanelPresetFixTasks: null }),
+  setChatPanelSessionId: (sessionId) => set({ chatPanelSessionId: sessionId }),
+  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelFixSessionBound: false, chatPanelPresetTab: null, chatPanelPresetInput: null, chatPanelPresetFixTasks: null }),
   logout: () => {
     localStorage.removeItem('fanshu-token');
     set({ currentUser: null, books: [], currentBook: null });
