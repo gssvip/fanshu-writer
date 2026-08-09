@@ -575,15 +575,9 @@ export default function ChatPanel() {
     } catch { /* ignore */ }
   }, [bookId]);
 
-  // 打开时加载基础数据 + 自动加载指定/最新一次聊天会话
-  // 若 store 中有 chatPanelSessionId（从历史对话「继续」按钮或修正入口复用传入），优先加载该会话；否则加载最新
-  // 用 ref 记录上次已加载的 sessionId，避免 sessionId 同步回 store 后重复加载导致消息闪烁
-  const loadedSessionRef = useRef<string | null | undefined>(undefined);
+  // 面板打开时加载基础元数据（维度、技能包、章节、卷等）——只要面板开着且有书就加载，不受会话影响
   useEffect(() => {
     if (!chatPanelOpen || !bookId) return;
-    // 仅在 chatPanelOpen 从 false→true 切换，或显式传入新会话 id 时加载
-    if (loadedSessionRef.current === chatPanelSessionId) return;
-    loadedSessionRef.current = chatPanelSessionId;
     refreshProgress();
     refreshHistory();
     api.smartDimensions().then(r => setDimensions(r.dimensions || [])).catch(() => {});
@@ -595,7 +589,16 @@ export default function ChatPanel() {
       setLatestChapter(r.latest);
       setNextChapterNum(r.next_chapter_num);
     }).catch(() => {});
-    // 加载会话：优先 chatPanelSessionId 指定的，否则最新
+  }, [chatPanelOpen, bookId, refreshProgress, refreshHistory]);
+
+  // 加载聊天会话：优先 chatPanelSessionId 指定的，否则最新
+  // 用 ref 记录上次已加载的 sessionId，避免 sessionId 同步回 store 后重复加载导致消息闪烁
+  const loadedSessionRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!chatPanelOpen || !bookId) return;
+    // 仅在会话 id 变化时加载（避免相同 session 下因其他 state 抖动重复加载消息）
+    if (loadedSessionRef.current === chatPanelSessionId) return;
+    loadedSessionRef.current = chatPanelSessionId;
     (async () => {
       try {
         const r = await api.listBookChatSessions(bookId);
@@ -624,7 +627,7 @@ export default function ChatPanel() {
         setMessages([]);
       }
     })();
-  }, [chatPanelOpen, bookId, chatPanelSessionId, refreshProgress, refreshHistory]);
+  }, [chatPanelOpen, bookId, chatPanelSessionId]);
 
   // 应用预设：从其它入口（如「修正正文」）跳转进来时切到指定 Tab 并预填输入框/任务清单
   useEffect(() => {
