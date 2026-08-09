@@ -7431,24 +7431,19 @@ function ForeshadowingPanel(props: {
 
   // 按卷分批选择弹窗已随 AI修正/修正正文 改为跳转 AI智驾而移除
 
-  // 「修正正文」改为跳转 AI智驾·正文Tab，预填违规项作为修改意见，由用户协同改写
+  // 「修正正文」改为跳转 AI智驾·正文Tab，提示违规项供用户参考，由用户选章+写意见协同改写
   function jumpToChatForTextFix(reportId: string) {
     const rec = afReports.find((r: any) => r.id === reportId);
     const rep = rec?.report || {};
     const violations = Array.isArray(rep.violations) ? rep.violations : [];
-    const lines: string[] = [];
-    violations.slice(0, 5).forEach((v: any, i: number) => {
-      const loc = v.location ? `【${v.location}】` : '';
-      const sev = v.severity ? `[${v.severity}]` : '';
-      const desc = v.desc ? `${v.desc}` : '';
-      const fix = v.fix ? `（建议：${v.fix}）` : '';
-      lines.push(`${i + 1}. ${sev}${loc} ${desc}${fix}`);
-    });
     const title = rec?.title ? `「${rec.title}」` : '防遗忘检查报告';
-    const header = violations.length > 0
-      ? `基于${title}的违规项，请逐条修正对应章节正文（保持文风剧情不变，只改写问题段落）：\n`
-      : `基于${title}，请检查并修正正文中的设定一致性问题。`;
-    const presetInput = lines.length > 0 ? header + lines.join('\n') : header;
+    // 预填简明引导：列出违规项位置，提示用户在下拉选章 + 输入框写修改意见
+    const locs = violations.slice(0, 5)
+      .filter((v: any) => v.location)
+      .map((v: any) => `${v.location}：${v.desc || ''}${v.fix ? `（建议${v.fix}）` : ''}`);
+    const presetInput = locs.length > 0
+      ? `参考${title}违规项，逐章修正：\n${locs.join('\n')}\n\n请在上方下拉选择章节，输入框写明修改意见后点「✨ 修改」`
+      : `参考${title}，请检查并修正正文设定一致性问题。请在上方下拉选择章节，输入框写明修改意见后点「✨ 修改」`;
     openChatPanel(bookId, null, { tab: 'chapter', input: presetInput });
   }
 

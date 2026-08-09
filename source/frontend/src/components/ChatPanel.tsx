@@ -531,6 +531,7 @@ export default function ChatPanel() {
   const [volumes, setVolumes] = useState<Array<{ id: string; title: string; order_index: number; chapter_count: number }>>([]);
   // 正文/去AI/校审 各自的章节选择（独立）
   const [deaiTargetId, setDeaiTargetId] = useState<string | null>(null);         // 去AITab：去味目标章节
+  const [chapterTargetId, setChapterTargetId] = useState<string | null>(null);   // 正文Tab：修改目标章节
   const [reviewChapterId, setReviewChapterId] = useState<string | null>(null);   // 校审Tab：一致性检查章节
   const [reviewVolumeIds, setReviewVolumeIds] = useState<string[]>([]);          // 校审Tab：按卷检查
   const [deaiPacks, setDeaiPacks] = useState<Array<{ id: string; name: string; description: string; icon: string; priority: number }>>([]);
@@ -1400,6 +1401,24 @@ export default function ChatPanel() {
                       title="刷新章节定位（写作后会自动填入新章节到目录）"
                     >🔄</button>
                   </div>
+                  {/* 章节选择器（用于「修改」模式定位目标章节） */}
+                  <div className="smart-chapter-select">
+                    <label>修改目标章节：</label>
+                    {chapters.length === 0 ? (
+                      <span className="smart-empty-hint">暂无章节</span>
+                    ) : (
+                      <select
+                        value={chapterTargetId || ''}
+                        onChange={e => setChapterTargetId(e.target.value)}
+                        disabled={streaming}
+                      >
+                        <option value="">从输入框解析章节号</option>
+                        {[...chapters].sort((a, b) => b.order_index - a.order_index).slice(0, 30).map(c => (
+                          <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}（{c.word_count}字）</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
                   {/* 写作 / 修改 两按钮一排（直接执行，无需切换模式） */}
                   <div className="smart-chapter-actions smart-chapter-actions-row">
                     <button
@@ -1412,14 +1431,19 @@ export default function ChatPanel() {
                       className="smart-action-btn"
                       onClick={() => {
                         const text = input.trim();
+                        // 有选中章节时，直接修改该章节（输入框作为修改意见，可为空）
+                        if (chapterTargetId) {
+                          doChapterActionWithNote('polish', chapterTargetId, text || '按检查报告修正违规项');
+                          return;
+                        }
                         if (!text) {
-                          setStreamError('请在输入框说明要修改哪一章及修改意见（如「第3章，增加主角心理描写」）');
+                          setStreamError('请在输入框说明要修改哪一章及修改意见（如「第3章，增加主角心理描写」），或在上方下拉选择章节');
                           return;
                         }
                         handleChapterSend();
                       }}
                       disabled={streaming || chapters.length === 0}
-                      title="修改已写章节（在输入框写明章节号和修改意见）"
+                      title="修改已写章节（下拉选章或输入框写明章节号和修改意见）"
                     >✨ 修改</button>
                   </div>
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} compact />
