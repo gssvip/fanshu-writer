@@ -2154,6 +2154,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   font-size: 10px; padding: 1px 6px; border-radius: 8px;
   background: #f3f4f6; color: #6b7280;
 }
+.fix-task-dim-tag {
+  font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 500;
+  background: #ede9fe; color: #6c5ce7;
+}
 .fix-task-desc { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
 .fix-task-fix { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
 .fix-task-action {

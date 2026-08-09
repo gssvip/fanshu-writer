@@ -536,8 +536,8 @@ export default function ChatPanel() {
   const [reviewVolumeIds, setReviewVolumeIds] = useState<string[]>([]);          // 校审Tab：按卷检查
   const [deaiPacks, setDeaiPacks] = useState<Array<{ id: string; name: string; description: string; icon: string; priority: number }>>([]);
   const [reviewing, setReviewing] = useState(false);
-  // 修正任务清单（从防遗忘报告违规项带入，支持多章连续修正并追踪进度）
-  const [fixTasks, setFixTasks] = useState<Array<{ location: string; desc: string; fix: string; severity?: string; done?: boolean; chapterId?: string | null }>>([]);
+  // 修正任务清单（从防遗忘报告违规项带入，支持多章/多维度连续修正并追踪进度）
+  const [fixTasks, setFixTasks] = useState<Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string; done?: boolean; chapterId?: string | null }>>([]);
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -545,6 +545,8 @@ export default function ChatPanel() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // 追踪正在修改的章节（用于修改完成后自动标记任务清单 done）
   const polishingChapterIdRef = useRef<string | null>(null);
+  // 追踪正在修正的设定维度（设定Tab修正完成后自动标记任务清单 done）
+  const fixingDimKeyRef = useRef<string | null>(null);
 
   const bookId = chatPanelBookId;
 
@@ -647,14 +649,41 @@ export default function ChatPanel() {
     }));
   }, [chapters, fixTasks.length]);
 
-  // 修改完成后自动标记对应任务为 done（streaming 从 true→false 且有记录的章节）
+  // 修改完成后自动标记对应任务为 done（streaming 从 true→false 且有记录的章节/维度）
   useEffect(() => {
     if (streaming) return;
     const chId = polishingChapterIdRef.current;
-    if (!chId || fixTasks.length === 0) return;
+    const dimKey = fixingDimKeyRef.current;
+    if (!chId && !dimKey) return;
+    if (fixTasks.length === 0) return;
     polishingChapterIdRef.current = null;
-    setFixTasks(prev => prev.map(t => (t.chapterId === chId && !t.done) ? { ...t, done: true } : t));
+    fixingDimKeyRef.current = null;
+    setFixTasks(prev => prev.map(t => {
+      if (t.done) return t;
+      if (chId && t.chapterId === chId) return { ...t, done: true };
+      if (dimKey && t.dimKey === dimKey) return { ...t, done: true };
+      return t;
+    }));
   }, [streaming, fixTasks.length]);
+
+  // 设定维度匹配：根据任务 location/desc 文本推断对应维度 key（仅未匹配 dimKey 的任务）
+  useEffect(() => {
+    if (fixTasks.length === 0) return;
+    setFixTasks(prev => prev.map(t => {
+      if (t.dimKey) return t; // 已匹配过的跳过
+      const text = `${t.location || ''} ${t.desc || ''} ${t.fix || ''}`;
+      let dimKey: string | undefined;
+      if (/人物|角色|主角|配角|性格|外貌|背景故事/.test(text)) dimKey = 'character_profiles';
+      else if (/伏笔|铺垫|预示|回收|埋下/.test(text)) dimKey = 'foreshadowing';
+      else if (/世界观|世界设定|地理|国家|大陆|城邦|历史/.test(text)) dimKey = 'worldbuilding';
+      else if (/规则|能力|体系|科技|魔法|修炼|等级/.test(text)) dimKey = 'key_rules';
+      else if (/剧情|大纲|情节|主线|支线|转折|高潮/.test(text)) dimKey = 'plot_design';
+      else if (/时间线|时间|年代|顺序|先后/.test(text)) dimKey = 'timeline';
+      else if (/构思|概念|主题|卖点|核心/.test(text)) dimKey = 'concept';
+      else dimKey = 'general';
+      return { ...t, dimKey };
+    }));
+  }, [fixTasks.length]);
 
   // 正文写作默认要求（切到正文Tab且输入框为空/为旧默认值时自动填入）
   const CHAPTER_DEFAULT_INPUT = '接上一章剧情，读取剧情维度本章剧情，保证剧情连贯、逻辑清晰。极致模仿人的写作习惯，自然没ai味儿。写事为主，景一笔带过，非必要不用比喻/拟人等修辞，句子阅读感强及顺畅。';
@@ -795,6 +824,8 @@ export default function ChatPanel() {
     setStreamError('');
     setSuggestions([]);
     streamBufferRef.current = '';
+    // 记录正在修正的维度（用于任务清单自动标记 done）
+    fixingDimKeyRef.current = selectedDim;
     appendUserAi(`选中方案：${suggestion.title} — ${suggestion.preview}`);
     setStreaming(true);
     const ctrl = new AbortController();
@@ -822,6 +853,8 @@ export default function ChatPanel() {
     setInput('');
     setStreamError('');
     streamBufferRef.current = '';
+    // 记录正在修正的维度（用于任务清单自动标记 done）
+    fixingDimKeyRef.current = selectedDim;
     const dimLabel = dimensions.find(d => d.key === selectedDim)?.label || selectedDim;
     appendUserAi(`修订${dimLabel}：${text}`);
     setStreaming(true);
@@ -1416,6 +1449,75 @@ export default function ChatPanel() {
                     </div>
                   </div>
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} compact />
+                  {/* 修正任务清单（从防遗忘报告违规项带入，支持多维度连续修正并追踪进度） */}
+                  {fixTasks.length > 0 && (
+                    <div className="fix-tasks-panel">
+                      <div className="fix-tasks-head">
+                        <span className="fix-tasks-title">📋 设定修正任务清单</span>
+                        <span className="fix-tasks-progress">
+                          {fixTasks.filter(t => t.done).length}/{fixTasks.length} 已完成
+                        </span>
+                      </div>
+                      <div className="fix-tasks-list">
+                        {fixTasks.map((task, idx) => {
+                          const dimLabel = task.dimKey ? (dimensions.find(d => d.key === task.dimKey)?.label || task.dimKey) : '未匹配';
+                          const dimIcon = task.dimKey ? (dimensions.find(d => d.key === task.dimKey)?.icon || '📌') : '❓';
+                          return (
+                            <div key={idx} className={`fix-task-item ${task.done ? 'fix-task-done' : ''}`}>
+                              <label className="fix-task-check">
+                                <input
+                                  type="checkbox"
+                                  checked={!!task.done}
+                                  onChange={() => setFixTasks(prev => prev.map((t, i) => i === idx ? { ...t, done: !t.done } : t))}
+                                  disabled={streaming}
+                                />
+                              </label>
+                              <div className="fix-task-content">
+                                <div className="fix-task-location">
+                                  {task.location || '（未指定位置）'}
+                                  <span className="fix-task-dim-tag">{dimIcon} {dimLabel}</span>
+                                  {task.severity && <span className={`fix-task-sev sev-${task.severity}`}>{task.severity}</span>}
+                                </div>
+                                <div className="fix-task-desc">{task.desc}</div>
+                                {task.fix && <div className="fix-task-fix">建议：{task.fix}</div>}
+                              </div>
+                              {task.dimKey && task.dimKey !== 'general' && !task.done && (
+                                <button
+                                  className="fix-task-action"
+                                  disabled={streaming || loadingSuggest}
+                                  onClick={() => {
+                                    setSelectedDim(task.dimKey!);
+                                    setSuggestions([]);
+                                    setInput(`修正意见：${task.desc}${task.fix ? `（${task.fix}）` : ''}`);
+                                  }}
+                                  title="定位到该维度并填充修正意见"
+                                >去修正</button>
+                              )}
+                              {task.done && <span className="fix-task-done-tag">✓ 已处理</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {/* 一键继续下一个未完成的设定任务 */}
+                      {fixTasks.some(t => !t.done) && (
+                        <button
+                          className="fix-tasks-continue"
+                          disabled={streaming || loadingSuggest}
+                          onClick={() => {
+                            const next = fixTasks.find(t => !t.done && t.dimKey && t.dimKey !== 'general');
+                            if (!next || !next.dimKey) return;
+                            setSelectedDim(next.dimKey);
+                            setSuggestions([]);
+                            setInput(`修正意见：${next.desc}${next.fix ? `（${next.fix}）` : ''}`);
+                          }}
+                          title="自动定位到第一个未完成的维度并填充意见"
+                        >▶ 继续下一个未完成</button>
+                      )}
+                      {fixTasks.every(t => t.done) && (
+                        <div className="fix-tasks-all-done">🎉 全部设定修正任务已完成</div>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
 

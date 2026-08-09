@@ -186,7 +186,7 @@ export default function WritePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const bookId = searchParams.get('book');
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string }> }) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
 
   const [book, setBook] = useState<Book | null>(null);
   const [books, setBooks] = useState<Book[]>([]);
@@ -2186,7 +2186,7 @@ function ConceptPanel(props: {
     onExecuteConceptAi, onCancelConceptAi, onEditConceptAiPrompt,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
     bookId, aiSessions, onRefreshSessions, onDeleteAiSessions, onRenameAiSession, onResumeAiSession } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string }> }) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const selectedCount = selectedSkillPackIds.length;
@@ -2673,7 +2673,7 @@ function ChapterPanel(props: {
     chapterLangStyles: langStyles, onToggleChapterLangStyle,
     batchCount, onBatchCountChange, batchCreating, batchProgress, onBatchCreate,
   } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string }> }) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [langStyleExpanded, setLangStyleExpanded] = useState(false);
@@ -7213,7 +7213,7 @@ function ForeshadowingPanel(props: {
   onAfStatusChange?: (pendingCount: number, alert: { reportId: string; title: string; score?: number; auto?: boolean } | null) => void;
 }) {
   const { bookId, bible, onBibleUpdate, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, selectedSkillPacks, onAfStatusChange } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string }> }) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
   const [foreshadowing, setForeshadowing] = useState('');
   const [foreVolumes, setForeVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
@@ -7448,32 +7448,42 @@ function ForeshadowingPanel(props: {
     openChatPanel(bookId, null, { tab: 'chapter', input: presetInput, fixTasks: fixTasks.length > 0 ? fixTasks : undefined });
   }
 
-  // 「AI修正」改为跳转 AI智驾·设定Tab，预填诊断要点，由 AI 协同产出设定维度卡片后采纳
+  // 「AI修正」改为跳转 AI智驾·设定Tab，带结构化任务清单，由用户逐维度协同修正并追踪进度
   function jumpToChatForSettingFix(reportId: string) {
     const rec = afReports.find((r: any) => r.id === reportId);
     const rep = rec?.report || {};
     const title = rec?.title ? `「${rec.title}」` : '防遗忘检查报告';
-    const lines: string[] = [];
+    // 把违规项转为结构化任务清单（每条带 location/desc/fix，由 ChatPanel 自动匹配维度 dimKey）
     const violations = Array.isArray(rep.violations) ? rep.violations : [];
-    violations.slice(0, 5).forEach((v: any, i: number) => {
-      const loc = v.location ? `【${v.location}】` : '';
-      const desc = v.desc ? `${v.desc}` : '';
-      const fix = v.fix ? `（建议：${v.fix}）` : '';
-      lines.push(`${i + 1}. ${loc} ${desc}${fix}`);
-    });
+    const fixTasks = violations
+      .slice(0, 8)
+      .map((v: any) => ({ location: String(v.location || ''), desc: String(v.desc || ''), fix: String(v.fix || ''), severity: v.severity }));
+    // 待回收伏笔单列任务（强制归到 foreshadowing 维度）
     const pf = Array.isArray(rep.pending_foreshadowing) ? rep.pending_foreshadowing : [];
     pf.slice(0, 3).forEach((f: any) => {
-      lines.push(`· 待回收伏笔：${f.content || ''}${f.suggest_chapter ? `（建议回收于 ${f.suggest_chapter}）` : ''}`);
+      fixTasks.push({
+        location: '伏笔',
+        desc: `待回收伏笔：${f.content || ''}`,
+        fix: f.suggest_chapter ? `建议回收于 ${f.suggest_chapter}` : '安排后续章节回收',
+        severity: 'medium',
+        dimKey: 'foreshadowing',
+      });
     });
+    // 叙事债务单列任务（归到 plot_design 维度）
     const nd = Array.isArray(rep.narrative_debt) ? rep.narrative_debt : [];
     nd.slice(0, 3).forEach((d: any) => {
-      lines.push(`· 叙事债务：${d.promise || ''}${d.status ? `（${d.status}）` : ''}`);
+      fixTasks.push({
+        location: '叙事债务',
+        desc: `叙事债务：${d.promise || ''}`,
+        fix: d.status ? `当前状态：${d.status}` : '在后续章节补足兑现',
+        severity: 'medium',
+        dimKey: 'plot_design',
+      });
     });
-    const header = lines.length > 0
-      ? `基于${title}的诊断，请修正对应设定维度（人物/世界规则/伏笔/时间线等），保持核心设定不变，只补正不一致项：\n`
+    const presetInput = fixTasks.length > 0
+      ? `基于${title}的 ${fixTasks.length} 项设定诊断，请在下方任务清单逐条「去修正」`
       : `基于${title}，请检查并修正设定维度的一致性问题。`;
-    const presetInput = lines.length > 0 ? header + lines.join('\n') : header;
-    openChatPanel(bookId, null, { tab: 'setting', input: presetInput });
+    openChatPanel(bookId, null, { tab: 'setting', input: presetInput, fixTasks: fixTasks.length > 0 ? fixTasks : undefined });
   }
 
   async function ignoreFixDraft(reportId: string) {
