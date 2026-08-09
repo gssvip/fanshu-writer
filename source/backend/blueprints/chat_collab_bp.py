@@ -147,13 +147,71 @@ def _smart_truncate(text: str, limit: int) -> str:
     return (cut[:last_break] if last_break > limit // 2 else cut) + '\n…（已截断）'
 
 
-def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapter_num: int = None) -> str:
+def _build_toc_block(book_id, max_items: int = 200) -> str:
+    """构建章节目录（按卷分组）块，供智驾聊天 system prompt 注入。
+    让 AI 知道完整目录，用户提"第N章/某卷"时可精准定位，不再索要资料。
+    输出：
+      第1卷《XXX》
+        第1章 XXX（2350字）
+        ...
+    """
+    try:
+        from app import Chapter, parse_chapter_number
+        from sqlalchemy import or_
+        rows = Chapter.query.filter_by(book_id=book_id).all()
+        if not rows:
+            return ''
+        # 按 order_index 排序（卷+章统一 order）
+        rows_sorted = sorted(rows, key=lambda c: (c.parent_id or '', c.order_index or 0))
+        vol_map = {v.id: v for v in rows_sorted if v.is_volume}
+        # 分组：卷 -> 该卷章节
+        from collections import OrderedDict
+        groups: 'OrderedDict[str, list]' = OrderedDict()
+        orphans = []
+        for c in rows_sorted:
+            if c.is_volume:
+                groups.setdefault(c.id, [])
+                continue
+            pid = c.parent_id
+            if pid and pid in vol_map:
+                groups.setdefault(pid, []).append(c)
+            else:
+                orphans.append(c)
+        lines = []
+        total = 0
+        for vid, chs in groups.items():
+            vol = vol_map.get(vid)
+            if vol:
+                lines.append(f'第{vol.order_index or 1}卷《{vol.title or "未命名卷"}》')
+            for ch in chs:
+                if total >= max_items:
+                    break
+                wc = ch.word_count or 0
+                lines.append(f'  {ch.title or ""}（{wc}字）')
+                total += 1
+            if total >= max_items:
+                break
+        if orphans and total < max_items:
+            if groups:
+                lines.append('【未分卷章节】')
+            for ch in orphans[:max_items - total]:
+                wc = ch.word_count or 0
+                lines.append(f'  {ch.title or ""}（{wc}字）')
+        if not lines:
+            return ''
+        return '\n'.join(lines)
+    except Exception:
+        return ''
+
+
+def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapter_num: int = None, toc_block: str = None) -> str:
     """构建维度感知的聊天 system_prompt。
 
-    注入当前书的全部 bible 维度 + 最近章节 + Action Card 使用说明 + 创作进度。
-    维度内容完整注入，不做截断（避免信息缺失导致错乱）。
+    注入当前书的全部 bible 维度 + 章节目录 + Action Card 使用说明 + 创作进度。
+    维度内容完整注入，不截断（避免信息缺失导致错乱）。
     recent_chapters: 最近章节列表（dict: title/word_count/order_index），由 chat_smart 注入
-    next_chapter_num: 下一章应使用的章节号（与写作/修改/去AI统一口径），用于约束 SAVE_CHAPTER 卡片标题
+    next_chapter_num: 下一章应使用的章节号（与写作/修改/去AI统一口径）
+    toc_block: 按卷分组的章节目录（可选，_build_toc_block 生成）
     """
     parts = [
         '你是一位资深网文创作副驾，正在和作者协作创作一部小说。你的职责：',
@@ -226,6 +284,33 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
             pass
     else:
         parts.append('\n【创作状态】这是一本新书，还没有任何设定，需要从头讨论。')
+
+    # 章节目录（按卷分组）：让AI根据章号/标题精准定位，不再向用户索要资料
+    if toc_block:
+        parts.append('\n【章节目录】（用户提"第N章""某卷""某章标题"时，你必须基于此定位章节，直接输出修改方案/续写，绝不要让用户"把资料发给你"）')
+        parts.append(toc_block)
+
+    # 维度入口：让AI知道改某维度内容直接用对应卡片/或基于已有内容输出
+    parts.append("""
+【维度与章节定位铁律·永远遵守】
+1. 绝对禁止回复"请把大纲/设定/人物/章节资料发给我""你需要先提供XXX资料"这类话。
+   上面【已设定·XXX】和【章节目录】中已有完整数据；若某个维度确实为空，直接说"这个维度还是空白，咱们从零开始…"，然后给出方案建议即可。
+2. 用户提到以下关键词 → 直接基于对应的【已设定·XXX】内容进行讨论/修改：
+   - "构思/故事核/核心冲突" → 核心构思
+   - "世界观/世界设定/地理" → 世界观
+   - "设定/规则/体系/能力/修炼" → 核心规则
+   - "人物/角色/主角/配角/XXX（人名）" → 人物档案
+   - "大纲/剧情线/主线/支线/五幕" → 大纲
+   - "时间线/时间/年代" → 剧情时间线
+   - "伏笔/铺垫/伏笔回收" → 伏笔
+   - "地点/场景/XXX（地名）" → 地点
+   - "文风/叙事风格" → 文风指南
+3. 用户提到"第N章/某章标题/某卷"：
+   - 若要求"修改/调整/润色/改改"：基于该章位置上下文讨论具体改动建议，产出 SAVE_CHAPTER 卡片或详细修改方案；
+   - 若要求"接着写/续写"：严格按【章节号铁律】写新章节；
+   - 不要让用户再把正文发给你（系统后续会自动把该章原文注入上下文）。
+4. 当确实缺少具体细节（如改第5章但要改某句特定措辞），只问具体要改什么，不要笼统要资料。
+""".strip())
 
     # Action Card 使用说明
     parts.append(_CARD_INSTRUCTIONS)
@@ -488,10 +573,26 @@ def chat_smart():
         db.session.commit()
     session_id = session.id
 
-    # 构建 system_prompt + 上下文
-    system_prompt = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num)
+    # 构建 system_prompt + 上下文（注入章节目录）
+    toc_block = _build_toc_block(book_id)
+    system_prompt = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block)
+
+    # 自动上下文注入：根据用户输入识别提及的章节/维度，将原文/维度内容作为"引用前言"前置到用户消息中
+    # 同时生成命中信息，在 SSE 首个 meta 事件中回传给前端做"已定位"提示
+    auto_ctx_block, auto_ctx_info = _build_auto_context_block(message, book_id, bb)
+    enriched_user_message = message
+    if auto_ctx_block:
+        enriched_user_message = (
+            '（以下为系统根据作者输入自动从当前书库载入的引用资料，用于辅助回答；作者原话为最后的"【作者原话】"段。\n'
+            '回答时直接基于这些资料讨论/修改，严禁再让作者"把资料发给我"；若引用中的某维度为空，直接说明为空并给出建议。）\n\n'
+            f'{auto_ctx_block}\n\n'
+            '——————————————————\n'
+            '【作者原话】\n'
+            f'{message}'
+        )
+
     history = load_session_messages(session)
-    messages = build_context_messages(system_prompt, history, message)
+    messages = build_context_messages(system_prompt, history, enriched_user_message)
 
     # 获取 LLM 配置 + gateway
     cfg = AIConfig.get_active()
@@ -504,6 +605,10 @@ def chat_smart():
     def generate():
         full_text = []
         try:
+            # SSE 首帧 meta：返回命中的章节/维度（用于前端回显"已定位并注入…"提示）
+            if auto_ctx_info['chapters'] or auto_ctx_info['dims']:
+                yield f'data: {json.dumps({"type": "meta", "kind": "auto_context", "info": auto_ctx_info}, ensure_ascii=False)}\n\n'
+
             for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=4096):
                 full_text.append(chunk)
                 yield f'data: {json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)}\n\n'
@@ -1680,6 +1785,168 @@ def _build_dim_context(book, bb, dim_key, with_self=True):
             if dim_key == 'character_profiles' and self_content.startswith('['):
                 self_content = _character_profiles_to_text(self_content)
     return ctx, self_content
+
+
+# 通用聊天：自动根据用户输入定位相关章节原文/维度内容并注入上下文
+# 让 AI 不再需要回复"请把资料发我"
+# ============================================================================
+
+# 关键词映射 -> 维度 key（含同义词，便于用户自由表达时命中）
+_DIM_KEYWORD_MAP = [
+    ('concept',            ['构思', '核心构思', '故事核', '核心冲突', '卖点', '一句话', '故事梗概']),
+    ('key_rules',          ['设定', '核心规则', '规则', '能力体系', '修炼体系', '科技树', '等级', '境界', '功法', '体系']),
+    ('worldbuilding',      ['世界观', '世界设定', '地理', '大陆', '国家', '城邦', '势力', '历史', '世界背景']),
+    ('plot_design',        ['大纲', '剧情大纲', '主线', '支线', '五幕', '三幕', '起承转合', '剧情线', '整体大纲']),
+    ('timeline',           ['剧情', '时间线', '时间', '年代', '剧情时间', '顺序', '先后', '事件顺序']),
+    ('character_profiles', ['人物', '角色', '主角', '配角', '反派', '性格', '外貌', '背景故事', '人物档案', '人物设定', '角色设定']),
+    ('foreshadowing',      ['伏笔', '铺垫', '预示', '伏笔回收', '回收伏笔', '埋设', '暗线']),
+    ('locations',          ['地图', '地点', '场景', '势力分布', '世界地图', '地理位置', '地名']),
+    ('style_guide',        ['文风', '叙事风格', '风格', '调性', '语言风格', '写作风格', '文笔']),
+]
+
+
+def _detect_mentions(user_text, book_id, bb):
+    """从用户输入中识别提及的章节（号/标题关键词）和维度。
+    返回：{'chapters': [Chapter 对象列表，按命中顺序去重], 'dims': [dim_key 列表，按命中顺序去重]}
+    """
+    from app import Chapter, parse_chapter_number
+    user_text = user_text or ''
+    # 1) 章节识别：章号
+    hit_chapters = []
+    hit_ids = set()
+    try:
+        all_chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+        def _ch_num(c):
+            n = parse_chapter_number(c.title or '')
+            return (0, n) if n is not None else (1, c.order_index)
+        all_chs_sorted = sorted(all_chs, key=_ch_num)
+        # 章号正则（支持第N章/第N回/Chapter N）
+        nums_found = []
+        suffix = '章节回卷部篇话集幕折更段讲课夜日年季场'
+        for m in re.finditer(r'第\s*([0-9零一二三四五六七八九十百千万亿两〇]+)\s*([' + suffix + r'])', user_text):
+            n = _cn_to_int(m.group(1))
+            if n is not None and n not in nums_found:
+                nums_found.append(n)
+        for m in re.finditer(r'(?:chapter|ch|episode|ep)\.?\s*(\d+)', user_text, re.IGNORECASE):
+            n = int(m.group(1))
+            if n not in nums_found:
+                nums_found.append(n)
+        for n in nums_found:
+            for c in all_chs_sorted:
+                cn = parse_chapter_number(c.title or '')
+                if cn == n:
+                    if c.id not in hit_ids:
+                        hit_chapters.append(c)
+                        hit_ids.add(c.id)
+                    break
+        # 章节标题关键词（除章号外的其余片段，若匹配某章标题中包含则命中，最多1章）
+        # 先去掉已命中章号的子串，避免重复匹配
+        remaining = re.sub(r'第\s*[0-9零一二三四五六七八九十百千万亿两〇]+\s*[' + suffix + r']', '', user_text)
+        remaining = re.sub(r'(?:chapter|ch|episode|ep)\.?\s*\d+', '', remaining, flags=re.IGNORECASE)
+        # 提取"XXX章"中章号后面的章节名关键词，长度>=2
+        name_match = re.search(r'章\s*([\u4e00-\u9fffA-Za-z0-9]{2,})', user_text)
+        if name_match:
+            kw = name_match.group(1)
+            for c in all_chs_sorted:
+                if c.id in hit_ids:
+                    continue
+                t = (c.title or '').strip()
+                # 仅命中不是章号部分的文字
+                t_without_num = re.sub(r'^第\s*[0-9零一二三四五六七八九十百千万亿两〇]+\s*章\s*', '', t)
+                if kw and (kw in t or kw in t_without_num):
+                    hit_chapters.append(c)
+                    hit_ids.add(c.id)
+                    break
+    except Exception:
+        pass
+
+    # 2) 维度识别：关键词命中
+    dims = []
+    dim_keys_seen = set()
+    for dim_key, kws in _DIM_KEYWORD_MAP:
+        for kw in kws:
+            if kw and kw in user_text:
+                if dim_key not in dim_keys_seen:
+                    dims.append(dim_key)
+                    dim_keys_seen.add(dim_key)
+                break
+    # 如果提到"设定"但没提"核心规则"单独词，可能用户泛指，保留一次
+    # （已在关键词中直接映射为 key_rules，保持一致即可）
+
+    return {'chapters': hit_chapters[:5], 'dims': dims[:5]}
+
+
+def _cn_to_int(s):
+    """中文数字转 int（轻量版，覆盖聊天场景常见范围）。"""
+    if not s:
+        return None
+    if re.fullmatch(r'\d+', s):
+        return int(s)
+    digit_map = {'零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10, '百': 100, '千': 1000, '万': 10000, '亿': 100000000}
+    total, section, num = 0, 0, 0
+    for ch in s:
+        v = digit_map.get(ch)
+        if v is None:
+            return None
+        if v >= 10:
+            section = (num or 1) * v
+            total += section
+            num = 0
+            if v >= 10000:
+                total = section
+                section = 0
+        else:
+            num = v
+    return total + num
+
+
+def _build_auto_context_block(user_text, book_id, bb):
+    """根据用户提及自动构建引用块（章节原文 + 维度内容摘要）。
+    返回：(block_str, info_dict) — info_dict 供前端回显命中的章节/维度名。
+    """
+    mentions = _detect_mentions(user_text, book_id, bb)
+    if not mentions['chapters'] and not mentions['dims']:
+        return '', {'chapters': [], 'dims': []}
+
+    lines = []
+    info_chapters = []
+    info_dims = []
+
+    for ch in mentions['chapters']:
+        title = ch.title or f'第{ch.order_index}章'
+        raw = (ch.content or '').strip()
+        # 正文过长（>1500字）截断中段保留首尾，关键信息不丢
+        if len(raw) > 1500:
+            head = raw[:800]
+            tail = raw[-700:]
+            snippet = head + '\n…（中间已省略，约' + str(max(0, len(raw) - 1500)) + '字）…\n' + tail
+        else:
+            snippet = raw or '（章节尚无正文）'
+        wc = ch.word_count or len(raw)
+        lines.append(f'【引用·章节原文】{title}（{wc}字，已自动从章节表载入，无需作者再发）')
+        lines.append(snippet)
+        info_chapters.append({'id': ch.id, 'title': title})
+
+    for dim_key in mentions['dims']:
+        spec = _DIM_KEY_TO_SPEC.get(dim_key)
+        if not spec:
+            continue
+        label = spec['label']
+        raw = ''
+        if bb:
+            raw = (getattr(bb, spec['field'], '') or '').strip()
+            if dim_key == 'character_profiles' and raw.startswith('['):
+                raw = _character_profiles_to_text(raw)
+        if raw:
+            snippet = raw if len(raw) <= 2500 else (raw[:1800] + '\n…（中间省略）…\n' + raw[-700:])
+            lines.append(f'【引用·维度内容】{label}（已从设定库载入，无需作者再发）')
+            lines.append(snippet)
+        else:
+            lines.append(f'【引用·维度内容】{label}（此维度目前还是空白）')
+        info_dims.append({'key': dim_key, 'label': label})
+
+    block = '\n\n'.join(lines)
+    return block, {'chapters': info_chapters, 'dims': info_dims}
 
 
 def _character_profiles_to_text(json_str):

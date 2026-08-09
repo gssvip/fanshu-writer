@@ -1832,6 +1832,33 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
 .chat-send.stop { background: #ef4444; }
 
+/* 自动上下文命中提示条 */
+.auto-context-notice {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; margin: 0 12px 8px 12px;
+  background: linear-gradient(90deg, rgba(59,130,246,0.08), rgba(16,185,129,0.08));
+  border: 1px solid rgba(59,130,246,0.25);
+  border-radius: 10px;
+  font-size: 12px; color: var(--text-primary);
+  cursor: pointer; user-select: none;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+.auto-context-notice .acn-icon { flex-shrink: 0; font-size: 14px; }
+.auto-context-notice .acn-text { flex: 1; min-width: 0; line-height: 1.5; word-break: break-all; }
+.auto-context-notice .acn-sub { color: var(--text-muted); }
+.auto-context-notice .acn-chips { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; flex-wrap: wrap; }
+.auto-context-notice .acn-chip {
+  display: inline-block;
+  padding: 1px 6px; background: var(--bg-primary);
+  border: 1px solid var(--border-color); border-radius: 4px;
+  font-size: 11px; color: var(--text-secondary);
+  max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+}
+@media (max-width: 640px) {
+  .auto-context-notice { margin: 0 10px 8px 10px; padding: 8px 10px; }
+  .auto-context-notice .acn-chip { max-width: 90px; }
+}
+
 .chat-error {
   align-self: center; padding: 8px 12px; background: #fee;
   border: 1px solid #fca5a5; border-radius: 8px;

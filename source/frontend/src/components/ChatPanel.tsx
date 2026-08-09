@@ -22,7 +22,8 @@ type SseEvent =
   | { type: 'delta'; content: string }
   | { type: 'card'; card: ActionCard; session_id: string; meta?: any }
   | { type: 'done'; session_id: string }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string }
+  | { type: 'meta'; kind: string; info?: any };
 
 // SSE 流解析
 async function* parseSSE(response: Response): AsyncGenerator<SseEvent> {
@@ -536,6 +537,8 @@ export default function ChatPanel() {
   const [reviewChapterId, setReviewChapterId] = useState<string | null>(null);   // 校审Tab：一致性检查章节
   const [reviewVolumeIds, setReviewVolumeIds] = useState<string[]>([]);          // 校审Tab：按卷检查
   const [deaiPacks, setDeaiPacks] = useState<Array<{ id: string; name: string; description: string; icon: string; priority: number }>>([]);
+  // 自动上下文命中提示：meta 事件告知已定位并注入的章节/维度
+  const [autoContextNotice, setAutoContextNotice] = useState<{ chapters: Array<{ id: string; title: string }>; dims: Array<{ key: string; label: string }> } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   // 修正任务清单（从防遗忘报告违规项带入，支持多章/多维度连续修正并追踪进度）
   const [fixTasks, setFixTasks] = useState<Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string; done?: boolean; chapterId?: string | null }>>([]);
@@ -743,7 +746,14 @@ export default function ChatPanel() {
     let receivedSessionId = sessionId;
     for await (const evt of parseSSE(res)) {
       if (ctrl.signal.aborted) break;
-      if (evt.type === 'delta') {
+      if (evt.type === 'meta') {
+        if (evt.kind === 'auto_context' && evt.info) {
+          setAutoContextNotice({
+            chapters: Array.isArray(evt.info.chapters) ? evt.info.chapters : [],
+            dims: Array.isArray(evt.info.dims) ? evt.info.dims : [],
+          });
+        }
+      } else if (evt.type === 'delta') {
         streamBufferRef.current += evt.content;
         const buf = streamBufferRef.current;
         setMessages(prev => {
@@ -1319,6 +1329,7 @@ export default function ChatPanel() {
     if (!bookId || !text || streaming) return;
     setInput('');
     setStreamError('');
+    setAutoContextNotice(null);
     streamBufferRef.current = '';
     appendUserAi(text);
     setStreaming(true);
@@ -1814,6 +1825,34 @@ export default function ChatPanel() {
                   disabled={streaming}
                 >{streaming ? '处理中…' : '🧹 开始去AI味'}</button>
                 {!deaiTargetId && <span className="smart-main-hint">未选章节时可在输入框输入「第N章」</span>}
+              </div>
+            )}
+
+            {/* 自动上下文命中提示：已定位并注入章节/维度资料 */}
+            {autoContextNotice && (autoContextNotice.chapters.length > 0 || autoContextNotice.dims.length > 0) && (
+              <div className="auto-context-notice" onClick={() => setAutoContextNotice(null)} title="点击关闭">
+                <span className="acn-icon">🎯</span>
+                <span className="acn-text">
+                  已自动定位并注入：
+                  {autoContextNotice.dims.length > 0 && (
+                    <span>「{autoContextNotice.dims.map(d => d.label).join('、')}」维度内容</span>
+                  )}
+                  {autoContextNotice.dims.length > 0 && autoContextNotice.chapters.length > 0 && <span> + </span>}
+                  {autoContextNotice.chapters.length > 0 && (
+                    <span>
+                      {autoContextNotice.chapters.length} 章原文
+                      {autoContextNotice.chapters.length <= 3 && (
+                        <span className="acn-chips">
+                          {autoContextNotice.chapters.map(c => (
+                            <span key={c.id} className="acn-chip">{c.title}</span>
+                          ))}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  <span className="acn-sub"> — 智驾已直接读取资料，无需再粘贴。点击关闭本提示</span>
+                </span>
+                <span className="acn-close" style={{ marginLeft: 'auto', padding: '0 6px', color: '#999', cursor: 'pointer' }}>×</span>
               </div>
             )}
 
