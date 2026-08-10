@@ -6212,13 +6212,29 @@ function OutlineCombinedPanel(props: {
   // 生成五幕式总纲（写入 plot_design）
   async function generateOutlineMaster() {
     if (!bookId) return;
-    // 弹出输入框让用户填写预计卷数（不设上限，由用户自行决定）
-    const input = window.prompt('请输入小说预计需要的卷数（≥1，不设上限）：', '10');
-    if (input === null) return; // 用户取消
-    const volumeCount = parseInt(input);
-    if (!volumeCount || volumeCount < 1) {
-      alert('卷数需为大于等于 1 的整数');
-      return;
+    // 卷数默认值权威来源：book.total_volumes（用户创建小说时填的 25 卷），
+    // 绝对不再默认写死 10——否则用户一弹窗回车就会把 25 卷覆盖成 10 卷。
+    const defaultFromBook = (totalVolumes && totalVolumes >= 1) ? String(totalVolumes) : '10';
+    // 若用户创建时已经明确设定过卷数（≥1），**不再弹窗骚扰**直接使用；
+    // 只有 totalVolumes 不可用时才弹窗让用户补填（避免用户手滑回车把 25 写成 10）。
+    let volumeCount: number;
+    if (totalVolumes && totalVolumes >= 1) {
+      const confirmRes = window.confirm(`检测到创建小说时设定的卷数为 ${totalVolumes} 卷，是否按此生成五幕式总纲？（点「取消」可手动输入其他卷数）`);
+      if (confirmRes) {
+        volumeCount = totalVolumes;
+      } else {
+        const input = window.prompt('请输入小说预计需要的卷数（≥1，不设上限）：', defaultFromBook);
+        if (input === null) return;
+        const vc = parseInt(input);
+        if (!vc || vc < 1) { alert('卷数需为大于等于 1 的整数'); return; }
+        volumeCount = vc;
+      }
+    } else {
+      const input = window.prompt('请输入小说预计需要的卷数（≥1，不设上限）：', defaultFromBook);
+      if (input === null) return; // 用户取消
+      const vc = parseInt(input);
+      if (!vc || vc < 1) { alert('卷数需为大于等于 1 的整数'); return; }
+      volumeCount = vc;
     }
     setOutlineWorkflowLoading('master');
     setOutlineWorkflowProgress(`⏳ 按五幕式生成总纲中（共 ${volumeCount} 卷）...`);

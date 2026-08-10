@@ -5596,10 +5596,11 @@ def _validate_and_align_timeline_volumes(parsed_tl, total_volumes):
     """【P0-1修复】timeline 卷数校验与对齐：解析成功后强制对齐 total_volumes。
     - 卷数匹配：直接返回
     - 卷数过多：截断到 total_volumes，标记 warning
-    - 卷数过少：不补全（无法凭空生成卷内容），标记 warning
+    - 卷数过少：【升级】自动补齐占位卷到 total_volumes，避免用户设 25 卷却只拿到 10 卷导致下游错位。
+               占位卷会依据五幕比例打上 act、卷名与占位 main_plot，提示后续手动或节点设计再充实。
     返回 (aligned_list, warning_msg or None)。
     """
-    if not isinstance(parsed_tl, list) or not parsed_tl:
+    if not isinstance(parsed_tl, list):
         return parsed_tl, None
     if not total_volumes or total_volumes < 1:
         return parsed_tl, None
@@ -5610,8 +5611,37 @@ def _validate_and_align_timeline_volumes(parsed_tl, total_volumes):
         # 卷数过多：截断
         aligned = parsed_tl[:total_volumes]
         return aligned, f'timeline生成了{actual}卷，超过设定的{total_volumes}卷，已自动截断到{total_volumes}卷'
-    # 卷数过少：不补全，仅警告
-    return parsed_tl, f'timeline仅生成{actual}卷，少于设定的{total_volumes}卷，下游dynamic_volumes/分卷大纲可能卷数错位，建议重新生成timeline维度'
+    # 卷数过少：自动补齐占位到 total_volumes（按比例+相邻卷字段做合理占位）
+    def map_act(vidx, tot):
+        pct = (vidx - 0.5) / max(1, tot)
+        if pct <= 0.05: return '立身'
+        if pct <= 0.25: return '立足'
+        if pct <= 0.50: return '立势'
+        if pct <= 0.75: return '立威'
+        return '立命'
+    # 用已存在的最后一卷做「相邻卷参考」；没有就造个基准
+    ref = parsed_tl[-1] if parsed_tl else {}
+    aligned = list(parsed_tl)
+    for idx in range(actual + 1, total_volumes + 1):
+        act = map_act(idx, total_volumes)
+        placeholder = {
+            'volume_id': str(idx),
+            'volume': f'第{idx}卷（AI未生成足够卷数已自动补齐占位，请在节点设计阶段重写）',
+            'volume_index': idx,
+            'act': act,
+            'main_plot': f'【占位卷】所属幕：{act}。当前AI输出卷数不足用户设定的{total_volumes}卷，已按{total_volumes}卷硬约束自动补齐，请手动调整本卷剧情或重新执行分卷提取。',
+            'core_conflict': ref.get('core_conflict', '待补充'),
+            'emotion_driver': ref.get('emotion_driver', '待补充'),
+            'key_events': ['待补充关键事件'],
+            'turning_points': ['待补充转折点'],
+            'climax': '待补充',
+            'ending': '待补充',
+            'ending_hook': '待补充',
+            'foreshadowing': [],
+            'nodes': [],
+        }
+        aligned.append(placeholder)
+    return aligned, f'timeline仅生成{actual}卷，少于用户设定的{total_volumes}卷，已自动补齐到{total_volumes}卷（后{total_volumes - actual}卷为占位，建议手动重写补齐或重新执行分卷提取）'
 
 
 # 网文风格流派标签库（基于2025中国网络文学蓝皮书与起点三江榜趋势）
@@ -5988,12 +6018,38 @@ def _cultivation_dimension_hint(dim, book=None, bb=None):
 def _sync_book_meta_to_bible(book, bb):
     """P0-3修复：把 book 的 total_volumes / novel_styles / genre / book_type 同步到 bible。
     在首次创建空 bible 或更新 book 时调用，确保各维度创作时能从 bible 读到权威元数据。
-    仅在 book 有值且 bible 字段为空/默认时回填，不覆盖用户已设置的值。"""
+
+    同步策略（核心：Book 表是用户创建/编辑作品时的「权威数据源」，除用户在 Bible 侧明确改过且 Book 仍为默认值的情况外，以 Book 为准）：
+    - book.tv != 默认(10) 且 bb.tv == 默认(10)   → 用户在 Book 改了，bb 还是默认值 → 同步（覆盖默认）
+    - book.tv != bb.tv  且 双方都不等于默认值  → 两边都非默认，以 Book（用户作品基本信息页）为准 → 同步
+    - bb.tv != 默认(10) 且 book.tv == 默认(10)   → 用户在 Bible 侧单独改了，Book 仍默认 → 保留 Bible，不同步
+    """
     if not book or not bb:
         return
+    DEFAULT_TV = 10
     try:
-        if getattr(book, 'total_volumes', None) and (not bb.total_volumes or bb.total_volumes == 10):
-            bb.total_volumes = book.total_volumes
+        bk_tv = getattr(book, 'total_volumes', None)
+        bb_tv = getattr(bb, 'total_volumes', None)
+        # 统一成 int 便于比较，None/0 视作默认
+        try:
+            bk_tv_i = int(bk_tv) if bk_tv else DEFAULT_TV
+        except (ValueError, TypeError):
+            bk_tv_i = DEFAULT_TV
+        try:
+            bb_tv_i = int(bb_tv) if bb_tv else DEFAULT_TV
+        except (ValueError, TypeError):
+            bb_tv_i = DEFAULT_TV
+        need_sync = False
+        # Case A：Book 非默认 + BB 默认 → 用户在 Book 设定页选了 25 卷，BB 刚创建还是默认 10 → 必须同步
+        if bk_tv_i != DEFAULT_TV and bb_tv_i == DEFAULT_TV:
+            need_sync = True
+        # Case B：两边都非默认但数值不同 → Book 是权威（作品基本信息页），同步覆盖 Bible
+        elif bk_tv_i != DEFAULT_TV and bb_tv_i != DEFAULT_TV and bk_tv_i != bb_tv_i:
+            need_sync = True
+        # Case C：两边都是默认 → 什么都不做
+        # Case D：BB 非默认 + Book 默认 → 用户在 Bible 侧单独调过，保留 Bible
+        if need_sync:
+            bb.total_volumes = bk_tv_i
     except Exception:
         pass
     try:
@@ -8865,16 +8921,25 @@ def ai_outline_master(book_id):
     skill_pack_ids = _resolve_skill_ids_by_category(book, 'master')
     if not skill_pack_ids:
         skill_pack_ids = data.get('skill_pack_ids', [])
-    total_chapters = data.get('total_chapters', 300)
-    chapters_per_volume = data.get('chapters_per_volume', 50)
-    # 支持用户直接指定卷数（优先于 total_chapters // chapters_per_volume）
-    volume_count = data.get('volume_count')
-    if not volume_count or volume_count < 1:
-        volume_count = max(1, total_chapters // chapters_per_volume)
-    # 反推总章数供 prompt 使用
-    total_chapters = max(volume_count * chapters_per_volume, total_chapters)
-
     skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['master_outline', 'tomato_outline', 'volume_breakdown'])
+
+    # ========== 卷数权威口径：用户创建小说时的 total_volumes（优先级：前端显式传 > Book表 > BookBible表 > 默认） ==========
+    # 这是用户最核心的创作参数，禁止被 300//50 这类粗暴算法覆盖！
+    cpv = _get_chapters_per_volume(bb, book)
+    tv = _get_total_volumes(bb, book)
+    total_chapters = data.get('total_chapters')
+    chapters_per_volume = data.get('chapters_per_volume') or cpv
+    # 支持用户直接指定卷数（最优先），否则强制使用用户建书时设定的 total_volumes，绝不再用 300//50 这种会踩用户设定的默认算法
+    user_volume_count = data.get('volume_count')
+    if user_volume_count and int(user_volume_count) >= 1:
+        volume_count = int(user_volume_count)
+    else:
+        volume_count = tv
+    # 反推总章数供 prompt 使用（按每卷章数计算，保证 prompt 与卷数一致）
+    if not total_chapters or int(total_chapters) < 1:
+        total_chapters = volume_count * chapters_per_volume
+    else:
+        total_chapters = max(int(total_chapters), volume_count * chapters_per_volume)
 
     context_parts = []
     if bb.concept:
@@ -8890,28 +8955,37 @@ def ai_outline_master(book_id):
     system_prompt = f"""你是番茄小说金番作者级别的总纲设计师。
 任务：为这本小说设计五幕式总纲，控制全书大体走向。
 
-【五幕模型】
-- 立身(1-5%)：底层→入门，觉醒金手指+首打脸+建立认知
-- 立足(5-25%)：新人→站稳，配角登场+世界观展开+5-8章小闭环
-- 立势(25-50%)：小角色→有分量，大舞台+强对手+团队建立
-- 立威(50-75%)：有分量→威名，组织级冲突+感情推进+信念考验
-- 立命(75-100%)：威名→蜕变，终极挑战+伏笔收束+续作种子
+【核心创作参数·铁律·不可违反】
+- 总卷数：{volume_count} 卷（本任务的第一硬约束：你输出的分卷数必须严格等于 {volume_count} 卷，多一卷少一卷都必须重写，严禁输出 5/6/8/10 卷等任何其他卷数）
+- 每卷章数：约 {chapters_per_volume} 章，全书约 {total_chapters} 章
+- 题材：{_get_genre_label(book, bb)}
+{f'- 风格流派：{_get_novel_styles_text(bb, book)}' if _get_novel_styles_text(bb, book) else ''}
+
+【五幕模型·按卷数分配（总卷 {volume_count} 卷自动映射到5幕比例）】
+- 立身(前5%)：第1~{max(1, volume_count*5//100)}卷，底层→入门，觉醒金手指+首打脸+建立认知
+- 立足(5-25%)：第{max(2, volume_count*5//100+1)}~{volume_count*25//100}卷，新人→站稳，配角登场+世界观展开+小闭环
+- 立势(25-50%)：第{volume_count*25//100+1}~{volume_count*50//100}卷，小角色→有分量，大舞台+强对手+团队建立
+- 立威(50-75%)：第{volume_count*50//100+1}~{volume_count*75//100}卷，有分量→威名，组织级冲突+感情推进+信念考验
+- 立命(75-100%)：第{volume_count*75//100+1}~{volume_count}卷，威名→蜕变，终极挑战+伏笔收束+续作种子
 
 【输出要求】
 全书约 {total_chapters} 章，分 {volume_count} 卷（每卷约 {chapters_per_volume} 章）。
-为每卷输出：卷号与卷名、所属幕、本卷核心目标（一句话）、主要冲突、关键转折点（2-3个）、卷尾高潮与悬念。
+必须为每一卷（1 到 {volume_count} 共 {volume_count} 卷）都输出：卷号与卷名、所属幕、本卷核心目标（一句话）、主要冲突、关键转折点（2-3个）、卷尾高潮与悬念。
 只输出总纲文本，不要输出各卷的详细情节节点（详细节点在卷纲滚动生成阶段产生）。
 {_cultivation_dimension_hint('plot_design', book, bb)}
 {skill_note}"""
 
     user_prompt = f"""书名：{book.title}
 
+【核心创作参数·再次强调·若违反直接作废】
+- 总卷数必须严格 {volume_count} 卷，不多不少。若你产出的卷数不是 {volume_count} 卷，立刻自我重写。
+
 {_build_core_params_block(bb, book)}
 
 已有设定：
 {context}
 
-请生成五幕式总纲。"""
+请生成完整的 {volume_count} 卷五幕式总纲（不要偷懒写成 5 卷或 10 卷，必须正好 {volume_count} 卷，每卷都要有条目）。"""
 
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
@@ -9518,16 +9592,16 @@ def ai_extract_volumes_from_outline(book_id):
 
     data = request.json or {}
     skill_pack_ids = data.get('skill_pack_ids', [])
-    volume_count = data.get('volume_count')  # 可选，不传则让AI自行决定
 
     skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['volume_breakdown', 'chapter_plan', 'tomato_outline'], mode='agent')
 
-    # 卷数：优先前端传入（来自 book.total_volumes），回退 book.total_volumes，再回退让AI自行决定
-    if not volume_count:
-        try:
-            volume_count = int(getattr(book, 'total_volumes', 0) or 0)
-        except Exception:
-            volume_count = 0
+    # ========== 卷数权威口径：_get_total_volumes（前端不传时必须从 Book/BookBible 读用户创建时的设定） ==========
+    tv = _get_total_volumes(bb, book)
+    user_volume_count = data.get('volume_count')
+    if user_volume_count and int(user_volume_count) >= 1:
+        volume_count = int(user_volume_count)
+    else:
+        volume_count = tv
 
     # 上下文：总纲 + 世界观 + 规则 + 人物
     context_parts = [f'【五幕式总纲】\n{bb.plot_design[:4000]}']
@@ -9539,31 +9613,50 @@ def ai_extract_volumes_from_outline(book_id):
         context_parts.append(f'【人物档案】\n{bb.character_profiles[:1000]}')
     context = '\n\n'.join(context_parts)
 
-    count_hint = f'严格 {volume_count} 卷' if volume_count else '根据总纲内容自行决定合理的卷数（通常5-8卷）'
+    # count_hint：强制写成「严格 N 卷」，绝对禁止出现「通常5-8卷」这种无视用户设定的字样
+    count_hint = f'必须严格 {volume_count} 卷（多一卷少一卷都不合格，若解析出来不是 {volume_count} 卷将直接报错）'
 
-    # ===== 【P1弊端7修复】五幕模型对齐约束 =====
+    # ===== 【P1弊端7修复】五幕模型对齐约束（按总卷数比例动态映射，不再硬编码 5 卷=5幕） =====
+    def map_act(vol_index_1based, total):
+        pct = (vol_index_1based - 0.5) / max(1, total)
+        if pct <= 0.05: return '立身'
+        if pct <= 0.25: return '立足'
+        if pct <= 0.50: return '立势'
+        if pct <= 0.75: return '立威'
+        return '立命'
     act_descriptions = {
-        '立身': '主角登场、金手指获得、确立生存基础（1-5%）',
-        '立足': '主角站稳脚跟、初露锋芒、建立基本人际网（5-25%）',
-        '立势': '主角势力扩张、主要冲突激化、BOSS浮出（25-50%）',
-        '立威': '主角与BOSS正面对抗、实力跃升、打脸高潮（50-75%）',
-        '立命': '终局决战、伏笔回收、世界观全貌揭示（75-100%）',
+        '立身': '主角登场、金手指获得、确立生存基础（前5%卷）',
+        '立足': '主角站稳脚跟、初露锋芒、建立基本人际网（5-25%卷）',
+        '立势': '主角势力扩张、主要冲突激化、BOSS浮出（25-50%卷）',
+        '立威': '主角与BOSS正面对抗、实力跃升、打脸高潮（50-75%卷）',
+        '立命': '终局决战、伏笔回收、世界观全貌揭示（75-100%卷）',
     }
+    # 给 prompt 直接生成一个「卷1~卷N → 对应幕」的对照表，避免 AI 还按 5 卷=5幕去想
+    act_table_lines = []
+    for i in range(1, min(volume_count + 1, 31)):
+        act_table_lines.append(f'第{i}卷 → {map_act(i, volume_count)}')
+    if volume_count > 30:
+        act_table_lines.append(f'第31~{volume_count}卷 → {map_act(volume_count, volume_count)}')
+    act_table = '\n'.join(act_table_lines)
 
     system_prompt = f"""你是番茄小说金番作者级别的剧情架构师。
 任务：根据五幕式总纲，一次性提取全部卷的【主线剧情】，输出为 JSON 数组。
 
+【核心创作参数·铁律·不可违反】
+- 总卷数：{volume_count} 卷（本次硬约束：最终 JSON 数组长度必须严格等于 {volume_count}，多一个少一个都不合格，必须重写。禁止输出 5/6/8/10/5-8 等其他卷数）
 {_build_core_params_block(bb, book)}
 
 【重要】本次只构建各卷主线剧情，**不生成情节节点**（nodes 输出为空数组）。情节节点由用户后续手动点击「节点设计」逐卷生成。
 
-【五幕模型对齐】各卷必须对应五幕模型，确保全书结构完整：
-- 第1卷对应「立身」幕：{act_descriptions['立身']}
-- 第2卷对应「立足」幕：{act_descriptions['立足']}
-- 第3卷对应「立势」幕：{act_descriptions['立势']}
-- 第4卷对应「立威」幕：{act_descriptions['立威']}
-- 第5卷对应「立命」幕：{act_descriptions['立命']}
-（若卷数超过5卷，按进度比例映射到五幕；每卷 main_plot 中需标注所属幕）
+【五幕模型对齐·按 {volume_count} 卷比例自动映射】（对照表：卷号 → 所属幕）
+{act_table}
+各幕说明：
+- 立身：{act_descriptions['立身']}
+- 立足：{act_descriptions['立足']}
+- 立势：{act_descriptions['立势']}
+- 立威：{act_descriptions['立威']}
+- 立命：{act_descriptions['立命']}
+（若卷数超过5卷，按上方卷号对照表映射；每卷 main_plot 中必须标注所属幕）
 
 【内容容量铁律】每卷固定 50 章约 12 万字（50章×2400字）。每卷 main_plot 必须足够丰满，能支撑 50 章 12 万字的内容容量，不得过于单薄；核心冲突、关键事件要充实，为后续节点设计留足展开空间。
 
@@ -9701,10 +9794,16 @@ def ai_extract_volumes_from_outline(book_id):
         merged_volumes.append(v)
     merged_volumes.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
 
+    # ===== 【对齐硬约束】最终强制对齐到用户设定的 volume_count，少了自动补占位、多了截断 =====
+    merged_volumes, align_warning = _validate_and_align_timeline_volumes(merged_volumes, volume_count)
+
     bb.timeline = json.dumps(merged_volumes, ensure_ascii=False, indent=2)
     _sync_foreshadowings_to_volumes(bb)  # 【P0修复】自动同步各卷伏笔到 foreshadowing_volumes
     db.session.commit()
-    return jsonify({'success': True, 'volumes': merged_volumes, 'bible': bb.to_dict()})
+    result = {'success': True, 'volumes': merged_volumes, 'bible': bb.to_dict(), 'volume_count': len(merged_volumes)}
+    if align_warning:
+        result['warning'] = align_warning
+    return jsonify(result)
 
 
 @app.route('/api/books/<book_id>/ai-reverse-generate-outline', methods=['POST'])
