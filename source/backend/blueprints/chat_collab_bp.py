@@ -2528,18 +2528,41 @@ def smart_suggest():
     book = Book.query.get(book_id)
     if not book:
         return jsonify({'error': '书籍不存在'}), 404
+
+    # ===== 【卷数/章数意图·落地前置】用户在需求框里说"改成25卷/每卷60章"也生效 =====
+    # （用户经常在"描述你对大纲的需求"输入框里直接说『给我出一个25卷玄幻』）
+    params_sync_notes = None
+    try:
+        params_sync_notes = _auto_sync_params_from_user_message(book, None, requirement or '')
+    except Exception:
+        params_sync_notes = None
+    # 同步后重新取 bb（可能刚刚新增）
     bb = BookBible.query.filter_by(book_id=book_id).first()
     ctx, self_content = _build_dim_context(book, bb, dim_key)
 
-    # 注入核心创作参数（卷数/题材/风格），让大纲/剧情等维度严格按全书卷数规划
+    # 注入核心创作参数铁律（卷数/题材/风格），方案简介里禁止再出现"十卷/五卷/5-8卷"这种默认值
+    # 【用户截图的根源】以前用的 _build_core_params_block 太弱，AI仍然按网文常识写"十卷"
+    # 现在强制用 _core_params_iron_block（同 chat_smart 那条铁律），且对 preview 简介做专门约束
     core_params = ''
+    tv_for_suggest = 10
     try:
-        from app import _build_core_params_block
-        core_params = _build_core_params_block(bb, book) or ''
+        from app import _get_total_volumes
+        tv_for_suggest = _get_total_volumes(bb, book) or 0
     except Exception:
         pass
+    try:
+        # 优先铁律版；铁律版取不到再降级旧版兜底
+        core_params = _core_params_iron_block(bb, book)
+    except Exception:
+        core_params = ''
+    if not core_params:
+        try:
+            from app import _build_core_params_block
+            core_params = _build_core_params_block(bb, book) or ''
+        except Exception:
+            pass
 
-    # 注入构思类技能包
+    # 构思类技能包注入
     skill_note = ''
     try:
         from app import _get_skill_prompts_by_category
@@ -2547,15 +2570,32 @@ def smart_suggest():
     except Exception:
         pass
 
-    # 大纲维度额外注入五幕模型说明，确保按卷数生成五幕式结构
+    # 方案级铁律（所有维度通用，直接在 suggestions[].preview 产出层拦截"十卷"）
+    suggest_iron_rule = ''
+    if tv_for_suggest and tv_for_suggest >= 1:
+        suggest_iron_rule = f"""
+【方案卡片预览·卷数铁律（直接作用于你输出的 JSON suggestions[].preview）】
+- 本书已设定总卷数为 {tv_for_suggest} 卷，你输出的**每一个**方案简介 preview 中，若需要提到全书分卷规模，
+  必须直接写成「{tv_for_suggest} 卷」（阿拉伯数字）或更具体的「{tv_for_suggest}卷×50章」。
+- 严禁在 preview 中出现「十卷 / 五卷 / 八卷 / 六卷 / 十二卷 / 十余卷 / 5-8 卷 / 通常 5-8 卷 / 5到8卷」这类默认值或中文数字描述，
+  哪怕你觉得更通顺也不行 —— 用户设定多少就必须写多少。
+- 严禁把卷数偷偷压缩成"5幕对应5卷"来写简介，必须真实体现 {tv_for_suggest} 卷的体量。
+- 如果你违反以上任何一条，你输出的方案卡片就不合格。"""
+
+    # 大纲/剧情/构思这 3 个维度专属：要求 preview 主动把卷数写进简介（用户截图的方案卡片就是"十卷按五幕完成"这种）
+    dim_needs_volume_in_preview = dim_key in ('plot_design', 'timeline', 'concept', 'dynamic_volumes')
+    preview_volume_req = ''
+    if dim_needs_volume_in_preview and tv_for_suggest and tv_for_suggest >= 1:
+        preview_volume_req = f'\n- 本任务为「{spec.get("label", dim_key)}」维度，你输出的每条 preview 简介**必须**显式出现「{tv_for_suggest}卷」的字样，用来直接告诉作者这方案是按他设定的 {tv_for_suggest} 卷规划的；不写"十卷""五卷"等其他数字。'
+
+    # 大纲维度：五幕模型说明（仍然保留，按 tv_for_suggest 动态比例）
     outline_extra = ''
     if dim_key == 'plot_design':
         try:
-            from app import _get_total_volumes
+            from app import _get_total_volumes, _cultivation_dimension_hint
             tv = _get_total_volumes(bb, book)
-            outline_extra = f'\n\n【大纲维度专属要求】请生成「五幕式总纲」，全书严格 {tv} 卷，每卷约50章12万字。五幕模型：立身(1-5%)/立足(5-25%)/立势(25-50%)/立威(50-75%)/立命(75-100%)。为每卷输出：卷号卷名、所属幕、本卷核心目标、主要冲突、关键转折点(2-3个)、卷尾高潮与悬念。只输出总纲文本，不输出详细情节节点。'
+            outline_extra = f'\n\n【大纲维度专属要求】请生成「五幕式总纲」方向的差异化方案。全书严格 {tv} 卷，每卷约50章12万字。五幕模型按{tv}卷比例自动映射：立身(前5%)=第1~{max(1, tv*5//100)}卷；立足(5-25%)=第{max(2, tv*5//100+1)}~{tv*25//100}卷；立势(25-50%)=第{tv*25//100+1}~{tv*50//100}卷；立威(50-75%)=第{tv*50//100+1}~{tv*75//100}卷；立命(75-100%)=第{tv*75//100+1}~{tv}卷。只输出多方案供作者选择，每个方案 preview 简介必须说明对应的五幕怎么分配到 {tv} 卷。'
             try:
-                from app import _cultivation_dimension_hint
                 outline_extra += _cultivation_dimension_hint('plot_design', book, bb)
             except Exception:
                 pass
@@ -2586,16 +2626,22 @@ def smart_suggest():
 
 【作者需求】
 {requirement or f"请帮我生成{spec['label']}的设定"}
-{outline_extra}{af_alerts_suggest}
+{outline_extra}{af_alerts_suggest}{suggest_iron_rule}{preview_volume_req}
 
 {("【技能包指引】\n" + skill_note) if skill_note else ""}
 
-请输出 3-5 个不同切入角度的方案。严格按以下 JSON 格式输出（不要任何其他内容、不要 Markdown 代码块）：
+【重要·方案卡格式】请输出 3-5 个不同切入角度的方案。严格按以下 JSON 格式输出（不要任何其他内容、不要 Markdown 代码块）：
 {{
   "suggestions": [
     {{"title": "方案标题（10字内）", "preview": "方案简介（80-150字，说清核心思路和亮点）"}}
   ]
 }}
+
+【最终自检（在输出 JSON 之前必须做完）】
+1. 检查每条 preview 里提到的卷数（如果提到）是否等于用户设定的实际卷数（={tv_for_suggest if (tv_for_suggest and tv_for_suggest>=1) else '未设定，可省略'}）；
+2. 禁止出现"十卷、五卷、5-8 卷、十余卷"等默认数字；
+3. 若本任务属于大纲/剧情/构思维度，每条 preview 必须显式包含"{tv_for_suggest if (tv_for_suggest and tv_for_suggest>=1) else '__'}卷"字样；
+4. JSON 合法，无多余逗号，suggestions 长度 3-5。
 
 {PLAIN_TEXT_LAYOUT_RULES}"""
 
@@ -2625,19 +2671,93 @@ def smart_suggest():
             if clean:
                 suggestions.append({'title': f'方案{i + 1}', 'preview': clean[:150]})
 
+    # === 后端兜底：即使 AI 仍然违规在 preview 里写了"十卷/五卷"，也强制替换成真实卷数 ===
+    # （因为截图里的"十卷按五幕完成"就是典型的中文数字违规，哪怕 prompt 说了铁律，LLM 偶尔也会忘）
+    def _enforce_volume_in_preview(preview: str, tv: int) -> str:
+        if not preview or not tv or tv < 1:
+            return preview
+        tvs = f'{tv}卷'
+
+        # 0) 安全名单：如果出现了"卷三 / 第X卷 / 卷X / Volume X"这类是"卷号"不是"总卷数"，绝对不能碰
+        #    通过先把卷号替换成占位符、等处理完后再还原，就不会误伤
+        volume_id_holders = []
+
+        def _stash(m):
+            volume_id_holders.append(m.group(0))
+            return f'\x00VID{len(volume_id_holders)-1}\x00'
+        # "第3卷 / 第 3 卷 / 第十卷 / 卷三 / 卷3 / 卷 2" 这些都是卷号
+        preview = re.sub(r'第\s*\d{1,4}\s*卷', _stash, preview)
+        preview = re.sub(r'第\s*[一二三四五六七八九十百零两]{1,6}\s*卷', _stash, preview)
+        preview = re.sub(r'(?<!\d)卷\s*\d{1,4}(?!卷)', _stash, preview)
+        preview = re.sub(r'(?<![一二三四五六七八九十百零两])卷\s*[一二三四五六七八九十百](?![一二三四五六七八九十百卷])', _stash, preview)
+
+        # 1) 违规中文数字卷（十/五/六/八/十二/十余/十几卷 等）→ 真实 tv 卷
+        #    注意：这里匹配的是"[中文数字]余?卷"，而且必须不是上面已经 stash 过的 VID 占位
+        cn_pat = r'(?:[一二两三四五六七八九十百零]{1,5}|十余|十几|数十)'
+        preview = re.sub(rf'(?<![\x00\d{tv}]){cn_pat}余?\s*卷(?!\s*(?:$|末|首|上|中|下|内|外|前|后|间|之|分|名|号|标|页|段|节|章))',
+                         tvs, preview)
+        # 更强的短名单兜底（直接针对截图最常见的"十卷按/十卷串联/十卷分别"句型）
+        preview = re.sub(r'十\s*卷(?=\s*(?:按|分别|串联|完成|写尽|涵盖|覆盖|铺陈|讲|写|推进|安排|规划|走|写完|撑起|构筑|呈现|讲完|写完|打通|完成))', tvs, preview)
+
+        # 2) "5-8卷 / 5~8卷 / 5到8卷 / 通常5-8卷 / 通常（5-8）卷"这类区间 → tv 卷
+        preview = re.sub(r'通常\s*[（(]?\s*\d{1,3}\s*[-~～到至]\s*\d{1,3}\s*[）)]?\s*卷', tvs, preview)
+        preview = re.sub(r'\d{1,3}\s*[-~～到至]\s*\d{1,3}\s*卷', tvs, preview)
+
+        # 3) 阿拉伯数字不等于 tv 的卷（例如写"10卷"/"6卷"但 tv=25）→ 强制 tv
+        #    先排除被 stash 的 VID 占位符，再做判断
+        def _fix_num(m):
+            try:
+                n = int(m.group(1))
+            except Exception:
+                return m.group(0)
+            return tvs if n != tv and n <= 200 else m.group(0)
+        preview = re.sub(r'(?<![\.第\x00])(\d{1,4})\s*卷(?![章第])', _fix_num, preview)
+
+        # 4) 若依然还残留"十卷 / 五卷 / 八卷"（防止上面漏网）→ 全局替换
+        for bad in ['十卷', '五卷', '六卷', '七卷', '八卷', '九卷', '十二卷', '十余卷', '十几卷', '数十卷', '二十卷', '三十卷']:
+            if bad == tvs:
+                continue
+            preview = preview.replace(bad, tvs)
+
+        # 5) 还原 stash 的卷号（避免误伤"第X卷/卷X"）
+        def _unstash(m):
+            try:
+                return volume_id_holders[int(m.group(1))]
+            except Exception:
+                return m.group(0)
+        preview = re.sub(r'\x00VID(\d+)\x00', _unstash, preview)
+
+        # 6) 大纲/剧情/构思维度：若 preview 里还没出现"tv卷"字样，强制在开头补上
+        if dim_needs_volume_in_preview and tvs not in preview and f'{tv} 卷' not in preview:
+            # 优先把开头"以/全书/故事"等开头改成"全书{tv}卷，以..."
+            preview = re.sub(r'^(以|全书|故事|小说|本书|该作|本作)?',
+                             lambda m: f'全书{tvs}，' if (not m.group(1)) else f'{m.group(1)}{tvs}，',
+                             preview)
+        return preview
+
     for i, s in enumerate(suggestions):
         s.setdefault('title', f'方案{i + 1}')
         s.setdefault('preview', '')
+        if tv_for_suggest and tv_for_suggest >= 1:
+            s['preview'] = _enforce_volume_in_preview(s.get('preview', '') or '', tv_for_suggest)
         s['id'] = f'sug_{i + 1}'
 
     if not suggestions:
         return jsonify({'error': 'AI 未返回有效方案，请重试或调整需求'}), 500
+
+    # 返回值里带上参数同步备注（若用户在需求里说"改成25卷"等），前端可在智驾里显示小字提示
+    meta = {}
+    if params_sync_notes:
+        meta['params_sync'] = params_sync_notes
+    if tv_for_suggest and tv_for_suggest >= 1:
+        meta['total_volumes'] = tv_for_suggest
 
     return jsonify({
         'suggestions': suggestions,
         'dimension': dim_key,
         'dimension_label': spec['label'],
         'requirement': requirement,
+        'meta': meta,
     })
 
 
