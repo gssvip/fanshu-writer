@@ -2026,6 +2026,7 @@ ${chapterEditContent}`;
             selectedSkillPacks={selectedSkillPacks}
             showConfirm={showConfirm}
             onOpenAiCreate={(field) => setAiCreateModalState({ mode: 'single', dimension: field })}
+            totalVolumes={book?.total_volumes || 0}
           />
         ) : isCharacterTab ? (
           <CharacterPanel
@@ -6111,8 +6112,9 @@ function OutlineCombinedPanel(props: {
   selectedSkillPacks: SkillPack[];
   showConfirm: (message: string, onConfirm: () => void) => void;
   onOpenAiCreate: (field: string) => void;
+  totalVolumes: number;
 }) {
-  const { bookId, bible, onBibleUpdate, concept, hasChapters, dimAnalyzing, onAnalyzeDimension, showConfirm } = props;
+  const { bookId, bible, onBibleUpdate, concept, hasChapters, dimAnalyzing, onAnalyzeDimension, showConfirm, totalVolumes } = props;
   const [subTab, setSubTab] = useState<'outline' | 'worldview'>('outline');
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');

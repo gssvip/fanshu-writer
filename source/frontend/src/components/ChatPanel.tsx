@@ -1170,25 +1170,6 @@ export default function ChatPanel() {
     setMessages(prev => prev.filter((_, i) => i !== index));
   }, []);
 
-  const handleRegenerate = useCallback((index: number) => {
-    // 重新生成：找到该AI消息前最近的用户消息，重新触发对应动作
-    setMessages(prev => {
-      // 删除该AI消息及之后的，保留之前的用户消息
-      const before = prev.slice(0, index);
-      const userMsg = [...before].reverse().find(m => m.role === 'user');
-      setMessages(before);
-      if (userMsg && activeTab === 'setting' && selectedDim) {
-        // 设定Tab：用用户消息内容重新触发（按维度判断走方案或直接生成/修改）
-        const text = userMsg.content.replace(/^【[^】]+】/, '').trim();
-        if (text) {
-          setInput(text);
-          setTimeout(() => handleMainSend(), 50);
-        }
-      }
-      return before;
-    });
-  }, [activeTab, selectedDim, handleMainSend]);
-
   // ========== 卡片操作 ==========
   const handleAdopt = useCallback(async (card: ActionCard) => {
     if (!bookId) return;
@@ -1425,6 +1406,25 @@ export default function ChatPanel() {
       handleSuggest();
     }
   }, [activeTab, selectedDim, suggestions, progress, handleSuggest, handleDimEdit, handleGeneral, handleDirectGenerate]);
+
+  // 重新生成：找到该AI消息前最近的用户消息，重新触发对应动作
+  const handleRegenerate = useCallback((index: number) => {
+    setMessages(prev => {
+      // 删除该AI消息及之后的，保留之前的用户消息
+      const before = prev.slice(0, index);
+      const userMsg = [...before].reverse().find(m => m.role === 'user');
+      setMessages(before);
+      if (userMsg && activeTab === 'setting' && selectedDim) {
+        // 设定Tab：用用户消息内容重新触发（按维度判断走方案或直接生成/修改）
+        const text = userMsg.content.replace(/^【[^】]+】/, '').trim();
+        if (text) {
+          setInput(text);
+          setTimeout(() => handleMainSend(), 50);
+        }
+      }
+      return before;
+    });
+  }, [activeTab, selectedDim, handleMainSend]);
 
   // 设定Tab：选择维度后
   // - 构思/设定/世界观 等上游维度：第一次输入走 suggest（生成多选意见），选中后 generate
