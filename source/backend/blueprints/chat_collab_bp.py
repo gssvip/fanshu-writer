@@ -204,6 +204,44 @@ def _build_toc_block(book_id, max_items: int = 200) -> str:
         return ''
 
 
+def _core_params_iron_block(bb, book):
+    """构建「核心创作参数·铁律·不可违反」块（所有创作链路统一注入）。
+
+    比 _build_core_params_block 更强：
+    - 标为「铁律·不可违反」放在 system prompt 最上方，避免被下文淹没
+    - 追加「越界拦截警示」：大纲/剧情/卷规划必须严格等于总卷数；正文章号不得超过总章数上限
+    - 所有 8 条创作链路都要调用（chat_smart / smart_general / smart_generate /
+      smart_dimension_edit / smart_batch / smart_deai / chat_smart_action / _action_chapter）
+
+    返回空串表示获取参数失败（静默降级，不阻断主流程）。
+    """
+    try:
+        from app import _get_total_volumes, _get_genre_label, _get_novel_styles_text, _get_chapters_per_volume
+        tv = _get_total_volumes(bb, book)
+        genre_label = _get_genre_label(book, bb)
+        styles_text = _get_novel_styles_text(bb, book)
+        cpv = _get_chapters_per_volume(bb, book)
+        max_chapters = tv * cpv  # 总章数上限 = 总卷数 × 每卷章数
+        bt = getattr(book, 'book_type', 'novel') or 'novel'
+        parts = ['【核心创作参数·铁律·不可违反】']
+        parts.append(f'1. 总卷数：{tv} 卷（全书所有分卷/五幕总纲/剧情大纲严格按此卷数规划，不得多不得少）')
+        parts.append(f'2. 题材：{genre_label}（人物设定、世界观、剧情走向、爽点类型须契合该题材的读者期待）')
+        if bt == 'novel':
+            parts.append(f'3. 每卷章数：约 {cpv} 章/卷（全书总章数上限约 {max_chapters} 章，总字数约 {tv*12} 万字）')
+        else:
+            parts.append(f'3. 短篇结构：{tv} 个单元/幕')
+        if styles_text:
+            parts.append(f'4. 风格流派：{styles_text}（人物塑造、节奏、爽点设计、叙事手法须契合所选流派，这是硬约束）')
+        parts.append('')
+        parts.append('【越界拦截警示·生成前自检】')
+        parts.append(f'1. 生成五幕总纲/分卷大纲/剧情线时，卷数必须严格等于 {tv} 卷，多一卷或少一卷都不合格，必须重写。')
+        parts.append(f'2. 生成正文章节时，章节号上限为第 {max_chapters} 章（= {tv} 卷 × {cpv} 章/卷），禁止产出超过此上限的章节号。')
+        parts.append('3. 讨论规划或生成卡片前先对照上述铁律，若你的方案会突破卷数/章数上限，请立刻自我修正到范围内再输出。')
+        return '\n'.join(parts)
+    except Exception:
+        return ''
+
+
 def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapter_num: int = None, toc_block: str = None) -> str:
     """构建维度感知的聊天 system_prompt。
 
@@ -221,6 +259,13 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
         '',
         f'【当前作品】《{book.title or "未命名"}》',
     ]
+
+    # =====================================================================
+    # 【核心创作参数·铁律·不可违反】（用户创建小说时的总卷数/题材/风格，注入到最上方，避免被下文淹没）
+    # =====================================================================
+    core_iron = _core_params_iron_block(bb, book)
+    if core_iron:
+        parts.append('\n' + core_iron)
 
     # 注入最近章节（让 AI 知道作者正在写哪一章，便于讨论"接下来怎么写"）
     if recent_chapters:
@@ -724,6 +769,13 @@ def apply_card():
 
     # 章节正文卡：落地到 Chapter 表（覆盖同章节号/同标题，自动分卷排序）
     if spec['mode'] == 'chapter':
+        # ====== 落地二次校验：章号越界坚决不入库（最后一道门） ======
+        from app import Book, _get_total_volumes, _get_chapters_per_volume
+        _book = Book.query.get(book_id)
+        _bb = BookBible.query.filter_by(book_id=book_id).first()
+        _tv = _get_total_volumes(_bb, _book)
+        _cpv = _get_chapters_per_volume(_bb, _book)
+        _max_chapters = _tv * _cpv
         # 防御性剥离标题行：保证 chapter.content 为纯正文
         # 兜底场景：chat_smart 产出的 SAVE_CHAPTER 卡片或历史会话恢复的卡片可能仍含标题
         stripped_title, body_content = _strip_chapter_title(content, fallback_title=title)
@@ -734,6 +786,10 @@ def apply_card():
         from app import count_words
         wc = count_words(body_content)
         ch_num = parse_chapter_number(title)
+        # 最后一道门：章号解析成功且越界 → 拒绝落地
+        if ch_num is not None and ch_num > _max_chapters:
+            return jsonify({'error': (f'【落地拦截·总章数越界】全书设定总卷数 {_tv} 卷 × 每卷 {_cpv} 章 = 总章数上限 {_max_chapters} 章，'
+                                    f'「{title or f"第{ch_num}章"}」(第{ch_num}章) 已超出上限，未保存。若需要继续，请先到作品基本信息中调大总卷数。')}), 400
         existing_ch = None
         # 优先按章节号匹配（覆盖同章节号的章节）
         if ch_num is not None:
@@ -1177,10 +1233,12 @@ def _action_master_create(book, session, instruction, gw, sse):
             ctx_parts.append(f'【{_DIM_LABELS.get(k, k)}】\n{v}')
         ctx_block = '\n\n'.join(ctx_parts) if ctx_parts else '（暂无）'
 
+        # 注入核心创作参数铁律（批量设定也要遵守总卷数/题材/风格）
+        core_iron = _core_params_iron_block(bb, book)
         sys_prompt = (
             f'你是资深网文创作副驾。请为《{book.title}》生成「{label}」设定。'
-            f'题材：{book.genre or "未指定"}，类型：{book.book_type or "未指定"}。'
-            f'\n已有设定参考：\n{ctx_block}'
+            f'\n\n{core_iron}'
+            f'\n\n已有设定参考：\n{ctx_block}'
             f'\n用户补充要求：{instruction or "无"}'
             f'\n请直接输出该维度的设定内容（300-600字），不要寒暄，不要解释。'
             f'\n\n{PLAIN_TEXT_LAYOUT_RULES}'
@@ -1500,9 +1558,15 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     - 伏笔：注入但加强约束（严禁揭示未到回收时机的谜底）
     - 世界观/规则/文风/地点/构思：全量注入（写作基础，不剧透）
     """
-    from app import db, BookBible, Chapter
+    from app import db, BookBible, Chapter, _get_total_volumes, _get_chapters_per_volume
     book_id = book.id
     bb = BookBible.query.filter_by(book_id=book_id).first()
+
+    # ====== 核心创作参数铁律 + 越界硬拦截（正文写作第一道门） ======
+    tv = _get_total_volumes(bb, book)
+    cpv = _get_chapters_per_volume(bb, book)
+    max_chapters = tv * cpv  # 总章数上限 = 总卷数 × 每卷章数
+    core_iron = _core_params_iron_block(bb, book)
 
     # 统一口径：从章节表提取最新章节号（写作/修改/去AI共用）
     ch_info = _get_latest_chapter_info(book_id)
@@ -1510,6 +1574,14 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     if not target_chapter_num:
         # 续写用「最新章节号+1」，润色用「最新章节号」
         target_chapter_num = ch_info['next_num'] if mode == 'continue' else ch_info['latest_num']
+
+    # 越界硬拦截：章号超过总章数上限立即停止，不发 LLM 请求
+    if target_chapter_num and target_chapter_num > max_chapters:
+        yield sse({'type': 'error',
+                   'error': (f'【核心参数越界拦截】全书设定总卷数 {tv} 卷 × 每卷 {cpv} 章 = 总章数上限 {max_chapters} 章，'
+                             f'当前请求第 {target_chapter_num} 章已超出上限。若需要继续写作，请先到作品基本信息中调大总卷数。')})
+        return
+
     if not prev_chapter_content:
         prev = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
             .filter(Chapter.order_index < target_chapter_num) \
@@ -1612,6 +1684,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         cur_len = len((cur.content or '').strip())
         sys_prompt = (
             f'你是资深网文润色编辑。请润色《{book.title}》第 {target_chapter_num} 章正文。'
+            f'\n\n{core_iron}'
             f'\n要求：保持剧情和人物不变，优化文笔节奏，提升画面感。'
             f'\n用户要求：{instruction or "无"}'
             f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
@@ -1630,7 +1703,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     else:
         sys_prompt = (
             f'你是资深网文创作副驾。请为《{book.title}》续写第 {target_chapter_num} 章正文。'
-            f'\n题材：{book.genre or "未指定"}，类型：{book.book_type or "未指定"}。'
+            f'\n\n{core_iron}'
             f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
             f'\n用户要求：{instruction or "自然推进剧情"}'
@@ -2464,13 +2537,8 @@ def smart_generate():
     bb = BookBible.query.filter_by(book_id=book_id).first()
     ctx, self_content = _build_dim_context(book, bb, dim_key)
 
-    # 注入核心创作参数（卷数/题材/风格），让大纲/剧情等维度严格按全书卷数规划
-    core_params = ''
-    try:
-        from app import _build_core_params_block
-        core_params = _build_core_params_block(bb, book) or ''
-    except Exception:
-        pass
+    # 注入核心创作参数铁律（卷数/题材/风格），让大纲/剧情等维度严格按全书卷数规划
+    core_params = _core_params_iron_block(bb, book)
 
     skill_note = ''
     try:
@@ -2870,9 +2938,11 @@ def smart_batch():
                 if bb:
                     existing = (getattr(bb, spec['field'], '') or '').strip()
 
+                # 注入核心创作参数铁律（批量维度也要遵守总卷数/题材/风格，尤其是大纲/剧情维度）
+                core_iron = _core_params_iron_block(bb, book)
                 sys_prompt = (
                     f'你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{label}」设定。'
-                    f'\n题材：{book.genre or "未指定"}，类型：{book.book_type or "未指定"}。'
+                    f'\n\n{core_iron}'
                     f'\n\n【已生成维度参考】\n{ctx_block}'
                     f'\n\n【作者补充要求】\n{requirement or "无"}'
                     f'{(chr(10) + chr(10) + "【技能包指引】" + chr(10) + skill_note) if skill_note else ""}'
@@ -3012,6 +3082,18 @@ def smart_deai():
 
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
+    # ====== 核心创作参数铁律 + 越界硬拦截（去AI味也要守边界） ======
+    from app import _get_total_volumes, _get_chapters_per_volume, parse_chapter_number
+    tv = _get_total_volumes(bb, book)
+    cpv = _get_chapters_per_volume(bb, book)
+    max_chapters = tv * cpv
+    core_iron = _core_params_iron_block(bb, book)
+    # 越界硬拦截：去AI味的章节号也不能超过总章数上限
+    ch_num = parse_chapter_number(chapter.title or '')
+    if ch_num and ch_num > max_chapters:
+        return jsonify({'error': (f'【核心参数越界拦截】全书设定总卷数 {tv} 卷 × 每卷 {cpv} 章 = 总章数上限 {max_chapters} 章，'
+                                f'《{chapter.title}》已超出上限。若需要继续，请先到作品基本信息中调大总卷数。')}), 400
+
     # 注入去AI味技能包（review 类，限定 deai 相关 prompt_keys）
     skill_note = ''
     try:
@@ -3064,6 +3146,8 @@ def smart_deai():
     from app import count_words
     orig_wc = count_words(raw_content)
     sys_prompt = f"""你是番茄去AI味审查员。请对以下章节正文做去AI味审校，按规则修改后只输出修改后的正文。
+
+{core_iron}
 
 {skill_note}
 
