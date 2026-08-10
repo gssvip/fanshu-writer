@@ -528,6 +528,7 @@ export default function ChatPanel() {
   const [dimensions, setDimensions] = useState<DimSpec[]>([]);
   const [selectedDim, setSelectedDim] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<Array<{ id: string; title: string; preview: string }>>([]);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<{ id: string; title: string; preview: string } | null>(null);
   const [loadingSuggest, setLoadingSuggest] = useState(false);
   const [bible, setBible] = useState<BookBible | null>(null);
   const [skillPacks, setSkillPacks] = useState<SkillPack[]>([]);
@@ -835,6 +836,7 @@ export default function ChatPanel() {
     setInput('');
     setStreamError('');
     setSuggestions([]);
+    setSelectedSuggestion(null);
     setLoadingSuggest(true);
     appendUserAi(`【${dimensions.find(d => d.key === selectedDim)?.label || selectedDim}】${text}`);
     try {
@@ -859,20 +861,32 @@ export default function ChatPanel() {
     }
   }, [input, bookId, selectedDim, streaming, settingPacks, dimensions, appendUserAi, removeEmptyAi]);
 
-  // 2. 选中意见 → 流式生成最终内容
-  const handleGenerate = useCallback(async (suggestion: { id: string; title: string; preview: string }) => {
+  // 2. 选中意见 → 进入"基于该方案修改/生成"模式
+  const handleGenerate = useCallback((suggestion: { id: string; title: string; preview: string }, index: number) => {
     if (!bookId || !selectedDim || streaming) return;
     setStreamError('');
     setSuggestions([]);
+    setSelectedSuggestion(suggestion);
     streamBufferRef.current = '';
-    // 记录正在修正的维度（用于任务清单自动标记 done）
     fixingDimKeyRef.current = selectedDim;
-    appendUserAi(`选中方案：${suggestion.title} — ${suggestion.preview}`);
+    appendUserAi(`已选择方案${['一', '二', '三', '四', '五'][index] || (index + 1)}：${suggestion.title}\n${suggestion.preview}\n\n请在下方的输入框中填写修改意见（不填则直接按此方案生成）。`);
+  }, [bookId, selectedDim, streaming, appendUserAi]);
+
+  // 2b. 基于已选方案 + 用户修改意见 流式生成最终内容
+  const handleGenerateFromSelected = useCallback(async () => {
+    if (!bookId || !selectedDim || streaming || !selectedSuggestion) return;
+    const modification = input.trim();
+    setInput('');
+    setStreamError('');
+    setSelectedSuggestion(null);
+    streamBufferRef.current = '';
+    fixingDimKeyRef.current = selectedDim;
+    appendUserAi(modification || '按此方案直接生成');
     setStreaming(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.smartGenerateStream(bookId, selectedDim, suggestion.preview, '', settingPacks, sessionId || undefined, ctrl.signal);
+      const res = await api.smartGenerateStream(bookId, selectedDim, selectedSuggestion.preview, modification, settingPacks, sessionId || undefined, ctrl.signal);
       await consumeSSE(res, ctrl);
       refreshProgress();
       refreshHistory();
@@ -885,7 +899,7 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [bookId, selectedDim, streaming, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+  }, [bookId, selectedDim, streaming, selectedSuggestion, input, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
   // 3. 下游维度直接生成（不经过多选方案，把用户输入作为生成要求）
   const handleDirectGenerate = useCallback(async () => {
@@ -1319,6 +1333,7 @@ export default function ChatPanel() {
     setShowHistory(false);
     setStreamError('');
     setSuggestions([]);
+    setSelectedSuggestion(null);
   }, [streaming]);
 
   const stopStream = useCallback(() => {
@@ -1335,6 +1350,9 @@ export default function ChatPanel() {
       if (!selectedDim) return '请先选择上方维度按钮…';
       if (selectedDim === 'general') return '和 AI 智驾自由讨论小说/剧情…（提及人物/伏笔/世界观等会自动产出卡片）';
       const dimLabel = dimensions.find(d => d.key === selectedDim)?.label || selectedDim;
+      if (selectedSuggestion) {
+        return `已选「${selectedSuggestion.title}」。可输入修改意见，不填则直接按此方案生成…`;
+      }
       if (shouldShowSuggestions(selectedDim)) {
         return `描述你对「${dimLabel}」的构思方向，AI 会给出多个方案供选择…`;
       }
@@ -1385,6 +1403,11 @@ export default function ChatPanel() {
   const handleMainSend = useCallback(() => {
     if (activeTab !== 'setting' || !selectedDim) return;
     if (suggestions.length > 0) return;
+    // 若已选择某个方案，则基于该方案 + 输入框修改意见生成
+    if (selectedSuggestion) {
+      handleGenerateFromSelected();
+      return;
+    }
     if (selectedDim === 'general') {
       handleGeneral();
       return;
@@ -1405,7 +1428,7 @@ export default function ChatPanel() {
     } else {
       handleSuggest();
     }
-  }, [activeTab, selectedDim, suggestions, progress, handleSuggest, handleDimEdit, handleGeneral, handleDirectGenerate]);
+  }, [activeTab, selectedDim, suggestions, selectedSuggestion, progress, handleSuggest, handleDimEdit, handleGeneral, handleDirectGenerate, handleGenerateFromSelected]);
 
   // 重新生成：找到该AI消息前最近的用户消息，重新触发对应动作
   const handleRegenerate = useCallback((index: number) => {
@@ -1509,7 +1532,7 @@ export default function ChatPanel() {
                     <div className="smart-dim-row">
                       <button
                         className={`smart-dim-btn ${selectedDim === 'general' ? 'active' : ''}`}
-                        onClick={() => { setSelectedDim('general'); setSuggestions([]); setInput(''); }}
+                        onClick={() => { setSelectedDim('general'); setSuggestions([]); setSelectedSuggestion(null); setInput(''); }}
                         disabled={streaming || loadingSuggest}
                         title="通用聊天：自由讨论小说/剧情，关键词触发填入各维度"
                       >💬 通用</button>
@@ -1517,7 +1540,7 @@ export default function ChatPanel() {
                         <button
                           key={d.key}
                           className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
-                          onClick={() => { setSelectedDim(d.key); setSuggestions([]); setInput(''); }}
+                          onClick={() => { setSelectedDim(d.key); setSuggestions([]); setSelectedSuggestion(null); setInput(''); }}
                           disabled={streaming || loadingSuggest}
                           title={d.key === 'key_rules' ? '能力体系/科技树等硬规则（生成时同步产出文风指南）' : d.hint}
                         >{d.icon} {d.label}</button>
@@ -1528,7 +1551,7 @@ export default function ChatPanel() {
                         <button
                           key={d.key}
                           className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
-                          onClick={() => { setSelectedDim(d.key); setSuggestions([]); setInput(''); }}
+                          onClick={() => { setSelectedDim(d.key); setSuggestions([]); setSelectedSuggestion(null); setInput(''); }}
                           disabled={streaming || loadingSuggest}
                           title={d.hint}
                         >{d.icon} {d.label}</button>
@@ -1575,6 +1598,7 @@ export default function ChatPanel() {
                                   onClick={() => {
                                     setSelectedDim(task.dimKey!);
                                     setSuggestions([]);
+                                    setSelectedSuggestion(null);
                                     setInput(`修正意见：${task.desc}${task.fix ? `（${task.fix}）` : ''}`);
                                   }}
                                   title="定位到该维度并填充修正意见"
@@ -1595,6 +1619,7 @@ export default function ChatPanel() {
                             if (!next || !next.dimKey) return;
                             setSelectedDim(next.dimKey!);
                             setSuggestions([]);
+                            setSelectedSuggestion(null);
                             setInput(`修正意见：${next.desc}${next.fix ? `（${next.fix}）` : ''}`);
                           }}
                           title="自动定位到第一个未完成的维度并填充意见"
@@ -1828,18 +1853,21 @@ export default function ChatPanel() {
             {activeTab === 'setting' && suggestions.length > 0 && shouldShowSuggestions(selectedDim) && (
               <div className="smart-suggestions">
                 <div className="smart-suggestions-head">请选择一个方案，AI 将基于它生成完整内容：</div>
-                {suggestions.map(s => (
-                  <button
-                    key={s.id}
-                    className="smart-suggestion-item"
-                    onClick={() => handleGenerate(s)}
-                    disabled={streaming}
-                  >
-                    <div className="smart-suggestion-title">{s.title}</div>
-                    <div className="smart-suggestion-preview">{s.preview}</div>
-                  </button>
-                ))}
-                <button className="smart-suggestion-cancel" onClick={() => setSuggestions([])}>取消，重新描述需求</button>
+                {suggestions.map((s, i) => {
+                  const schemeLabel = ['方案一', '方案二', '方案三', '方案四', '方案五'][i] || `方案${i + 1}`;
+                  return (
+                    <button
+                      key={s.id}
+                      className="smart-suggestion-item"
+                      onClick={() => handleGenerate(s, i)}
+                      disabled={streaming}
+                    >
+                      <div className="smart-suggestion-title">{schemeLabel}：{s.title}</div>
+                      <div className="smart-suggestion-preview">{s.preview}</div>
+                    </button>
+                  );
+                })}
+                <button className="smart-suggestion-cancel" onClick={() => { setSuggestions([]); setSelectedSuggestion(null); }}>取消，重新描述需求</button>
               </div>
             )}
 
@@ -1928,7 +1956,7 @@ export default function ChatPanel() {
                     onKeyDown={onInputKeyDown}
                     placeholder={inputPlaceholder}
                     rows={1}
-                    disabled={streaming || loadingSuggest || suggestions.length > 0 || !selectedDim}
+                    disabled={streaming || loadingSuggest || (suggestions.length > 0 && !selectedSuggestion) || !selectedDim}
                   />
                   {streaming ? (
                     <button className="chat-send stop" onClick={stopStream}>停止</button>
@@ -1936,9 +1964,10 @@ export default function ChatPanel() {
                     <button
                       className="chat-send"
                       onClick={handleMainSend}
-                      disabled={!canSend || loadingSuggest || suggestions.length > 0}
+                      disabled={!canSend && !selectedSuggestion || loadingSuggest || suggestions.length > 0}
                     >{
                       loadingSuggest ? '…' :
+                      selectedSuggestion ? '按方案生成' :
                       selectedDim === 'general' ? '发送' :
                       shouldShowSuggestions(selectedDim) ? '生成方案' : '生成/修改'
                     }</button>
