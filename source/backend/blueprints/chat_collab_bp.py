@@ -90,6 +90,119 @@ DEAI_RULES = """【去AI味执行规则】
 
 
 # ============================================================================
+# 用户说话意图识别 → 自动同步核心创作参数（卷数/每卷章数/题材/风格）到 Book + BookBible
+# 解决：用户在智驾里说「改成25卷」时，不能只当一句对话，要真正落地到 DB，
+#       否则后续 prompt 中的【核心创作参数铁律】读的还是旧值，等于用户白说。
+# ============================================================================
+
+# 卷数：正则命中即提取数字（允许：总卷数/全书/一共/计划/改成/设为/按/做 等词 + N + 卷）
+# 例："改成25卷"、"全书按30卷来写"、"总卷数15卷"、"一共8卷"、"做60卷"、"写10卷"、"搞18卷"、"按20卷规划"
+_RE_TV = re.compile(
+    r'(?:总卷数|全书|全本|整本书|一共|总共|合计|总计|计划|准备|打算|想|要|需要|改成|改为|设置为|设为|调整为|调成|调为|按|做成|写成|做|写|搞|设计成|规划成|规划|控制在|就|那就|那就按|就按|至少|最多|左右|大概|约|差不多)'
+    r'\s*(\d{1,4})\s*卷',
+)
+# 反向宽松：数字+卷 在句中且含"卷"的意图词（兜底）；配合负向词表避免误判叙事
+_RE_TV_LOOSE = re.compile(r'(?:^|[,，。；！？\s])(\d{1,4})\s*卷', re.IGNORECASE)
+
+# 每卷章数：例 "每卷60章"、"改成每卷 80 章"、"每卷按40章规划"
+_RE_CPV = re.compile(
+    r'(?:每卷|一卷|单卷|一册)\s*(?:改成|改为|设置为|设为|调整为|按|做成|写成|控制在|计划|一共|大约|约)?\s*(\d{1,4})\s*章'
+)
+_RE_CPV_LOOSE = re.compile(r'每卷.*?(\d{1,4})\s*章', re.IGNORECASE)
+
+# 防止被"第12卷"、"卷三"、"10卷公交"这种非总卷数/章数意图的纯叙事描述命中：负向关键词
+_NEG_TV_TOKENS = re.compile(r'(第\s*\d+\s*卷|卷[一二三四五六七八九十百千零\d]+|回|话|公交|公卷|问卷|试卷|答卷|卷宗|卷(起|发|入|尺|子|心菜|心菜|曲|烟|叶|铺盖|包|云|))', re.IGNORECASE)
+
+
+def _auto_sync_params_from_user_message(book, bb, message: str):
+    """从用户最新一条聊天消息中识别「卷数/章数调整」意图，真正同步到 DB。
+
+    Returns:
+      list[str]：本次实际同步成功的 human-readable 说明（供前端 SSE meta 回显）。
+                 空列表表示没有识别到需要同步的参数。
+    """
+    import app as app_module
+    from app import db, _sync_book_meta_to_bible  # 复用现有同步机制，保证口径一致
+    if not book or not message:
+        return []
+    msg = (message or '').strip()
+    if not msg:
+        return []
+    synced_notes = []
+
+    # -------- 1. 总卷数：提取并落 Book.total_volumes --------
+    def extract_tv(text):
+        m = _RE_TV.search(text)
+        if m:
+            return int(m.group(1))
+        # 负向过滤：含「第N卷/卷X」字样时不再走宽松匹配，避免"我现在在写第25卷"被误判为改总卷数
+        if _NEG_TV_TOKENS.search(text):
+            return None
+        m2 = _RE_TV_LOOSE.search(text)
+        if m2:
+            return int(m2.group(1))
+        return None
+
+    tv_new = extract_tv(msg)
+    if tv_new is not None and 1 <= tv_new <= 2000:  # 合理性区间，防止"1卷"这种错别字
+        try:
+            cur_tv = int(getattr(book, 'total_volumes', 0) or 0)
+        except Exception:
+            cur_tv = 0
+        if cur_tv != tv_new:
+            # 先写 Book（权威口径）
+            book.total_volumes = tv_new
+            # 再调用同步机制把 Book → BookBible（内部已处理 Case A/B，不会把用户 Bible 手工修改覆盖）
+            if bb is None:
+                from app import BookBible as _BB
+                bb = _BB.query.filter_by(book_id=book.id).first()
+                if bb is None:
+                    bb = _BB(book_id=book.id)
+                    db.session.add(bb)
+            _sync_book_meta_to_bible(book, bb, commit=False)
+            db.session.commit()
+            synced_notes.append(f'【已同步】检测到你要求「{tv_new}卷」，已自动将作品总卷数从 {cur_tv or "未设定"} 更新为 {tv_new} 卷（后续五幕总纲/分卷规划/正文写作都会严格按此卷数执行）')
+
+    # -------- 2. 每卷章数：提取并落 Book.chapters_per_volume（若有该字段） --------
+    def extract_cpv(text):
+        m = _RE_CPV.search(text)
+        if m:
+            return int(m.group(1))
+        m2 = _RE_CPV_LOOSE.search(text)
+        if m2:
+            return int(m2.group(1))
+        return None
+    cpv_new = extract_cpv(msg)
+    if cpv_new is not None and 5 <= cpv_new <= 500:
+        # chapters_per_volume 字段在不同版本项目里可能叫 chapters_per_volume / chapters_every_volume / 不存在
+        field_candidates = ('chapters_per_volume', 'chapters_every_volume', 'chapters_per_book')
+        cur_cpv = 0
+        for f in field_candidates:
+            if hasattr(book, f):
+                try:
+                    cur_cpv = int(getattr(book, f, 0) or 0)
+                except Exception:
+                    cur_cpv = 0
+                break
+        if cur_cpv != cpv_new:
+            for f in field_candidates:
+                if hasattr(book, f):
+                    setattr(book, f, cpv_new)
+                    break
+            if bb is None:
+                from app import BookBible as _BB
+                bb = _BB.query.filter_by(book_id=book.id).first()
+                if bb is None:
+                    bb = _BB(book_id=book.id)
+                    db.session.add(bb)
+            _sync_book_meta_to_bible(book, bb, commit=False)
+            db.session.commit()
+            synced_notes.append(f'【已同步】检测到你要求「每卷 {cpv_new} 章」，已自动将每卷章数从 {cur_cpv or "默认"} 更新为 {cpv_new} 章（后续总章数上限会按 总卷数 × {cpv_new} 章计算）')
+
+    return synced_notes
+
+
+# ============================================================================
 # Action Card 协议
 # ============================================================================
 
@@ -592,6 +705,14 @@ def chat_smart():
         return jsonify({'error': '书籍不存在'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
+    # ===== 【卷数/章数意图·落地前置】先于 LLM 调用执行 =====
+    # 用户在智驾里说"改成25卷/每卷60章"时，必须真正写入 DB，
+    # 否则后续 build_chat_system_prompt → _core_params_iron_block 读到的还是旧值，用户等于白说。
+    params_sync_notes = _auto_sync_params_from_user_message(book, bb, message)
+    # 同步后重新取一次 bb（可能刚刚新增了一条，避免后续 None 判空出问题）
+    if bb is None:
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+
     # P4：加载最近 5 章标题（让 AI 懂作者正在写哪一章）+ 统一口径下一章号
     recent_chapters = []
     next_chapter_num = None
@@ -653,7 +774,10 @@ def chat_smart():
     def generate():
         full_text = []
         try:
-            # SSE 首帧 meta：返回命中的章节/维度（用于前端回显"已定位并注入…"提示）
+            # SSE 首帧 ①：核心创作参数同步结果（若用户这条消息触发了卷数/章数调整，先告诉前端已落地）
+            if params_sync_notes:
+                yield f'data: {json.dumps({"type": "meta", "kind": "params_sync", "info": {"notes": params_sync_notes}}, ensure_ascii=False)}\n\n'
+            # SSE 首帧 ②：返回命中的章节/维度（用于前端回显"已定位并注入…"提示）
             if auto_ctx_info['chapters'] or auto_ctx_info['dims']:
                 yield f'data: {json.dumps({"type": "meta", "kind": "auto_context", "info": auto_ctx_info}, ensure_ascii=False)}\n\n'
 
@@ -1169,6 +1293,12 @@ def chat_smart_action():
         db.session.commit()
     session_id = session.id
 
+    # ===== 【卷数/章数意图·落地前置】副驾快捷按钮的 instruction 也可能含卷数/章数要求 =====
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    params_sync_notes_action = _auto_sync_params_from_user_message(book, bb, instruction or '')
+    if bb is None:
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+
     # 取激活配置
     try:
         base_url, api_key, model = get_llm_config()
@@ -1184,6 +1314,9 @@ def chat_smart_action():
 
     def generate():
         try:
+            # 副驾首帧：参数同步说明（若有）
+            if params_sync_notes_action:
+                yield sse({'type': 'meta', 'kind': 'params_sync', 'info': {'notes': params_sync_notes_action}})
             if action == 'master_create':
                 yield from _action_master_create(book, session, instruction, gw, sse)
             elif action == 'continue':
