@@ -2588,13 +2588,31 @@ def smart_suggest():
     if dim_needs_volume_in_preview and tv_for_suggest and tv_for_suggest >= 1:
         preview_volume_req = f'\n- 本任务为「{spec.get("label", dim_key)}」维度，你输出的每条 preview 简介**必须**显式出现「{tv_for_suggest}卷」的字样，用来直接告诉作者这方案是按他设定的 {tv_for_suggest} 卷规划的；不写"十卷""五卷"等其他数字。'
 
-    # 大纲维度：五幕模型说明（仍然保留，按 tv_for_suggest 动态比例）
+    # 大纲维度：五幕模型说明（给出 tv 卷下的精确映射示例，禁止 AI 把多幕压缩到第25卷）
     outline_extra = ''
     if dim_key == 'plot_design':
         try:
             from app import _get_total_volumes, _cultivation_dimension_hint
             tv = _get_total_volumes(bb, book)
-            outline_extra = f'\n\n【大纲维度专属要求】请生成「五幕式总纲」方向的差异化方案。全书严格 {tv} 卷，每卷约50章12万字。五幕模型按{tv}卷比例自动映射：立身(前5%)=第1~{max(1, tv*5//100)}卷；立足(5-25%)=第{max(2, tv*5//100+1)}~{tv*25//100}卷；立势(25-50%)=第{tv*25//100+1}~{tv*50//100}卷；立威(50-75%)=第{tv*50//100+1}~{tv*75//100}卷；立命(75-100%)=第{tv*75//100+1}~{tv}卷。只输出多方案供作者选择，每个方案 preview 简介必须说明对应的五幕怎么分配到 {tv} 卷。'
+            act1_end = max(1, tv*5//100)
+            act2_end = tv*25//100
+            act3_end = tv*50//100
+            act4_end = tv*75//100
+            # 构造一个按 tv 卷精确分配的五幕示例，直接给 AI 照抄
+            five_act_example = f'立身第1~{act1_end}卷、立足第{act1_end+1}~{act2_end}卷、立势第{act2_end+1}~{act3_end}卷、立威第{act3_end+1}~{act4_end}卷、立命第{act4_end+1}~{tv}卷'
+            outline_extra = f"""\n\n【大纲维度专属要求】请生成「五幕式总纲」方向的差异化方案。
+全书严格 {tv} 卷，每卷约50章12万字。
+五幕模型按{tv}卷比例的精确卷号映射如下（必须严格遵守，不得擅自改动）：
+- 立身(前5%)：第1~{act1_end}卷
+- 立足(5%-25%)：第{act1_end+1}~{act2_end}卷
+- 立势(25%-50%)：第{act2_end+1}~{act3_end}卷
+- 立威(50%-75%)：第{act3_end+1}~{act4_end}卷
+- 立命(75%-100%)：第{act4_end+1}~{tv}卷
+
+【必须照抄的示例】当提到五幕对应的卷号范围时，请严格按以下格式书写：
+"{five_act_example}"
+严禁出现"第2至{tv}卷""第7至{tv}卷""第X至{tv}卷"这种把多幕压缩到同一卷的错误写法；每一幕必须对应独立的卷号区间。
+只输出多方案供作者选择，每个方案 preview 简介必须说明对应的五幕怎么分配到 {tv} 卷。"""
             try:
                 outline_extra += _cultivation_dimension_hint('plot_design', book, bb)
             except Exception:
@@ -2671,62 +2689,61 @@ def smart_suggest():
             if clean:
                 suggestions.append({'title': f'方案{i + 1}', 'preview': clean[:150]})
 
-    # === 后端兜底：即使 AI 仍然违规在 preview 里写了"十卷/五卷"，也强制替换成真实卷数 ===
-    #     【上一版严重 bug 教训】绝对不能用全局 str.replace('二卷','25卷') 这种粗暴方式！
-    #     因为『第2卷 立足』里紧跟"立足"二字的"二"会被偶合命中，变成『第2 25卷 立足』→ 最终拼接成"第225卷立足"。
-    #     现在严格遵守：先把所有"卷号锚点"（含卷号+紧随的幕/动作描述）全部 stash → 只对非 stash 区域精细匹配 → 再还原，绝不越界替换。
+    # === 后端兜底：只纠正明显作为「全书总卷数」的违规描述，绝不碰任何卷号/卷号区间 ===
+    #     惨痛教训：任何试图全局替换"第X卷"或"X-Y卷"的规则都会误伤，导致"第13-18卷"→"第125卷"。
+    #     现在策略极度保守：
+    #       1) 先把所有卷号（含第X卷、第X-Y卷、卷X、第X卷后紧随1-8字中文）完整 stash 占位；
+    #       2) 只对 stash 之外的独立"总卷数"短语做替换；
+    #       3) 还原 stash，卷号原封不动返回。
     def _enforce_volume_in_preview(preview: str, tv: int) -> str:
         if not preview or not tv or tv < 1:
             return preview
         tvs = f'{tv}卷'
 
-        # --- 0) 超强卷号保护：把「第X卷 / 卷X」以及它们**紧随的"立X/幕/核心"这类单字/词尾**一起打包 stash ---
-        #     这样"第2卷立足"会被整体替换占位，里面的"2 卷 立..."再也不会被后面"中文数字卷"正则碰到
         volume_id_holders = []
 
         def _stash(m):
             volume_id_holders.append(m.group(0))
             return f'\x00VID{len(volume_id_holders)-1}\x00'
 
-        # 「第 25 卷立身/立足/立势/立威/立命/大高潮/核心目标…」——卷号 + 紧随动作（1~6 字中文）一起 stash
-        #   这是这次误伤的核心防护：必须优先于任何正则
-        volid_suffix_follow = r'(?:\s*[\u4e00-\u9fff]{1,8})?'
-        preview = re.sub(rf'第\s*\d{{1,4}}\s*卷{volid_suffix_follow}', _stash, preview)
-        preview = re.sub(rf'第\s*[一二两三四五六七八九十百零]{{1,6}}\s*卷{volid_suffix_follow}', _stash, preview)
-        preview = re.sub(rf'(?<!\d)卷\s*\d{{1,4}}(?!\s*卷){volid_suffix_follow}', _stash, preview)
-        preview = re.sub(rf'(?<![一二两三四五六七八九十百零])卷\s*[一二两三四五六七八九十百](?![一二两三四五六七八九十百卷]){volid_suffix_follow}', _stash, preview)
+        # 0) 卷号保护：第X-Y卷、第X卷、卷X 以及后面紧跟的少量中文（立身/立足/核心目标等）一起 stash
+        cn_digit = r'[一二两三四五六七八九十百零]'
+        suffix_follow = r'(?:\s*[\u4e00-\u9fff]{0,8})?'
+        preview = re.sub(rf'第\s*\d{{1,4}}\s*[-~～到至]\s*\d{{1,4}}\s*卷{suffix_follow}', _stash, preview)
+        preview = re.sub(rf'第\s*\d{{1,4}}\s*卷{suffix_follow}', _stash, preview)
+        preview = re.sub(rf'第\s*{cn_digit}{{1,6}}\s*卷{suffix_follow}', _stash, preview)
+        preview = re.sub(rf'(?<!\d)卷\s*\d{{1,4}}(?!\s*卷){suffix_follow}', _stash, preview)
 
-        # --- 1) 违规「中文数字总卷数」替换：只能匹配**前面不是"第/之/其/第X卷/VID 占位"**的独立短语 ---
-        #    正确命中："十卷按五幕完成 / 十余卷写尽 / 五到八卷规划 / 三十卷飞升"
-        #    绝对不会碰：VID0(里面是被 stash 的"第2卷立足") / "第X卷"已占位 / "卷X"已占位
-        cn_numerals = r'(?:[一二两三四五六七八九十百零]{1,5}|十余|十几|数十|十二|十五|二十|三十|五十|一百)'
-        # 负向边界：前一个字符不能是 "第/之/卷/\d/VID占位\x00"（这些都是卷号或编号特征）
-        neg_prefix = r'(?<![第之其卷\-\d\x00])'
-        # 正向：中文数字(+余) + 空格可选 + 卷 + (不能以"末/首/上/中/下/之/分/名/号/页/段/节/章"结尾，这些是卷号修饰)
-        preview = re.sub(rf'{neg_prefix}{cn_numerals}余?\s*卷(?!\s*(?:末|首|上|中|下|内|外|前|后|间|之|分|名|号|标|页|段|节|章))',
+        # 1) 替换中文数字总卷数（如"十卷、五卷、十二卷"），要求：
+        #    - 前面是"全书/按/共/约/规划/规模/体量/为/是/有"等总卷数上下文，或句首/标点/空格
+        #    - 前面不能是"第/之/其/卷/VID占位"
+        cn_total = r'(?:[一二两三四五六七八九十百零]{1,5}|十余|十几|数十|十二|十五|二十|三十|五十|一百)'
+        total_ctx = r'(?:全书|按|共|约|大概|规划|规模|体量|设定|写|分|划分|安排|设计|为|是|有|写成|出|设定为)'
+
+        def _replace_total_cn(m):
+            # m.group(1) 是前面的总卷数上下文/标点/句首，必须原样保留
+            prefix = m.group(1)
+            return f'{prefix}{tvs}'
+        # 中文数字总卷数：前面是总卷数上下文、句首、或标点/空格；后面不能是卷号修饰
+        preview = re.sub(rf'((?:{total_ctx}\s*|^|[，。；！？、\s])){cn_total}\s*卷(?!\s*(?:末|首|上|中|下|内|外|前|后|间|之|分|名|号|标|页|段|节|章))',
+                         _replace_total_cn, preview)
+        # 兜底：句首直接出现的"十卷按/十卷分别/十卷串联/十二卷..."
+        preview = re.sub(rf'(?<![第之其卷\d\x00]){cn_total}\s*卷(?=\s*(?:按|分别|串联|完成|写尽|涵盖|覆盖|铺陈|讲|写|推进|安排|规划|走|写完|撑起|构筑|呈现|讲完|打通|飞升|史诗|规模|体量|全书))',
                          tvs, preview)
-        # 截图句型专门兜底："十卷 按/分别/串联/完成/写尽/涵盖/覆盖/铺陈/推进/规划/安排/走/撑起/构筑/讲完/写完/打通"
-        preview = re.sub(r'(?<![\x00第])十\s*卷(?=\s*(?:按|分别|串联|完成|写尽|涵盖|覆盖|铺陈|讲|写|推进|安排|规划|走|写完|撑起|构筑|呈现|讲完|打通))',
-                         tvs, preview)
 
-        # --- 2) "5-8卷 / 5~8卷 / 5到8卷 / 通常5-8卷" 这类区间（必须非 VID 区域）---
-        preview = re.sub(r'(?<![\x00第])通常\s*[（(]?\s*\d{1,3}\s*[-~～到至]\s*\d{1,3}\s*[）)]?\s*卷', tvs, preview)
-        preview = re.sub(r'(?<![\x00第])\d{1,3}\s*[-~～到至]\s*\d{1,3}\s*卷', tvs, preview)
-
-        # --- 3) 阿拉伯数字卷数≠tv（只在非 VID、非"第X卷"的位置替换；注意 VID 已被 \x00 包裹，所以 \x00 前缀边界可以挡住）---
-        def _fix_num(m):
+        # 2) 替换阿拉伯数字总卷数（如"全书12卷""按30卷"），要求前面是明确总卷数上下文
+        #    注意：tv 本身不替换；独立句首/标点后的数字卷也要替换
+        def _replace_total_num(m):
+            prefix = m.group(1)
             try:
-                n = int(m.group(1))
+                n = int(m.group(2))
             except Exception:
                 return m.group(0)
-            # 绝对不替换 tv 本身（当用户就设 10 卷时，10卷是正确的，不能被搞掉）
-            if n == tv:
-                return m.group(0)
-            return tvs if (n <= 200 and n >= 1) else m.group(0)
-        # 负向：前面不能是第、小数点、VID 占位符
-        preview = re.sub(r'(?<![\.第\x00])\s*(\d{1,4})\s*卷(?![章第])', _fix_num, preview)
+            return f'{prefix}{tvs}' if n != tv else m.group(0)
+        preview = re.sub(rf'((?:{total_ctx}\s*|^|[，。；！？、\s]))(?!{tv}\b)(\d{{1,4}})\s*卷(?!\s*(?:末|首|上|中|下|章|节|段|页|号|名))',
+                         _replace_total_num, preview)
 
-        # --- 4) 还原所有被 stash 的卷号锚点（含卷号+紧随"立身/立足"动作）——完全原样返回 ---
+        # 3) 还原所有卷号
         def _unstash(m):
             try:
                 return volume_id_holders[int(m.group(1))]
@@ -2734,9 +2751,8 @@ def smart_suggest():
                 return m.group(0)
         preview = re.sub(r'\x00VID(\d+)\x00', _unstash, preview)
 
-        # --- 5) 大纲/剧情/构思维度：若 preview 里还没出现"tv卷"字样，只在**句首**安全补一次 ---
+        # 4) 大纲/剧情/构思维度：若 preview 里还没出现 tv卷，只在句首安全补一次
         if dim_needs_volume_in_preview and tvs not in preview and f'{tv} 卷' not in preview:
-            # 仅在句首是"以/全书/故事/本书/小说/本作/该作"开头的位置前缀注入，绝对不在文中间拼接防止出"第225卷"这种怪
             def _prefix_prepend(m):
                 prefix_word = m.group(1) or ''
                 return f'全书{tvs}，' if not prefix_word else f'{prefix_word}{tvs}，'
