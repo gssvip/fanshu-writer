@@ -264,13 +264,20 @@ export default function AiCreateModal({
       ? '\n\n【已确认的其他维度产物（必须与本维度保持一致，不可矛盾；缺失维度视为未规划）】\n' + bibleCtxParts.join('\n\n')
       : '\n\n【其他维度】暂无已确认的产物，本维度为起点。';
 
+    const modifyRule = modificationNote ? '\n【本次为修改任务】用户已提供「当前维度原文」和「修改意见」。你必须在原文基础上做局部微调，保留未修改部分，禁止推翻重写或生成全新版本。' : '';
     const system = `你是专业网文创作助手，正在参与多维度协同创作。用户正在创作一部${book?.book_type || '小说'}，题材为${book?.genre || '通用'}。
 【你的当前任务】生成「${DIM_LABEL[dim] || dim}」维度内容。
-【核心约束】必须与已确认维度保持一致；不可与其他维度矛盾；缺失的维度可在产物中预留对接点但不要凭空生成。${upstreamCtx}${skillNote}`;
+【核心约束】必须与已确认维度保持一致；不可与其他维度矛盾；缺失的维度可在产物中预留对接点但不要凭空生成。${modifyRule}${upstreamCtx}${skillNote}`;
 
     let user = `${prompt}\n\n【用户原始构思】${concept}\n\n【用户要求】${userInstruction || '请基于已确认维度自由发挥'}`;
     if (modificationNote) {
-      user += `\n\n【上一轮生成结果】\n${(prevOutput || '').slice(0, 2000)}\n\n【用户修改意见】${modificationNote}\n请根据修改意见调整优化。`;
+      const currentText = prevOutput || '';
+      user += `\n\n【当前维度原文·必须在此基础上修改】\n${currentText}\n\n【用户修改意见】${modificationNote}
+【修改铁律】你正在对「已有内容」进行**局部微调/修订**，必须满足以下要求：
+1. 保留原文的合理结构、主要设定、已有角色/地点/事件名称，禁止推翻重写或另起炉灶；
+2. 仅针对修改意见中明确提到的点进行调整，未提及的部分尽量保持原样；
+3. 输出必须是**完整修订后的正文**（不要只输出修改片段），让平台能直接覆盖原维度；
+4. 如果修改意见与原文存在冲突，优先执行修改意见，但同时说明调整的范围，避免引入新矛盾。`;
     }
     return [
       { role: 'system', content: system },

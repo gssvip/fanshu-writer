@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useStore } from '../store';
 import { api } from '../api';
-import type { ActionCard, ProgressMap, AIMessage, SkillPack } from '../types';
+import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible } from '../types';
 import CarLogo from './CarLogo';
 
 // ============================================================================
@@ -103,6 +103,14 @@ function chineseToInt(s: string): number | null {
     }
   }
   return total + num;
+}
+
+// 判断维度是否走"方案选择"流程：构思/核心设定/世界观 需要发散多方案；
+// 大纲/剧情/人物/伏笔 等下游维度已由上游确定，直接生成或修改即可。
+function shouldShowSuggestions(dimKey: string | null): boolean {
+  if (!dimKey || dimKey === 'general') return false;
+  const suggestDims = ['concept', 'key_rules', 'worldbuilding', 'locations', 'inventory'];
+  return suggestDims.includes(dimKey);
 }
 
 // ============================================================================
@@ -521,6 +529,7 @@ export default function ChatPanel() {
   const [selectedDim, setSelectedDim] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<Array<{ id: string; title: string; preview: string }>>([]);
   const [loadingSuggest, setLoadingSuggest] = useState(false);
+  const [bible, setBible] = useState<BookBible | null>(null);
   const [skillPacks, setSkillPacks] = useState<SkillPack[]>([]);
   // 各 Tab 独立的技能包选择（切换 Tab 互不干扰）
   const [settingPacks, setSettingPacks] = useState<string[]>([]);
@@ -561,12 +570,16 @@ export default function ChatPanel() {
     }
   }, [messages, streaming]);
 
-  // 加载进度
+  // 加载进度（同时刷新 bible，避免修改时拿到旧内容）
   const refreshProgress = useCallback(async () => {
     if (!bookId) return;
     try {
       const p = await api.getProgressMap(bookId);
       setProgress(p);
+    } catch { /* ignore */ }
+    try {
+      const b = await api.getBible(bookId);
+      setBible(b);
     } catch { /* ignore */ }
   }, [bookId]);
 
@@ -817,6 +830,8 @@ export default function ChatPanel() {
   const handleSuggest = useCallback(async () => {
     const text = input.trim();
     if (!bookId || !selectedDim || streaming) return;
+    // 仅方案选择型维度才走多选意见流程
+    if (!shouldShowSuggestions(selectedDim)) return;
     setInput('');
     setStreamError('');
     setSuggestions([]);
@@ -872,7 +887,36 @@ export default function ChatPanel() {
     }
   }, [bookId, selectedDim, streaming, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
-  // 3. 单独维度AI修改（基于已落地内容）
+  // 3. 下游维度直接生成（不经过多选方案，把用户输入作为生成要求）
+  const handleDirectGenerate = useCallback(async () => {
+    const text = input.trim();
+    if (!bookId || !selectedDim || streaming || !text) return;
+    setInput('');
+    setStreamError('');
+    streamBufferRef.current = '';
+    fixingDimKeyRef.current = selectedDim;
+    const dimLabel = dimensions.find(d => d.key === selectedDim)?.label || selectedDim;
+    appendUserAi(`生成${dimLabel}：${text}`);
+    setStreaming(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await api.smartGenerateStream(bookId, selectedDim, text, text, settingPacks, sessionId || undefined, ctrl.signal);
+      await consumeSSE(res, ctrl);
+      refreshProgress();
+      refreshHistory();
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setStreamError(e.message || '生成失败');
+        removeEmptyAi();
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }, [input, bookId, selectedDim, streaming, settingPacks, sessionId, dimensions, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+
+  // 4. 单独维度AI修改（基于已落地内容）
   const handleDimEdit = useCallback(async () => {
     const text = input.trim();
     if (!bookId || !selectedDim || streaming || !text) return;
@@ -887,7 +931,8 @@ export default function ChatPanel() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.smartDimEditStream(bookId, selectedDim, '', text, settingPacks, sessionId || undefined, ctrl.signal);
+      const currentContent = (bible as any)?.[selectedDim] || '';
+      const res = await api.smartDimEditStream(bookId, selectedDim, currentContent, text, settingPacks, sessionId || undefined, ctrl.signal);
       await consumeSSE(res, ctrl);
       refreshProgress();
       refreshHistory();
@@ -900,7 +945,7 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [input, bookId, selectedDim, streaming, settingPacks, sessionId, dimensions, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+  }, [input, bookId, selectedDim, streaming, settingPacks, sessionId, dimensions, bible, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
   // ========== 正文Tab：写作/修改（结合消息栏输入的要求创作）==========
   // 真正执行章节写作/修改（结合用户在消息栏输入的要求）
@@ -1133,16 +1178,16 @@ export default function ChatPanel() {
       const userMsg = [...before].reverse().find(m => m.role === 'user');
       setMessages(before);
       if (userMsg && activeTab === 'setting' && selectedDim) {
-        // 设定Tab：用用户消息内容重新触发
+        // 设定Tab：用用户消息内容重新触发（按维度判断走方案或直接生成/修改）
         const text = userMsg.content.replace(/^【[^】]+】/, '').trim();
         if (text) {
           setInput(text);
-          setTimeout(() => handleSuggest(), 50);
+          setTimeout(() => handleMainSend(), 50);
         }
       }
       return before;
     });
-  }, [activeTab, selectedDim, handleSuggest]);
+  }, [activeTab, selectedDim, handleMainSend]);
 
   // ========== 卡片操作 ==========
   const handleAdopt = useCallback(async (card: ActionCard) => {
@@ -1308,7 +1353,11 @@ export default function ChatPanel() {
     if (activeTab === 'setting') {
       if (!selectedDim) return '请先选择上方维度按钮…';
       if (selectedDim === 'general') return '和 AI 智驾自由讨论小说/剧情…（提及人物/伏笔/世界观等会自动产出卡片）';
-      return `描述你对「${dimensions.find(d => d.key === selectedDim)?.label || selectedDim}」的需求或修改意见…`;
+      const dimLabel = dimensions.find(d => d.key === selectedDim)?.label || selectedDim;
+      if (shouldShowSuggestions(selectedDim)) {
+        return `描述你对「${dimLabel}」的构思方向，AI 会给出多个方案供选择…`;
+      }
+      return `输入要求直接生成或修改「${dimLabel}」（无需方案选择）…`;
     }
     if (activeTab === 'chapter') return '输入写作要求直接续写，或输入「第3章 增加心理描写」修改已写章节…';
     if (activeTab === 'deai') return '点击上方「开始去AI味」按钮即可…';
@@ -1360,15 +1409,26 @@ export default function ChatPanel() {
       return;
     }
     const dimStatus = progress?.dims.find(d => d.field === selectedDim)?.status;
+    // 下游维度（大纲/剧情/人物/伏笔等）由上游确定，不再给出多选方案：
+    // 有内容则修改，无内容则直接基于用户要求生成。
+    if (!shouldShowSuggestions(selectedDim)) {
+      if (dimStatus && dimStatus !== 'empty') {
+        handleDimEdit();
+      } else {
+        handleDirectGenerate();
+      }
+      return;
+    }
     if (dimStatus && dimStatus !== 'empty') {
       handleDimEdit();
     } else {
       handleSuggest();
     }
-  }, [activeTab, selectedDim, suggestions, progress, handleSuggest, handleDimEdit, handleGeneral]);
+  }, [activeTab, selectedDim, suggestions, progress, handleSuggest, handleDimEdit, handleGeneral, handleDirectGenerate]);
 
-  // 设定Tab：选择维度后，第一次输入走 suggest（生成多选意见）
-  // 选中意见后走 generate（流式生成）
+  // 设定Tab：选择维度后
+  // - 构思/设定/世界观 等上游维度：第一次输入走 suggest（生成多选意见），选中后 generate
+  // - 大纲/剧情/人物/伏笔 等下游维度：由上游确定，直接 generate 或 dim-edit，不再给方案
   // 生成落地后，再输入走 dim-edit（修订）
   // 通用模式：直接走 general（流式聊天）
   const onInputKeyDown = (e: React.KeyboardEvent) => {
@@ -1764,8 +1824,8 @@ export default function ChatPanel() {
               )}
             </div>
 
-            {/* 多选意见列表（设定Tab专属） */}
-            {activeTab === 'setting' && suggestions.length > 0 && (
+            {/* 多选意见列表（设定Tab专属，仅对方案选择型维度显示） */}
+            {activeTab === 'setting' && suggestions.length > 0 && shouldShowSuggestions(selectedDim) && (
               <div className="smart-suggestions">
                 <div className="smart-suggestions-head">请选择一个方案，AI 将基于它生成完整内容：</div>
                 {suggestions.map(s => (
@@ -1877,7 +1937,11 @@ export default function ChatPanel() {
                       className="chat-send"
                       onClick={handleMainSend}
                       disabled={!canSend || loadingSuggest || suggestions.length > 0}
-                    >{loadingSuggest ? '…' : (selectedDim === 'general' ? '发送' : '生成方案')}</button>
+                    >{
+                      loadingSuggest ? '…' :
+                      selectedDim === 'general' ? '发送' :
+                      shouldShowSuggestions(selectedDim) ? '生成方案' : '生成/修改'
+                    }</button>
                   )}
                 </div>
               </div>
