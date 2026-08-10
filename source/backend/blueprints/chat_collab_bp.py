@@ -2538,6 +2538,18 @@ def smart_suggest():
         params_sync_notes = None
     # 同步后重新取 bb（可能刚刚新增）
     bb = BookBible.query.filter_by(book_id=book_id).first()
+    # 确保作品基本信息页（Book）的卷数同步到 Bible：
+    # 若用户在 Book 侧改为 25 卷但 Bible 仍是默认 10，必须同步，否则 AI 读到的仍是 10 卷
+    try:
+        from app import _sync_book_meta_to_bible
+        if bb is None:
+            bb = BookBible(book_id=book_id)
+            db.session.add(bb)
+        _sync_book_meta_to_bible(book, bb)
+        db.session.commit()
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+    except Exception:
+        pass
     ctx, self_content = _build_dim_context(book, bb, dim_key)
 
     # 注入核心创作参数铁律（卷数/题材/风格），方案简介里禁止再出现"十卷/五卷/5-8卷"这种默认值
