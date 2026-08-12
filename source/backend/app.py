@@ -9111,6 +9111,41 @@ def _extract_volume_index(text):
     return 0
 
 
+def _split_volume_title(raw):
+    """从卷标题行剩余内容中拆分出 (纯卷名, 剧情描述剩余)。
+
+    导入剧情大纲时，正则会把'第1卷'之后的整行内容捕获为标题行，例如：
+      '《凡骨矿奴》：姜辰在古神胸腔矿场受尽欺压…节点：修炼进展…'
+    这里只需提取书名号内的'凡骨矿奴'作为卷名，其余剧情描述作为 main_plot 回填。
+
+    输入: '《凡骨矿奴》：姜辰在古神胸腔矿场…节点：…'
+    输出: ('凡骨矿奴', '姜辰在古神胸腔矿场…节点：…')
+
+    输入: '凡骨矿奴'
+    输出: ('凡骨矿奴', '')
+    """
+    if not raw:
+        return '', ''
+    import re as _re
+    s = raw.strip()
+    # 优先书名号《》【】[] 内内容，剩余作为剧情描述
+    bm = _re.match(r'^[《【〖［\[](.+?)[》】〗］\]][：:．.、\s\-—–]*([\s\S]*)$', s)
+    if bm:
+        return bm.group(1).strip(), bm.group(2).strip()
+    # 冒号分隔：前段作卷名（短），后段作剧情描述
+    cm = _re.split(r'[：:]', s, maxsplit=1)
+    if len(cm) == 2 and cm[0].strip() and len(cm[0].strip()) <= 15:
+        return cm[0].strip(), cm[1].strip()
+    # 破折号分隔
+    dm = _re.split(r'[—–]', s, maxsplit=1)
+    if len(dm) == 2 and dm[0].strip() and len(dm[0].strip()) <= 15:
+        return dm[0].strip(), dm[1].strip()
+    # 无分隔符：较短当卷名，较长当剧情描述（卷名留空走默认）
+    if len(s) <= 15:
+        return s, ''
+    return '', s
+
+
 @app.route('/api/books/<book_id>/ai-outline-volume', methods=['POST'])
 def ai_outline_volume(book_id):
     """生成单卷详细大纲（滚动生成）：基于总纲+已完成章节，写入 timeline"""
@@ -9956,15 +9991,22 @@ def ai_import_plot_outline(book_id):
             vol_idx = _extract_volume_index(vol_num_str) or (i + 1)
             # 序章/楔子等特殊章节
             special = m.group(5)
+            _title_remainder = ''  # 卷名行中卷名之后的剧情描述，回填到卷内容
             if special:
                 vol_title = special
                 vol_idx = 0 if special in ('序章', '楔子', '引子') else 999
             else:
-                vol_title = (m.group(7) or '').strip() or f'第{vol_idx}卷'
+                # 【P0修复】只提取书名号/冒号前的纯卷名，避免整段剧情被识别成卷名
+                _raw_title_line = (m.group(7) or '').strip()
+                vol_title, _title_remainder = _split_volume_title(_raw_title_line)
+                vol_title = vol_title or f'第{vol_idx}卷'
             # 内容范围：从当前匹配结束到下一个匹配开始（最后一卷取到文末，不丢尾部）
             content_start = m.end()
             content_end = matches[i + 1].start() if i + 1 < len(matches) else len(outline_text)
             vol_content = outline_text[content_start:content_end].strip()
+            # 卷名行剩余的剧情描述前置到卷内容，避免丢失（原本被当作卷名的剧情现在归入 main_plot）
+            if _title_remainder:
+                vol_content = (f'{_title_remainder}\n{vol_content}').strip() if vol_content else _title_remainder
 
             volumes.append({
                 'volume_id': str(vol_idx),
