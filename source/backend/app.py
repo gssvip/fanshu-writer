@@ -9140,21 +9140,6 @@ def ai_outline_volume(book_id):
     # 节点设计模式：已有卷剧情时只细化 nodes，不覆盖 main_plot 等字段
     node_only = bool(data.get('node_only', False))
 
-    # 节点设计模式：取本卷已有的卷剧情作为节点拆分依据
-    current_vol_existing = None
-    if node_only:
-        for v in existing_volumes_for_ctx:
-            if not isinstance(v, dict):
-                continue
-            v_idx = v.get('volume_index') or _extract_volume_index(v.get('volume', v.get('volume_id', '')))
-            if str(v_idx) == str(volume_index):
-                current_vol_existing = v
-                break
-
-    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['volume_breakdown', 'chapter_plan', 'tomato_outline'])
-
-    chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
-
     # ===== 【P0弊端2修复】已完成章节摘要：取上一卷结尾章节，而非全局最后5章 =====
     # 解析已有 timeline，获取上一卷（volume_index-1）的节点章节范围
     prev_volume_end_chapter = 0
@@ -9189,6 +9174,21 @@ def ai_outline_volume(book_id):
                         break
         except (json.JSONDecodeError, ValueError, TypeError):
             pass
+
+    # 节点设计模式：取本卷已有的卷剧情作为节点拆分依据（必须在 existing_volumes_for_ctx 解析之后）
+    current_vol_existing = None
+    if node_only:
+        for v in existing_volumes_for_ctx:
+            if not isinstance(v, dict):
+                continue
+            v_idx = v.get('volume_index') or _extract_volume_index(v.get('volume', v.get('volume_id', '')))
+            if str(v_idx) == str(volume_index):
+                current_vol_existing = v
+                break
+
+    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['volume_breakdown', 'chapter_plan', 'tomato_outline'])
+
+    chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
 
     # 上一卷结尾章节正文（用于卷间衔接，取最后2章各300字）
     prev_volume_end_summary = ''

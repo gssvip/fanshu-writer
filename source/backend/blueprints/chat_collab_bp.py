@@ -212,13 +212,38 @@ CARD_REGISTRY = {
     'SAVE_CHARACTER':    {'field': 'character_profiles', 'mode': 'character', 'label': '人物'},
     'SAVE_FORESHADOW':   {'field': 'foreshadowing', 'mode': 'append', 'label': '伏笔'},
     'SAVE_OUTLINE_NODE': {'field': 'plot_design', 'mode': 'append', 'label': '大纲'},
-    'SAVE_PLOT':         {'field': 'timeline', 'mode': 'append', 'label': '剧情线'},
+    'SAVE_PLOT':         {'field': 'timeline', 'mode': 'timeline', 'label': '剧情线'},
     'SAVE_LOCATION':     {'field': 'locations', 'mode': 'append', 'label': '地点'},
     'SAVE_RULE':         {'field': 'key_rules', 'mode': 'append', 'label': '核心规则'},
     'APPLY_STYLE':       {'field': 'style_guide', 'mode': 'append', 'label': '文风'},
     'SAVE_CONCEPT':      {'field': 'concept', 'mode': 'append', 'label': '核心构思'},
     'SAVE_CHAPTER':      {'field': 'chapter', 'mode': 'chapter', 'label': '章节正文'},
 }
+
+# 安全提取卷号：接受 dict 或 str，返回 int 或 0
+def _extract_volume_index_safe(vol):
+    """从卷字典或字符串中提取卷号。dict 时取 volume/volume_id 字段。"""
+    if isinstance(vol, dict):
+        for k in ('volume_index', 'volume_id'):
+            v = vol.get(k)
+            if v is not None:
+                try:
+                    return int(v)
+                except (ValueError, TypeError):
+                    pass
+        # 从 volume 名提取
+        try:
+            from app import _extract_volume_index
+            return _extract_volume_index(vol.get('volume', '') or vol.get('volume_title', '') or '')
+        except Exception:
+            return 0
+    if isinstance(vol, str):
+        try:
+            from app import _extract_volume_index
+            return _extract_volume_index(vol)
+        except Exception:
+            return 0
+    return 0
 
 # LLM 输出的卡片标记格式：
 #   [[CARD:SAVE_CHARACTER|标题|内容]]
@@ -884,11 +909,14 @@ def apply_card():
     if ctype not in CARD_REGISTRY or not content:
         return jsonify({'error': '无效的卡片或内容为空'}), 400
 
+    spec = CARD_REGISTRY[ctype]
+
     # 平台级后处理：统一清理 Markdown 符号 * 和 #，保证落地内容为好看的纯文字排版
-    content = _clean_text_to_plain(content)
+    # timeline 模式跳过清理（content 是 JSON 数组，清理会破坏 JSON 结构）
+    if spec.get('mode') != 'timeline':
+        content = _clean_text_to_plain(content)
     title = _clean_text_to_plain(title) if title else title
 
-    spec = CARD_REGISTRY[ctype]
     result_extra = {}
 
     # 章节正文卡：落地到 Chapter 表（覆盖同章节号/同标题，自动分卷排序）
@@ -1021,6 +1049,64 @@ def apply_card():
                 ))
                 existing_list.append(char_data)
             bb.character_profiles = json.dumps(existing_list, ensure_ascii=False)
+        elif spec['mode'] == 'timeline':
+            # 剧情线卡：content 是 JSON 数组（按卷），需按 volume_index upsert 到已有 timeline
+            # 尝试解析 content 为 JSON 数组（可能被 _clean_text_to_plain 清理或被 markdown 包裹）
+            raw = content.strip()
+            # 剥离可能的 markdown 代码块包裹
+            fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', raw)
+            if fence:
+                raw = fence.group(1).strip()
+            try:
+                new_vols = json.loads(raw)
+                if not isinstance(new_vols, list):
+                    new_vols = [new_vols] if isinstance(new_vols, dict) else []
+            except (json.JSONDecodeError, ValueError, TypeError):
+                # JSON 解析失败：退回纯文本模式存储
+                new_vols = []
+
+            if new_vols:
+                # 解析已有 timeline
+                existing_vols = []
+                try:
+                    parsed_tl = json.loads(bb.timeline or '[]')
+                    if isinstance(parsed_tl, list):
+                        existing_vols = parsed_tl
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    existing_vols = []
+
+                # 按 volume_index upsert（覆盖同卷、追加新卷）
+                for nv in new_vols:
+                    if not isinstance(nv, dict):
+                        continue
+                    nv_idx = nv.get('volume_index') or _extract_volume_index_safe(nv)
+                    matched = False
+                    for i, ev in enumerate(existing_vols):
+                        if not isinstance(ev, dict):
+                            continue
+                        ev_idx = ev.get('volume_index') or _extract_volume_index_safe(ev)
+                        if str(ev_idx) == str(nv_idx):
+                            # 覆盖同卷
+                            existing_vols[i] = nv
+                            matched = True
+                            break
+                    if not matched:
+                        existing_vols.append(nv)
+
+                # 按 volume_index 排序
+                existing_vols.sort(key=lambda v: (
+                    v.get('volume_index') or _extract_volume_index_safe(v) or 0
+                    if isinstance(v, dict) else 0
+                ))
+                bb.timeline = json.dumps(existing_vols, ensure_ascii=False)
+            else:
+                # JSON 解析失败，退回纯文本存储
+                entry = f'【{title}】\n{content}' if title else content
+                if is_edit_overwrite:
+                    bb.timeline = entry
+                else:
+                    existing_tl = (bb.timeline or '').strip()
+                    bb.timeline = f'{existing_tl}\n\n{entry}'.strip() if existing_tl else entry
         else:
             field = spec['field']
             existing = (getattr(bb, field, '') or '').strip()
@@ -2984,18 +3070,41 @@ def smart_generate():
     def generate():
         full = []
         try:
-            for chunk in gw.chat_stream(messages, temperature=0.85, max_tokens=2000):
+            # timeline 维度需要更多 token（全书各卷 JSON 输出较长）
+            max_tok = 6000 if dim_key == 'timeline' else 2000
+            for chunk in gw.chat_stream(messages, temperature=0.85, max_tokens=max_tok):
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
-            # 平台级纯文本清理（先清再解析卡片）
-            content = _clean_text_to_plain(content)
-            # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言，避免带符号英文内容
-            if dim_key == 'character_profiles' and content.lstrip().startswith('['):
-                content = _character_profiles_to_text(content)
+            # timeline 维度：不清理 JSON 结构，仅剥离代码块包裹
+            if dim_key == 'timeline':
+                fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+                if fence:
+                    content = fence.group(1).strip()
+                # 尝试规范化为纯 JSON 数组
+                try:
+                    parsed = json.loads(content)
+                    if isinstance(parsed, dict):
+                        for k in ['volumes', 'data', 'result', 'items', 'list']:
+                            if isinstance(parsed.get(k), list):
+                                parsed = parsed[k]
+                                break
+                    if isinstance(parsed, list):
+                        content = json.dumps(parsed, ensure_ascii=False, indent=2)
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
+            else:
+                # 平台级纯文本清理（先清再解析卡片）
+                content = _clean_text_to_plain(content)
+                # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言，避免带符号英文内容
+                if dim_key == 'character_profiles' and content.lstrip().startswith('['):
+                    content = _character_profiles_to_text(content)
             # 解析卡片标记（世界观会额外产出地图卡片）
             extra_cards = _parse_card_markers(content)
-            clean_content = _clean_text_to_plain(_strip_card_markers(content)) if extra_cards else content
+            if extra_cards:
+                clean_content = _clean_text_to_plain(_strip_card_markers(content)) if dim_key != 'timeline' else _strip_card_markers(content)
+            else:
+                clean_content = content
             card = {
                 'id': str(uuid.uuid4())[:8],
                 'type': spec['card'],
@@ -3126,14 +3235,32 @@ def smart_dim_edit():
     def generate():
         full = []
         try:
-            for chunk in gw.chat_stream(messages, temperature=0.7, max_tokens=2000):
+            max_tok = 6000 if dim_key == 'timeline' else 2000
+            for chunk in gw.chat_stream(messages, temperature=0.7, max_tokens=max_tok):
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
-            content = _clean_text_to_plain(content)
-            # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言
-            if dim_key == 'character_profiles' and content.lstrip().startswith('['):
-                content = _character_profiles_to_text(content)
+            # timeline 维度：不清理 JSON 结构
+            if dim_key == 'timeline':
+                fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+                if fence:
+                    content = fence.group(1).strip()
+                try:
+                    parsed = json.loads(content)
+                    if isinstance(parsed, dict):
+                        for k in ['volumes', 'data', 'result', 'items', 'list']:
+                            if isinstance(parsed.get(k), list):
+                                parsed = parsed[k]
+                                break
+                    if isinstance(parsed, list):
+                        content = json.dumps(parsed, ensure_ascii=False, indent=2)
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
+            else:
+                content = _clean_text_to_plain(content)
+                # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言
+                if dim_key == 'character_profiles' and content.lstrip().startswith('['):
+                    content = _character_profiles_to_text(content)
             card = {
                 'id': str(uuid.uuid4())[:8],
                 'type': spec['card'],
