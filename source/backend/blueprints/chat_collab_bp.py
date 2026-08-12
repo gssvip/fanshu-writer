@@ -2939,11 +2939,15 @@ def smart_generate():
             pass
 
     # 剧情维度额外注入全部卷剧情约束，确保按全部卷创作
+    # 【P0修复】timeline 维度必须输出按卷 JSON 数组（与 ai_master_create 一致），
+    # 否则落地时无法按卷 upsert，会被识别成一个整体剧情大纲
     timeline_extra = ''
     if dim_key == 'timeline':
         try:
-            from app import _get_total_volumes
+            from app import _get_total_volumes, _get_chapters_per_volume
             tv = _get_total_volumes(bb, book)
+            cpv = _get_chapters_per_volume(bb, book)
+            total_chapters = tv * cpv
             # 注入已有卷剧情作为连贯约束
             existing_volumes = ''
             if bb and bb.timeline:
@@ -2959,9 +2963,34 @@ def smart_generate():
                         existing_volumes = '\n'.join(vol_lines)
                 except Exception:
                     pass
-            timeline_extra = f'\n\n【剧情维度专属要求】全书严格 {tv} 卷，每卷约50章12万字。请基于五幕式总纲生成全部 {tv} 卷的剧情，各卷剧情连贯、卷间衔接（ending_hook与下一卷开头承接），每卷剧情须支撑50章12万字容量。'
+            timeline_extra = f'\n\n【剧情维度专属要求】全书严格 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章。请基于五幕式总纲生成全部 {tv} 卷的剧情，各卷剧情连贯、卷间衔接（ending_hook与下一卷开头承接），每卷剧情须支撑 {cpv} 章容量。'
             if existing_volumes:
                 timeline_extra += f'\n\n【已有卷剧情（须保持连贯，可在其基础上完善）】\n{existing_volumes}'
+            # JSON 数组格式铁律（与 ai_master_create 保持一致，落地端按 volume_index upsert）
+            timeline_extra += f'''
+
+【分卷铁律·必读】**全书共 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章**。卷序号从 1 开始连续递增到 {tv}。卷名格式"第N卷 副标题"。必须覆盖全部 {tv} 卷，不得多不得少。
+
+【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 chapters 全书连续编号。
+
+【分卷章节分配】全书 {total_chapters} 章 → {tv} 卷（每卷 {cpv} 章）：第1卷 1-{cpv}、第2卷 {cpv + 1}-{cpv * 2}、... 第{tv}卷 {(tv - 1) * cpv + 1}-{total_chapters}；每卷 nodes 章节连续不重叠。
+
+【输出格式铁律·绝对】严格输出 JSON 数组（不要包裹在 markdown 代码块中，不要任何解释性文字），每卷结构如下：
+[
+  {{
+    "volume_id": "1",
+    "volume": "第1卷 副标题",
+    "volume_index": 1,
+    "act": "立身",
+    "main_plot": "本卷主线剧情（100-200字）",
+    "core_conflict": "本卷核心冲突",
+    "ending_hook": "本卷卷尾钩子具体内容",
+    "nodes": [
+      {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
+    ]
+  }}
+]
+直接输出 JSON 数组，不要寒暄，不要解释，不要加任何 Markdown 标题或文字。'''
             # 修炼体系小说：节点须含修炼进展/境界区间/年龄区间/时间线锚点
             try:
                 from app import _cultivation_dimension_hint
@@ -3009,6 +3038,13 @@ def smart_generate():
     except Exception:
         pass
 
+    # 【P0修复】timeline 维度输出按卷 JSON 数组，末尾不附加"300-800字纯文本"规则
+    # 否则 AI 会输出纯文本大纲，落地时无法按卷 upsert
+    if dim_key == 'timeline':
+        _tail_rule = ''
+    else:
+        _tail_rule = f'\n\n请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。\n\n{PLAIN_TEXT_LAYOUT_RULES}'
+
     sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{spec['label']}」维度的完整设定内容。
 
 题材：{book.genre or "未指定"}
@@ -3029,10 +3065,7 @@ def smart_generate():
 {outline_extra}{timeline_extra}{character_extra}{af_alerts_gen}
 
 {("【技能包指引】\n" + skill_note) if skill_note else ""}
-
-请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。
-
-{PLAIN_TEXT_LAYOUT_RULES}"""
+{_tail_rule}"""
 
     session = None
     if session_id:
@@ -3202,6 +3235,11 @@ def smart_dim_edit():
     if dim_key == 'character_profiles':
         character_extra = '\n\n【人物维度输出格式·绝对铁律】绝对禁止 JSON 符号 [ ] { } " : 和英文字段名。必须用纯中文，按「姓名：xxx\\n身份：xxx\\n性格：xxx\\n动机：xxx\\n背景：xxx\\n关系：xxx\\n能力：xxx」分行输出，每字段至少30字。'
 
+    # 【P0修复】timeline 维度保持按卷 JSON 数组格式，不附加纯文本规则
+    timeline_edit_extra = ''
+    if dim_key == 'timeline':
+        timeline_edit_extra = '\n\n【剧情维度修改铁律】当前维度原文是按卷的 JSON 数组（每卷含 volume_index/volume/main_plot/core_conflict/ending_hook/nodes 等字段）。修改后必须保持相同的 JSON 数组格式输出，不要输出纯文本或 Markdown。只调整修改意见涉及的卷或字段，其余卷保持原样。直接输出 JSON 数组，不要包裹代码块，不要解释。'
+
     sys_prompt = f"""你是资深网文创作智驾。请根据作者的修改意见，修订《{book.title or "未命名"}》的「{spec['label']}」维度内容。
 
 【其他维度参考】
@@ -3214,7 +3252,7 @@ def smart_dim_edit():
 {edit_request}
 
 {("【技能包指引】\n" + skill_note) if skill_note else ""}
-{character_extra}
+{character_extra}{timeline_edit_extra}
 
 请直接输出修订后的完整内容（保留原文中合理的部分，按修改意见调整），不要寒暄，不要解释，不要加 Markdown 标题。
 
@@ -3224,7 +3262,7 @@ def smart_dim_edit():
 3. 如果修改意见与原文冲突，优先执行修改意见，但需在同一框架内微调，禁止另起炉灶生成全新世界观/大纲/人物；
 4. 输出必须是可直接覆盖原维度的完整修订正文。
 
-{PLAIN_TEXT_LAYOUT_RULES}"""
+{'' if dim_key == 'timeline' else PLAIN_TEXT_LAYOUT_RULES}"""
 
     messages = [{'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': f'请修订{spec["label"]}内容'}]
@@ -3363,15 +3401,26 @@ def smart_batch():
 
                 # 注入核心创作参数铁律（批量维度也要遵守总卷数/题材/风格，尤其是大纲/剧情维度）
                 core_iron = _core_params_iron_block(bb, book)
+                # 【P0修复】timeline 维度输出按卷 JSON 数组，跳过纯文本规则与清理
+                _is_tl = (dim_key == 'timeline')
                 sys_prompt = (
                     f'你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{label}」设定。'
                     f'\n\n{core_iron}'
                     f'\n\n【已生成维度参考】\n{ctx_block}'
                     f'\n\n【作者补充要求】\n{requirement or "无"}'
                     f'{(chr(10) + chr(10) + "【技能包指引】" + chr(10) + skill_note) if skill_note else ""}'
-                    f'\n\n请直接输出该维度的设定内容（300-600字），不要寒暄，不要解释。'
-                    f'\n\n{PLAIN_TEXT_LAYOUT_RULES}'
                 )
+                if _is_tl:
+                    sys_prompt += (
+                        '\n\n【剧情维度输出铁律】必须输出按卷的 JSON 数组（不要代码块包裹），'
+                        '每卷含 volume_id/volume/volume_index/act/main_plot/core_conflict/ending_hook/nodes 字段。'
+                        '直接输出 JSON 数组，不要解释。'
+                    )
+                else:
+                    sys_prompt += (
+                        '\n\n请直接输出该维度的设定内容（300-600字），不要寒暄，不要解释。'
+                        f'\n\n{PLAIN_TEXT_LAYOUT_RULES}'
+                    )
                 if existing:
                     sys_prompt += f'\n\n【已有内容（可补充完善，不要简单重复）】\n{existing[:400]}'
 
@@ -3379,14 +3428,32 @@ def smart_batch():
                             {'role': 'user', 'content': f'请生成{label}'}]
                 content = ''
                 try:
-                    for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=1500):
+                    max_tok = 6000 if _is_tl else 1500
+                    for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=max_tok):
                         content += chunk
                         yield sse({'type': 'delta', 'content': chunk})
                 except Exception as e:
                     yield sse({'type': 'error', 'error': f'{label}生成失败：{e}'})
                     continue
 
-                content = _clean_text_to_plain(content.strip())
+                if _is_tl:
+                    # timeline：剥离代码块包裹，规范化为 JSON 数组
+                    fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', content.strip())
+                    if fence:
+                        content = fence.group(1).strip()
+                    try:
+                        parsed = json.loads(content)
+                        if isinstance(parsed, dict):
+                            for k in ['volumes', 'data', 'result', 'items', 'list']:
+                                if isinstance(parsed.get(k), list):
+                                    parsed = parsed[k]
+                                    break
+                        if isinstance(parsed, list):
+                            content = json.dumps(parsed, ensure_ascii=False, indent=2)
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        pass
+                else:
+                    content = _clean_text_to_plain(content.strip())
                 generated[dim_key] = content
                 card = {
                     'id': str(uuid.uuid4())[:8],
