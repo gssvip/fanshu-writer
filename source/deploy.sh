@@ -41,6 +41,7 @@ rm -rf .git
 git init -q
 git config user.email "deploy@fanshu.dev"
 git config user.name "fanshu-deploy"
+git config credential.helper store
 git remote add origin https://github.com/gssvip/fanshu-writer.git
 git add -A
 git commit -m "deploy: $(date +'%Y-%m-%d %H:%M:%S')" -q || true
