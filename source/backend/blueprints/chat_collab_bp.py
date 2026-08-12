@@ -1872,6 +1872,58 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         ctx_blocks.append(f'【近期动态文件（已发生事件摘要）】\n{dynamic_reports_ctx}')
     bible_ctx = '\n\n'.join(ctx_blocks) or '（暂无设定）'
 
+    # 【P2改进】长篇上下文相关性加权裁剪：避免低相关内容膨胀占满 token
+    # 仅在 bible_ctx 较长时触发（短篇直接全量注入，无裁剪开销）
+    try:
+        from context_ranker import ContextRanker, ContextChunk
+        _ctx_total_chars = len(bible_ctx)
+        # 粗估 token：中文约 2 字/token，超过 4000 token（约 8000 字）才触发裁剪
+        if _ctx_total_chars > 8000:
+            # 把 ctx_blocks 拆成带标签的 chunks 用于加权排序
+            raw_chunks = []
+            for d in SMART_DIMENSIONS:
+                if d['key'] in ('character_profiles', 'timeline', 'foreshadowing'):
+                    continue
+                v = (getattr(bb, d['field'], '') or '').strip() if bb else ''
+                if v:
+                    raw_chunks.append(ContextChunk(
+                        dim_key=d['key'], label=d['label'], content=v,
+                        priority=ContextRanker.BASE_PRIORITY.get(d['key'], 3)
+                    ))
+            if char_ctx:
+                raw_chunks.append(ContextChunk('character_profiles', '人物档案', char_ctx, priority=1))
+            if chapter_plot_ctx:
+                raw_chunks.append(ContextChunk('timeline', '本章剧情', chapter_plot_ctx, priority=1))
+            if timeline_ctx:
+                raw_chunks.append(ContextChunk('timeline', '本卷剧情脉络', timeline_ctx, priority=1))
+            if foreshadow_ctx:
+                raw_chunks.append(ContextChunk('foreshadowing', '伏笔线索', foreshadow_ctx, priority=3))
+            if dynamic_reports_ctx:
+                raw_chunks.append(ContextChunk('dynamic', '近期动态', dynamic_reports_ctx, priority=2))
+            if raw_chunks:
+                ranker = ContextRanker(max_tokens=4000)
+                pov_name_for_rank = pov_name or None
+                ranked = ranker.rank_for_chapter(raw_chunks, target_chapter_num, pov_name_for_rank, book_id)
+                # 重新组装带 POV 注解的 bible_ctx
+                ranked_parts = []
+                for c in ranked:
+                    if c.dim_key == 'character_profiles':
+                        pov_note = f'（本章视点人物：{pov_name}，第三人称有限视角，只写{pov_name}能感知到的事物）' if pov_name else '（第三人称有限视角）'
+                        ranked_parts.append(f'【人物档案·视点感知】{pov_note}\n{c.content}')
+                    elif c.dim_key == 'timeline' and c.label == '本章剧情':
+                        ranked_parts.append(f'【本章剧情·精确命中】\n{c.content}\n（请严格按此情节节点推进本章剧情，不得跳过或偏移）')
+                    elif c.dim_key == 'timeline':
+                        ranked_parts.append(f'【本卷及过往剧情脉络】\n{c.content}')
+                    elif c.dim_key == 'foreshadowing':
+                        ranked_parts.append(f'【伏笔线索】\n{c.content}')
+                    elif c.dim_key == 'dynamic':
+                        ranked_parts.append(f'【近期动态文件（已发生事件摘要）】\n{c.content}')
+                    else:
+                        ranked_parts.append(f'【{c.label}】\n{c.content}')
+                bible_ctx = '\n\n'.join(ranked_parts) or '（暂无设定）'
+    except Exception:
+        pass  # 裁剪失败时回退到全量注入
+
     # 防剧透硬约束（伏笔+大纲）
     anti_spoiler_rule = (
         '\n\n【防剧透铁律·第三人称有限视角】'
@@ -2128,6 +2180,89 @@ SMART_DIMENSIONS = [
 SMART_GENERAL_KEY = 'general'
 
 _DIM_KEY_TO_SPEC = {d['key']: d for d in SMART_DIMENSIONS}
+
+# ============================================================================
+# 维度依赖图（P1 改进）：某维度生成前，建议/要求先完善哪些前置维度
+# required:   未完善时阻断生成（强依赖，违反会导致下游维度质量崩溃）
+# recommended: 未完善时提示但允许生成（软依赖，影响一致性）
+# 设计原则：
+#   - concept 是所有维度的源头（一句话讲清故事核）
+#   - worldbuilding/key_rules 是剧情/人物的设定基础
+#   - plot_design（五幕总纲）是 timeline（分卷剧情）的前置
+#   - timeline（分卷剧情）是 foreshadowing（伏笔回收计划）的前置
+# ============================================================================
+DIMENSION_DEPENDENCIES = {
+    'concept':            {'required': [], 'recommended': []},
+    'key_rules':          {'required': ['concept'], 'recommended': []},
+    'worldbuilding':      {'required': ['concept'], 'recommended': ['key_rules']},
+    'plot_design':        {'required': ['concept'], 'recommended': ['worldbuilding', 'key_rules']},
+    'timeline':           {'required': ['plot_design'], 'recommended': ['character_profiles', 'worldbuilding']},
+    'character_profiles': {'required': ['concept'], 'recommended': ['worldbuilding']},
+    'foreshadowing':      {'required': ['plot_design'], 'recommended': ['timeline']},
+    'locations':          {'required': ['worldbuilding'], 'recommended': []},
+    'style_guide':        {'required': [], 'recommended': ['concept']},
+}
+
+
+def _is_dim_filled(bb, dim_key: str) -> bool:
+    """判断指定维度是否已完善（达到可用阈值）"""
+    spec = _DIM_KEY_TO_SPEC.get(dim_key)
+    if not spec or not bb:
+        return False
+    val = (getattr(bb, spec['field'], '') or '').strip()
+    if not val:
+        return False
+    # timeline 是 JSON 数组：至少 1 卷且每卷有 main_plot
+    if dim_key == 'timeline':
+        try:
+            vols = json.loads(val)
+            return isinstance(vols, list) and len(vols) > 0 and \
+                   all(isinstance(v, dict) and (v.get('main_plot') or '').strip() for v in vols)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return False
+    # character_profiles 可能是 JSON 数组或纯文本：至少有 1 个人物
+    if dim_key == 'character_profiles':
+        if val.startswith('['):
+            try:
+                chars = json.loads(val)
+                return isinstance(chars, list) and len(chars) > 0
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+        return len(val) >= 50
+    # 其他维度：至少 50 字
+    return len(val) >= 50
+
+
+def check_dim_readiness(bb, dim_key: str) -> dict:
+    """检查指定维度的前置依赖完善度
+
+    返回:
+    {
+        'ready': bool,
+        'missing_required': ['character_profiles'],
+        'missing_recommended': ['worldbuilding'],
+        'warning': '生成剧情前建议先完善：人物设定'
+    }
+    """
+    deps = DIMENSION_DEPENDENCIES.get(dim_key, {'required': [], 'recommended': []})
+    missing_req = [k for k in deps['required'] if not _is_dim_filled(bb, k)]
+    missing_rec = [k for k in deps['recommended'] if not _is_dim_filled(bb, k)]
+
+    warning = ''
+    if missing_req:
+        labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k in missing_req)
+        warning = f'生成「{_DIM_KEY_TO_SPEC[dim_key]["label"]}」前必须先完善：{labels}（未完善会导致内容质量严重下降）'
+    elif missing_rec:
+        labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k in missing_rec)
+        warning = f'建议先完善：{labels}（未完善可能导致内容不一致）'
+
+    return {
+        'ready': len(missing_req) == 0,
+        'missing_required': missing_req,
+        'missing_recommended': missing_rec,
+        'warning': warning,
+    }
+
 
 
 def _build_dim_context(book, bb, dim_key, with_self=True):
@@ -3103,35 +3238,74 @@ def smart_generate():
     def generate():
         full = []
         try:
+            # 【P1改进】生成前依赖检查：前置维度未完善时下发提示（不阻断）
+            try:
+                readiness = check_dim_readiness(bb, dim_key)
+                if readiness.get('warning'):
+                    yield sse({'type': 'meta', 'kind': 'dependency_warning', 'info': readiness})
+            except Exception:
+                pass
+
             # timeline 维度需要更多 token（全书各卷 JSON 输出较长）
             max_tok = 6000 if dim_key == 'timeline' else 2000
-            for chunk in gw.chat_stream(messages, temperature=0.85, max_tokens=max_tok):
-                full.append(chunk)
-                yield sse({'type': 'delta', 'content': chunk})
-            content = ''.join(full).strip()
-            # timeline 维度：不清理 JSON 结构，仅剥离代码块包裹
-            if dim_key == 'timeline':
-                fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
-                if fence:
-                    content = fence.group(1).strip()
-                # 尝试规范化为纯 JSON 数组
-                try:
-                    parsed = json.loads(content)
-                    if isinstance(parsed, dict):
-                        for k in ['volumes', 'data', 'result', 'items', 'list']:
-                            if isinstance(parsed.get(k), list):
-                                parsed = parsed[k]
-                                break
-                    if isinstance(parsed, list):
-                        content = json.dumps(parsed, ensure_ascii=False, indent=2)
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    pass
+
+            # 【P0改进】LLM 调用 + 生成后自检重试
+            from post_gen_validator import PostGenValidator
+            try:
+                from app import _get_total_volumes, _get_chapters_per_volume
+                _tv = _get_total_volumes(bb, book)
+                _cpv = _get_chapters_per_volume(bb, book)
+            except Exception:
+                _tv, _cpv = 1, 50
+            validator = PostGenValidator(_tv, _cpv, max_retries=1)
+
+            content = ''
+            cur_messages = messages
+            retry_done = False
+            for _attempt in range(2):  # 首次 + 最多 1 次重试
+                full = []
+                for chunk in gw.chat_stream(cur_messages, temperature=0.85, max_tokens=max_tok):
+                    full.append(chunk)
+                    yield sse({'type': 'delta', 'content': chunk})
+                content = ''.join(full).strip()
+                # timeline 维度：不清理 JSON 结构，仅剥离代码块包裹
+                if dim_key == 'timeline':
+                    fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+                    if fence:
+                        content = fence.group(1).strip()
+                    # 尝试规范化为纯 JSON 数组
+                    try:
+                        parsed = json.loads(content)
+                        if isinstance(parsed, dict):
+                            for k in ['volumes', 'data', 'result', 'items', 'list']:
+                                if isinstance(parsed.get(k), list):
+                                    parsed = parsed[k]
+                                    break
+                        if isinstance(parsed, list):
+                            content = json.dumps(parsed, ensure_ascii=False, indent=2)
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        pass
+                else:
+                    # 平台级纯文本清理（先清再解析卡片）
+                    content = _clean_text_to_plain(content)
+                    # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言，避免带符号英文内容
+                    if dim_key == 'character_profiles' and content.lstrip().startswith('['):
+                        content = _character_profiles_to_text(content)
+                # 自检校验
+                issues = validator.validate(dim_key, content)
+                if not validator.should_retry(issues) or _attempt >= 1:
+                    validation_meta = validator.to_meta(issues)
+                    break
+                # 需要重试：带错误反馈重新生成
+                retry_hint = validator.build_retry_hint(issues)
+                yield sse({'type': 'meta', 'kind': 'validation_retry',
+                          'info': {'attempt': _attempt + 1, 'issues': validator.to_meta(issues)}})
+                cur_messages = messages + [
+                    {'role': 'assistant', 'content': content},
+                    {'role': 'user', 'content': retry_hint}
+                ]
             else:
-                # 平台级纯文本清理（先清再解析卡片）
-                content = _clean_text_to_plain(content)
-                # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言，避免带符号英文内容
-                if dim_key == 'character_profiles' and content.lstrip().startswith('['):
-                    content = _character_profiles_to_text(content)
+                validation_meta = []
             # 解析卡片标记（世界观会额外产出地图卡片）
             extra_cards = _parse_card_markers(content)
             if extra_cards:
@@ -3145,7 +3319,9 @@ def smart_generate():
                 'content': clean_content,
                 'target': _CARD_TARGET.get(spec['card'], spec['label']),
             }
-            yield sse({'type': 'card', 'card': card, 'session_id': session_id})
+            # 【P0改进】卡片下发时附带自检结果，前端可展示
+            card_meta = {'validation': validation_meta} if validation_meta else None
+            yield sse({'type': 'card', 'card': card, 'session_id': session_id, 'meta': card_meta})
             for ec in extra_cards:
                 ec['content'] = _clean_text_to_plain(ec.get('content', ''))
                 if ec.get('title'):
@@ -3385,10 +3561,39 @@ def smart_batch():
     def generate():
         generated = {}
         try:
+            # 【P0改进】初始化自检器（批量生成共用）
+            from post_gen_validator import PostGenValidator
+            try:
+                from app import _get_total_volumes, _get_chapters_per_volume
+                _tv = _get_total_volumes(bb, book)
+                _cpv = _get_chapters_per_volume(bb, book)
+            except Exception:
+                _tv, _cpv = 1, 50
+            validator = PostGenValidator(_tv, _cpv, max_retries=1)
+
             for dim_key in dims:
                 spec = _DIM_KEY_TO_SPEC[dim_key]
                 label = spec['label']
                 yield sse({'type': 'delta', 'content': f'\n\n正在生成【{label}】…\n\n'})
+
+                # 【P1改进】依赖检查：前置维度未完善时下发提示
+                try:
+                    # 批量场景：已批量生成的维度也算"已完善"
+                    tmp_bb = bb
+                    # 把 generated 临时合并到 bb 副本用于依赖检查
+                    if generated:
+                        from app import BookBible as _BB
+                        tmp_bb = _BB(book_id=book_id)
+                        for k_field in ['concept','key_rules','worldbuilding','plot_design','timeline','character_profiles','foreshadowing','locations','style_guide']:
+                            v = (getattr(bb, k_field, '') or '') if bb else ''
+                            if k_field in generated:
+                                v = generated[k_field]
+                            setattr(tmp_bb, k_field, v)
+                    readiness = check_dim_readiness(tmp_bb, dim_key)
+                    if readiness.get('warning'):
+                        yield sse({'type': 'meta', 'kind': 'dependency_warning', 'info': readiness})
+                except Exception:
+                    pass
 
                 ctx_parts = []
                 for k, v in generated.items():
@@ -3427,33 +3632,50 @@ def smart_batch():
                 messages = [{'role': 'system', 'content': sys_prompt},
                             {'role': 'user', 'content': f'请生成{label}'}]
                 content = ''
+                cur_messages = messages
+                validation_meta = []
                 try:
                     max_tok = 6000 if _is_tl else 1500
-                    for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=max_tok):
-                        content += chunk
-                        yield sse({'type': 'delta', 'content': chunk})
+                    # 【P0改进】自检重试循环
+                    for _attempt in range(2):
+                        content = ''
+                        for chunk in gw.chat_stream(cur_messages, temperature=0.8, max_tokens=max_tok):
+                            content += chunk
+                            yield sse({'type': 'delta', 'content': chunk})
+                        # 清理/规范化
+                        if _is_tl:
+                            fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', content.strip())
+                            if fence:
+                                content = fence.group(1).strip()
+                            try:
+                                parsed = json.loads(content)
+                                if isinstance(parsed, dict):
+                                    for k in ['volumes', 'data', 'result', 'items', 'list']:
+                                        if isinstance(parsed.get(k), list):
+                                            parsed = parsed[k]
+                                            break
+                                if isinstance(parsed, list):
+                                    content = json.dumps(parsed, ensure_ascii=False, indent=2)
+                            except (json.JSONDecodeError, ValueError, TypeError):
+                                pass
+                        else:
+                            content = _clean_text_to_plain(content.strip())
+                        # 自检
+                        issues = validator.validate(dim_key, content)
+                        if not validator.should_retry(issues) or _attempt >= 1:
+                            validation_meta = validator.to_meta(issues)
+                            break
+                        retry_hint = validator.build_retry_hint(issues)
+                        yield sse({'type': 'meta', 'kind': 'validation_retry',
+                                  'info': {'dim': dim_key, 'attempt': _attempt + 1, 'issues': validator.to_meta(issues)}})
+                        cur_messages = messages + [
+                            {'role': 'assistant', 'content': content},
+                            {'role': 'user', 'content': retry_hint}
+                        ]
                 except Exception as e:
                     yield sse({'type': 'error', 'error': f'{label}生成失败：{e}'})
                     continue
 
-                if _is_tl:
-                    # timeline：剥离代码块包裹，规范化为 JSON 数组
-                    fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', content.strip())
-                    if fence:
-                        content = fence.group(1).strip()
-                    try:
-                        parsed = json.loads(content)
-                        if isinstance(parsed, dict):
-                            for k in ['volumes', 'data', 'result', 'items', 'list']:
-                                if isinstance(parsed.get(k), list):
-                                    parsed = parsed[k]
-                                    break
-                        if isinstance(parsed, list):
-                            content = json.dumps(parsed, ensure_ascii=False, indent=2)
-                    except (json.JSONDecodeError, ValueError, TypeError):
-                        pass
-                else:
-                    content = _clean_text_to_plain(content.strip())
                 generated[dim_key] = content
                 card = {
                     'id': str(uuid.uuid4())[:8],
@@ -3462,7 +3684,8 @@ def smart_batch():
                     'content': content,
                     'target': _CARD_TARGET.get(spec['card'], label),
                 }
-                yield sse({'type': 'card', 'card': card, 'session_id': session_id})
+                card_meta = {'validation': validation_meta} if validation_meta else None
+                yield sse({'type': 'card', 'card': card, 'session_id': session_id, 'meta': card_meta})
 
             # 持久化
             history = load_session_messages(session)

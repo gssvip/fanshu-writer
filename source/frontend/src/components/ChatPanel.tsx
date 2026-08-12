@@ -161,6 +161,9 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
   // 去AI味卡片：meta.replace=true 时主按钮变为"替换本章正文"
   const cardMeta = (card as any).__meta as any;
   const isReplaceMode = !!(onReplaceChapter && cardMeta?.replace && cardMeta?.chapter_id);
+  // 【P0改进】自检校验结果：error 级红色提示，warn 级黄色提示
+  const validation: any[] = cardMeta?.validation || [];
+  const hasError = validation.some(v => v.severity === 'error');
 
   const handleSaveEdit = () => {
     if (!draft.trim()) return;
@@ -192,6 +195,26 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
         <span className="chat-card-title">{card.title}</span>
         <span className="chat-card-target">→ {card.target}</span>
       </div>
+      {/* 【P0改进】自检校验结果展示 */}
+      {validation.length > 0 && (
+        <div style={{
+          padding: '6px 10px',
+          margin: '6px 0',
+          borderRadius: 6,
+          fontSize: 12,
+          background: hasError ? '#fef2f2' : '#fffbeb',
+          border: `1px solid ${hasError ? '#fecaca' : '#fde68a'}`,
+          color: hasError ? '#b91c1c' : '#92400e',
+        }}>
+          {hasError && <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ 自检未通过（已自动重试）</div>}
+          {validation.map((v, i) => (
+            <div key={i} style={{ marginTop: 2 }}>
+              <span style={{ opacity: 0.7 }}>[{v.severity}]</span>{' '}
+              <span style={{ fontWeight: 500 }}>{v.code}</span>: {v.message}
+            </div>
+          ))}
+        </div>
+      )}
       {editing ? (
         <>
           <textarea
@@ -767,6 +790,36 @@ export default function ChatPanel() {
             dims: Array.isArray(evt.info.dims) ? evt.info.dims : [],
           });
         }
+        // 【P1改进】维度依赖检查提示：前置维度未完善
+        if (evt.kind === 'dependency_warning' && evt.info?.warning) {
+          streamBufferRef.current += `\n\n> ⚠ ${evt.info.warning}\n\n`;
+          const buf = streamBufferRef.current;
+          setMessages(prev => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last && last.role === 'assistant') {
+              next[next.length - 1] = { ...last, content: buf };
+            }
+            return next;
+          });
+        }
+        // 【P0改进】自检重试提示：首次输出未通过校验，正在重试
+        if (evt.kind === 'validation_retry' && evt.info) {
+          const errs = (evt.info.issues || []).filter((v: any) => v.severity === 'error');
+          if (errs.length) {
+            const errList = errs.map((v: any) => `${v.code}: ${v.message}`).join('；');
+            streamBufferRef.current += `\n\n> 🔄 首版自检未通过（${errList}），正在带反馈重试…\n\n`;
+            const buf = streamBufferRef.current;
+            setMessages(prev => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant') {
+                next[next.length - 1] = { ...last, content: buf };
+              }
+              return next;
+            });
+          }
+        }
       } else if (evt.type === 'delta') {
         streamBufferRef.current += evt.content;
         const buf = streamBufferRef.current;
@@ -786,11 +839,16 @@ export default function ChatPanel() {
         if (evt.meta && onCardMeta) {
           onCardMeta({ ...evt.card, status: 'pending' }, evt.meta);
         }
+        // 【P0改进】把 meta（含 validation 校验结果）注入 card.__meta，供 ActionCardView 展示
+        const cardWithMeta = { ...evt.card, status: 'pending' } as any;
+        if (evt.meta) {
+          (cardWithMeta as any).__meta = { ...((cardWithMeta as any).__meta || {}), ...evt.meta };
+        }
         setMessages(prev => {
           const next = [...prev];
           const last = next[next.length - 1];
           if (last && last.role === 'assistant') {
-            next[next.length - 1] = { ...last, cards: [...(last.cards || []), { ...evt.card, status: 'pending' }] };
+            next[next.length - 1] = { ...last, cards: [...(last.cards || []), cardWithMeta] };
           }
           return next;
         });
@@ -1547,7 +1605,7 @@ export default function ChatPanel() {
                       ))}
                     </div>
                     <div className="smart-dim-row">
-                      {dimensions.filter(d => ['plot_design', 'timeline', 'character_profiles', 'foreshadowing'].includes(d.key)).map(d => (
+                      {dimensions.filter(d => ['plot_design', 'character_profiles', 'timeline', 'foreshadowing'].includes(d.key)).map(d => (
                         <button
                           key={d.key}
                           className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
