@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api';
+import { useStore } from '../store';
 
 export default function AuthPage({ onAuth }: { onAuth: () => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -8,6 +9,7 @@ export default function AuthPage({ onAuth }: { onAuth: () => void }) {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const setCurrentUser = useStore((s: any) => s.setCurrentUser);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,6 +20,10 @@ export default function AuthPage({ onAuth }: { onAuth: () => void }) {
         ? await api.login(username, password)
         : await api.register(username, password, email);
       localStorage.setItem('fanshu-token', result.token);
+      // 写入当前用户信息并触发书籍列表刷新（跨设备登录后立刻同步）
+      if (result.user) {
+        setCurrentUser(result.user);
+      }
       onAuth();
     } catch (err: any) {
       setError(err.message);
