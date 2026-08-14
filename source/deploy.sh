@@ -14,6 +14,12 @@ cat > dist/version.json <<EOF
 EOF
 echo "version.json 内容: $(cat dist/version.json)"
 
+# 给 JS/CSS 引用加版本戳，强制浏览器重新下载（避免 Vite hash 未变时中间缓存不刷新）
+sed -i "s|src=\"\\(./assets/index-[^\"]*\\.js\\)\"|src=\"\\1?v=${DEPLOY_TS}\"|g" dist/index.html
+sed -i "s|href=\"\\(./assets/index-[^\"]*\\.css\\)\"|href=\"\\1?v=${DEPLOY_TS}\"|g" dist/index.html
+echo "index.html 更新后引用:"
+grep -oE 'assets/index-[^" ]+\?v=[0-9]+' dist/index.html || true
+
 echo "=== 复制产物到 backend/static ==="
 cd /workspace/source
 rm -rf backend/static/*
