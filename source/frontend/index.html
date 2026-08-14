@@ -27,10 +27,21 @@
           }
         });
       }
-      // 版本自检：绕过 GitHub Pages index.html 600秒缓存，部署后自动刷新
+      // 版本自检：绕过 GitHub Pages / 浏览器 / PWA 缓存，部署后自动刷新
       // version.json 由 deploy.sh 每次部署生成，fetch 时带时间戳破缓存
       (function () {
         var KEY = 'fanshu-version';
+        function bustCache(url) { return url.replace(/([?&])_v=[^&]*(&|$)/, '$1').replace(/\?$/, '') + (url.indexOf('?') >= 0 ? '&' : '?') + '_v=' + Date.now(); }
+        function reloadToNewVersion(v) {
+          localStorage.setItem(KEY, v);
+          // 用带版本参数的 URL 强制重新请求 index.html，绕过所有缓存层
+          var next = bustCache(location.href.split('#')[0]);
+          if (location.href !== next) {
+            location.replace(next);
+          } else {
+            location.reload(true);
+          }
+        }
         function check() {
           fetch('./version.json?_t=' + Date.now(), { cache: 'no-store' })
             .then(function (r) { return r.ok ? r.json() : null; })
@@ -39,16 +50,16 @@
               var saved = localStorage.getItem(KEY);
               if (saved && saved !== data.v) {
                 // 版本不一致，部署了新版，强制刷新拉取新 index.html
-                localStorage.setItem(KEY, data.v);
-                location.reload();
+                reloadToNewVersion(data.v);
               } else if (!saved) {
-                localStorage.setItem(KEY, data.v);
+                // 首次访问：也强制带版本参数刷新一次，确保 index.html 和 JS 都是最新
+                reloadToNewVersion(data.v);
               }
             })
             .catch(function () { /* 静默失败，不影响使用 */ });
         }
-        // 首次加载延迟 3 秒检查（避开冷启动请求高峰），之后每 60 秒轮询
-        setTimeout(check, 3000);
+        // 首次加载立即检查（PWA 场景不能等），之后每 60 秒轮询
+        check();
         setInterval(check, 60000);
       })();
     </script>
