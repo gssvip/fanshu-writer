@@ -4,7 +4,7 @@ import { api } from '../api';
 import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible } from '../types';
 import CarLogo from './CarLogo';
 
-const __BUILD_TAG__ = 'v2-0814';
+const __BUILD_TAG__ = 'v3-0814';
 
 // ============================================================================
 // AI 智驾：四Tab（设定/正文/去AI/校审）统一创作平台
@@ -1607,15 +1607,19 @@ export default function ChatPanel() {
                       ))}
                     </div>
                     <div className="smart-dim-row">
-                      {dimensions.filter(d => ['plot_design', 'character_profiles', 'timeline', 'foreshadowing'].includes(d.key)).map(d => (
-                        <button
-                          key={d.key}
-                          className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
-                          onClick={() => { setSelectedDim(d.key); setSuggestions([]); setSelectedSuggestion(null); setInput(''); }}
-                          disabled={streaming || loadingSuggest}
-                          title={d.hint}
-                        >{d.icon} {d.label}</button>
-                      ))}
+                      {['plot_design', 'character_profiles', 'timeline', 'foreshadowing'].map(key => {
+                        const d = dimensions.find(dim => dim.key === key);
+                        if (!d) return null;
+                        return (
+                          <button
+                            key={d.key}
+                            className={`smart-dim-btn ${selectedDim === d.key ? 'active' : ''}`}
+                            onClick={() => { setSelectedDim(d.key); setSuggestions([]); setSelectedSuggestion(null); setInput(''); }}
+                            disabled={streaming || loadingSuggest}
+                            title={d.hint}
+                          >{d.icon} {d.label}</button>
+                        );
+                      })}
                     </div>
                   </div>
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} compact />
