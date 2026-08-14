@@ -991,6 +991,39 @@ def apply_card():
         except Exception:
             db.session.rollback()
 
+        # M1a: 章节入库后自动抽取事件 → EventLog，并索引本章埋/收伏笔
+        try:
+            from event_log_manager import append_chapter_events
+            known_actors = [c.name for c in Character.query.filter_by(book_id=book_id).all() if c.name]
+            known_locations = []
+            try:
+                locs = json.loads(_bb.locations or '[]') if _bb else []
+                if isinstance(locs, list):
+                    known_locations = [str(x) for x in locs if x]
+            except Exception:
+                pass
+            append_chapter_events(
+                _bb, ch, body_content,
+                known_actors=known_actors,
+                known_locations=known_locations,
+                use_llm=False,
+            )
+            # 索引本章埋/收伏笔（从 DAG 反查）
+            if _bb and _bb.foreshadowing_graph:
+                try:
+                    from foreshadowing_manager import ForeshadowingGraph
+                    graph = ForeshadowingGraph.from_dict(json.loads(_bb.foreshadowing_graph))
+                    hooks = graph.get_nodes_for_chapter(ch.order_index)
+                    ch.hooks_set_json = json.dumps({
+                        'setup': [n.id for n in hooks.get('setup', [])],
+                        'payoff': [n.id for n in hooks.get('payoff', [])],
+                    }, ensure_ascii=False)
+                except Exception:
+                    pass
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
         result_extra = {
             'action': action,
             'chapter_id': ch.id,
@@ -1117,6 +1150,17 @@ def apply_card():
             else:
                 # 直接采纳：追加到原内容后
                 setattr(bb, field, f'{existing}\n\n{entry}'.strip() if existing else entry)
+
+            # M1a: 伏笔维度落地后自动解析为 DAG（结构化状态追踪）
+            if field == 'foreshadowing':
+                try:
+                    from foreshadowing_manager import parse_text_to_dag
+                    final_text = getattr(bb, field, '') or ''
+                    graph = parse_text_to_dag(final_text)
+                    if graph.nodes:
+                        bb.foreshadowing_graph = json.dumps(graph.to_dict(), ensure_ascii=False)
+                except Exception:
+                    pass
 
         db.session.commit()
     except Exception as e:
@@ -1734,14 +1778,81 @@ def _get_chapter_plot_node(timeline_raw, outline_hierarchy_raw, target_chapter_n
         return ''
 
 
-def _filter_foreshadowing_for_chapter(foreshadow_raw, target_chapter_num):
-    """伏笔维度过滤：注入伏笔但加防剧透指令。
-    纯文本伏笔难以按章节精确过滤，采用"注入+强约束"策略：
-    只允许AI呼应POV已察觉的线索，严禁揭示未到回收时机的谜底。
-    """
+def _filter_foreshadowing_for_chapter(foreshadow_raw, foreshadowing_graph_json, target_chapter_num, bb=None):
+    """M3: 伏笔维度过滤：用 ContextBus 算完整任务清单（应埋/应收/禁揭示），fallback 到文本+强约束。"""
+    if not target_chapter_num:
+        return foreshadow_raw.strip() if foreshadow_raw else ''
+
+    # 优先从结构化 DAG 计算完整任务清单
+    if foreshadowing_graph_json and bb:
+        try:
+            from context_ranker import ContextBus
+            mission = ContextBus.get_hook_mission(bb, target_chapter_num)
+            if mission:
+                return mission + '\n\n【伏笔防剧透铁律】严禁提前揭示未到回收时机的伏笔谜底；POV 未察觉的伏笔只能以客观现象/旁枝线索出现，不能给读者上帝视角。'
+        except Exception:
+            pass
+
+    # fallback：文本全量注入 + 强约束
     if not foreshadow_raw or not foreshadow_raw.strip():
         return ''
-    return foreshadow_raw.strip()
+    return (
+        foreshadow_raw.strip()
+        + '\n\n【伏笔防剧透铁律】以上伏笔中，未到回收时机的严禁揭示谜底；'
+        '只允许呼应 POV 已察觉的客观线索。'
+    )
+
+
+def _log_validation_issues(bb, dim_key: str, issues):
+    """M4: 将 error 级自检问题写入 FailureDB"""
+    if not bb or not issues:
+        return
+    try:
+        from meta_optimizer import log_failure
+        for issue in issues:
+            if issue.severity != 'error':
+                continue
+            cat_map = {
+                'JSON_INVALID': 'format',
+                'VOL_COUNT_MISMATCH': 'structure',
+                'VOL_INDEX_GAP': 'structure',
+                'CH_NUM_OVERFLOW': 'structure',
+                'CH_NUM_UNDERFLOW': 'structure',
+                'FIELD_MISSING': 'structure',
+                'ACT_COUNT_MISMATCH': 'structure',
+                'CHAR_JSON_LEAK': 'format',
+            }
+            category = cat_map.get(issue.code, 'content')
+            log_failure(bb, category, dim_key=dim_key, summary=f'[{issue.code}] {issue.message}',
+                        snippet=issue.auto_fix or issue.message, fix_hint=issue.auto_fix)
+    except Exception:
+        pass
+
+
+def _get_event_log_ctx(bb, target_chapter_num, limit=5):
+    """M2: 从 EventLog 拉取上一章/最近事件，作为本章写作前的"最新动态"。"""
+    if not bb or not bb.event_log_json or not target_chapter_num:
+        return ''
+    try:
+        from event_log_manager import EventLogManager
+        events = EventLogManager.load(bb)
+        if not events:
+            return ''
+        # 取上一章的事件 + 最近几条更早的事件
+        prev_events = [e for e in events if e.chapter_num == target_chapter_num - 1]
+        recent = [e for e in events if e.chapter_num < target_chapter_num and e not in prev_events]
+        recent.sort(key=lambda x: x.chapter_num, reverse=True)
+        selected = (prev_events + recent)[:limit]
+        if not selected:
+            return ''
+        lines = ['【前情提要·事件序列】']
+        for e in sorted(selected, key=lambda x: x.chapter_num):
+            actors = '、'.join(e.actors) if e.actors else '（无）'
+            loc = f'｜地点：{e.location}' if e.location else ''
+            lines.append(f'· 第{e.chapter_num}章｜{e.type}｜{actors}{loc}｜{e.summary}')
+        return '\n'.join(lines)
+    except Exception:
+        return ''
 
 
 def _filter_dynamic_reports_for_chapter(book_id, target_chapter_num, limit=5):
@@ -1841,7 +1952,13 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
 
     # 4. 伏笔：注入但后续prompt加强约束
     foreshadow_ctx = _filter_foreshadowing_for_chapter(
-        bb.foreshadowing if bb else '', target_chapter_num)
+        bb.foreshadowing if bb else '',
+        bb.foreshadowing_graph if bb else '',
+        target_chapter_num,
+        bb)
+
+    # M2: 事件序列上下文（前情提要）
+    event_log_ctx = _get_event_log_ctx(bb, target_chapter_num)
 
     # 5. 世界观/规则/文风/地点/构思/大纲：全量注入（写作基础，不剧透）
     #    大纲(plot_design)是总纲，注入但加约束"仅作宏观方向，不可剧透未发生转折"
@@ -1868,6 +1985,8 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         ctx_blocks.append(f'【本卷及过往剧情脉络】{trunc_note}\n{timeline_ctx}')
     if foreshadow_ctx:
         ctx_blocks.append(f'【伏笔线索】\n{foreshadow_ctx}')
+    if event_log_ctx:
+        ctx_blocks.append(event_log_ctx)
     if dynamic_reports_ctx:
         ctx_blocks.append(f'【近期动态文件（已发生事件摘要）】\n{dynamic_reports_ctx}')
     bible_ctx = '\n\n'.join(ctx_blocks) or '（暂无设定）'
@@ -1898,6 +2017,8 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
                 raw_chunks.append(ContextChunk('timeline', '本卷剧情脉络', timeline_ctx, priority=1))
             if foreshadow_ctx:
                 raw_chunks.append(ContextChunk('foreshadowing', '伏笔线索', foreshadow_ctx, priority=3))
+            if event_log_ctx:
+                raw_chunks.append(ContextChunk('event_log', '前情提要', event_log_ctx, priority=2))
             if dynamic_reports_ctx:
                 raw_chunks.append(ContextChunk('dynamic', '近期动态', dynamic_reports_ctx, priority=2))
             if raw_chunks:
@@ -1916,6 +2037,8 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
                         ranked_parts.append(f'【本卷及过往剧情脉络】\n{c.content}')
                     elif c.dim_key == 'foreshadowing':
                         ranked_parts.append(f'【伏笔线索】\n{c.content}')
+                    elif c.dim_key == 'event_log':
+                        ranked_parts.append(c.content)
                     elif c.dim_key == 'dynamic':
                         ranked_parts.append(f'【近期动态文件（已发生事件摘要）】\n{c.content}')
                     else:
@@ -2546,6 +2669,47 @@ def _character_profiles_to_text(json_str):
 def smart_dimensions():
     """返回 AI 智驾支持的维度列表（供前端渲染子按钮）。"""
     return jsonify({'dimensions': SMART_DIMENSIONS})
+
+
+@chat_collab_bp.route('/api/ai/smart/optimization-report', methods=['GET'])
+def optimization_report():
+    """M4: 返回系统学习到的失败模式与 prompt 优化建议。"""
+    from app import BookBible
+    book_id = request.args.get('book_id')
+    if not book_id:
+        return jsonify({'error': '缺少 book_id'}), 400
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'ready': False, 'failure_count': 0, 'suggestions': []})
+    try:
+        from meta_optimizer import get_optimization_report
+        return jsonify(get_optimization_report(bb))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@chat_collab_bp.route('/api/ai/smart/preview-impact', methods=['POST'])
+def preview_impact():
+    """M2: 动作影响预览。当前支持 rename_entity / edit_dim。"""
+    from app import BookBible
+    data = request.json or {}
+    book_id = data.get('book_id')
+    action = data.get('action')
+    if not book_id or not action:
+        return jsonify({'error': '缺少 book_id 或 action'}), 400
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    planner = SmartPlanner(book_id, bb)
+    if action == 'rename_entity':
+        graph = planner.build_plan(
+            'rename_entity',
+            old_name=data.get('old_name', ''),
+            new_name=data.get('new_name', ''),
+            entity_type=data.get('entity_type', 'character'))
+    elif action == 'edit_dim':
+        graph = planner.build_plan('edit_dim', dim_key=data.get('dim_key', ''))
+    else:
+        return jsonify({'error': '不支持的 action'}), 400
+    return jsonify(graph.to_dict())
 
 
 # ----------------------------------------------------------------------------
@@ -3343,6 +3507,7 @@ def smart_generate():
                         content = _character_profiles_to_text(content)
                 # 自检校验
                 issues = validator.validate(dim_key, content)
+                _log_validation_issues(bb, dim_key, issues)
                 if not validator.should_retry(issues) or _attempt >= 1:
                     validation_meta = validator.to_meta(issues)
                     break
@@ -3712,6 +3877,7 @@ def smart_batch():
                             content = _clean_text_to_plain(content.strip())
                         # 自检
                         issues = validator.validate(dim_key, content)
+                        _log_validation_issues(bb, dim_key, issues)
                         if not validator.should_retry(issues) or _attempt >= 1:
                             validation_meta = validator.to_meta(issues)
                             break

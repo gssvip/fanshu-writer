@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useStore } from '../store';
 import { api } from '../api';
-import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible } from '../types';
+import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible, ImpactPreview } from '../types';
 import CarLogo from './CarLogo';
 
 const __BUILD_TAG__ = 'v3-0814';
@@ -577,6 +577,18 @@ export default function ChatPanel() {
   const [reviewing, setReviewing] = useState(false);
   // 修正任务清单（从防遗忘报告违规项带入，支持多章/多维度连续修正并追踪进度）
   const [fixTasks, setFixTasks] = useState<Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string; done?: boolean; chapterId?: string | null }>>([]);
+  // M4: 系统优化建议
+  const [optimizationReport, setOptimizationReport] = useState<{ ready: boolean; failure_count: number; suggestions: Array<any> } | null>(null);
+  const [showOptimizationReport, setShowOptimizationReport] = useState(false);
+  // M4: 动作影响预览
+  const [showImpactPreview, setShowImpactPreview] = useState(false);
+  const [impactPreview, setImpactPreview] = useState<ImpactPreview | null>(null);
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactAction, setImpactAction] = useState<'rename_entity' | 'edit_dim'>('rename_entity');
+  const [impactOldName, setImpactOldName] = useState('');
+  const [impactNewName, setImpactNewName] = useState('');
+  const [impactEntityType, setImpactEntityType] = useState('character');
+  const [impactDimKey, setImpactDimKey] = useState('character_profiles');
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -607,7 +619,28 @@ export default function ChatPanel() {
       const b = await api.getBible(bookId);
       setBible(b);
     } catch { /* ignore */ }
+    try {
+      const r = await api.getOptimizationReport(bookId);
+      setOptimizationReport(r);
+    } catch { /* ignore */ }
   }, [bookId]);
+
+  // M4: 拉取动作级联影响预览
+  const fetchImpactPreview = useCallback(async () => {
+    if (!bookId) return;
+    setImpactLoading(true);
+    try {
+      const payload = impactAction === 'rename_entity'
+        ? { old_name: impactOldName, new_name: impactNewName, entity_type: impactEntityType }
+        : { dim_key: impactDimKey };
+      const r = await api.previewImpact(bookId, impactAction, payload);
+      setImpactPreview(r);
+    } catch (e: any) {
+      setImpactPreview({ action: impactAction, summary: e?.message || '获取影响预览失败', tasks: [], warnings: [] });
+    } finally {
+      setImpactLoading(false);
+    }
+  }, [bookId, impactAction, impactOldName, impactNewName, impactEntityType, impactDimKey]);
 
   const refreshHistory = useCallback(async () => {
     if (!bookId) return;
@@ -1543,6 +1576,9 @@ export default function ChatPanel() {
               </div>
               <div className="chat-panel-tools">
                 <button className="chat-tool-btn" onClick={() => { setShowProgress(s => !s); }} title="创作进度">🗺️<span className="chat-tool-label">创作进度</span></button>
+                <button className="chat-tool-btn" onClick={() => { setShowOptimizationReport(s => !s); }} title="系统优化建议">
+                  🧠{optimizationReport && optimizationReport.failure_count > 0 && <span className="chat-tool-badge">{optimizationReport.failure_count}</span>}<span className="chat-tool-label">系统优化</span>
+                </button>
                 <button className="chat-tool-btn" onClick={() => { setShowHistory(s => !s); refreshHistory(); }} title="历史会话">🕘<span className="chat-tool-label">历史会话</span></button>
                 <button className="chat-tool-btn" onClick={handleNewSession} title="新会话">✨<span className="chat-tool-label">新会话</span></button>
                 <button className="chat-tool-btn close" onClick={closeChatPanel} title="关闭">✕</button>
@@ -1578,6 +1614,58 @@ export default function ChatPanel() {
                         >×</button>
                       </div>
                     ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 系统优化建议浮层 */}
+            {showOptimizationReport && (
+              <div className="chat-panel-side">
+                <div className="opt-report">
+                  <div className="opt-report-head">
+                    <span>🧠 系统优化建议</span>
+                    <button className="opt-report-close" onClick={() => setShowOptimizationReport(false)}>×</button>
+                  </div>
+                  {!optimizationReport || optimizationReport.failure_count === 0 ? (
+                    <div className="opt-report-empty">
+                      <div className="opt-report-empty-icon">✅</div>
+                      <div>当前未检测到高频失败模式</div>
+                      <div className="opt-report-empty-sub">系统会在生成自检发现 error 时自动学习并给出 prompt 优化建议</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="opt-report-summary">
+                        累计发现 <strong>{optimizationReport.failure_count}</strong> 条失败记录，已生成 {optimizationReport.suggestions.length} 条优化建议
+                      </div>
+                      <div className="opt-report-list">
+                        {optimizationReport.suggestions.map((s, idx) => (
+                          <div key={idx} className={`opt-report-item sev-${s.severity || 'medium'}`}>
+                            <div className="opt-report-item-head">
+                              <span className="opt-report-cat">{s.category}</span>
+                              <span className="opt-report-count">{s.count} 次</span>
+                              <span className={`opt-report-sev sev-${s.severity || 'medium'}`}>{s.severity === 'high' ? '高' : s.severity === 'low' ? '低' : '中'}</span>
+                            </div>
+                            <div className="opt-report-pattern">{s.problem_pattern}</div>
+                            {s.affected_dims && s.affected_dims.length > 0 && (
+                              <div className="opt-report-dims">
+                                影响维度：{s.affected_dims.map((dk: string) => dimensions.find(d => d.key === dk)?.label || dk).join('、')}
+                              </div>
+                            )}
+                            <div className="opt-report-patch">
+                              <div className="opt-report-patch-title">建议优化：</div>
+                              <div className="opt-report-patch-body">{s.proposed_patch}</div>
+                            </div>
+                            {s.sample_snippet && (
+                              <div className="opt-report-snippet">
+                                <div className="opt-report-snippet-title">示例片段：</div>
+                                <pre>{s.sample_snippet}</pre>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
@@ -1694,6 +1782,71 @@ export default function ChatPanel() {
                       )}
                     </div>
                   )}
+
+                  {/* M4: 动作影响预览（改人物/改维度前先看会联动哪些地方） */}
+                  <div className="impact-preview-panel">
+                    <div className="impact-preview-head" onClick={() => setShowImpactPreview(s => !s)}>
+                      <span>⚡ 动作影响预览</span>
+                      <span className="impact-preview-toggle">{showImpactPreview ? '收起 ▲' : '展开 ▼'}</span>
+                    </div>
+                    {showImpactPreview && (
+                      <div className="impact-preview-body">
+                        <div className="impact-preview-actions">
+                          <select value={impactAction} onChange={e => { setImpactAction(e.target.value as any); setImpactPreview(null); }} disabled={streaming || impactLoading}>
+                            <option value="rename_entity">改名/替换实体</option>
+                            <option value="edit_dim">修改设定维度</option>
+                          </select>
+                          {impactAction === 'rename_entity' ? (
+                            <>
+                              <input type="text" placeholder="旧名称" value={impactOldName} onChange={e => setImpactOldName(e.target.value)} disabled={streaming || impactLoading} />
+                              <input type="text" placeholder="新名称" value={impactNewName} onChange={e => setImpactNewName(e.target.value)} disabled={streaming || impactLoading} />
+                              <select value={impactEntityType} onChange={e => setImpactEntityType(e.target.value)} disabled={streaming || impactLoading}>
+                                <option value="character">人物</option>
+                                <option value="faction">势力</option>
+                                <option value="location">地点</option>
+                                <option value="item">物品</option>
+                                <option value="skill">技能</option>
+                              </select>
+                            </>
+                          ) : (
+                            <select value={impactDimKey} onChange={e => setImpactDimKey(e.target.value)} disabled={streaming || impactLoading}>
+                              {dimensions.filter(d => d.key !== 'general').map(d => (
+                                <option key={d.key} value={d.key}>{d.label}</option>
+                              ))}
+                            </select>
+                          )}
+                          <button onClick={fetchImpactPreview} disabled={streaming || impactLoading || (impactAction === 'rename_entity' && (!impactOldName.trim() || !impactNewName.trim()))}>
+                            {impactLoading ? '计算中…' : '预览影响'}
+                          </button>
+                        </div>
+                        {impactPreview && (
+                          <div className="impact-preview-result">
+                            <div className="impact-preview-summary">{impactPreview.summary}</div>
+                            {impactPreview.warnings.length > 0 && (
+                              <div className="impact-preview-warnings">
+                                {impactPreview.warnings.map((w, i) => <div key={i}>⚠️ {w}</div>)}
+                              </div>
+                            )}
+                            {impactPreview.tasks.length > 0 ? (
+                              <div className="impact-preview-tasks">
+                                {impactPreview.tasks.map((t, i) => (
+                                  <div key={i} className={`impact-task ${t.auto ? 'impact-task-auto' : 'impact-task-manual'}`}>
+                                    <div className="impact-task-title">
+                                      <span>{t.auto ? '🤖' : '✋'} {t.action}</span>
+                                      <span className="impact-task-target">{t.target_label || t.target_dim}{t.target_chapter ? ` · 第${t.target_chapter}章` : ''}</span>
+                                    </div>
+                                    <div className="impact-task-reason">{t.reason}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="impact-preview-empty">未检测到需要联动的任务</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
 

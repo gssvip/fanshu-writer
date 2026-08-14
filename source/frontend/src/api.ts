@@ -1,4 +1,4 @@
-import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport } from './types';
+import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, ImpactPreview } from './types';
 
 // 后端 API 默认地址（内置，开箱即用）
 // 其他用户无需手动配置即可使用。如需切换到自部署的后端，可在「我的 → 服务器」覆盖。
@@ -945,5 +945,16 @@ export const api = {
     request<{ ok: boolean; applied: Array<{ chapter_id: string; chapter_title: string; count: number }> }>(
       '/ai/smart/apply-text-fix',
       { method: 'POST', body: JSON.stringify({ book_id: bookId, fixes }) }
+    ),
+
+  // M4: 获取系统优化报告（基于 FailureDB 的 Meta-LLM 分析）
+  getOptimizationReport: (bookId: string) =>
+    request<OptimizationReport>(`/ai/smart/optimization-report?book_id=${bookId}`),
+
+  // M4: 预览动作级联影响（rename_entity / edit_dim）
+  previewImpact: (bookId: string, action: 'rename_entity' | 'edit_dim', payload: Record<string, any>) =>
+    request<ImpactPreview>(
+      '/ai/smart/preview-impact',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, action, ...payload }) }
     ),
 };

@@ -360,6 +360,9 @@ class Chapter(db.Model):
     notes = db.Column(db.Text, default='')
     review_snapshots = db.Column(db.Text, default='')  # P1-5：审计-修订闭环 best snapshot 历史（JSON）
     summary = db.Column(db.String(500), default='')  # 章节摘要（用于上下文构建，避免塞入完整正文）
+    # M1a: 本章埋/收的伏笔索引 + 本章抽取的事件ID列表（支持跨章溯源与任务清单）
+    hooks_set_json = db.Column(db.Text, default='')
+    events_extracted_json = db.Column(db.Text, default='')
 
     versions = db.relationship('ChapterVersion', backref='chapter', lazy=True, cascade='all, delete-orphan', order_by='ChapterVersion.version_num.desc()')
 
@@ -372,6 +375,8 @@ class Chapter(db.Model):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'notes': self.notes,
             'summary': self.summary,
+            'hooks_set': json.loads(self.hooks_set_json or '[]'),
+            'events_extracted': json.loads(self.events_extracted_json or '[]'),
         }
         if include_content:
             d['content'] = self.content
@@ -626,6 +631,12 @@ class BookBible(db.Model):
     chapter_changes_log = db.Column(db.Text, default='')
     # 借鉴 PlotPilot 检查点快照：每5章自动备份 BookBible+DynamicMemory 关键字段，支持回滚
     state_snapshots = db.Column(db.Text, default='')
+    # M1a: 全书事件日志（时间序列），每章写作后自动抽取事件追加
+    event_log_json = db.Column(db.Text, default='')
+    # M1b: 实体注册表（JSON），跨维度统一追踪人/地/物/势力/技能及其别名
+    entity_registry_json = db.Column(db.Text, default='')
+    # M4: 失败记录库（JSON），供 Meta-LLM 分析并优化 prompt
+    failure_log_json = db.Column(db.Text, default='')
     # 总卷数 + 风格流派（与 Book 表同步，创作时从 bible 直接读取注入各维度）
     total_volumes = db.Column(db.Integer, default=10)
     novel_styles = db.Column(db.Text, default='[]')
@@ -653,6 +664,9 @@ class BookBible(db.Model):
             'outline_hierarchy': self.outline_hierarchy or '',
             'chapter_changes_log': self.chapter_changes_log or '',
             'state_snapshots': self.state_snapshots or '',
+            'event_log': json.loads(self.event_log_json or '[]'),
+            'entity_registry': json.loads(self.entity_registry_json or '{}'),
+            'failure_log': json.loads(self.failure_log_json or '[]'),
             'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None,
             # P1-2修复：补 total_volumes / novel_styles，让前端可见 bible 权威值
             'total_volumes': self.total_volumes if self.total_volumes else 10,
@@ -13420,6 +13434,15 @@ def init_db():
         _add_column('chapters', 'review_snapshots TEXT')
         # Migration: 章节摘要（修复 'Chapter' object has no attribute 'summary'：老库缺此列）
         _add_column('chapters', 'summary VARCHAR(500)')
+        # Migration M1a: 章节伏笔索引 + 事件抽取索引
+        _add_column('chapters', 'hooks_set_json TEXT')
+        _add_column('chapters', 'events_extracted_json TEXT')
+        # Migration M1a: 全书事件日志
+        _add_column('book_bible', 'event_log_json TEXT')
+        # Migration M1b: 实体注册表
+        _add_column('book_bible', 'entity_registry_json TEXT')
+        # Migration M4: 失败记录库
+        _add_column('book_bible', 'failure_log_json TEXT')
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()

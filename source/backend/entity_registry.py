@@ -265,3 +265,127 @@ def merge_entities(bb, chapters_query, main_name: str, alias_names: List[str], e
             summary['chapters_affected'] += r['chapters_affected']
     summary['success'] = len(summary['merged']) > 0
     return summary
+
+
+# ---------- M1b: EntityHub 统一注册表（从事件日志 + 章节内容增量更新） ----------
+
+ENTITY_TYPES = {
+    'characters': {'label': '人物', 'default_weight': 5},
+    'factions': {'label': '势力', 'default_weight': 4},
+    'locations': {'label': '地点', 'default_weight': 4},
+    'items': {'label': '物品', 'default_weight': 3},
+    'skills': {'label': '技能', 'default_weight': 3},
+}
+
+
+def _load_registry(bb) -> Dict:
+    """加载实体注册表。结构：{characters: {name: {aliases, refs, first_seen_ch, last_seen_ch, weight}}, ...}"""
+    if not bb or not bb.entity_registry_json:
+        return {k: {} for k in ENTITY_TYPES}
+    try:
+        data = json.loads(bb.entity_registry_json)
+        if isinstance(data, dict):
+            return {k: data.get(k, {}) for k in ENTITY_TYPES}
+    except Exception:
+        pass
+    return {k: {} for k in ENTITY_TYPES}
+
+
+def _save_registry(bb, registry: Dict):
+    if not bb:
+        return
+    bb.entity_registry_json = json.dumps(registry, ensure_ascii=False)
+
+
+def _normalize_name(name: str) -> str:
+    name = (name or '').strip()
+    # 去掉常见前缀/后缀噪声
+    name = re.sub(r'^[“"]?|[”"]?$', '', name)
+    return name
+
+
+def _is_valid_name(name: str) -> bool:
+    if not name:
+        return False
+    if len(name) < 2 or len(name) > 30:
+        return False
+    # 排除纯数字、纯英文短词
+    if re.match(r'^\d+$', name):
+        return False
+    if re.match(r'^[a-zA-Z]{1,3}$', name):
+        return False
+    return True
+
+
+def register_event_entities(bb, events: List[Dict], source_chapter: int = 0):
+    """从事件列表增量更新实体注册表。
+    events: StoryEvent.to_dict() 列表或含 actors/location 的字典列表
+    """
+    if not bb or not events:
+        return
+    registry = _load_registry(bb)
+
+    def _touch(bucket: str, name: str, ref_type: str):
+        name = _normalize_name(name)
+        if not _is_valid_name(name):
+            return
+        if name not in registry[bucket]:
+            registry[bucket][name] = {
+                'aliases': [],
+                'refs': [],
+                'first_seen_ch': source_chapter,
+                'last_seen_ch': source_chapter,
+                'weight': ENTITY_TYPES[bucket]['default_weight'],
+            }
+        entry = registry[bucket][name]
+        entry['last_seen_ch'] = max(entry.get('last_seen_ch', 0), source_chapter)
+        if ref_type not in entry['refs']:
+            entry['refs'].append(ref_type)
+
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        ch_num = ev.get('chapter_num') or source_chapter
+        for actor in ev.get('actors', []):
+            _touch('characters', actor, 'event')
+        loc = ev.get('location')
+        if loc:
+            _touch('locations', loc, 'event')
+        # 物品/技能从 tags 或 type 推断（llm 抽取时可能给出）
+        if ev.get('type') == 'item':
+            # 从 summary 取前 10 字作为物品名候选（较糙，后续可由 LLM 精确抽取）
+            candidate = ev.get('summary', '').split('，')[0][:12]
+            _touch('items', candidate, 'event')
+
+    _save_registry(bb, registry)
+
+
+def register_chapter_entities(bb, chapter_num: int, content: str, known_actors: List[str] = None):
+    """从章节内容中增量发现已知人物的别名/新出现人物。
+    目前策略：扫描所有已知人物名，若本章出现则更新 last_seen_ch。
+    """
+    if not bb or not content:
+        return
+    registry = _load_registry(bb)
+    known_actors = known_actors or []
+
+    # 1. 更新已有角色的 last_seen_ch
+    for name, entry in list(registry.get('characters', {}).items()):
+        if name in content:
+            entry['last_seen_ch'] = max(entry.get('last_seen_ch', 0), chapter_num)
+
+    # 2. 已知演员表（Character 表）中的人物，若未在注册表则加入
+    for name in known_actors:
+        if _is_valid_name(name) and name not in registry.get('characters', {}):
+            registry['characters'][name] = {
+                'aliases': [],
+                'refs': ['character_table'],
+                'first_seen_ch': chapter_num,
+                'last_seen_ch': chapter_num,
+                'weight': 6,
+            }
+        elif _is_valid_name(name):
+            registry['characters'][name]['last_seen_ch'] = max(
+                registry['characters'][name].get('last_seen_ch', 0), chapter_num)
+
+    _save_registry(bb, registry)

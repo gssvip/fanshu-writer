@@ -137,6 +137,39 @@ export interface BookBible {
   anti_forget_reports?: string; // 防遗忘检查报告 JSON 数组
 }
 
+// M4: 系统优化报告
+export interface OptimizationSuggestion {
+  category: string;
+  count: number;
+  severity: 'high' | 'medium' | 'low';
+  problem_pattern: string;
+  affected_dims: string[];
+  proposed_patch: string;
+  sample_snippet?: string;
+}
+export interface OptimizationReport {
+  ready: boolean;
+  failure_count: number;
+  suggestions: OptimizationSuggestion[];
+}
+
+// M4: 动作影响预览
+export interface ImpactTask {
+  id: string;
+  action: string;
+  target_dim: string;
+  target_label?: string;
+  target_chapter?: number;
+  reason: string;
+  auto: boolean;
+}
+export interface ImpactPreview {
+  action: string;
+  summary: string;
+  tasks: ImpactTask[];
+  warnings: string[];
+}
+
 export interface SkillPack {
   id: string; name: string; description: string;
   genre: string; book_type: string;
