@@ -39,6 +39,8 @@ jobs:
           commit_message: "deploy: auto ${{ github.sha }}"
 
       - name: Trigger Render Deploy
-        if: ${{ secrets.RENDER_DEPLOY_HOOK != '' }}
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        if: env.RENDER_DEPLOY_HOOK != ''
         run: |
-          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" -fsS -o /dev/null
+          curl -X POST "$RENDER_DEPLOY_HOOK" -fsS -o /dev/null
