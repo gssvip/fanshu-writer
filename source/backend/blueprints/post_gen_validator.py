@@ -206,6 +206,6 @@ class PostGenValidator:
             issues.append(ValidationIssue(
                 'CHAR_JSON_LEAK', 'error',
                 '人物维度出现 JSON 结构符号，应纯中文分行',
-                auto_fix='用「姓名：xxx\\n身份：xxx」分行输出，禁用 [ ] { } " : 等符号'
+                auto_fix='用“姓名：xxx\\n身份：xxx”分行输出，禁用 [ ] { } " : 等符号'
             ))
         return issues

@@ -1042,7 +1042,7 @@ def parse_chapter_number(title):
     # 全角数字转半角
     t = title.strip().translate(_FULLWIDTH_DIGITS)
 
-    # 收集所有「第...后缀」模式的章节号，取最后一个（最细粒度）
+    # 收集所有“第...后缀”模式的章节号，取最后一个（最细粒度）
     # 后缀字符集：章/节/回/卷/部/篇/话/集/幕/折/更/段/讲/课/夜/日/年/季/场 等
     suffix_class = '章节回卷部篇话集幕折更段讲课夜日年季场'
     matches = re.findall(r'第\s*([0-9零一二三四五六七八九十百千万亿两〇]+)\s*[' + suffix_class + r']', t)
@@ -3126,7 +3126,7 @@ def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
 @login_required
 def ai_anti_forget_check(book_id):
     """长篇小说防遗忘与一致性检查（综合诊断）。
-    整合技能包「长篇小说防遗忘系统」的 consistency_check / lock_facts / narrative_debt / foreshadow_register / character_cognition 提示词，
+    整合技能包“长篇小说防遗忘系统”的 consistency_check / lock_facts / narrative_debt / foreshadow_register / character_cognition 提示词，
     扫描全部维度+近期章节，输出：锁定事实清单、一致性违规清单、待回收伏笔、叙事债务、改进建议。
     【改造】支持分卷选择（volume_ids 多选/单选），报告持久化到 bb.anti_forget_reports，自动命名"检查01/02..."。"""
     book = Book.query.get(book_id)
@@ -3351,7 +3351,7 @@ def ai_anti_forget_check(book_id):
     af_cult_check = ('\n- 修炼体系：境界突破违反已建立突破条件/越级战斗不合理/年龄与境界进度不匹配/'
                      '时间线与修炼进度矛盾/修炼天赋前后不一致') if is_cultivation_novel(book) else ''
 
-    system_prompt = f"""你是「长篇小说防遗忘与一致性审查员」，整合多个防遗忘技能协同工作：
+    system_prompt = f"""你是“长篇小说防遗忘与一致性审查员”，整合多个防遗忘技能协同工作：
 1. 设定锁定员(lock_facts)：从各维度提取不可变核心事实清单
 2. 一致性审查员(consistency_check)：检查近期章节是否违反已锁定设定
 3. 伏笔管理师(foreshadow_register)：盘点伏笔状态，标记待回收
@@ -4038,7 +4038,7 @@ SEED_SKILL_PACKS = [
          {'step':4,'name':'分卷大纲','desc':'按卷规划大纲','prompt_key':'volume_outline'},
      ], ensure_ascii=False),
      'prompts': json.dumps({
-         'level_system': '你是玄幻升级体系设计师。**整合到「设定/规则」维度的等级体系条目**输出：\n【输出格式·必读】作为"④ 等级体系"条目融入编号列表，包含：1)境界名称及每境界细分 2)突破条件与资源需求 3)每境界战力变化 4)境界对应寿命/地位。每条独立成行，不要写成大段散文。',
+         'level_system': '你是玄幻升级体系设计师。**整合到“设定/规则”维度的等级体系条目**输出：\n【输出格式·必读】作为"④ 等级体系"条目融入编号列表，包含：1)境界名称及每境界细分 2)突破条件与资源需求 3)每境界战力变化 4)境界对应寿命/地位。每条独立成行，不要写成大段散文。',
          'level_curve': '你是升级节奏规划师。规划：1)预计全文字数 2)每个境界的章节跨度 3)关键突破节点 4)压制与爆发节奏。',
          'dungeon_design': '你是副本设计师。设计：1)副本背景与入口 2)挑战层次 3)奖励机制 4)难度与战力匹配 5)隐藏要素。',
          'volume_outline': '你是网文编辑。为当前卷规划：1)卷核心目标 2)主要冲突线 3)人物成长目标 4)关键转折点 5)卷末状态。',
@@ -4095,7 +4095,7 @@ SEED_SKILL_PACKS = [
      ], ensure_ascii=False),
      'prompts': json.dumps({
          'base_rules': '你是世界观架构师。定义：1)世界物理法则(重力、元素、魔法来源) 2)能量/能力体系基本规则 3)生物进化基本逻辑 4)神/超自然存在的定位。',
-         'geography': '你是世界地理设计师。**严格按平台「地点」维度的 JSON 三级结构**输出：\n【输出格式·必读】严格 JSON 数组：[{"name":"一级大区域","description":"...","secondaries":[{"name":"二级城市/门派","description":"...","scenes":[{"name":"三级具体场景","description":"...","key_events":"关键事件"}]}]}].\n地理要素：1)大陆/海洋分布 2)关键地理特征 3)势力范围划分 4)资源分布 5)交通与贸易路线。设计 2-3 个一级大区域。',
+         'geography': '你是世界地理设计师。**严格按平台“地点”维度的 JSON 三级结构**输出：\n【输出格式·必读】严格 JSON 数组：[{"name":"一级大区域","description":"...","secondaries":[{"name":"二级城市/门派","description":"...","scenes":[{"name":"三级具体场景","description":"...","key_events":"关键事件"}]}]}].\n地理要素：1)大陆/海洋分布 2)关键地理特征 3)势力范围划分 4)资源分布 5)交通与贸易路线。设计 2-3 个一级大区域。',
          'history': '你是世界历史编年官。编写：1)创世/远古时期 2)重要历史节点 3)战争与和平时期 4)技术/魔法发展里程碑 5)当前时代的定位。',
          'cultures': '你是种族文化设计师。设计每个种族/民族的：1)外貌特征 2)社会结构 3)宗教/信仰 4)语言特点 5)与其他种族的关系。',
      }, ensure_ascii=False)},
@@ -4152,7 +4152,7 @@ SEED_SKILL_PACKS = [
      'prompts': json.dumps({
          'infinity_rules': '你是无限流系统设计师。设定：1)主神空间/轮回世界的规则体系 2)轮回者的等级与权限 3)任务系统与奖励机制 4)惩罚与抹杀的触发条件。',
          'dungeon_design': '你是副本世界设计师。为每个副本设计：1)世界背景与规则(可借用知名IP) 2)主线任务与隐藏任务 3)BOSS战与关键道具 4)副本难度与玩家适配。',
-         'ability_tree': '你是能力进化设计师。**整合到「物资库」维度的 JSON 数组**输出：\n【输出格式·必读】严格 JSON 数组：[{"name":"能力名","type":"功法/异能/血脉","source":"来源","effect":"效果","owner":"归属角色","first_appearance":"首次出现章节"}].\n规划：1)能力体系分类 2)每级进化条件与效果 3)能力组合与开发 4)主角独特能力的来源与秘密。设计 8-15 个核心能力项。',
+         'ability_tree': '你是能力进化设计师。**整合到“物资库”维度的 JSON 数组**输出：\n【输出格式·必读】严格 JSON 数组：[{"name":"能力名","type":"功法/异能/血脉","source":"来源","effect":"效果","owner":"归属角色","first_appearance":"首次出现章节"}].\n规划：1)能力体系分类 2)每级进化条件与效果 3)能力组合与开发 4)主角独特能力的来源与秘密。设计 8-15 个核心能力项。',
          'team_tactics': '你是团战策略师。设计：1)团队角色分工 2)经典配合战术 3)智斗名场面 4)背叛与信任危机。',
      }, ensure_ascii=False)},
     {'name': 'SoloEnt Vibe Writing', 'description': 'SoloEnt式人机共创哲学：作者主导，AI辅助，保留个人文风', 'genre': 'other', 'book_type': 'short_story', 'icon':'✨',
@@ -4239,9 +4239,9 @@ SEED_SKILL_PACKS = [
          {'step':6,'name':'记忆沉淀','desc':'每章写完后提取事实更新设定库','prompt_key':'memory_update'},
      ], ensure_ascii=False),
      'prompts': json.dumps({
-         'one_line_concept': '你是网文创意策划师。根据用户给出的一句话构思，扩展为3个不同方向的完整创意方案。**严格按平台「构思」维度的输出格式**输出：\n【输出格式·必读】纯文本分项（空行分隔）：1) 一句话核心概念；2) 核心卖点（3-5条）；3) 目标读者画像；4) 主线冲突；5) 独特亮点。\n每个创意方案必须包含以上5项，让用户选择最适合的方向。',
+         'one_line_concept': '你是网文创意策划师。根据用户给出的一句话构思，扩展为3个不同方向的完整创意方案。**严格按平台“构思”维度的输出格式**输出：\n【输出格式·必读】纯文本分项（空行分隔）：1) 一句话核心概念；2) 核心卖点（3-5条）；3) 目标读者画像；4) 主线冲突；5) 独特亮点。\n每个创意方案必须包含以上5项，让用户选择最适合的方向。',
          'master_outline': '你是长篇网文总纲设计师。规划全书：1)核心主线（一句话）2)分卷规划（每卷核心目标与字数）3)主角成长弧线 4)主要势力格局 5)核心矛盾递进 6)大结局方向。确保总纲能支撑百万字以上。【视角规划铁律】明确各卷的视角人物分配，标注哪些卷以主角视角推进、哪些卷穿插配角视角；标注信息差设计点（读者知道而主角不知道/主角知道而读者不知道的关键信息）。【伏笔纪律】总纲层面只标注"核心伏笔锚点"（全书不超过5-8条），每条注明大致埋设卷次和回收卷次；不得把所有伏笔在一卷内集中铺设，必须分散到不同卷次自然穿插。',
-         'volume_breakdown': '你是卷纲设计师。**严格按平台「分卷剧情」维度的 JSON 格式**输出：\n【输出格式·必读】严格 JSON 数组：[{"volume_index":1,"volume":"第1卷 副标题","main_plot":"本卷主线100-200字","core_conflict":"...","ending_hook":"卷尾钩子","nodes":[{"title":"节点1","chapters":"1-10","type":"M","summary":"概要","cool_type":"..."}]}].\n【分卷铁律】**每卷固定 50 章**，全书卷数=总章数÷50向上取整，卷序号从1开始连续递增。每卷 5-8 个 nodes；chapters 字段"起始-结束"，全书 chapter 编号连续不重叠。\n【节点内容】每节点：标题/章节范围/章型(M主线C角色W世界观D日常F伏笔)/概要/爽点类型(实力碾压/装逼打脸/智斗碾压等)。',
+         'volume_breakdown': '你是卷纲设计师。**严格按平台“分卷剧情”维度的 JSON 格式**输出：\n【输出格式·必读】严格 JSON 数组：[{"volume_index":1,"volume":"第1卷 副标题","main_plot":"本卷主线100-200字","core_conflict":"...","ending_hook":"卷尾钩子","nodes":[{"title":"节点1","chapters":"1-10","type":"M","summary":"概要","cool_type":"..."}]}].\n【分卷铁律】**每卷固定 50 章**，全书卷数=总章数÷50向上取整，卷序号从1开始连续递增。每卷 5-8 个 nodes；chapters 字段"起始-结束"，全书 chapter 编号连续不重叠。\n【节点内容】每节点：标题/章节范围/章型(M主线C角色W世界观D日常F伏笔)/概要/爽点类型(实力碾压/装逼打脸/智斗碾压等)。',
          'chapter_plan': '你是章纲设计师。为每章规划：1)章节目标 2)关键场景(2-3个) 3)出场人物 4)信息释放量 5)章尾钩子 6)预估字数(2400字±100)。保持章与章之间的节奏衔接。',
          'write_chapter': '你是专业网文写手。根据章纲写正文：1)严格遵循章纲目标 2)保持人物性格一致 3)控制节奏张弛有度 4)章尾留追读钩子 5)避免信息倾泻 6)每章2400字±100。写作前回顾项目宪法和前文摘要。',
          'memory_update': '你是记忆管理助手。从刚写完的章节中提取：1)新出场人物及特征 2)人物关系变化 3)新出现的设定/规则 4)埋下的伏笔 5)回收的伏笔 6)地点变更 7)时间线推进。输出结构化JSON供更新设定库。',
@@ -4292,12 +4292,12 @@ SEED_SKILL_PACKS = [
          {'step':6,'name':'叙事债务','desc':'追踪悬念承诺与兑现平衡','prompt_key':'narrative_debt'},
      ], ensure_ascii=False),
      'prompts': json.dumps({
-         'lock_facts': '你是设定锁定员。**严格按平台「设定/规则」维度的输出格式**输出：\n【输出格式·必读】编号列表，每条以"① ② ③..."开头，规则间空行分隔。从世界观、人物档案、大纲中提取不可变的核心事实：\n① 人物核心设定(名字、年龄、能力上限、性格底线) - 标注"不可变更"原因\n② 世界规则(物理法则、力量体系、社会结构) - 标注"不可变更"原因\n③ 已发生的关键事件 - 标注"不可变更"原因\n④ 已确定的人物关系 - 标注"不可变更"原因\n后续章节必须遵循。每条独立成行。',
+         'lock_facts': '你是设定锁定员。**严格按平台“设定/规则”维度的输出格式**输出：\n【输出格式·必读】编号列表，每条以"① ② ③..."开头，规则间空行分隔。从世界观、人物档案、大纲中提取不可变的核心事实：\n① 人物核心设定(名字、年龄、能力上限、性格底线) - 标注"不可变更"原因\n② 世界规则(物理法则、力量体系、社会结构) - 标注"不可变更"原因\n③ 已发生的关键事件 - 标注"不可变更"原因\n④ 已确定的人物关系 - 标注"不可变更"原因\n后续章节必须遵循。每条独立成行。',
          'foreshadow_register': '你是伏笔管理师。建立伏笔线索库：1)扫描已有内容找出所有伏笔 2)每条记录：位置、内容、预期回收章节、当前状态(待回收/已回收/已废弃) 3)按紧急度排序(离预期回收章节越近越紧急) 4)标记"叙事债务"(承诺了但还没兑现的悬念)。输出伏笔清单。【伏笔埋设纪律·必读】①伏笔必须隐性埋设，伪装成日常细节/闲笔/环境描写/人物口头禅，正文创作时不得标记"这是伏笔/此处埋线"；②单章最多埋1-2处暗线，禁止一股脑集中铺设；③伏笔与回收之间至少间隔3章以上，制造"恍然大悟"效果；④每条伏笔标注"伪装方式"（用什么细节藏起来）和"回收时读者反应"（预期情绪）。',
          'character_cognition': '你是角色认知管理师。为每个角色建立认知档案：1)角色知道什么(信息列表) 2)角色不知道什么(禁忌信息) 3)读者知道但角色不知道的(信息差) 4)角色之间的关系认知(A认为B是盟友，实际B是间谍)。写新场景前先查角色认知，不该知道的就是不知道。',
          'pre_write_query': '你是上下文检索助手。写新章前检索：1)本章涉及的人物当前状态 2)本章涉及的地点信息 3)活跃伏笔(需在本章提及或推进的) 4)相关已锁定设定 5)前一章结尾(衔接) 6)角色认知边界(本章角色应知道/不知道什么)。输出写作上下文包。',
          'consistency_check': '你是一致性审查员。检查最新章节是否违反：1)已锁定的人物设定(名字记错、能力超限、性格突变) 2)世界规则(违反已建立的物理/魔法法则) 3)时间线(时间倒流、年龄错误) 4)人物认知(角色知道了不该知道的信息) 5)伏笔状态(已回收的伏笔又被当作未回收)。输出违规清单。',
-         'narrative_debt': '你是叙事债务追踪师。盘点全书的悬念承诺与兑现：1)已兑现的悬念(承诺→兑现，正常) 2)待兑现的悬念(承诺了还没兑现，债务) 3)过度透支(承诺太多读者已遗忘) 4)未承诺但需要交代的信息。输出债务清单和回收优先级建议。**保持与「伏笔」维度的格式一致**（编号列表+字段结构）。',
+         'narrative_debt': '你是叙事债务追踪师。盘点全书的悬念承诺与兑现：1)已兑现的悬念(承诺→兑现，正常) 2)待兑现的悬念(承诺了还没兑现，债务) 3)过度透支(承诺太多读者已遗忘) 4)未承诺但需要交代的信息。输出债务清单和回收优先级建议。**保持与“伏笔”维度的格式一致**（编号列表+字段结构）。',
      }, ensure_ascii=False)},
 
     {'name': '玄幻小说文风', 'description': '冷静克制硬朗文风：短句密集+对话驱动+禁词管控+长短句比例控制，玄幻正文专用文风锚定', 'genre': 'fantasy', 'book_type': 'novel', 'icon':'⚔️',
@@ -4328,9 +4328,9 @@ SEED_SKILL_PACKS = [
      ], ensure_ascii=False),
      'prompts': json.dumps({
          'tomato_plan': '你是番茄爆款方案策划师。根据用户构思生成完整方案：\n【爆款设定四要素】1)核心梗=身份/处境+反差/反常识+爽点预期(一句话能说清) 2)身份矛盾天然存在贯穿全书 3)可视化修炼体系让读者随时知道主角多强 4)核心恐惧/软肋让读者心疼。\n【书名】≤15字：身份标签+反差/爽点+情绪词。"开局XX"是万能前缀。\n【简介】≤100字：困境(代入)→反转/金手指(希望)→看点承诺(爽点)。绝对不写世界观背景和设定说明。\n【极简启动卡】1)主角是谁+什么困境 2)他想要什么 3)谁在拦他 4)靠什么翻盘(第1-2章亮金手指)。\n适用题材：都市高武/异能/灵气复苏/系统文/重生文/末世文/玄幻/仙侠。不适用女频言情。',
-         'tomato_setting': '你是番茄设定构建师。根据上游已确认的构思与世界观框架，生成核心设定规则。**严格按平台「设定/规则」维度的输出格式**输出：\n【输出格式·必读】编号列表，每条以"① ② ③..."开头，规则间空行分隔。包括：\n① 世界必须遵循的铁律（融入"五不妥协原则"：开篇不写大段旁白介绍世界观、对话都有功能、段落≤3行、章末不平淡收尾、不连续同爽点超2次）\n② 金手指/奇遇四法则（一句话说清/自带冲突/能撑长篇/和主角性格绑定），并注明对应到哪个角色\n③ 人物能力边界与代价反噬机制（代价与能力成正比、不可完全可逆、每次使用累积代价点数、阈值触发负面剧情）\n④ 等级体系（≥9级每级标志性能力，作为可视化修炼体系，让读者随时知道主角多强）\n⑤ 禁忌事项与社会结构（社会阶层/禁忌规则/核心矛盾）\n不要写大段散文。每条规则独立成行。',
-         'tomato_character': '你是番茄人物设计师。根据上游已确认的世界观与设定，生成主要人物。**严格按平台「人物」维度的输出格式**输出：\n【输出格式·必读】每个角色一个"## 角色：<姓名>"二级标题，下方依次（保持平台字段顺序）：\n- 身份/年龄（融入CDL档案的年龄/身份/外貌特征≤3个标签）\n- 性格（3-5个关键词；融入CDL的性格标签）\n- 背景故事（100-200字；融入成长弧线/口头禅/核心恐惧）\n- 核心动机（融入CDL的核心动机/战斗风格）\n- 与其他角色关系（"→ 角色名：关系"格式）\n- 剧情功能：标注属于配角六功能中的哪一类（信息源/陪衬吐槽/阻碍者/助力者/情感寄托/伏笔载体）\n\n【主角模板·必读】年龄18-25/起点低被踩或天才强/不憋屈不圣母嘴硬痞/利益驱动/≥1个共情痛点/≥1个核心恐惧/≥1个口头禅/战斗中必须有嘴炮。\n【女主·若适用】独立人格不花瓶/有自己的目标和弧线/与主角关系自然递进/感情线绑定主线不工业糖精。\n主角 + 3-5个配角（每个配角首出场必须有明确的剧情功能）。',
-         'tomato_outline': '你是番茄分卷大纲设计师。根据上游已确认的人物与世界，规划分卷大纲与五幕模型。**严格按平台「大纲/剧情」维度的输出格式**输出。\n\n【如果是生成「大纲」维度】每幕一个"## 第N幕：<幕名>"二级标题，下方：幕核心目标/主要冲突/卷入角色/关键转折点/幕尾悬念/对应分卷范围（"第X-Y卷"）。共5幕，对应全书所有分卷。\n【五幕模型·必读】立身(1-5%金手指+首打脸)→立足(5-25%站稳+配角+世界观5-8章闭环)→立势(25-50%大舞台+强对手+团队8-12章)→立威(50-75%威名+组织敌+情感12-20章)→立命(75-95%终极挑战+信念冲突)→终局(95-100%伏笔收束+蜕变)。\n【章型配额制】主线推进章M(50%)、角色深挖章C(10%)、世界观展开章W(10%)、日常呼吸章D(20%)、伏笔暗线章F(10%)。相邻章节章型不能相同，每20章必须包含全部5种。\n【四线并行】主线(每章推进)、副线A情感(≤10章)、副线B配角(≤25章)、暗线世界观(≤50章)。\n【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子引下一事件(5-8章)。\n\n【如果是生成「分卷剧情」维度】**严格按 JSON 数组输出**：[{"volume_index":1,"volume":"第1卷 副标题","main_plot":"100-200字","core_conflict":"...","ending_hook":"...","nodes":[{"title":"节点1","chapters":"1-10","type":"M","summary":"...","cool_type":"..."}]}]. **每卷固定 50 章**（全书卷数=总章数÷50向上取整，卷序号从1开始连续递增），每卷 5-8 个 nodes；chapters 字段"起始-结束"，全书 chapter 编号连续不重叠。\n不要混淆两种维度的输出格式，按任务指定的维度输出对应格式。',
+         'tomato_setting': '你是番茄设定构建师。根据上游已确认的构思与世界观框架，生成核心设定规则。**严格按平台“设定/规则”维度的输出格式**输出：\n【输出格式·必读】编号列表，每条以"① ② ③..."开头，规则间空行分隔。包括：\n① 世界必须遵循的铁律（融入"五不妥协原则"：开篇不写大段旁白介绍世界观、对话都有功能、段落≤3行、章末不平淡收尾、不连续同爽点超2次）\n② 金手指/奇遇四法则（一句话说清/自带冲突/能撑长篇/和主角性格绑定），并注明对应到哪个角色\n③ 人物能力边界与代价反噬机制（代价与能力成正比、不可完全可逆、每次使用累积代价点数、阈值触发负面剧情）\n④ 等级体系（≥9级每级标志性能力，作为可视化修炼体系，让读者随时知道主角多强）\n⑤ 禁忌事项与社会结构（社会阶层/禁忌规则/核心矛盾）\n不要写大段散文。每条规则独立成行。',
+         'tomato_character': '你是番茄人物设计师。根据上游已确认的世界观与设定，生成主要人物。**严格按平台“人物”维度的输出格式**输出：\n【输出格式·必读】每个角色一个"## 角色：<姓名>"二级标题，下方依次（保持平台字段顺序）：\n- 身份/年龄（融入CDL档案的年龄/身份/外貌特征≤3个标签）\n- 性格（3-5个关键词；融入CDL的性格标签）\n- 背景故事（100-200字；融入成长弧线/口头禅/核心恐惧）\n- 核心动机（融入CDL的核心动机/战斗风格）\n- 与其他角色关系（"→ 角色名：关系"格式）\n- 剧情功能：标注属于配角六功能中的哪一类（信息源/陪衬吐槽/阻碍者/助力者/情感寄托/伏笔载体）\n\n【主角模板·必读】年龄18-25/起点低被踩或天才强/不憋屈不圣母嘴硬痞/利益驱动/≥1个共情痛点/≥1个核心恐惧/≥1个口头禅/战斗中必须有嘴炮。\n【女主·若适用】独立人格不花瓶/有自己的目标和弧线/与主角关系自然递进/感情线绑定主线不工业糖精。\n主角 + 3-5个配角（每个配角首出场必须有明确的剧情功能）。',
+         'tomato_outline': '你是番茄分卷大纲设计师。根据上游已确认的人物与世界，规划分卷大纲与五幕模型。**严格按平台“大纲/剧情”维度的输出格式**输出。\n\n【如果是生成“大纲”维度】每幕一个"## 第N幕：<幕名>"二级标题，下方：幕核心目标/主要冲突/卷入角色/关键转折点/幕尾悬念/对应分卷范围（"第X-Y卷"）。共5幕，对应全书所有分卷。\n【五幕模型·必读】立身(1-5%金手指+首打脸)→立足(5-25%站稳+配角+世界观5-8章闭环)→立势(25-50%大舞台+强对手+团队8-12章)→立威(50-75%威名+组织敌+情感12-20章)→立命(75-95%终极挑战+信念冲突)→终局(95-100%伏笔收束+蜕变)。\n【章型配额制】主线推进章M(50%)、角色深挖章C(10%)、世界观展开章W(10%)、日常呼吸章D(20%)、伏笔暗线章F(10%)。相邻章节章型不能相同，每20章必须包含全部5种。\n【四线并行】主线(每章推进)、副线A情感(≤10章)、副线B配角(≤25章)、暗线世界观(≤50章)。\n【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子引下一事件(5-8章)。\n\n【如果是生成“分卷剧情”维度】**严格按 JSON 数组输出**：[{"volume_index":1,"volume":"第1卷 副标题","main_plot":"100-200字","core_conflict":"...","ending_hook":"...","nodes":[{"title":"节点1","chapters":"1-10","type":"M","summary":"...","cool_type":"..."}]}]. **每卷固定 50 章**（全书卷数=总章数÷50向上取整，卷序号从1开始连续递增），每卷 5-8 个 nodes；chapters 字段"起始-结束"，全书 chapter 编号连续不重叠。\n不要混淆两种维度的输出格式，按任务指定的维度输出对应格式。',
          'tomato_chapter': '你是番茄金番写手。严格遵循以下规则写正文：\n【行文铁律】段落≤3行，对话/动作独立成段，心理描写一句话。全章对话+OS占比≥30%。信息靠对话和行动传递不靠旁白。\n【克制铁律】四不写：不写让读者停下来欣赏的句子/不写解释情绪的句子/不写展示阅读量的句子/不写为了质感的句子。形容词每10句0形容词≥4句。比喻每章≤1个。"的"字每句≤1个。\n【句式】禁止连续3句以上"主语+谓语"，五种交替：动作前置/名词前置/环境前置/连招式/短句爆发。同主语≤连续2次，长短交替，每400字≥1次突变。\n【情绪直给】写外在表现不写内心感受。震惊→？？？/瞳孔地震；愤怒→面色铁青/青筋暴起；爽→嘴角上扬/嘿嘿直乐；无语→……/满头黑线；害怕→脸色煞白/腿肚子打颤。\n【番茄体】？？？震惊/！！！激动/……沉默/OS内心吐槽。\n【字数】2400字±100，句子平均≤15字，最长≤30字。\n【三明治结构】苦(困境)→甜(获得力量)→爽(反击打脸)→钩子(新信息/新困境)。爽前必有憋屈(哪怕3句话)，爽后必跟钩子。\n【章尾钩子】七种不重复：身份揭露/新危机/荒诞反转/悬念/角色危机/能力突破/世界异常。',
          'tomato_deai': '你是番茄去AI味审查员。按以下流程逐项检查并修改：\n【优先级铁律】人味>克制>流畅。删完AI味后读起来像机器人汇报→加口语碎片。太啰嗦→删修饰。磕磕绊绊→调句式。判定标准：大声读一遍，不像人说话就改。\n【必删清单(28词)】一股/一抹/不由得/不禁/随即/旋即/与此同时/颇为/甚为/极为/缓缓/淡淡/轻轻/微微/毫无疑问/毋庸置疑/不言而喻/深吸一口气/眼中闪过一丝/心中暗想/心念电转/若有所思/不知不觉间/转眼间/恍然大悟/面无表情/淡漠/漠然/眸子/嘴角微微上扬/如同/宛如/犹如/周身/周遭/气息/威压/那道身影/说话间/话音未落/当即/顿时/瞬时。\n【口语化替换】因此→所以；颇为→特别/贼；随即→马上/下一秒；显而易见→说白了；或许→估计/大概。强制使用：合着/整半天/好家伙/说白了/得了吧/拉倒吧/啥玩意/搁这/说实话/你别说。\n【AI味浓度红线≤15%】AI味特征：排比句过多/模板化过渡/段落长度均匀/情感直述/总结性段落/信息倾泻/对话书面化/缺口语语气词/转场工整/形容词堆叠。\n【人味注入】加入不完美细节(结巴/重复/打断)/感官碎片/小动作微表情/语气词和断句/适当留白/个人化比喻。只输出修改后的正文。',
          'tomato_diagnosis': '你是番茄节点诊断师。为已完成章节生成多维诊断报告：\n【基础指标】章数/总字数/均字/章型分布(M__%/C__%/W__%/D__%/F__%对比配额)/对话占比趋势。\n【质量趋势】AI味浓度(最高/最低/均值/趋势)/爽点审计(8种中使用了哪几种)/微爽密度(均__个/400字目标≥1)/钩子类型(近5章是否重复)。\n【线程健康度】主线(每章推进✅)/副线A情感(距上次__章<10✅)/副线B配角(距上次__章<25✅)/暗线世界观(距上次__章<50✅)。\n【角色出场】配角出场统计/超10章未出场(🔴需安排)。\n【代价系统】金手指代价点数__/阈值→安全/接近/已触发。\n【改进建议】针对每个🔴和⚠️给出具体修复建议。',
@@ -4458,7 +4458,7 @@ SEED_SKILL_PACKS = [
          'chapter_structure': '你是Martin风格章节结构师。每章按模板构建：\n【开篇1-3段】in medias res或接近处；确立情绪与场景；引入本章赌注。开篇类型：in medias res/潜在张力(暴风前平静)/隐含问题/迷失感。\n【主体】交替场景/反思；闪回只在感官触发驱动时使用(气味/词/画面唤起记忆)；POV角色想要某物——并遇到障碍。每段是一个张力单位不是话题单位，每段必须推进信息/情感/疑虑。测试：每段开头到结尾有什么变化？没变化就是废段。\n【收尾】情况改变(不一定变好)；钩子：开放问题/揭示/新威胁。收尾类型：开放问题/揭示/状态改变/安静的恐惧。\n【叙事声音】永远第三人称有限视角(除非明确选择其他)。叙述者只看到POV角色看到的，同场景内不切视角。叙述者非全知也非中性：一切经POV角色个性/偏见/历史过滤——战士与德鲁伊对战斗描述不同。POV纪律：POV角色不知道的读者不知道，POV角色误读的读者一同误读。\n【时态】主线叙事→叙事现在时(即时感)；闪回记忆→简单过去时(斜体视觉对比)；状态描写习惯背景→过去进行时或简单过去时。\n【对话】必须推进故事或塑造角色否则删。用said中性标签不用exclaimed/hissed/barked。用对话周围动作显示谁在说话比标签更好。沉默是对话的一部分。潜台词——角色没说的往往比说的更重要。自然主义=打断/不完整句/deflect。\n【场景描写】通过POV角色感官描写不客观照相。初见vs熟见不同。一两个精确细节胜过十个泛泛的。',
      }, ensure_ascii=False)},
 
-    # ==== 官方题材文风包（style 类）：各题材正文文风锚定，与「玄幻小说文风」配套 ====
+    # ==== 官方题材文风包（style 类）：各题材正文文风锚定，与“玄幻小说文风”配套 ====
     # 三类无污染：仅注入正文生成阶段（_get_skill_prompts_by_category 'style'），不污染大纲/审查阶段
 
     {'name': '都市异能文风', 'description': '都市异能正文文风：现代口语+爽快节奏+异能展示与日常切换，番茄都市异能专用文风锚定',
@@ -4813,7 +4813,7 @@ def publish_skill_pack(pack_id):
     # 检查重名
     existing = SkillPack.query.filter_by(name=pack.name, is_builtin=True).first()
     if existing:
-        return jsonify({'error': f'系统已存在同名技能包「{pack.name}」，请先重命名'}), 409
+        return jsonify({'error': f'系统已存在同名技能包“{pack.name}”，请先重命名'}), 409
     pack.is_builtin = True
     db.session.commit()
     return jsonify(pack.to_dict())
@@ -5081,11 +5081,11 @@ def _get_volume_outline(vol_chapter, volume_index):
                                 parts.append(f'卷尾钩子：{v.get("ending") or v.get("climax")}')
                             if parts:
                                 content = '\n'.join(parts)
-                                return f'【本卷目标/卷纲】（第{volume_index}卷「{vol_label}」）\n{content[:1800]}'
+                                return f'【本卷目标/卷纲】（第{volume_index}卷“{vol_label}”）\n{content[:1800]}'
             else:
                 # 纯文本格式（旧数据或手动填写），直接返回
                 if timeline_raw:
-                    return f'【本卷目标/卷纲】（第{volume_index}卷「{vol_label}」）\n{timeline_raw[:1500]}'
+                    return f'【本卷目标/卷纲】（第{volume_index}卷“{vol_label}”）\n{timeline_raw[:1500]}'
     except Exception:
         pass
 
@@ -5095,7 +5095,7 @@ def _get_volume_outline(vol_chapter, volume_index):
         for o in outlines:
             if o.title and vol_chapter.title and (o.title in vol_chapter.title or vol_chapter.title in o.title):
                 if o.content and o.content.strip():
-                    return f'【本卷目标/卷纲】（第{volume_index}卷「{vol_chapter.title}」）\n{o.content[:1200]}'
+                    return f'【本卷目标/卷纲】（第{volume_index}卷“{vol_chapter.title}”）\n{o.content[:1200]}'
         acts = [o for o in outlines if o.level == 0]
         if 0 <= volume_index - 1 < len(acts):
             o = acts[volume_index - 1]
@@ -5135,7 +5135,7 @@ def _get_adjacent_volumes_outline(book_id, volume_index):
                 return ''
             v_idx = _v_idx(v)
             v_name = v.get('volume') or v.get('volume_title') or f'第{v_idx}卷'
-            parts = [f'▼ [{role_label}] 第{v_idx}卷「{v_name}」']
+            parts = [f'▼ [{role_label}] 第{v_idx}卷“{v_name}”']
             if v.get('act'):
                 parts.append(f'  五幕定位：{v["act"]}')
             main_plot = v.get('main_plot') or v.get('core_goal') or ''
@@ -5633,7 +5633,7 @@ def _validate_and_align_timeline_volumes(parsed_tl, total_volumes):
         if pct <= 0.50: return '立势'
         if pct <= 0.75: return '立威'
         return '立命'
-    # 用已存在的最后一卷做「相邻卷参考」；没有就造个基准
+    # 用已存在的最后一卷做“相邻卷参考”；没有就造个基准
     ref = parsed_tl[-1] if parsed_tl else {}
     aligned = list(parsed_tl)
     for idx in range(actual + 1, total_volumes + 1):
@@ -6033,7 +6033,7 @@ def _sync_book_meta_to_bible(book, bb):
     """P0-3修复：把 book 的 total_volumes / novel_styles / genre / book_type 同步到 bible。
     在首次创建空 bible 或更新 book 时调用，确保各维度创作时能从 bible 读到权威元数据。
 
-    同步策略（核心：Book 表是用户创建/编辑作品时的「权威数据源」，除用户在 Bible 侧明确改过且 Book 仍为默认值的情况外，以 Book 为准）：
+    同步策略（核心：Book 表是用户创建/编辑作品时的“权威数据源”，除用户在 Bible 侧明确改过且 Book 仍为默认值的情况外，以 Book 为准）：
     - book.tv != 默认(10) 且 bb.tv == 默认(10)   → 用户在 Book 改了，bb 还是默认值 → 同步（覆盖默认）
     - book.tv != bb.tv  且 双方都不等于默认值  → 两边都非默认，以 Book（用户作品基本信息页）为准 → 同步
     - bb.tv != 默认(10) 且 book.tv == 默认(10)   → 用户在 Bible 侧单独改了，Book 仍默认 → 保留 Bible，不同步
@@ -6136,7 +6136,7 @@ def _get_novel_styles_text(bb, book=None):
 
 
 def _build_core_params_block(bb, book):
-    """构建「核心创作参数」注入块：题材+卷数+风格流派，作为所有维度创作与章节写作的核心依据。
+    """构建“核心创作参数”注入块：题材+卷数+风格流派，作为所有维度创作与章节写作的核心依据。
     三大约束统一在此注入，确保用户选定项在下游真正生效。"""
     tv = _get_total_volumes(bb, book)
     genre_label = _get_genre_label(book, bb)
@@ -6154,7 +6154,7 @@ def _build_core_params_block(bb, book):
     return '\n'.join(parts)
 
 
-# 章节正文「语言风格」表（行文文风，区别于题材流派）
+# 章节正文“语言风格”表（行文文风，区别于题材流派）
 # 与前端 constants.ts CHAPTER_LANG_STYLES 保持一致
 CHAPTER_LANG_STYLES = {
     'general': ('通用', '行文规范流畅，叙述与对话比例均衡，节奏舒张有度，不刻意炫技也不寡淡；用词准确，符合现代汉语习惯。适合大多数题材的常规叙事。'),
@@ -6175,7 +6175,7 @@ CHAPTER_LANG_STYLES = {
 
 
 def _build_chapter_lang_style_prompt(style_keys):
-    """根据前端传入的语言风格 key 列表，拼装注入 system_prompt 的「本章语言风格」铁律约束。
+    """根据前端传入的语言风格 key 列表，拼装注入 system_prompt 的“本章语言风格”铁律约束。
     返回空串表示未选择（AI 按默认通用风格行文）。"""
     if not style_keys:
         return ''
@@ -6475,7 +6475,7 @@ def _build_smart_instruction(instruction, last_chapter, current_chapter_num):
     """生成智能默认指令。若用户未提供 instruction，结合上一章章尾内容生成承接指令。
     【字数铁律】无论何种情况，user_prompt 末尾必须强制追加字数限定，确保 AI 在正文生成框明确看到 2400±100 约束。"""
     # 字数强制限定尾注（追加到任何指令后，确保字数约束出现在正文生成框）
-    word_count_clause = f'请为「第{current_chapter_num}章」创作完整章节内容，要求上下文剧情连贯、对话自然、节奏紧凑、章末留悬念，字数2400±100字。'
+    word_count_clause = f'请为“第{current_chapter_num}章”创作完整章节内容，要求上下文剧情连贯、对话自然、节奏紧凑、章末留悬念，字数2400±100字。'
 
     if instruction and instruction.strip():
         # 用户自定义指令：末尾追加字数限定，避免用户指令未提字数导致失控
@@ -6555,7 +6555,7 @@ def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_in
     返回计划文本，失败时返回空串（不阻塞正文生成）。"""
     # 【三类无污染】chapter_plan 前置规划属于构思阶段：只注入构思类（master）技能包
     plan_skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['chapter_plan'], mode='single')
-    vol_label = f'第{vol_index}卷「{vol_chapter.title}」' if vol_chapter else '当前卷'
+    vol_label = f'第{vol_index}卷“{vol_chapter.title}”' if vol_chapter else '当前卷'
 
     # ===== 【P0弊端5修复】提取当前卷纲 nodes，定位本章对应的节点 =====
     volume_nodes_section = ''
@@ -6594,12 +6594,12 @@ def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_in
                                         if len(nums) >= 2:
                                             start_n, end_n = int(nums[0]), int(nums[-1])
                                             if start_n <= current_chapter_num <= end_n:
-                                                current_node_hint = f"""【本章所属节点】第{current_chapter_num}章对应节点「{n.get('title','')}」（{ch_range}章，类型{n.get('type','M')}）：{n.get('summary','')}
+                                                current_node_hint = f"""【本章所属节点】第{current_chapter_num}章对应节点“{n.get('title','')}”（{ch_range}章，类型{n.get('type','M')}）：{n.get('summary','')}
 章纲必须围绕此节点的核心事件展开，不得偏离到其他节点。"""
                                                 break
                                         elif len(nums) == 1:
                                             if int(nums[0]) == current_chapter_num:
-                                                current_node_hint = f"""【本章所属节点】第{current_chapter_num}章对应节点「{n.get('title','')}」（类型{n.get('type','M')}）：{n.get('summary','')}"""
+                                                current_node_hint = f"""【本章所属节点】第{current_chapter_num}章对应节点“{n.get('title','')}”（类型{n.get('type','M')}）：{n.get('summary','')}"""
                                                 break
                             break
                 # 也提取上一卷卷尾钩子作为衔接提示
@@ -8535,16 +8535,16 @@ def _format_chapter_title(chapter_num, suggested_title):
     确保所有章节标题格式一致，混用模式时不会出现格式混乱。
 
     规则：
-    - 有 suggested_title：格式为「第{章号}章 {标题}」
-    - 无 suggested_title：格式为「第{章号}章」
-    - suggested_title 已含「第X章」前缀时去重，避免「第1章 第1章 xxx」
+    - 有 suggested_title：格式为“第{章号}章 {标题}”
+    - 无 suggested_title：格式为“第{章号}章”
+    - suggested_title 已含“第X章”前缀时去重，避免“第1章 第1章 xxx”
     """
     import re as _re
     prefix = f'第{chapter_num}章'
     if not suggested_title or not suggested_title.strip():
         return prefix
     title = suggested_title.strip()
-    # 去除标题中可能自带的「第X章」前缀（LLM 偶尔会带上）
+    # 去除标题中可能自带的“第X章”前缀（LLM 偶尔会带上）
     title = _re.sub(r'^第[一二三四五六七八九十百零0-9]+章[\s:：]*', '', title).strip()
     if not title:
         return prefix
@@ -9265,7 +9265,7 @@ def ai_outline_volume(book_id):
             v_nodes = v.get('nodes') or []
             # 上一卷（volume_index-1）注入完整信息（含完整节点）
             if v_idx_int == volume_index - 1:
-                tl_parts.append(f'▼ [上一卷·完整] 第{v_idx}卷「{v.get("volume", v.get("volume_title", ""))}」\n'
+                tl_parts.append(f'▼ [上一卷·完整] 第{v_idx}卷“{v.get("volume", v.get("volume_title", ""))}”\n'
                                 + f'  主线：{(v.get("main_plot") or v.get("core_goal") or "")[:400]}\n'
                                 + f'  核心冲突：{str(v.get("core_conflict", ""))[:200]}\n'
                                 + f'  关键转折：{", ".join(v.get("key_events", []) or v.get("turning_points", []))[:200]}\n'
@@ -9276,12 +9276,12 @@ def ai_outline_volume(book_id):
                 main = (v.get('main_plot') or v.get('core_goal') or '')[:120]
                 hook = v.get('ending') or v.get('ending_hook') or v.get('climax') or ''
                 nodes_brief = ' | '.join([f'{n.get("chapters","")}{n.get("title","")}' for n in v_nodes[:6]])
-                tl_parts.append(f'· 第{v_idx}卷「{v.get("volume", v.get("volume_title", ""))}」主线：{main}；卷尾钩子：{str(hook)[:80]}；节点：{nodes_brief[:200]}')
+                tl_parts.append(f'· 第{v_idx}卷“{v.get("volume", v.get("volume_title", ""))}”主线：{main}；卷尾钩子：{str(hook)[:80]}；节点：{nodes_brief[:200]}')
             else:
                 # 无节点的卷：仅主线+钩子
                 hook = v.get('ending') or v.get('ending_hook') or v.get('climax') or ''
                 main = (v.get('main_plot') or v.get('core_goal') or '')[:80]
-                tl_parts.append(f'· 第{v_idx}卷「{v.get("volume", v.get("volume_title", ""))}」主线：{main}；卷尾钩子：{str(hook)[:100]}')
+                tl_parts.append(f'· 第{v_idx}卷“{v.get("volume", v.get("volume_title", ""))}”主线：{main}；卷尾钩子：{str(hook)[:100]}')
         existing_timeline = '\n'.join(tl_parts)[:4500]
     else:
         existing_timeline = (bb.timeline or '')[:2000]
@@ -9397,7 +9397,7 @@ def ai_outline_volume(book_id):
         existing_emotion = current_vol_existing.get('emotion_driver') or ''
 
         system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
-任务：基于第 {volume_index} 卷「{volume_title}」已有的卷剧情，详细拆分为情节节点。
+任务：基于第 {volume_index} 卷“{volume_title}”已有的卷剧情，详细拆分为情节节点。
 
 【模式说明】本卷已有完整卷剧情，你的任务是把本卷剧情详细拆分为 5-8 个情节节点。
 - 不要修改本卷的 main_plot / key_events / turning_points / climax / ending / foreshadowing 等卷级字段
@@ -9406,7 +9406,7 @@ def ai_outline_volume(book_id):
 - 卷与卷之间的情节节点更要连贯：本卷第一个节点必须承接上一卷卷尾钩子，本卷最后一个节点必须埋下下一卷的钩子
 - 每个节点必须符合本卷卷剧情的设定（核心目标、关键事件、转折点），不得脱离卷剧情自创主线
 
-【五幕模型对齐】本卷对应五幕中的「{current_act}」幕：{act_descriptions.get(current_act, '')}
+【五幕模型对齐】本卷对应五幕中的“{current_act}”幕：{act_descriptions.get(current_act, '')}
 节点设计必须服务于该幕的核心目标。
 
 {cool_system_prompt}
@@ -9450,7 +9450,7 @@ def ai_outline_volume(book_id):
 {existing_timeline or '（暂无）'}
 
 【本卷已有卷剧情】（节点拆分的唯一依据，必须严格符合）
-- 卷名：第{volume_index}卷「{volume_title}」
+- 卷名：第{volume_index}卷“{volume_title}”
 - 核心目标（main_plot）：{existing_main_plot or '（无）'}
 - 核心冲突：{existing_core_conflict or '（无）'}
 - 情感驱动：{existing_emotion or '（无）'}
@@ -9478,9 +9478,9 @@ def ai_outline_volume(book_id):
     else:
         # ===== 整卷生成模式（默认）：生成完整卷大纲+情节节点 =====
         system_prompt = f"""你是番茄小说金番作者级别的卷纲设计师。
-任务：为第 {volume_index} 卷「{volume_title}」生成详细大纲+情节节点。
+任务：为第 {volume_index} 卷“{volume_title}”生成详细大纲+情节节点。
 
-【五幕模型对齐】本卷对应五幕中的「{current_act}」幕：{act_descriptions.get(current_act, '')}
+【五幕模型对齐】本卷对应五幕中的“{current_act}”幕：{act_descriptions.get(current_act, '')}
 本卷情节设计必须服务于该幕的核心目标，不得脱离五幕结构。
 
 {cool_system_prompt}
@@ -9527,12 +9527,12 @@ def ai_outline_volume(book_id):
 
 {_build_core_params_block(bb, book)}
 
-{f"【五幕式总纲】{chr(10)}{master_outline}" if has_master else "【五幕式总纲】（暂无，请基于下方已有剧情/卷大纲自行推演本卷情节节点，但必须符合五幕模型中「" + current_act + "」幕的定位）"}
+{f"【五幕式总纲】{chr(10)}{master_outline}" if has_master else "【五幕式总纲】（暂无，请基于下方已有剧情/卷大纲自行推演本卷情节节点，但必须符合五幕模型中“" + current_act + "”幕的定位）"}
 
 【已有剧情】（含已生成卷纲，本卷需与之衔接）
 {existing_timeline or '（暂无）'}
 
-【本卷在已有剧情中的定位】请优先基于本卷（第""" + f"{volume_index}卷「{volume_title}」" + """）已有的 main_plot/key_events 设计节点；若已有剧情为空，则基于世界观、规则、人物合理推演。
+【本卷在已有剧情中的定位】请优先基于本卷（第""" + f"{volume_index}卷“{volume_title}”" + """）已有的 main_plot/key_events 设计节点；若已有剧情为空，则基于世界观、规则、人物合理推演。
 
 【世界观设定】（情节节点需符合世界观规则）
 """ + (worldbuilding_ctx or '（暂无）') + f"""
@@ -9662,7 +9662,7 @@ def ai_extract_volumes_from_outline(book_id):
         context_parts.append(f'【人物档案】\n{bb.character_profiles[:1000]}')
     context = '\n\n'.join(context_parts)
 
-    # count_hint：强制写成「严格 N 卷」，绝对禁止出现「通常5-8卷」这种无视用户设定的字样
+    # count_hint：强制写成“严格 N 卷”，绝对禁止出现“通常5-8卷”这种无视用户设定的字样
     count_hint = f'必须严格 {volume_count} 卷（多一卷少一卷都不合格，若解析出来不是 {volume_count} 卷将直接报错）'
 
     # ===== 【P1弊端7修复】五幕模型对齐约束（按总卷数比例动态映射，不再硬编码 5 卷=5幕） =====
@@ -9680,7 +9680,7 @@ def ai_extract_volumes_from_outline(book_id):
         '立威': '主角与BOSS正面对抗、实力跃升、打脸高潮（50-75%卷）',
         '立命': '终局决战、伏笔回收、世界观全貌揭示（75-100%卷）',
     }
-    # 给 prompt 直接生成一个「卷1~卷N → 对应幕」的对照表，避免 AI 还按 5 卷=5幕去想
+    # 给 prompt 直接生成一个“卷1~卷N → 对应幕”的对照表，避免 AI 还按 5 卷=5幕去想
     act_table_lines = []
     for i in range(1, min(volume_count + 1, 31)):
         act_table_lines.append(f'第{i}卷 → {map_act(i, volume_count)}')
@@ -9695,7 +9695,7 @@ def ai_extract_volumes_from_outline(book_id):
 - 总卷数：{volume_count} 卷（本次硬约束：最终 JSON 数组长度必须严格等于 {volume_count}，多一个少一个都不合格，必须重写。禁止输出 5/6/8/10/5-8 等其他卷数）
 {_build_core_params_block(bb, book)}
 
-【重要】本次只构建各卷主线剧情，**不生成情节节点**（nodes 输出为空数组）。情节节点由用户后续手动点击「节点设计」逐卷生成。
+【重要】本次只构建各卷主线剧情，**不生成情节节点**（nodes 输出为空数组）。情节节点由用户后续手动点击“节点设计”逐卷生成。
 
 【五幕模型对齐·按 {volume_count} 卷比例自动映射】（对照表：卷号 → 所属幕）
 {act_table}
@@ -9858,7 +9858,7 @@ def ai_extract_volumes_from_outline(book_id):
 @app.route('/api/books/<book_id>/ai-reverse-generate-outline', methods=['POST'])
 def ai_reverse_generate_outline(book_id):
     """反生成五幕式总纲：从已导入的各卷剧情（timeline）反向提炼五幕式总纲，
-    自动填入大纲维度（plot_design）。打通「导入剧情大纲 → 大纲总纲」的反哺链路。"""
+    自动填入大纲维度（plot_design）。打通“导入剧情大纲 → 大纲总纲”的反哺链路。"""
     book = Book.query.get(book_id)
     if not book:
         return jsonify({'error': 'Not found'}), 404
@@ -9894,7 +9894,7 @@ def ai_reverse_generate_outline(book_id):
         ending = (v.get('ending') or '').strip()
         key_events = v.get('key_events') or []
         events_str = '；'.join(key_events) if key_events else ''
-        parts = [f'第{idx}卷「{name}」']
+        parts = [f'第{idx}卷“{name}”']
         if main_plot:
             parts.append(f'主线：{main_plot[:200]}')
         if events_str:
@@ -9912,7 +9912,7 @@ def ai_reverse_generate_outline(book_id):
     characters_ctx = (bb.character_profiles or '')[:800]
 
     system_prompt = f"""你是番茄小说金番作者级别的剧情架构师。
-任务：根据已有的各卷剧情，反向提炼生成「五幕式总纲」，写入大纲维度。
+任务：根据已有的各卷剧情，反向提炼生成“五幕式总纲”，写入大纲维度。
 
 【已有各卷剧情】
 {volumes_text}
@@ -10327,7 +10327,7 @@ def ai_master_create(book_id):
         # 即使技能包自带独立格式要求（如CDL档案/五不妥协原则），模型也要按平台格式整合映射
         format_integration_note = ''
         if skill_note:
-            format_integration_note = '\n\n【格式整合铁律·必读】上方「技能包内容」是创作方法论（指导原则），不是输出格式模板。必须严格按下方任务的「输出格式」骨架输出，技能包的要求整合映射到对应字段。例如：技能包要求"CDL角色档案"中的"外貌特征/战斗风格"应并入角色卡对应字段；技能包要求"五不妥协原则"应整合到对应小节内。不要把技能包字段原样搬出来，要按平台格式重新组织。'
+            format_integration_note = '\n\n【格式整合铁律·必读】上方“技能包内容”是创作方法论（指导原则），不是输出格式模板。必须严格按下方任务的“输出格式”骨架输出，技能包的要求整合映射到对应字段。例如：技能包要求"CDL角色档案"中的"外貌特征/战斗风格"应并入角色卡对应字段；技能包要求"五不妥协原则"应整合到对应小节内。不要把技能包字段原样搬出来，要按平台格式重新组织。'
 
         # 按 DAG 依赖图只注入该维度的上游维度产物（不再无差别全注入）
         upstream_ctx = _build_master_upstream_ctx(dim, ctx)
@@ -10577,7 +10577,7 @@ def ai_master_create_stream(book_id):
                 skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', info['keys'], mode='agent')
                 format_integration_note = ''
                 if skill_note:
-                    format_integration_note = '\n\n【格式整合铁律·必读】上方「技能包内容」是创作方法论（指导原则），不是输出格式模板。必须严格按下方任务的「输出格式」骨架输出，技能包的要求整合映射到对应字段。'
+                    format_integration_note = '\n\n【格式整合铁律·必读】上方“技能包内容”是创作方法论（指导原则），不是输出格式模板。必须严格按下方任务的“输出格式”骨架输出，技能包的要求整合映射到对应字段。'
 
                 # 按 DAG 依赖图只注入该维度的上游维度产物（不再无差别全注入）
                 upstream_ctx = _build_master_upstream_ctx(dim, ctx)
@@ -11053,7 +11053,7 @@ def ai_analyze_dimension(book_id):
     known_ctx = '\n\n'.join(known_ctx_parts) if known_ctx_parts else '（暂无其他维度参考）'
 
     system_prompt = f"""你是专业的小说分析师，正在与其他维度分析师协同工作。
-请分析以下小说内容，提取并归纳「{dim_label}」维度的设定信息。
+请分析以下小说内容，提取并归纳“{dim_label}”维度的设定信息。
 
 【已确认的其他维度设定】（识别结果必须与这些维度保持一致，不可矛盾）
 {known_ctx}
@@ -11201,7 +11201,7 @@ def ai_analyze_character(book_id):
 
     if character_name:
         # 识别指定角色的详细信息
-        system_prompt = f"""你是专业的小说分析师。请从以下小说内容中，提取角色「{character_name}」的详细档案。
+        system_prompt = f"""你是专业的小说分析师。请从以下小说内容中，提取角色“{character_name}”的详细档案。
 严格按JSON格式输出，不要任何其他文字：
 {{
   "name": "{character_name}",
@@ -11392,7 +11392,7 @@ def ai_analyze_plot_volume(book_id):
 
     vol_label = volume_title or '全部章节'
 
-    system_prompt = f"""你是番茄小说金番作者级别的剧情分析师。请综合【设定/大纲/人物/规则/章节内容/动态文件】多维度数据，识别「{vol_label}」的剧情大纲和情节节点。
+    system_prompt = f"""你是番茄小说金番作者级别的剧情分析师。请综合【设定/大纲/人物/规则/章节内容/动态文件】多维度数据，识别“{vol_label}”的剧情大纲和情节节点。
 
 【多维度上下文（相互提供资料数据）】
 {extra_ctx or '（暂无设定参考，仅依据章节内容识别）'}
@@ -11617,7 +11617,7 @@ def _collect_dimension_source(bb, volume_title=''):
                         vol_name = v.get('volume', '')
                         vol_content = v.get('content', '') or v.get('outline', '') or v.get('plot', '')
                         if vol_content:
-                            tl_lines.append(f'卷「{vol_name}」: {vol_content}')
+                            tl_lines.append(f'卷“{vol_name}”: {vol_content}')
                 if tl_lines:
                     tl_text = '\n'.join(tl_lines)
         except (json.JSONDecodeError, ValueError):
@@ -11643,7 +11643,7 @@ def _collect_dimension_source(bb, volume_title=''):
     source_text = '\n\n'.join(parts)
     label = '设定/大纲/剧情维度' if source_text else ''
     if volume_title and source_text:
-        label = f'设定/大纲/剧情维度（针对「{volume_title}」）'
+        label = f'设定/大纲/剧情维度（针对“{volume_title}”）'
     return source_text, label
 
 
@@ -11760,7 +11760,7 @@ def ai_analyze_character_volume(book_id):
     skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['character_cognition', 'tomato_character'], mode='agent')
 
     vol_label = volume_title or '全部章节'
-    system_prompt = f"""你是专业的小说分析师。请从以下「{vol_label}」的章节内容中，识别本卷出现的所有重要角色（出现2次以上或有台词的角色）。
+    system_prompt = f"""你是专业的小说分析师。请从以下“{vol_label}”的章节内容中，识别本卷出现的所有重要角色（出现2次以上或有台词的角色）。
 
 {extra_ctx and f"【已有参考】{chr(10)}{extra_ctx}" or ""}
 
@@ -11881,7 +11881,7 @@ def ai_analyze_inventory_volume(book_id):
     skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['lock_facts', 'tomato_setting'], mode='agent')
 
     vol_label = volume_title or '全部章节'
-    system_prompt = f"""你是专业的小说世界观分析师。请从以下「{vol_label}」的章节内容中，识别本卷出现的所有势力及角色拥有的物资。
+    system_prompt = f"""你是专业的小说世界观分析师。请从以下“{vol_label}”的章节内容中，识别本卷出现的所有势力及角色拥有的物资。
 物资类型包括：物品、功法、法宝、境界、灵宠、领地、资源等。
 
 {extra_ctx and f"【已有参考】{chr(10)}{extra_ctx}" or ""}
@@ -12020,7 +12020,7 @@ def ai_analyze_dynamic_volume(book_id):
     skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['lock_facts', 'narrative_debt', 'foreshadow_register'], mode='agent')
 
     vol_label = volume_title or '全部章节'
-    system_prompt = f"""你是专业的小说防遗忘系统分析师。请从以下「{vol_label}」的章节内容及已有动态报告中，生成本卷的动态分类摘要。
+    system_prompt = f"""你是专业的小说防遗忘系统分析师。请从以下“{vol_label}”的章节内容及已有动态报告中，生成本卷的动态分类摘要。
 
 【已有动态报告（5章一份）】
 {reports_text}
@@ -12119,7 +12119,7 @@ def ai_analyze_foreshadowing_volume(book_id):
     skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['foreshadow_register', 'narrative_debt'], mode='agent')
 
     vol_label = volume_title or '全部章节'
-    system_prompt = f"""你是专业的小说伏笔分析师。请从以下「{vol_label}」的章节内容中，识别本卷埋设的伏笔、回收的伏笔、以及尚未回收的悬念。
+    system_prompt = f"""你是专业的小说伏笔分析师。请从以下“{vol_label}”的章节内容中，识别本卷埋设的伏笔、回收的伏笔、以及尚未回收的悬念。
 
 {extra_ctx and f"【已有参考】{chr(10)}{extra_ctx}" or ""}
 
@@ -12223,7 +12223,7 @@ def ai_analyze_locations_volume(book_id):
     skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', ['lock_facts', 'tomato_setting'], mode='agent')
 
     vol_label = volume_title or '全部章节'
-    system_prompt = f"""你是专业的小说地图分析师。请从以下「{vol_label}」的章节内容中，识别本卷涉及的所有地点、场景、地理信息。
+    system_prompt = f"""你是专业的小说地图分析师。请从以下“{vol_label}”的章节内容中，识别本卷涉及的所有地点、场景、地理信息。
 
 {extra_ctx and f"【已有参考】{chr(10)}{extra_ctx}" or ""}
 
@@ -12422,7 +12422,7 @@ def ai_generate_dynamic_memory(book_id):
     if dm:
         current_content = getattr(dm, file_key, '') or ''
 
-    system_prompt = f"""你是专业的小说分析师和创作助手。请根据小说的章节内容、设定信息，生成或更新「{file_descriptions.get(file_key, file_key)}」的JSON数据。
+    system_prompt = f"""你是专业的小说分析师和创作助手。请根据小说的章节内容、设定信息，生成或更新“{file_descriptions.get(file_key, file_key)}”的JSON数据。
 
 要求：
 1. 严格输出有效的JSON格式，不要有任何其他文字
@@ -12786,12 +12786,12 @@ def batch_generate_dynamic_reports(book_id):
         # 用共享助手取该卷章节：parent_id 优先，回退顺序遍历（兼容未设置 parent_id 的旧数据）
         vol_chs = _get_volume_chapters_ordered(book_id, volume_id)
         if not vol_chs:
-            return jsonify({'error': f'卷「{volume_title or volume_id}」内暂无章节（请确认章节已归入该卷）'}), 400
+            return jsonify({'error': f'卷“{volume_title or volume_id}”内暂无章节（请确认章节已归入该卷）'}), 400
         # 计算这些章节在 all_chs 中的全局序号（1-based）
         ch_id_to_idx = {c.id: i for i, c in enumerate(all_chs)}
         vol_ch_idx = [ch_id_to_idx[c.id] for c in vol_chs if c.id in ch_id_to_idx]
         if not vol_ch_idx:
-            return jsonify({'error': f'卷「{volume_title or volume_id}」内暂无章节'}), 400
+            return jsonify({'error': f'卷“{volume_title or volume_id}”内暂无章节'}), 400
         global_start = min(vol_ch_idx) + 1
         global_end = max(vol_ch_idx) + 1
     else:
@@ -12996,9 +12996,9 @@ def ai_analyze_from_reports(book_id):
     existing_value = getattr(bible, field, '') if bible else ''
 
     # 按维度组装数据源（用户要求：不同图谱从不同维度读取数据供AI识别）
-    # 1. 关系图谱：从「人物及关系」+「剧情」维度读取，再补充动态文件
-    # 2. 地点图谱：首先从「设定」+「大纲」维度读取，再从动态文件补充
-    # 3. 境界图谱：首先从「设定」+「大纲」维度读取，再从动态文件补充
+    # 1. 关系图谱：从“人物及关系”+“剧情”维度读取，再补充动态文件
+    # 2. 地点图谱：首先从“设定”+“大纲”维度读取，再从动态文件补充
+    # 3. 境界图谱：首先从“设定”+“大纲”维度读取，再从动态文件补充
     # 4. 地图(locations)：保持动态文件优先，回退章节内容
 
     def _bible_val(attr):
@@ -13102,7 +13102,7 @@ def ai_analyze_from_reports(book_id):
 
     prompt = dim_prompts.get(dimension, dim_prompts.get(field, f'提取{dim_label}信息'))
 
-    system_prompt = f"""你是专业的小说分析师。请从以下{source_type}中提取「{dim_label}」维度的信息。
+    system_prompt = f"""你是专业的小说分析师。请从以下{source_type}中提取“{dim_label}”维度的信息。
 
 已有内容（供参考，在基础上补充而非完全重写）：
 {existing_value[:500] if existing_value else '（空）'}

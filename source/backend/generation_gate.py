@@ -125,7 +125,7 @@ def gate_blueprint_check(content: str, bb, chapter_num: int) -> Dict:
         found = any(kw in content for kw in keywords if len(kw) >= 2)
         if not found:
             issues.append({'gate': 'blueprint', 'severity': 'warning',
-                           'message': f'本章规划焦点「{focus[:10]}」未在正文中体现'})
+                           'message': f'本章规划焦点“{focus[:10]}”未在正文中体现'})
 
     return {'passed': len([i for i in issues if i['severity'] == 'critical']) == 0, 'issues': issues}
 

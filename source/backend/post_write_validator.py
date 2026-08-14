@@ -108,7 +108,7 @@ def validate_chapter(content: str) -> ValidationResult:
     # 3. 段落结构检查（warning）
     _check_paragraph_structure(text, cfg, result)
 
-    # 4. 连续「了」字检查（warning）
+    # 4. 连续“了”字检查（warning）
     _check_continuous_le(text, cfg, result)
 
     # 5. 转折词密度检查（warning）
@@ -168,7 +168,7 @@ def _check_fatigue_words(text: str, cfg: Dict, result: ValidationResult):
                 pattern=word,
                 count=count,
                 position=f'全章出现 {count} 次',
-                suggestion=f'「{word}」出现过多（{count}次，建议≤{max_per_chapter}次），替换部分表达',
+                suggestion=f'“{word}”出现过多（{count}次，建议≤{max_per_chapter}次），替换部分表达',
             ))
 
 
@@ -213,9 +213,9 @@ def _check_paragraph_structure(text: str, cfg: Dict, result: ValidationResult):
 
 
 def _check_continuous_le(text: str, cfg: Dict, result: ValidationResult):
-    """连续「了」字检查"""
+    """连续“了”字检查"""
     max_le = cfg.get('continuous_le_max', 5)
-    # 匹配连续 6 个及以上「了」
+    # 匹配连续 6 个及以上“了”
     pattern = r'了{' + str(max_le + 1) + r',}'
     matches = re.findall(pattern, text)
     if matches:
@@ -224,8 +224,8 @@ def _check_continuous_le(text: str, cfg: Dict, result: ValidationResult):
             category='连续了字',
             pattern='了' * (max_le + 1),
             count=len(matches),
-            position=f'共 {len(matches)} 处连续{max_le+1}个以上「了」',
-            suggestion=f'连续「了」字过多（≥{max_le+1}），减少重复助词',
+            position=f'共 {len(matches)} 处连续{max_le+1}个以上“了”',
+            suggestion=f'连续“了”字过多（≥{max_le+1}），减少重复助词',
         ))
 
 
@@ -677,7 +677,7 @@ def _check_dead_character_revival(text: str, bible: Dict, result: ValidationResu
                         pattern=name,
                         count=1,
                         position=f'第{dead_ch}章已死亡，本章出现活人动作（有复活铺垫）',
-                        suggestion=f'角色「{name}」已于第{dead_ch}章死亡，本章让其说话/行动。已有复活铺垫，请确认铺垫充分。',
+                        suggestion=f'角色“{name}”已于第{dead_ch}章死亡，本章让其说话/行动。已有复活铺垫，请确认铺垫充分。',
                     ))
                 else:
                     result.add(ValidationIssue(
@@ -686,7 +686,7 @@ def _check_dead_character_revival(text: str, bible: Dict, result: ValidationResu
                         pattern=name,
                         count=1,
                         position=f'第{dead_ch}章已死亡，本章出现活人动作',
-                        suggestion=f'角色「{name}」已于第{dead_ch}章死亡，但本章让其说话/行动，属硬伤。若为回忆/幻觉/复活剧情，请显式标注铺垫。',
+                        suggestion=f'角色“{name}”已于第{dead_ch}章死亡，但本章让其说话/行动，属硬伤。若为回忆/幻觉/复活剧情，请显式标注铺垫。',
                     ))
                 reported = True
                 break
@@ -736,7 +736,7 @@ def _check_realm_regression(text: str, bible: Dict, result: ValidationResult):
                         pattern=f'{name}:{recorded_realm}→{hit_lower}',
                         count=1,
                         position=f'第{rec_ch}章记录为{recorded_realm}，本章出现{hit_lower}（有回退铺垫）',
-                        suggestion=f'角色「{name}」已记录为「{recorded_realm}」（第{rec_ch}章），本章出现「{hit_lower}」。已有回退铺垫，请确认合理。',
+                        suggestion=f'角色“{name}”已记录为“{recorded_realm}”（第{rec_ch}章），本章出现“{hit_lower}”。已有回退铺垫，请确认合理。',
                     ))
                 else:
                     result.add(ValidationIssue(
@@ -745,7 +745,7 @@ def _check_realm_regression(text: str, bible: Dict, result: ValidationResult):
                         pattern=f'{name}:{recorded_realm}→{hit_lower}',
                         count=1,
                         position=f'第{rec_ch}章记录为{recorded_realm}，本章出现{hit_lower}',
-                        suggestion=f'角色「{name}」已记录为「{recorded_realm}」（第{rec_ch}章），本章出现「{hit_lower}」疑似境界/功法无故回退，请核对或补铺垫。',
+                        suggestion=f'角色“{name}”已记录为“{recorded_realm}”（第{rec_ch}章），本章出现“{hit_lower}”疑似境界/功法无故回退，请核对或补铺垫。',
                     ))
                 break  # 同一角色只报一次
 
@@ -780,8 +780,8 @@ def _check_unknown_character_names(text: str, bible: Dict, result: ValidationRes
                         category='角色名疑似错写',
                         pattern=f'{ref}≈{nm}',
                         count=1,
-                        position=f'正文出现「{ref}」，已知角色有「{nm}」',
-                        suggestion=f'正文「{ref}」与已知角色「{nm}」仅一字之差，请确认是否错写。',
+                        position=f'正文出现“{ref}”，已知角色有“{nm}”',
+                        suggestion=f'正文“{ref}”与已知角色“{nm}”仅一字之差，请确认是否错写。',
                     ))
                     break
 
@@ -840,7 +840,7 @@ _TENSION_LOW_WORDS = [
     '风景', '阳光', '微风', '平静', '安宁', '闲聊', '寒暄',
 ]
 # 对话密度相关
-_DIALOGUE_PATTERN = re.compile(r'[""「」『』].*?[""「」『』]')
+_DIALOGUE_PATTERN = re.compile(r'[""“”『』].*?[""“”『』]')
 # 短句标点（。！？）
 _SENTENCE_END_PATTERN = re.compile(r'[。！？]')
 
@@ -931,12 +931,12 @@ def _check_style_forbidden_words(text: str, result: ValidationResult):
             pattern=word,
             count=cnt,
             position=f'出现 {cnt} 次',
-            suggestion=f'「{word}」在标准文风禁词清单中，禁止使用。请用动作/物象/对白替代。',
+            suggestion=f'“{word}”在标准文风禁词清单中，禁止使用。请用动作/物象/对白替代。',
         ))
 
 
 # ===== 视角与信息控制铁律：确定性检测 =====
-# 对接 STANDARD_WRITING_STYLE_PROMPT 中的「视角与信息控制铁律」小节
+# 对接 STANDARD_WRITING_STYLE_PROMPT 中的“视角与信息控制铁律”小节
 # 检测上帝视角、剧透式叙述、上帝点评、伏笔明写、伏笔过载等违规
 
 # 上帝视角/剧透式叙述触发词（命中即 critical）
@@ -976,7 +976,7 @@ _VIEW_SWITCH_PATTERN = re.compile(r'(?:(?:他|她|它)(?:心想|心中暗想|心
 def _check_god_view_and_foreshadow_leak(text: str, result: ValidationResult):
     """视角与信息控制铁律检测（critical 级）。
     检测上帝视角、剧透式叙述、上帝点评、伏笔明写、伏笔过载、视角频繁切换。
-    对接 STANDARD_WRITING_STYLE_PROMPT 中的「视角与信息控制铁律」小节。"""
+    对接 STANDARD_WRITING_STYLE_PROMPT 中的“视角与信息控制铁律”小节。"""
     if not text or len(text) < 20:
         return
 

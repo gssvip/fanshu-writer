@@ -2,7 +2,7 @@
 
 把"表单填空"创作模式升级为"边聊边写"：
   - 聊天时自动注入当前书的相关 bible 维度（AI 真懂你的书）
-  - AI 回复中可产出结构化「落地卡片」，用户点确认即写入对应维度
+  - AI 回复中可产出结构化“落地卡片”，用户点确认即写入对应维度
   - AI 感知创作进度，主动引导下一步该做什么
 
 所有新代码独立成模块，不增加 app.py 行数（架构门禁约束）。
@@ -31,7 +31,7 @@ MAX_HISTORY_ROUNDS = 8
 MAX_MSG_CHARS = 2000
 
 # ============================================================================
-# 统一去AI味规则（融合「默认去AI味规则」+「去AI味执行规则精简版」）
+# 统一去AI味规则（融合“默认去AI味规则”+“去AI味执行规则精简版”）
 # 适用：正文写作（continue）、正文修改（polish）、去AI Tab（smart_deai）
 # 三处共用同一份规则，保证口径一致
 # ============================================================================
@@ -91,7 +91,7 @@ DEAI_RULES = """【去AI味执行规则】
 
 # ============================================================================
 # 用户说话意图识别 → 自动同步核心创作参数（卷数/每卷章数/题材/风格）到 Book + BookBible
-# 解决：用户在智驾里说「改成25卷」时，不能只当一句对话，要真正落地到 DB，
+# 解决：用户在智驾里说“改成25卷”时，不能只当一句对话，要真正落地到 DB，
 #       否则后续 prompt 中的【核心创作参数铁律】读的还是旧值，等于用户白说。
 # ============================================================================
 
@@ -115,7 +115,7 @@ _NEG_TV_TOKENS = re.compile(r'(第\s*\d+\s*卷|卷[一二三四五六七八九�
 
 
 def _auto_sync_params_from_user_message(book, bb, message: str):
-    """从用户最新一条聊天消息中识别「卷数/章数调整」意图，真正同步到 DB。
+    """从用户最新一条聊天消息中识别“卷数/章数调整”意图，真正同步到 DB。
 
     Returns:
       list[str]：本次实际同步成功的 human-readable 说明（供前端 SSE meta 回显）。
@@ -135,7 +135,7 @@ def _auto_sync_params_from_user_message(book, bb, message: str):
         m = _RE_TV.search(text)
         if m:
             return int(m.group(1))
-        # 负向过滤：含「第N卷/卷X」字样时不再走宽松匹配，避免"我现在在写第25卷"被误判为改总卷数
+        # 负向过滤：含“第N卷/卷X”字样时不再走宽松匹配，避免"我现在在写第25卷"被误判为改总卷数
         if _NEG_TV_TOKENS.search(text):
             return None
         m2 = _RE_TV_LOOSE.search(text)
@@ -161,7 +161,7 @@ def _auto_sync_params_from_user_message(book, bb, message: str):
                     db.session.add(bb)
             _sync_book_meta_to_bible(book, bb, commit=False)
             db.session.commit()
-            synced_notes.append(f'【已同步】检测到你要求「{tv_new}卷」，已自动将作品总卷数从 {cur_tv or "未设定"} 更新为 {tv_new} 卷（后续五幕总纲/分卷规划/正文写作都会严格按此卷数执行）')
+            synced_notes.append(f'【已同步】检测到你要求“{tv_new}卷”，已自动将作品总卷数从 {cur_tv or "未设定"} 更新为 {tv_new} 卷（后续五幕总纲/分卷规划/正文写作都会严格按此卷数执行）')
 
     # -------- 2. 每卷章数：提取并落 Book.chapters_per_volume（若有该字段） --------
     def extract_cpv(text):
@@ -197,7 +197,7 @@ def _auto_sync_params_from_user_message(book, bb, message: str):
                     db.session.add(bb)
             _sync_book_meta_to_bible(book, bb, commit=False)
             db.session.commit()
-            synced_notes.append(f'【已同步】检测到你要求「每卷 {cpv_new} 章」，已自动将每卷章数从 {cur_cpv or "默认"} 更新为 {cpv_new} 章（后续总章数上限会按 总卷数 × {cpv_new} 章计算）')
+            synced_notes.append(f'【已同步】检测到你要求“每卷 {cpv_new} 章”，已自动将每卷章数从 {cur_cpv or "默认"} 更新为 {cpv_new} 章（后续总章数上限会按 总卷数 × {cpv_new} 章计算）')
 
     return synced_notes
 
@@ -343,11 +343,11 @@ def _build_toc_block(book_id, max_items: int = 200) -> str:
 
 
 def _core_params_iron_block(bb, book):
-    """构建「核心创作参数·铁律·不可违反」块（所有创作链路统一注入）。
+    """构建“核心创作参数·铁律·不可违反”块（所有创作链路统一注入）。
 
     比 _build_core_params_block 更强：
-    - 标为「铁律·不可违反」放在 system prompt 最上方，避免被下文淹没
-    - 追加「越界拦截警示」：大纲/剧情/卷规划必须严格等于总卷数；正文章号不得超过总章数上限
+    - 标为“铁律·不可违反”放在 system prompt 最上方，避免被下文淹没
+    - 追加“越界拦截警示”：大纲/剧情/卷规划必须严格等于总卷数；正文章号不得超过总章数上限
     - 所有 8 条创作链路都要调用（chat_smart / smart_general / smart_generate /
       smart_dimension_edit / smart_batch / smart_deai / chat_smart_action / _action_chapter）
 
@@ -392,7 +392,7 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
     parts = [
         '你是一位资深网文创作副驾，正在和作者协作创作一部小说。你的职责：',
         '1. 像同行一样讨论创作问题（人物、剧情、世界观、文风）',
-        '2. 当讨论中形成明确结论时，主动产出「落地卡片」让作者一键采纳',
+        '2. 当讨论中形成明确结论时，主动产出“落地卡片”让作者一键采纳',
         '3. 感知创作进度，主动引导下一步该做什么',
         '',
         f'【当前作品】《{book.title or "未命名"}》',
@@ -418,7 +418,7 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
     if next_chapter_num is not None:
         parts.append(
             f'\n【章节号铁律】当前正文章节维度下最新章节号已到第{next_chapter_num - 1}章。'
-            f'产出 SAVE_CHAPTER 卡片时，新章节标题必须用「第{next_chapter_num}章」开头'
+            f'产出 SAVE_CHAPTER 卡片时，新章节标题必须用“第{next_chapter_num}章”开头'
             f'（如：第{next_chapter_num}章 章节名），不得重复使用已有的章节号。'
             f'修改已有章节时，保持原章节号不变。'
         )
@@ -941,7 +941,7 @@ def apply_card():
         # 最后一道门：章号解析成功且越界 → 拒绝落地
         if ch_num is not None and ch_num > _max_chapters:
             return jsonify({'error': (f'【落地拦截·总章数越界】全书设定总卷数 {_tv} 卷 × 每卷 {_cpv} 章 = 总章数上限 {_max_chapters} 章，'
-                                    f'「{title or f"第{ch_num}章"}」(第{ch_num}章) 已超出上限，未保存。若需要继续，请先到作品基本信息中调大总卷数。')}), 400
+                                    f'“{title or f"第{ch_num}章"}”(第{ch_num}章) 已超出上限，未保存。若需要继续，请先到作品基本信息中调大总卷数。')}), 400
         existing_ch = None
         # 优先按章节号匹配（覆盖同章节号的章节）
         if ch_num is not None:
@@ -1499,7 +1499,7 @@ def _action_master_create(book, session, instruction, gw, sse):
         # 注入核心创作参数铁律（批量设定也要遵守总卷数/题材/风格）
         core_iron = _core_params_iron_block(bb, book)
         sys_prompt = (
-            f'你是资深网文创作副驾。请为《{book.title}》生成「{label}」设定。'
+            f'你是资深网文创作副驾。请为《{book.title}》生成“{label}”设定。'
             f'\n\n{core_iron}'
             f'\n\n已有设定参考：\n{ctx_block}'
             f'\n用户补充要求：{instruction or "无"}'
@@ -1902,7 +1902,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     ch_info = _get_latest_chapter_info(book_id)
     # 确定当前章号 + 上一章内容
     if not target_chapter_num:
-        # 续写用「最新章节号+1」，润色用「最新章节号」
+        # 续写用“最新章节号+1”，润色用“最新章节号”
         target_chapter_num = ch_info['next_num'] if mode == 'continue' else ch_info['latest_num']
 
     # 越界硬拦截：章号超过总章数上限立即停止，不发 LLM 请求
@@ -2357,9 +2357,9 @@ PLAIN_TEXT_LAYOUT_RULES = """
    五）禁止 ``` 代码块
    六）禁止用 1. / 2. / (1) 这类编号列表符号
 2. 正确的纯文字排版形式：
-   一）分节标题：直接写成「第一幕：XXX」「本卷目标」「第3卷·XX卷」「姜辰」等，前后各空一行即可（不要加#、不要加*）
-   二）条目列表：用「一、二、三、…」「1）2）3）…」「甲、乙、丙…」或中文顿号直接并列，缩进用空格，禁止用 - 或 * 或 1. 开头
-   三）强调/专有名词：直接用书名号《》、引号「」或不加符号即可，不要用 **粗体** 或 *斜体*
+   一）分节标题：直接写成“第一幕：XXX”“本卷目标”“第3卷·XX卷”“姜辰”等，前后各空一行即可（不要加#、不要加*）
+   二）条目列表：用“一、二、三、…”“1）2）3）…”“甲、乙、丙…”或中文顿号直接并列，缩进用空格，禁止用 - 或 * 或 1. 开头
+   三）强调/专有名词：直接用书名号《》、引号“”或不加符号即可，不要用 **粗体** 或 *斜体*
 3. 章节正文专属：只输出自然叙述，段落直接用换行/空行分隔。除对话中的正常标点外，正文内容里也不能出现 * 和 # 符号本身。
 4. 检查自检：你输出的完整文本中如果出现了独立的 * 字符（除正常数学乘号含义外，极少用到）或行首 #，一律删掉或改成等价中文形式再输出。
 """.strip()
@@ -2410,7 +2410,7 @@ def _clean_text_to_plain(text: str) -> str:
 SMART_DIMENSIONS = [
     {'key': 'concept',            'label': '构思',       'field': 'concept',            'card': 'SAVE_CONCEPT',      'icon': '💡', 'hint': '一句话讲清故事核：主角是谁、要什么、最大的阻碍'},
     {'key': 'key_rules',          'label': '设定',       'field': 'key_rules',          'card': 'SAVE_RULE',         'icon': '⚙️', 'hint': '能力体系/修炼体系/科技树，硬规则'},
-    {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': '🌍', 'hint': '故事发生的世界，独特规则或设定（生成中会提取世界地图架构到「地图」维度）'},
+    {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': '🌍', 'hint': '故事发生的世界，独特规则或设定（生成中会提取世界地图架构到“地图”维度）'},
     {'key': 'plot_design',        'label': '大纲',       'field': 'plot_design',        'card': 'SAVE_OUTLINE_NODE', 'icon': '📋', 'hint': '主线走向，三幕式或起承转合'},
     {'key': 'character_profiles', 'label': '人物',       'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': '👤', 'hint': '主角和核心配角的动机、性格、关系网'},
     {'key': 'timeline',           'label': '剧情',       'field': 'timeline',           'card': 'SAVE_PLOT',         'icon': '📖', 'hint': '关键剧情节点的时间顺序'},
@@ -2494,7 +2494,7 @@ def check_dim_readiness(bb, dim_key: str) -> dict:
     warning = ''
     if missing_req:
         labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k in missing_req)
-        warning = f'生成「{_DIM_KEY_TO_SPEC[dim_key]["label"]}」前必须先完善：{labels}（未完善会导致内容质量严重下降）'
+        warning = f'生成“{_DIM_KEY_TO_SPEC[dim_key]["label"]}”前必须先完善：{labels}（未完善会导致内容质量严重下降）'
     elif missing_rec:
         labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k in missing_rec)
         warning = f'建议先完善：{labels}（未完善可能导致内容不一致）'
@@ -2890,7 +2890,7 @@ def smart_general():
         dim_labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k, _ in detected)
         dim_hint = f'\n\n【关键词触发】用户讨论涉及维度：{dim_labels}。若你的回复中产出了可落地的设定内容，请用卡片标记输出（每个维度一张）：\n[[CARD:卡片类型|标题|内容]]\n卡片类型对照：SAVE_CONCEPT=构思, SAVE_RULE=设定, SAVE_WORLDSETTING=世界观, SAVE_OUTLINE_NODE=大纲, SAVE_PLOT=剧情, SAVE_CHARACTER=人物, SAVE_FORESHADOW=伏笔, SAVE_LOCATION=地图, APPLY_STYLE=文风。无则不输出卡片。'
         if any(k == 'character_profiles' for k, _ in detected):
-            dim_hint += '\n\n【人物卡片内容格式·铁律】绝对禁止 JSON 符号 [ ] { } " : 和英文字段名。卡片内容必须用纯中文，按「姓名：xxx\\n身份：xxx\\n性格：xxx\\n动机：xxx\\n背景：xxx\\n关系：xxx\\n能力：xxx」分行输出，每字段至少30字。'
+            dim_hint += '\n\n【人物卡片内容格式·铁律】绝对禁止 JSON 符号 [ ] { } " : 和英文字段名。卡片内容必须用纯中文，按“姓名：xxx\\n身份：xxx\\n性格：xxx\\n动机：xxx\\n背景：xxx\\n关系：xxx\\n能力：xxx”分行输出，每字段至少30字。'
     # 叠加一条更强的禁令（第二保险，避免模型偶尔无视 base 的铁律）
     extra_parts.append("""
 【禁止索要资料·二次强制（如与上面铁律冲突，以本条目为准）】
@@ -3093,8 +3093,8 @@ def smart_suggest():
         suggest_iron_rule = f"""
 【方案卡片预览·卷数铁律（直接作用于你输出的 JSON suggestions[].preview）】
 - 本书已设定总卷数为 {tv_for_suggest} 卷，你输出的**每一个**方案简介 preview 中，若需要提到全书分卷规模，
-  必须直接写成「{tv_for_suggest} 卷」（阿拉伯数字）或更具体的「{tv_for_suggest}卷×50章」。
-- 严禁在 preview 中出现「十卷 / 五卷 / 八卷 / 六卷 / 十二卷 / 十余卷 / 5-8 卷 / 通常 5-8 卷 / 5到8卷」这类默认值或中文数字描述，
+  必须直接写成“{tv_for_suggest} 卷”（阿拉伯数字）或更具体的“{tv_for_suggest}卷×50章”。
+- 严禁在 preview 中出现“十卷 / 五卷 / 八卷 / 六卷 / 十二卷 / 十余卷 / 5-8 卷 / 通常 5-8 卷 / 5到8卷”这类默认值或中文数字描述，
   哪怕你觉得更通顺也不行 —— 用户设定多少就必须写多少。
 - 严禁把卷数偷偷压缩成"5幕对应5卷"来写简介，必须真实体现 {tv_for_suggest} 卷的体量。
 - 如果你违反以上任何一条，你输出的方案卡片就不合格。"""
@@ -3103,7 +3103,7 @@ def smart_suggest():
     dim_needs_volume_in_preview = dim_key in ('plot_design', 'timeline', 'concept', 'dynamic_volumes')
     preview_volume_req = ''
     if dim_needs_volume_in_preview and tv_for_suggest and tv_for_suggest >= 1:
-        preview_volume_req = f'\n- 本任务为「{spec.get("label", dim_key)}」维度，你输出的每条 preview 简介**必须**显式出现「{tv_for_suggest}卷」的字样，用来直接告诉作者这方案是按他设定的 {tv_for_suggest} 卷规划的；不写"十卷""五卷"等其他数字。'
+        preview_volume_req = f'\n- 本任务为“{spec.get("label", dim_key)}”维度，你输出的每条 preview 简介**必须**显式出现“{tv_for_suggest}卷”的字样，用来直接告诉作者这方案是按他设定的 {tv_for_suggest} 卷规划的；不写"十卷""五卷"等其他数字。'
 
     # 大纲维度：五幕模型说明（给出 tv 卷下的精确映射示例，禁止 AI 把多幕压缩到第25卷）
     outline_extra = ''
@@ -3117,7 +3117,7 @@ def smart_suggest():
             act4_end = tv*75//100
             # 构造一个按 tv 卷精确分配的五幕示例，直接给 AI 照抄
             five_act_example = f'立身第1~{act1_end}卷、立足第{act1_end+1}~{act2_end}卷、立势第{act2_end+1}~{act3_end}卷、立威第{act3_end+1}~{act4_end}卷、立命第{act4_end+1}~{tv}卷'
-            outline_extra = f"""\n\n【大纲维度专属要求】请生成「五幕式总纲」方向的差异化方案。
+            outline_extra = f"""\n\n【大纲维度专属要求】请生成“五幕式总纲”方向的差异化方案。
 全书严格 {tv} 卷，每卷约50章12万字。
 五幕模型按{tv}卷比例的精确卷号映射如下（必须严格遵守，不得擅自改动）：
 - 立身(前5%)：第1~{act1_end}卷
@@ -3147,7 +3147,7 @@ def smart_suggest():
     except Exception:
         pass
 
-    sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》的「{spec['label']}」维度生成 3-5 个差异化的创意方案供作者选择。
+    sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》的“{spec['label']}”维度生成 3-5 个差异化的创意方案供作者选择。
 
 题材：{book.genre or "未指定"}
 类型：{book.book_type or "未指定"}
@@ -3206,7 +3206,7 @@ def smart_suggest():
             if clean:
                 suggestions.append({'title': f'方案{i + 1}', 'preview': clean[:150]})
 
-    # === 后端兜底：只纠正明显作为「全书总卷数」的违规描述，绝不碰任何卷号/卷号区间 ===
+    # === 后端兜底：只纠正明显作为“全书总卷数”的违规描述，绝不碰任何卷号/卷号区间 ===
     #     惨痛教训：任何试图全局替换"第X卷"或"X-Y卷"的规则都会误伤，导致"第13-18卷"→"第125卷"。
     #     现在策略极度保守：
     #       1) 先把所有卷号（含第X卷、第X-Y卷、卷X、第X卷后紧随1-8字中文）完整 stash 占位；
@@ -3348,7 +3348,7 @@ def smart_generate():
         try:
             from app import _get_total_volumes
             tv = _get_total_volumes(bb, book)
-            outline_extra = f'\n\n【大纲维度专属要求】请生成「五幕式总纲」，全书严格 {tv} 卷，每卷约50章12万字。五幕模型：立身(1-5%)/立足(5-25%)/立势(25-50%)/立威(50-75%)/立命(75-100%)。为每卷输出：卷号卷名、所属幕、本卷核心目标、主要冲突、关键转折点(2-3个)、卷尾高潮与悬念。只输出总纲文本，不输出详细情节节点。'
+            outline_extra = f'\n\n【大纲维度专属要求】请生成“五幕式总纲”，全书严格 {tv} 卷，每卷约50章12万字。五幕模型：立身(1-5%)/立足(5-25%)/立势(25-50%)/立威(50-75%)/立命(75-100%)。为每卷输出：卷号卷名、所属幕、本卷核心目标、主要冲突、关键转折点(2-3个)、卷尾高潮与悬念。只输出总纲文本，不输出详细情节节点。'
             try:
                 from app import _cultivation_dimension_hint
                 outline_extra += _cultivation_dimension_hint('plot_design', book, bb)
@@ -3464,7 +3464,7 @@ def smart_generate():
     else:
         _tail_rule = f'\n\n请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。\n\n{PLAIN_TEXT_LAYOUT_RULES}'
 
-    sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{spec['label']}」维度的完整设定内容。
+    sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成“{spec['label']}”维度的完整设定内容。
 
 题材：{book.genre or "未指定"}
 类型：{book.book_type or "未指定"}
@@ -3505,13 +3505,13 @@ def smart_generate():
 
     gw = LLMGateway(base_url, api_key, model)
 
-    # 世界观维度：生成后额外产出地图卡片，便于提取到「地图」维度
+    # 世界观维度：生成后额外产出地图卡片，便于提取到“地图”维度
     if dim_key == 'worldbuilding':
-        sys_prompt += '\n\n另外，若世界观中包含地理/势力分布信息，请在正文之后追加一张「地图」卡片，格式：\n[[CARD:SAVE_LOCATION|世界地图架构|在此输出主要地理区域、势力分布、关键地点的简要架构]]'
+        sys_prompt += '\n\n另外，若世界观中包含地理/势力分布信息，请在正文之后追加一张“地图”卡片，格式：\n[[CARD:SAVE_LOCATION|世界地图架构|在此输出主要地理区域、势力分布、关键地点的简要架构]]'
 
-    # 设定维度：文风已并入设定，额外产出一张「文风」卡片，便于落地到 style_guide
+    # 设定维度：文风已并入设定，额外产出一张“文风”卡片，便于落地到 style_guide
     if dim_key == 'key_rules':
-        sys_prompt += '\n\n另外，请基于本书题材与设定，提炼出适配的文风指南（叙事风格、语言调性、节奏把控），在正文之后追加一张「文风」卡片，格式：\n[[CARD:APPLY_STYLE|文风指南|在此输出叙事风格、语言调性、节奏把控等文风约束]]'
+        sys_prompt += '\n\n另外，请基于本书题材与设定，提炼出适配的文风指南（叙事风格、语言调性、节奏把控），在正文之后追加一张“文风”卡片，格式：\n[[CARD:APPLY_STYLE|文风指南|在此输出叙事风格、语言调性、节奏把控等文风约束]]'
 
     messages = [{'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': f'请生成{spec["label"]}的完整内容'}]
@@ -3694,14 +3694,14 @@ def smart_dim_edit():
     # 人物维度额外约束：禁止输出 JSON/代码符号，必须用自然语言按字段分行
     character_extra = ''
     if dim_key == 'character_profiles':
-        character_extra = '\n\n【人物维度输出格式·绝对铁律】绝对禁止 JSON 符号 [ ] { } " : 和英文字段名。必须用纯中文，按「姓名：xxx\\n身份：xxx\\n性格：xxx\\n动机：xxx\\n背景：xxx\\n关系：xxx\\n能力：xxx」分行输出，每字段至少30字。'
+        character_extra = '\n\n【人物维度输出格式·绝对铁律】绝对禁止 JSON 符号 [ ] { } " : 和英文字段名。必须用纯中文，按“姓名：xxx\\n身份：xxx\\n性格：xxx\\n动机：xxx\\n背景：xxx\\n关系：xxx\\n能力：xxx”分行输出，每字段至少30字。'
 
     # 【P0修复】timeline 维度保持按卷 JSON 数组格式，不附加纯文本规则
     timeline_edit_extra = ''
     if dim_key == 'timeline':
         timeline_edit_extra = '\n\n【剧情维度修改铁律】当前维度原文是按卷的 JSON 数组（每卷含 volume_index/volume/main_plot/core_conflict/ending_hook/nodes 等字段）。修改后必须保持相同的 JSON 数组格式输出，不要输出纯文本或 Markdown。只调整修改意见涉及的卷或字段，其余卷保持原样。直接输出 JSON 数组，不要包裹代码块，不要解释。'
 
-    sys_prompt = f"""你是资深网文创作智驾。请根据作者的修改意见，修订《{book.title or "未命名"}》的「{spec['label']}」维度内容。
+    sys_prompt = f"""你是资深网文创作智驾。请根据作者的修改意见，修订《{book.title or "未命名"}》的“{spec['label']}”维度内容。
 
 【其他维度参考】
 {ctx or "（暂无）"}
@@ -3718,7 +3718,7 @@ def smart_dim_edit():
 请直接输出修订后的完整内容（保留原文中合理的部分，按修改意见调整），不要寒暄，不要解释，不要加 Markdown 标题。
 
 【修改铁律】
-1. 这是对「已有内容」的局部修订，不是重新创作；必须保留原文的整体结构、核心设定、人物/地点/势力名称及关键事件；
+1. 这是对“已有内容”的局部修订，不是重新创作；必须保留原文的整体结构、核心设定、人物/地点/势力名称及关键事件；
 2. 仅针对修改意见中明确提到的点进行调整，未提及的部分尽量保持原样；
 3. 如果修改意见与原文冲突，优先执行修改意见，但需在同一框架内微调，禁止另起炉灶生成全新世界观/大纲/人物；
 4. 输出必须是可直接覆盖原维度的完整修订正文。
@@ -3894,7 +3894,7 @@ def smart_batch():
                 # 【P0修复】timeline 维度输出按卷 JSON 数组，跳过纯文本规则与清理
                 _is_tl = (dim_key == 'timeline')
                 sys_prompt = (
-                    f'你是资深网文创作智驾。请为《{book.title or "未命名"}》生成「{label}」设定。'
+                    f'你是资深网文创作智驾。请为《{book.title or "未命名"}》生成“{label}”设定。'
                     f'\n\n{core_iron}'
                     f'\n\n【已生成维度参考】\n{ctx_block}'
                     f'\n\n【作者补充要求】\n{requirement or "无"}'
@@ -4569,7 +4569,7 @@ def smart_fix_from_report():
 {chr(10) + chr(10) + '【技能包指引】' + chr(10) + skill_note if skill_note else ''}
 
 【你的任务】
-针对报告诊断出的问题，逐维度生成「修正方案」。每个维度一个修正项，包含：
+针对报告诊断出的问题，逐维度生成“修正方案”。每个维度一个修正项，包含：
 1. issues：该维度涉及的诊断问题（从上方诊断中归纳）
 2. action：一句话说明怎么改（如：补全主角境界突破条件、修正时间线倒流）
 3. new_content：修正后的完整设定内容（必须是可直接落地的完整内容，不是片段说明）
@@ -4682,10 +4682,10 @@ def smart_apply_fix():
 # ============================================================================
 
 def _locate_chapter_by_location(location: str, chapters: list):
-    """根据违规位置字符串定位章节。支持「第N章」或标题匹配。"""
+    """根据违规位置字符串定位章节。支持“第N章”或标题匹配。"""
     if not location:
         return None
-    # 优先匹配「第N章」
+    # 优先匹配“第N章”
     nums = re.findall(r'第\s*(\d+)\s*章', str(location))
     if nums:
         idx = int(nums[0]) - 1
@@ -4801,7 +4801,7 @@ def smart_fix_text_from_report():
         if not filtered:
             no_loc = [v for v in violations if isinstance(v, dict) and not v.get('location')]
             if no_loc:
-                return jsonify({'fixes': [], 'empty_reason': '报告中的违规项缺少位置信息（location 字段为空），无法定位到具体章节。请重新运行防遗忘检查，确保违规项包含「第N章」或章节标题。'})
+                return jsonify({'fixes': [], 'empty_reason': '报告中的违规项缺少位置信息（location 字段为空），无法定位到具体章节。请重新运行防遗忘检查，确保违规项包含“第N章”或章节标题。'})
             return jsonify({'fixes': [], 'empty_reason': '报告中没有违规项，无需修正正文。'})
 
         chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
@@ -4845,7 +4845,7 @@ def smart_fix_text_from_report():
             if volume_ids and located_but_filtered_out > 0 and not_located == 0:
                 return jsonify({'fixes': [], 'empty_reason': f'共 {located_but_filtered_out} 处违规已定位到章节，但均不在所选分卷内。请选择包含违规章节的分卷，或不限分卷重新检查。'})
             if not_located > 0 and located_but_filtered_out == 0:
-                return jsonify({'fixes': [], 'empty_reason': f'共 {not_located} 处违规的位置无法匹配到已有章节（位置格式需为「第N章」或章节标题）。请检查违规位置描述，或重新运行防遗忘检查。'})
+                return jsonify({'fixes': [], 'empty_reason': f'共 {not_located} 处违规的位置无法匹配到已有章节（位置格式需为“第N章”或章节标题）。请检查违规位置描述，或重新运行防遗忘检查。'})
             return jsonify({'fixes': [], 'empty_reason': f'共 {len(filtered)} 处违规均无法生成可修正案例（{not_located} 处定位失败，{located_but_filtered_out} 处不在所选分卷）。请检查违规位置或重新选择分卷。'})
 
         case_blocks = []

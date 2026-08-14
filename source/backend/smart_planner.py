@@ -145,7 +145,7 @@ class SmartPlanner:
             id='t1', op='rename_entity', target=old_name,
             args={'old_name': old_name, 'new_name': new_name, 'entity_type': entity_type},
             auto=True,
-            reason=f'将 {entity_type}「{old_name}」重命名为「{new_name}」'
+            reason=f'将 {entity_type}“{old_name}”重命名为“{new_name}”'
         ))
 
         # 2. 依赖字段重渲染（自动）
@@ -155,21 +155,21 @@ class SmartPlanner:
             g.add(Task(
                 id=f't{idx}', op='refresh_dim', target=field,
                 depends_on=['t1'], auto=True,
-                reason=f'{field} 字段可能含「{old_name}」，替换后需要同步索引/结构'
+                reason=f'{field} 字段可能含“{old_name}”，替换后需要同步索引/结构'
             ))
 
         # 3. 标脏相关章节（自动：记录哪些章节需要重写）
         g.add(Task(
             id='t_dirty', op='mark_dirty_chapters', target='chapters',
             args={'keyword': old_name}, depends_on=['t1'], auto=True,
-            reason=f'扫描所有章节正文，标记含「{old_name}」的章节为待重写'
+            reason=f'扫描所有章节正文，标记含“{old_name}”的章节为待重写'
         ))
 
         # 4. 章节正文重写（手动：需要用户确认）
         g.add(Task(
             id='t_rewrite', op='regenerate_text', target='chapters',
             args={'keyword': old_name, 'scope': 'light'}, depends_on=['t_dirty'], auto=False,
-            reason=f'含「{old_name}」的章节需要批量替换为「{new_name}」；是否让 AI 轻量重写（只改名，不改剧情）？'
+            reason=f'含“{old_name}”的章节需要批量替换为“{new_name}”；是否让 AI 轻量重写（只改名，不改剧情）？'
         ))
 
         return g
