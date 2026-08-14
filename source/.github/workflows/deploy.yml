@@ -28,6 +28,11 @@ jobs:
           npm ci
           npm run build
 
+      - name: Generate version.json
+        working-directory: frontend
+        run: |
+          echo "{\"v\":\"${{ github.sha }}\",\"t\":$(date +%s)}" > dist/version.json
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         if: github.ref == 'refs/heads/main'
