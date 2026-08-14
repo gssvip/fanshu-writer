@@ -13472,7 +13472,12 @@ def serve_frontend(path):
     # 其他情况返回 index.html（SPA 路由回退）
     index_file = dist_dir / 'index.html'
     if index_file.exists():
-        return send_from_directory(dist_dir, 'index.html')
+        resp = send_from_directory(dist_dir, 'index.html')
+        # 强制浏览器清除 HTTP 缓存和 Service Worker 注册（解决 PWA 死锁缓存问题）
+        # 不清除 cookies 和 storage，避免用户登出/丢失数据
+        resp.headers['Clear-Site-Data'] = '"cache", "serviceworkers"'
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        return resp
     return jsonify({'error': 'index.html not found'}), 404
 
 

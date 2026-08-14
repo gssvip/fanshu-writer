@@ -4,6 +4,8 @@ import { api } from '../api';
 import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible } from '../types';
 import CarLogo from './CarLogo';
 
+const __BUILD_TAG__ = 'v2-0814';
+
 // ============================================================================
 // AI 智驾：四Tab（设定/正文/去AI/校审）统一创作平台
 // 整合原 AI副驾 + AI总创作 + 章节AI创作 能力
@@ -1531,7 +1533,7 @@ export default function ChatPanel() {
   return (
     <>
       {chatPanelOpen && bookId && (
-        <div className="chat-panel-overlay">
+        <div className="chat-panel-overlay" data-build={__BUILD_TAG__}>
           <div className="chat-panel smart-panel">
             {/* 头部（紧凑） */}
             <div className="chat-panel-header chat-panel-header-compact">
