@@ -2099,16 +2099,19 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 }
 .smart-chapter-info-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* 手机端：章节信息行允许换行，避免"第X章 章节名"被挤成竖排一列 */
+/* 手机端：章节信息行保持单行，文字截断，刷新按钮紧跟右侧 */
 @media (max-width: 768px) {
-  .smart-chapter-info-row { flex-wrap: wrap; gap: 4px 8px; }
+  .smart-chapter-info-row { flex-wrap: nowrap; gap: 4px 8px; }
   .smart-chapter-info-text {
-    flex: 1 1 100%;
-    white-space: normal;
-    word-break: break-word;
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: normal;
     line-height: 1.4;
   }
-  .smart-chapter-refresh { align-self: flex-end; }
+  .smart-chapter-refresh { align-self: center; flex-shrink: 0; }
 }
 .smart-chapter-refresh {
   flex-shrink: 0; border: none; background: transparent; cursor: pointer;
