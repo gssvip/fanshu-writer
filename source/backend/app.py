@@ -7227,6 +7227,17 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     # 优先级最高；技能包/语言风格仅做题材向微调，不得覆盖核心长短句比例与禁词清单。
     system_prompt += '\n\n【字数铁律】输出必须 2400±100 字（2300-2500字区间，含标点）。\n\n' + STANDARD_WRITING_STYLE_PROMPT
 
+    # ===== 用户采纳的"系统学习与优化建议"补丁：统一追加到章节生成 system prompt 末尾 =====
+    # （正文生成 / 流式 / 批量生成 都共享 _build_ai_continue_context，在此一处注入全局生效）
+    if bb:
+        try:
+            from meta_optimizer import build_active_patch_text
+            _pp = build_active_patch_text(bb)
+            if _pp:
+                system_prompt += '\n\n' + _pp
+        except Exception:
+            pass
+
     # ===== 9. 动态 temperature（#10）=====
     temperature = _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, chapters_in_vol)
 

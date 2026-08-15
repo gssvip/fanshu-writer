@@ -501,6 +501,17 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
     # 平台级纯文字排版铁律（禁止 * 和 #）
     parts.append(PLAIN_TEXT_LAYOUT_RULES)
 
+    # 用户采纳的"系统学习与优化建议"补丁 → 作为铁律段追加到 system prompt 末尾，
+    # 保证智驾对话、后续维度生成都能按用户定制规则约束自身输出
+    if bb:
+        try:
+            from meta_optimizer import build_active_patch_text
+            _pp = build_active_patch_text(bb)
+            if _pp:
+                parts.append('\n' + _pp)
+        except Exception:
+            pass
+
     return '\n'.join(parts)
 
 
@@ -3869,6 +3880,16 @@ def smart_generate():
 
 {_skill_note_block}
 {_tail_rule}"""
+
+    # 用户采纳的"系统学习与优化建议"补丁：维度生成时必须同样遵守
+    if bb:
+        try:
+            from meta_optimizer import build_active_patch_text
+            _pp = build_active_patch_text(bb)
+            if _pp:
+                sys_prompt += '\n\n' + _pp
+        except Exception:
+            pass
 
     session = None
     if session_id:

@@ -24,5 +24,7 @@ services:
       # ============================================================
       - key: FANSHU_DATA_DIR
         value: /tmp/fanshu-data
-      - key: FANSHU_FRONTEND_DIST
-        value: ../frontend/dist
+      # ⚠️ 关键修复：不要设 FANSHU_FRONTEND_DIST=../frontend/dist（该目录在 Render
+      # rootDir=source/backend 下可能不存在/不是最新构建，且前端构建产物统一由
+      # CI 预构建到 backend/static，app.py 优先级 #2 会自动使用 backend/static，
+      # 避免后端读到旧 dist 导致"前端没更新"假象。
