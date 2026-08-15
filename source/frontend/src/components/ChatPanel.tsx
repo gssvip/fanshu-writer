@@ -595,6 +595,8 @@ export default function ChatPanel() {
   const [editingPatch, setEditingPatch] = useState('');
   // 已采纳/忽略的 bucket 前端乐观 UI 隐藏（避免等 refresh 才消失）
   const [locallyDismissedBuckets, setLocallyDismissedBuckets] = useState<Set<string>>(new Set());
+  // 系统学习面板折叠（默认收起 → 只占一行高度）
+  const [showOptReport, setShowOptReport] = useState(false);
 
   // Q2 合并：事件日志重算（原先在工具栏浮层，现在合并进「校审」Tab 子面板）
   const [showBackfill, setShowBackfill] = useState(false);
@@ -2148,7 +2150,8 @@ export default function ChatPanel() {
                      用户可 ✅采纳（补丁自动追加到系统 prompt 末尾，后续所有维度/章节生成都生效）· 📝自定义编辑 · ❌忽略 */}
                   <div className="opt-report-inline impact-preview-panel review-grid-cell">
                     <div className="impact-preview-head">
-                      <span>🧠 系统学习与优化建议
+                      <span className="smart-flex-fill" onClick={(e) => { e.stopPropagation(); setShowOptReport(s => !s); }} style={{cursor:'pointer'}}>
+                        🧠 系统学习
                         {optimizationReport && optimizationReport.failure_count > 0 && (
                           <span className="chat-tool-badge" style={{marginLeft:6,fontSize:10}}>{optimizationReport.failure_count}</span>
                         )}
@@ -2158,15 +2161,20 @@ export default function ChatPanel() {
                           </span>
                         )}
                       </span>
-                      <button className="btn-ghost-sm" onClick={async () => {
-                        if (!bookId) return;
-                        try {
-                          const r: any = await api.getOptimizationReport(bookId);
-                          setOptimizationReport(r);
-                        } catch {}
-                      }}>🔄 刷新</button>
+                      <span style={{display:'flex',alignItems:'center',gap:4,flexShrink:0}}>
+                        <button className="btn-ghost-sm" style={{padding:'2px 6px',fontSize:11,lineHeight:1}} onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!bookId) return;
+                          try {
+                            const r: any = await api.getOptimizationReport(bookId);
+                            setOptimizationReport(r);
+                          } catch {}
+                        }}>🔄 刷新</button>
+                        <span className="impact-preview-toggle" style={{cursor:'pointer'}} onClick={(e) => { e.stopPropagation(); setShowOptReport(s => !s); }}>{showOptReport ? '▲' : '▼'}</span>
+                      </span>
                     </div>
 
+                    {showOptReport && (
                     <div className="impact-preview-body">
                       {!optimizationReport ? (
                         <div className="opt-report-empty" style={{padding: '10px 4px'}}>
@@ -2344,6 +2352,7 @@ export default function ChatPanel() {
                         </>
                       )}
                     </div>
+                    )}
                   </div>
 
                   </div>{/* /.review-grid-row */}
