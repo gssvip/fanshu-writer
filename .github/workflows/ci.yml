@@ -21,13 +21,8 @@ on:
       - ".github/workflows/ci.yml"
   push:
     branches: [main]
-    paths:
-      - "source/backend/**"
-      - "source/frontend/src/**"
-      - "source/frontend/package.json"
-      - "source/frontend/package-lock.json"
-      - "source/scripts/check-architecture.py"
-      - ".github/workflows/ci.yml"
+    # push 到 main 全路径跑：确保任何修改都能触发统一发布管线（目录同步 + gh-pages + Render）
+    # PR 阶段保留 path filter 降噪
 
 permissions:
   contents: write  # deploy job 需回写构建产物到 main 并推送 gh-pages
