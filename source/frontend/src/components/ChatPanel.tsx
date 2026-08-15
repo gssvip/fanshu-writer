@@ -499,13 +499,11 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
 // ============================================================================
 // 技能包选择器（精简版，按 category 分组）
 // ============================================================================
-function SkillPackSelector({ packs, selected, onToggle, compact, sceneLabel }: {
+function SkillPackSelector({ packs, selected, onToggle, compact }: {
   packs: SkillPack[];
   selected: string[];
   onToggle: (id: string) => void;
   compact?: boolean;
-  /** 场景说明，显示在底部，避免校审Tab/去AI味Tab各维护一份状态让用户误以为同步 */
-  sceneLabel?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   if (packs.length === 0) return null;
@@ -514,7 +512,6 @@ function SkillPackSelector({ packs, selected, onToggle, compact, sceneLabel }: {
     <div className={`smart-skill-selector ${compact ? 'compact' : ''}`}>
       <button className="smart-skill-toggle" onClick={() => setExpanded(e => !e)}>
         📦 技能包 {selectedCount > 0 && <span className="smart-skill-badge">{selectedCount}</span>}
-        {sceneLabel && <span className="smart-skill-arrow" style={{color:'var(--accent)',marginRight:8,fontSize:11}}>· {sceneLabel}</span>}
         <span className="smart-skill-arrow">{expanded ? '▲' : '▼'}</span>
       </button>
       {expanded && (
@@ -525,20 +522,11 @@ function SkillPackSelector({ packs, selected, onToggle, compact, sceneLabel }: {
                 type="checkbox"
                 checked={selected.includes(p.id)}
                 onChange={() => onToggle(p.id)}
-                title={selected.includes(p.id) ? '再点一次 = 本次不使用该技能包（不会删除技能包本身）' : '勾选 = 本次生成/检查会应用这个技能包'}
               />
               <span className="smart-skill-icon">{p.icon || '📦'}</span>
               <span className="smart-skill-name">{p.name}</span>
             </label>
           ))}
-          <div className="smart-skill-footer">
-            <div style={{fontSize:11,color:'var(--text-muted)'}}>
-              ✅ 勾选 = 本次{sceneLabel || '操作'}启用；取消勾选 = 本次不使用。<strong>不会删除技能包本身</strong>。
-            </div>
-            <div style={{fontSize:11,color:'var(--text-muted)'}}>
-              要删除 / 编辑技能包 → 前往「<strong>导航 → 工具 → 技能包管理</strong>」。
-            </div>
-          </div>
         </div>
       )}
     </div>
@@ -590,7 +578,6 @@ export default function ChatPanel() {
   //   Step 2: 二次点击 = 真正执行
   //   用户换 scope 下拉（换卷/换章）→ 自动出确认态，避免按旧范围误跑
   const [reviewArmedMode, setReviewArmedMode] = useState<'anti_forget' | 'consistency' | null>(null);
-  const [deaiPacks, setDeaiPacks] = useState<Array<{ id: string; name: string; description: string; icon: string; priority: number }>>([]);
   // 自动上下文命中提示：meta 事件告知已定位并注入的章节/维度
   const [autoContextNotice, setAutoContextNotice] = useState<{ chapters: Array<{ id: string; title: string }>; dims: Array<{ key: string; label: string }> } | null>(null);
   const [reviewing, setReviewing] = useState(false);
@@ -604,7 +591,6 @@ export default function ChatPanel() {
     how_to_use?: any; applied_patches?: Array<any>; applied_patch_count?: number;
     active_patch_preview?: string; reason?: string; ignored_bucket_count?: number;
   } | null>(null);
-  const [showHowToUseOpt, setShowHowToUseOpt] = useState(true);   // 默认展开使用说明
   const [optBusyBucket, setOptBusyBucket] = useState<string | null>(null);
   // 自定义编辑：open=true 时在卡片里显示 textarea，改完点"保存后采纳"
   const [editingBucket, setEditingBucket] = useState<string | null>(null);
@@ -763,7 +749,6 @@ export default function ChatPanel() {
     refreshHistory();
     api.smartDimensions().then(r => setDimensions(r.dimensions || [])).catch(() => {});
     api.listSkillPacks().then(all => setSkillPacks(all || [])).catch(() => {});
-    api.smartDeaiPacks().then(r => setDeaiPacks(r.packs || [])).catch(() => {});
     api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
     api.smartVolumes(bookId).then(r => setVolumes(r.volumes || [])).catch(() => {});
     api.smartLatestChapter(bookId).then(r => {
@@ -1343,7 +1328,6 @@ export default function ChatPanel() {
   const _reviewScopeConsistency = reviewChapterId
     ? (chapters.find(c => c.id === reviewChapterId)?.title || '指定章节')
     : '最新章节';
-  const _reviewArmedLabel = reviewArmedMode === 'anti_forget' ? _reviewScopeAntiForget : _reviewScopeConsistency;
   const handleReview = useCallback(async (mode: 'anti_forget' | 'consistency') => {
     if (!bookId || reviewing) return;
     // Step 1：首次点击（未 armed）→ 不跑，仅让按钮变为「待确认」状态，提醒用户确认范围
@@ -1813,7 +1797,7 @@ export default function ChatPanel() {
                       })}
                     </div>
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} compact sceneLabel="设定/世界观生成" />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} compact />
                   {/* 修正任务清单（从防遗忘报告违规项带入，支持多维度连续修正并追踪进度） */}
                   {fixTasks.length > 0 && (
                     <div className="fix-tasks-panel">
@@ -2019,7 +2003,7 @@ export default function ChatPanel() {
                       title="修改已写章节（下拉选章或输入框写明章节号和修改意见）"
                     >✨ 修改</button>
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} compact sceneLabel="章节生成" />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} compact />
                 </>
               )}
 
@@ -2045,10 +2029,7 @@ export default function ChatPanel() {
                   {chapters.length > 10 && (
                     <div className="smart-deai-hint">💡 仅显示最新10章，其他章节可在下方消息框输入「第N章」指定</div>
                   )}
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={deaiPacks_selected} onToggle={(id) => toggleSkillPack('deai', id)} compact sceneLabel="去AI味" />
-                  {deaiPacks.length > 0 && deaiPacks_selected.length === 0 && (
-                    <div className="smart-deai-hint">💡 检测到 {deaiPacks.length} 个去AI味技能包，可在上方勾选，未选将使用默认去AI味规则</div>
-                  )}
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={deaiPacks_selected} onToggle={(id) => toggleSkillPack('deai', id)} compact />
                 </>
               )}
 
@@ -2059,7 +2040,6 @@ export default function ChatPanel() {
                       className={`smart-action-btn ${reviewArmedMode === 'anti_forget' ? 'primary armed' : 'primary'}`}
                       onClick={() => handleReview('anti_forget')}
                       disabled={reviewing || streaming}
-                      title={reviewArmedMode === 'anti_forget' ? `当前范围：${_reviewScopeAntiForget}。再点一次确认执行` : '点击选择检查范围并确认后再运行'}
                     >
                       {reviewArmedMode === 'anti_forget' ? <>✅ 确认：{_reviewScopeAntiForget}</> : <>🔍 防遗忘检查</>}
                     </button>
@@ -2067,18 +2047,10 @@ export default function ChatPanel() {
                       className={`smart-action-btn ${reviewArmedMode === 'consistency' ? 'armed' : ''}`}
                       onClick={() => handleReview('consistency')}
                       disabled={reviewing || streaming}
-                      title={reviewArmedMode === 'consistency' ? `当前章节：${_reviewScopeConsistency}。再点一次确认执行` : '先在下方选择章节（或默认最新章），再点击确认'}
                     >
                       {reviewArmedMode === 'consistency' ? <>✅ 确认：{_reviewScopeConsistency}</> : <>⚖️ 一致性检查</>}
                     </button>
                   </div>
-                  {reviewArmedMode && (
-                    <div className="smart-review-armed-hint">
-                      ⚠️ 已进入确认模式：当前将检查「<strong>{_reviewArmedLabel}</strong>」。
-                      范围有误？请在下方下拉修改后，再次点击上面的按钮重新确认。
-                      <button className="btn-ghost-sm" style={{marginLeft:8}} onClick={() => setReviewArmedMode(null)}>取消</button>
-                    </div>
-                  )}
                   {/* 校审范围：两行下拉选择（按卷 + 一致性章节），样式统一对齐 */}
                   <div className={`smart-review-scope ${reviewArmedMode ? 'armed' : ''}`}>
                     {volumes.length > 0 && (
@@ -2121,7 +2093,7 @@ export default function ChatPanel() {
                       </div>
                     )}
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={reviewPacks} onToggle={(id) => toggleSkillPack('review', id)} compact sceneLabel="校审检查" />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={reviewPacks} onToggle={(id) => toggleSkillPack('review', id)} compact />
 
                   {/* Q2 合并：🧩 事件日志素材管理（原工具栏浮层）
                      校审输入是"防遗忘/一致性检查"，事件日志是它们的素材来源与质量保障。
@@ -2178,11 +2150,7 @@ export default function ChatPanel() {
                      用户可 ✅采纳（补丁自动追加到系统 prompt 末尾，后续所有维度/章节生成都生效）· 📝自定义编辑 · ❌忽略 */}
                   <div className="opt-report-inline impact-preview-panel">
                     <div className="impact-preview-head">
-                      <span
-                        style={{cursor: 'pointer'}}
-                        onClick={() => setShowHowToUseOpt(v => !v)}
-                        title="点击展开/收起使用说明"
-                      >🧠 系统学习与优化建议
+                      <span>🧠 系统学习与优化建议
                         {optimizationReport && optimizationReport.failure_count > 0 && (
                           <span className="chat-tool-badge" style={{marginLeft:6,fontSize:10}}>{optimizationReport.failure_count}</span>
                         )}
@@ -2191,9 +2159,6 @@ export default function ChatPanel() {
                             ✓ {optimizationReport.applied_patch_count}
                           </span>
                         )}
-                        <span className="impact-preview-toggle" style={{marginLeft:6,fontSize:10,color:'var(--text-muted)'}}>
-                          {showHowToUseOpt ? '说明▲' : '说明▼'}
-                        </span>
                       </span>
                       <button className="btn-ghost-sm" onClick={async () => {
                         if (!bookId) return;
@@ -2201,55 +2166,8 @@ export default function ChatPanel() {
                           const r: any = await api.getOptimizationReport(bookId);
                           setOptimizationReport(r);
                         } catch {}
-                      }} title="重新扫描 FailureDB（含已采纳/忽略状态）">🔄 刷新</button>
+                      }}>🔄 刷新</button>
                     </div>
-
-                    {/* ── 使用说明（默认展开） ── */}
-                    {showHowToUseOpt && (
-                      <div className="opt-how-to-use" style={{
-                        padding: '10px 12px', fontSize: 12, lineHeight: 1.8,
-                        background: 'linear-gradient(180deg, #eff6ff 0%, transparent 100%)',
-                        borderBottom: '1px solid var(--border-color)',
-                      }}>
-                        <div style={{fontWeight: 600, marginBottom: 6, color: 'var(--accent)'}}>❓ 这个功能怎么用？</div>
-                        <ol style={{margin:0, paddingLeft: 18, color: 'var(--text-secondary)'}}>
-                          {(() => {
-                            const h = optimizationReport?.how_to_use;
-                            const steps = [
-                              h?.step1 || '① 跑校审（防遗忘/一致性）、门禁校验、或章节生成后校验，错误会自动写入 FailureDB',
-                              h?.step2 || '② 同类问题累积 ≥ 2 条 → 生成一条优化建议（出现越多越可信）',
-                              h?.step3 || '③ ✅ 采纳 → 建议文字作为「铁律补丁」追加到系统 prompt 末尾，后续生成任何维度都会带上',
-                              h?.step4 || '④ 📝 自定义编辑 → 可改补丁文字后再采纳；不认可 → 点 ❌ 忽略 不再提示',
-                            ];
-                            return steps.map((s, i) => <li key={i}>{s}</li>);
-                          })()}
-                        </ol>
-                        {/* 已采纳补丁预览 */}
-                        {optimizationReport && (optimizationReport.applied_patch_count || 0) > 0 && (
-                          <details style={{marginTop: 8}}>
-                            <summary style={{cursor:'pointer', color: 'var(--accent)', fontWeight: 500}}>
-                              📋 当前已采纳补丁（{optimizationReport.applied_patch_count} 条）
-                            </summary>
-                            <div style={{marginTop:6, display:'flex', flexDirection:'column', gap:6}}>
-                              {(optimizationReport.applied_patches || []).map((p: any) => (
-                                <div key={p.id} className="opt-applied-patch-card">
-                                  <div className="opt-applied-patch-head">
-                                    <span className="opt-report-cat">{p.category_cn || p.category}</span>
-                                    <span style={{fontSize:11, color:'var(--text-muted)'}}>{p.applied_at?.slice(0,16) || ''}</span>
-                                  </div>
-                                  <div style={{whiteSpace:'pre-wrap', wordBreak:'break-word', fontSize:12}}>{p.patch_text}</div>
-                                </div>
-                              ))}
-                              {optimizationReport.active_patch_preview && (
-                                <div style={{fontSize:11, color:'var(--text-muted)', marginTop:4}}>
-                                  💡 以上补丁已在后台自动拼接为系统 prompt 末尾段，下次生成直接生效。
-                                </div>
-                              )}
-                            </div>
-                          </details>
-                        )}
-                      </div>
-                    )}
 
                     <div className="impact-preview-body">
                       {!optimizationReport ? (
