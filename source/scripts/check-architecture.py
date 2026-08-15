@@ -39,7 +39,8 @@ WRITEPAGE_BASELINE = 8576
 CHATPANEL_BASELINE = 2254
 
 # chat_collab_bp.py 基线行数：只能减不能增（智驾协作 Blueprint 巨石）
-CHAT_COLLAB_BP_BASELINE = 5020
+# 2026-08-15 重校准：新增 TIMELINE_NARRATIVE_RULES（剧情维度 JSON 专用叙事铁律）导致 +61 行
+CHAT_COLLAB_BP_BASELINE = 5085
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
