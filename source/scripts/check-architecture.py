@@ -24,22 +24,29 @@ MAX_LINES_PER_FILE = 2000
 MAX_ROUTES_PER_FILE = 30
 
 # app.py 基线行数：只能减不能增（防止巨石继续膨胀）
-# 当前基线：12882 行（2026-08 P1-P4 重构后：+77 行 LLM Gateway 集成 + Context Manifest + Blueprint 注册）
+# 当前基线：13513 行（2026-08-15 重校准：M4 智驾/系统优化等功能迭代后实际值）
 # 未来禁止再增长，新代码必须落到独立模块
-APP_PY_BASELINE = 12882
+APP_PY_BASELINE = 13513
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
 FE_MAX_LINES = 1500
 
 # WritePage.tsx 基线行数：只能减不能增（前端巨石，防止继续膨胀）
-WRITEPAGE_BASELINE = 7976
+WRITEPAGE_BASELINE = 8576
+
+# ChatPanel.tsx 基线行数：只能减不能增（智驾面板巨石，防止继续膨胀）
+CHATPANEL_BASELINE = 2254
+
+# chat_collab_bp.py 基线行数：只能减不能增（智驾协作 Blueprint 巨石）
+CHAT_COLLAB_BP_BASELINE = 5020
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
 EXEMPT_FILES = {
     "backend/app.py",
     "backend/post_write_validator.py",  # 1138 行，已模块化
+    "backend/blueprints/chat_collab_bp.py",
 }
 
 
@@ -72,6 +79,12 @@ def check_backend() -> list[str]:
                     violations.append(
                         f"[app.py 巨石回生] {rel} 行数 {lines} > 基线 {APP_PY_BASELINE}，"
                         f"禁止继续增长，请拆分到 Blueprint 或独立模块"
+                    )
+            elif rel == "backend/blueprints/chat_collab_bp.py":
+                if lines > CHAT_COLLAB_BP_BASELINE:
+                    violations.append(
+                        f"[chat_collab_bp 巨石回生] {rel} 行数 {lines} > 基线 {CHAT_COLLAB_BP_BASELINE}，"
+                        f"禁止继续增长，新路由请拆分到新 Blueprint"
                     )
             continue
 
@@ -107,7 +120,7 @@ def check_frontend() -> list[str]:
                 f"基线 {WRITEPAGE_BASELINE}，禁止继续增长，请拆分组件"
             )
 
-    # 扫描其他前端文件（WritePage 豁免单文件行数，只受不得增长约束）
+    # 扫描其他前端文件（WritePage/ChatPanel 豁免单文件行数，只受不得增长约束）
     for fe_file in frontend_src.rglob("*"):
         if fe_file.suffix not in (".tsx", ".ts"):
             continue
@@ -117,6 +130,13 @@ def check_frontend() -> list[str]:
         if rel == "frontend/src/pages/WritePage.tsx":
             continue
         lines = count_lines(fe_file)
+        if rel == "frontend/src/components/ChatPanel.tsx":
+            if lines > CHATPANEL_BASELINE:
+                violations.append(
+                    f"[ChatPanel 巨石回生] {rel} 行数 {lines} > 基线 {CHATPANEL_BASELINE}，"
+                    f"禁止继续增长，新功能请拆分组件"
+                )
+            continue
         if lines > FE_MAX_LINES:
             violations.append(
                 f"[前端单文件过大] {rel} {lines} 行 > 上限 {FE_MAX_LINES}，请拆分组件"

@@ -3148,6 +3148,10 @@ def smart_suggest():
     except Exception:
         pass
 
+    # 预拼接块（Python 3.11 禁止 f-string 表达式内含反斜杠，故先算好再引用）
+    _self_content_block = ("【当前维度已有内容（可在其基础上补充完善）】\n" + self_content) if self_content else ""
+    _skill_note_block = ("【技能包指引】\n" + skill_note) if skill_note else ""
+
     sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》的“{spec['label']}”维度生成 3-5 个差异化的创意方案供作者选择。
 
 题材：{book.genre or "未指定"}
@@ -3158,13 +3162,13 @@ def smart_suggest():
 【已有设定参考】
 {ctx or "（暂无）"}
 
-{("【当前维度已有内容（可在其基础上补充完善）】\n" + self_content) if self_content else ""}
+{_self_content_block}
 
 【作者需求】
 {requirement or f"请帮我生成{spec['label']}的设定"}
 {outline_extra}{af_alerts_suggest}{suggest_iron_rule}{preview_volume_req}
 
-{("【技能包指引】\n" + skill_note) if skill_note else ""}
+{_skill_note_block}
 
 【重要·方案卡格式】请输出 3-5 个不同切入角度的方案。严格按以下 JSON 格式输出（不要任何其他内容、不要 Markdown 代码块）：
 {{
@@ -3465,6 +3469,10 @@ def smart_generate():
     else:
         _tail_rule = f'\n\n请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。\n\n{PLAIN_TEXT_LAYOUT_RULES}'
 
+    # 预拼接块（Python 3.11 禁止 f-string 表达式内含反斜杠，故先算好再引用）
+    _self_content_block = ("【当前维度已有内容（可在此基础上完善，不要简单重复）】\n" + self_content) if self_content else ""
+    _skill_note_block = ("【技能包指引】\n" + skill_note) if skill_note else ""
+
     sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成“{spec['label']}”维度的完整设定内容。
 
 题材：{book.genre or "未指定"}
@@ -3475,7 +3483,7 @@ def smart_generate():
 【已有设定参考】
 {ctx or "（暂无）"}
 
-{("【当前维度已有内容（可在此基础上完善，不要简单重复）】\n" + self_content) if self_content else ""}
+{_self_content_block}
 
 【作者需求】
 {requirement or "无"}
@@ -3484,7 +3492,7 @@ def smart_generate():
 {suggestion}
 {outline_extra}{timeline_extra}{character_extra}{af_alerts_gen}
 
-{("【技能包指引】\n" + skill_note) if skill_note else ""}
+{_skill_note_block}
 {_tail_rule}"""
 
     session = None
@@ -3702,6 +3710,9 @@ def smart_dim_edit():
     if dim_key == 'timeline':
         timeline_edit_extra = '\n\n【剧情维度修改铁律】当前维度原文是按卷的 JSON 数组（每卷含 volume_index/volume/main_plot/core_conflict/ending_hook/nodes 等字段）。修改后必须保持相同的 JSON 数组格式输出，不要输出纯文本或 Markdown。只调整修改意见涉及的卷或字段，其余卷保持原样。直接输出 JSON 数组，不要包裹代码块，不要解释。'
 
+    # 预拼接块（Python 3.11 禁止 f-string 表达式内含反斜杠，故先算好再引用）
+    _skill_note_block = ("【技能包指引】\n" + skill_note) if skill_note else ""
+
     sys_prompt = f"""你是资深网文创作智驾。请根据作者的修改意见，修订《{book.title or "未命名"}》的“{spec['label']}”维度内容。
 
 【其他维度参考】
@@ -3713,7 +3724,7 @@ def smart_dim_edit():
 【作者修改意见】
 {edit_request}
 
-{("【技能包指引】\n" + skill_note) if skill_note else ""}
+{_skill_note_block}
 {character_extra}{timeline_edit_extra}
 
 请直接输出修订后的完整内容（保留原文中合理的部分，按修改意见调整），不要寒暄，不要解释，不要加 Markdown 标题。
