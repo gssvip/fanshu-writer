@@ -1317,6 +1317,16 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .btn-primary-sm:disabled{opacity:0.5;cursor:not-allowed}
 .btn-ghost-sm{padding:6px 14px;font-size:13px;color:var(--text-secondary);background:transparent;border:1px solid var(--border-color);border-radius:var(--radius-sm);cursor:pointer}
 .btn-ghost-sm:hover{border-color:var(--accent);color:var(--accent)}
+.btn-ghost-sm:disabled{opacity:0.5;cursor:not-allowed}
+.btn-sm{
+  padding:6px 12px;font-size:12px;
+  border:1px solid var(--border-color);background:var(--bg-secondary);color:var(--text-primary);
+  border-radius:var(--radius-sm);cursor:pointer;touch-action:manipulation;
+}
+.btn-sm:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.btn-sm:disabled{opacity:0.5;cursor:not-allowed}
+.btn-sm.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-sm.primary:hover:not(:disabled){opacity:0.9;color:#fff}
 
 /* ===== 动态文件面板（防遗忘摘要系统） ===== */
 .dm-panel{padding:12px 16px}
@@ -2087,6 +2097,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .smart-skill-item input { margin: 0; }
 .smart-skill-icon { font-size: 14px; }
 .smart-skill-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.smart-skill-footer {
+  margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border-color);
+  line-height: 1.6;
+}
 
 /* 正文Tab：章节信息 + 动作按钮 */
 .smart-chapter-info {
@@ -2135,7 +2149,33 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   background: var(--accent); color: #fff; border-color: var(--accent);
 }
 .smart-action-btn.primary:hover:not(:disabled) { opacity: 0.9; color: #fff; }
+.smart-action-btn.armed {
+  /* 待确认态：橙色脉冲，提醒用户"再点一次才执行" */
+  border-color: #f59e0b; background: #fff7e6; color: #b45309;
+  box-shadow: 0 0 0 2px rgba(245,158,11,0.18);
+  animation: armed-pulse 1.6s ease-in-out infinite;
+}
+.smart-action-btn.armed.primary {
+  background: #ffedd5; color: #9a3412; border-color: #f59e0b;
+}
+@keyframes armed-pulse {
+  0%,100% { box-shadow: 0 0 0 2px rgba(245,158,11,0.18); }
+  50%     { box-shadow: 0 0 0 4px rgba(245,158,11,0.28); }
+}
 .smart-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.smart-review-armed-hint {
+  margin: 8px 0 0; padding: 8px 10px; border-radius: 6px;
+  border: 1px dashed #f59e0b; background: #fffbeb; color: #92400e;
+  font-size: 12px; line-height: 1.6;
+  display: flex; align-items: center; flex-wrap: wrap;
+}
+.smart-review-armed-hint strong { color: #b45309; }
+
+.smart-review-scope.armed {
+  padding: 10px; border-radius: 8px; border: 1px solid #f59e0b;
+  background: linear-gradient(180deg, #fffbeb 0%, transparent 100%);
+}
 
 /* 章节选择下拉 */
 .smart-chapter-select {
@@ -2288,6 +2328,14 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   background: var(--bg-tertiary); border-radius: 6px;
   overflow-x: auto; white-space: pre-wrap; word-break: break-all;
   color: var(--text-secondary);
+}
+.opt-applied-patch-card {
+  padding: 8px 10px; border: 1px solid var(--border-color);
+  border-radius: 6px; background: var(--bg-primary);
+}
+.opt-applied-patch-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 4px; gap: 8px;
 }
 
 /* M4: 动作影响预览面板 */

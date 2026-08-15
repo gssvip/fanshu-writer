@@ -499,11 +499,13 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
 // ============================================================================
 // 技能包选择器（精简版，按 category 分组）
 // ============================================================================
-function SkillPackSelector({ packs, selected, onToggle, compact }: {
+function SkillPackSelector({ packs, selected, onToggle, compact, sceneLabel }: {
   packs: SkillPack[];
   selected: string[];
   onToggle: (id: string) => void;
   compact?: boolean;
+  /** 场景说明，显示在底部，避免校审Tab/去AI味Tab各维护一份状态让用户误以为同步 */
+  sceneLabel?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   if (packs.length === 0) return null;
@@ -512,6 +514,7 @@ function SkillPackSelector({ packs, selected, onToggle, compact }: {
     <div className={`smart-skill-selector ${compact ? 'compact' : ''}`}>
       <button className="smart-skill-toggle" onClick={() => setExpanded(e => !e)}>
         📦 技能包 {selectedCount > 0 && <span className="smart-skill-badge">{selectedCount}</span>}
+        {sceneLabel && <span className="smart-skill-arrow" style={{color:'var(--accent)',marginRight:8,fontSize:11}}>· {sceneLabel}</span>}
         <span className="smart-skill-arrow">{expanded ? '▲' : '▼'}</span>
       </button>
       {expanded && (
@@ -522,11 +525,20 @@ function SkillPackSelector({ packs, selected, onToggle, compact }: {
                 type="checkbox"
                 checked={selected.includes(p.id)}
                 onChange={() => onToggle(p.id)}
+                title={selected.includes(p.id) ? '再点一次 = 本次不使用该技能包（不会删除技能包本身）' : '勾选 = 本次生成/检查会应用这个技能包'}
               />
               <span className="smart-skill-icon">{p.icon || '📦'}</span>
               <span className="smart-skill-name">{p.name}</span>
             </label>
           ))}
+          <div className="smart-skill-footer">
+            <div style={{fontSize:11,color:'var(--text-muted)'}}>
+              ✅ 勾选 = 本次{sceneLabel || '操作'}启用；取消勾选 = 本次不使用。<strong>不会删除技能包本身</strong>。
+            </div>
+            <div style={{fontSize:11,color:'var(--text-muted)'}}>
+              要删除 / 编辑技能包 → 前往「<strong>导航 → 工具 → 技能包管理</strong>」。
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -573,6 +585,11 @@ export default function ChatPanel() {
   const [chapterTargetId, setChapterTargetId] = useState<string | null>(null);   // 正文Tab：修改目标章节
   const [reviewChapterId, setReviewChapterId] = useState<string | null>(null);   // 校审Tab：一致性检查章节
   const [reviewVolumeIds, setReviewVolumeIds] = useState<string[]>([]);          // 校审Tab：按卷检查
+  // B：两步确认机制——防止用户点了按钮就直接跑全书，避免误操作浪费 token
+  //   Step 1: 首次点击 = 选中"待跑模式"，按钮提示"再点确认 + 显示当前范围"
+  //   Step 2: 二次点击 = 真正执行
+  //   用户换 scope 下拉（换卷/换章）→ 自动出确认态，避免按旧范围误跑
+  const [reviewArmedMode, setReviewArmedMode] = useState<'anti_forget' | 'consistency' | null>(null);
   const [deaiPacks, setDeaiPacks] = useState<Array<{ id: string; name: string; description: string; icon: string; priority: number }>>([]);
   // 自动上下文命中提示：meta 事件告知已定位并注入的章节/维度
   const [autoContextNotice, setAutoContextNotice] = useState<{ chapters: Array<{ id: string; title: string }>; dims: Array<{ key: string; label: string }> } | null>(null);
@@ -581,8 +598,19 @@ export default function ChatPanel() {
   const [fixTasks, setFixTasks] = useState<Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string; done?: boolean; chapterId?: string | null }>>([]);
   // Q1：实体管理弹窗（复用 WritePage 里已有的 EntityRegistryModal）
   const [showEntityRegistry, setShowEntityRegistry] = useState(false);
-  // Q2：系统优化建议（从顶栏移入「校审」Tab，保留数据模型）
-  const [optimizationReport, setOptimizationReport] = useState<{ ready: boolean; failure_count: number; suggestions: Array<any> } | null>(null);
+  // Q2：系统优化建议（从顶栏移入「校审」Tab） + 新交互：使用说明/采纳/忽略/自定义编辑
+  const [optimizationReport, setOptimizationReport] = useState<{
+    ready: boolean; failure_count: number; suggestions: Array<any>;
+    how_to_use?: any; applied_patches?: Array<any>; applied_patch_count?: number;
+    active_patch_preview?: string; reason?: string; ignored_bucket_count?: number;
+  } | null>(null);
+  const [showHowToUseOpt, setShowHowToUseOpt] = useState(true);   // 默认展开使用说明
+  const [optBusyBucket, setOptBusyBucket] = useState<string | null>(null);
+  // 自定义编辑：open=true 时在卡片里显示 textarea，改完点"保存后采纳"
+  const [editingBucket, setEditingBucket] = useState<string | null>(null);
+  const [editingPatch, setEditingPatch] = useState('');
+  // 已采纳/忽略的 bucket 前端乐观 UI 隐藏（避免等 refresh 才消失）
+  const [locallyDismissedBuckets, setLocallyDismissedBuckets] = useState<Set<string>>(new Set());
 
   // Q2 合并：事件日志重算（原先在工具栏浮层，现在合并进「校审」Tab 子面板）
   const [showBackfill, setShowBackfill] = useState(false);
@@ -1304,8 +1332,26 @@ export default function ChatPanel() {
   }, [bookId, deaiTargetId, streaming, chapters, deaiPacks_selected, sessionId, input, appendUserAi, removeEmptyAi, consumeSSE, refreshHistory]);
 
   // ========== 校审Tab：防遗忘 / 一致性检查（按卷，拉取动态文件+伏笔）==========
+  // B：两步确认机制
+  //   reviewArmedMode === null  → 第 1 次点击按钮仅进入"待确认态"，并显示当前范围给用户
+  //   reviewArmedMode === mode  → 第 2 次点击同模式才真正执行
+  //   切 scope（换卷/换章） → 自动解除 armed（避免用旧范围误跑）
+  const _reviewVolume = reviewVolumeIds[0] || null;
+  const _reviewScopeAntiForget = _reviewVolume
+    ? volumes.find(v => v.id === _reviewVolume)?.title || '按卷检查'
+    : '全书';
+  const _reviewScopeConsistency = reviewChapterId
+    ? (chapters.find(c => c.id === reviewChapterId)?.title || '指定章节')
+    : '最新章节';
+  const _reviewArmedLabel = reviewArmedMode === 'anti_forget' ? _reviewScopeAntiForget : _reviewScopeConsistency;
   const handleReview = useCallback(async (mode: 'anti_forget' | 'consistency') => {
     if (!bookId || reviewing) return;
+    // Step 1：首次点击（未 armed）→ 不跑，仅让按钮变为「待确认」状态，提醒用户确认范围
+    if (reviewArmedMode !== mode) {
+      setReviewArmedMode(mode);
+      return;
+    }
+    // Step 2：二次点击 → 真正执行
     setStreamError('');
     setReviewing(true);
     const label = mode === 'anti_forget' ? '防遗忘检查' : '一致性检查';
@@ -1364,8 +1410,9 @@ export default function ChatPanel() {
       removeEmptyAi();
     } finally {
       setReviewing(false);
+      setReviewArmedMode(null);  // 执行完解除确认，下一轮从头来
     }
-  }, [bookId, reviewing, reviewChapterId, reviewVolumeIds, reviewPacks, appendUserAi, removeEmptyAi, refreshHistory]);
+  }, [bookId, reviewing, reviewArmedMode, reviewChapterId, reviewVolumeIds, reviewPacks, volumes, chapters, appendUserAi, removeEmptyAi, refreshHistory]);
 
   // ========== 消息长按操作：编辑/删除/重新生成 ==========
   const handleEditMessage = useCallback((index: number, newContent: string) => {
@@ -1766,7 +1813,7 @@ export default function ChatPanel() {
                       })}
                     </div>
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} compact />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} compact sceneLabel="设定/世界观生成" />
                   {/* 修正任务清单（从防遗忘报告违规项带入，支持多维度连续修正并追踪进度） */}
                   {fixTasks.length > 0 && (
                     <div className="fix-tasks-panel">
@@ -1972,7 +2019,7 @@ export default function ChatPanel() {
                       title="修改已写章节（下拉选章或输入框写明章节号和修改意见）"
                     >✨ 修改</button>
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} compact />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} compact sceneLabel="章节生成" />
                 </>
               )}
 
@@ -1998,7 +2045,7 @@ export default function ChatPanel() {
                   {chapters.length > 10 && (
                     <div className="smart-deai-hint">💡 仅显示最新10章，其他章节可在下方消息框输入「第N章」指定</div>
                   )}
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={deaiPacks_selected} onToggle={(id) => toggleSkillPack('deai', id)} compact />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={deaiPacks_selected} onToggle={(id) => toggleSkillPack('deai', id)} compact sceneLabel="去AI味" />
                   {deaiPacks.length > 0 && deaiPacks_selected.length === 0 && (
                     <div className="smart-deai-hint">💡 检测到 {deaiPacks.length} 个去AI味技能包，可在上方勾选，未选将使用默认去AI味规则</div>
                   )}
@@ -2009,18 +2056,31 @@ export default function ChatPanel() {
                 <>
                   <div className="smart-review-actions">
                     <button
-                      className="smart-action-btn primary"
+                      className={`smart-action-btn ${reviewArmedMode === 'anti_forget' ? 'primary armed' : 'primary'}`}
                       onClick={() => handleReview('anti_forget')}
                       disabled={reviewing || streaming}
-                    >🔍 防遗忘检查</button>
+                      title={reviewArmedMode === 'anti_forget' ? `当前范围：${_reviewScopeAntiForget}。再点一次确认执行` : '点击选择检查范围并确认后再运行'}
+                    >
+                      {reviewArmedMode === 'anti_forget' ? <>✅ 确认：{_reviewScopeAntiForget}</> : <>🔍 防遗忘检查</>}
+                    </button>
                     <button
-                      className="smart-action-btn"
+                      className={`smart-action-btn ${reviewArmedMode === 'consistency' ? 'armed' : ''}`}
                       onClick={() => handleReview('consistency')}
                       disabled={reviewing || streaming}
-                    >⚖️ 一致性检查</button>
+                      title={reviewArmedMode === 'consistency' ? `当前章节：${_reviewScopeConsistency}。再点一次确认执行` : '先在下方选择章节（或默认最新章），再点击确认'}
+                    >
+                      {reviewArmedMode === 'consistency' ? <>✅ 确认：{_reviewScopeConsistency}</> : <>⚖️ 一致性检查</>}
+                    </button>
                   </div>
+                  {reviewArmedMode && (
+                    <div className="smart-review-armed-hint">
+                      ⚠️ 已进入确认模式：当前将检查「<strong>{_reviewArmedLabel}</strong>」。
+                      范围有误？请在下方下拉修改后，再次点击上面的按钮重新确认。
+                      <button className="btn-ghost-sm" style={{marginLeft:8}} onClick={() => setReviewArmedMode(null)}>取消</button>
+                    </div>
+                  )}
                   {/* 校审范围：两行下拉选择（按卷 + 一致性章节），样式统一对齐 */}
-                  <div className="smart-review-scope">
+                  <div className={`smart-review-scope ${reviewArmedMode ? 'armed' : ''}`}>
                     {volumes.length > 0 && (
                       <div className="smart-chapter-select smart-review-scope-row">
                         <label>📚 按卷（不选=全书）</label>
@@ -2030,6 +2090,7 @@ export default function ChatPanel() {
                           onChange={e => {
                             const v = e.target.value;
                             setReviewVolumeIds(v ? [v] : []);
+                            setReviewArmedMode(null);  // 切范围 → 出确认态，避免按旧范围误跑
                           }}
                           disabled={reviewing || streaming}
                         >
@@ -2046,7 +2107,10 @@ export default function ChatPanel() {
                         <select
                           className="smart-review-scope-select"
                           value={reviewChapterId || ''}
-                          onChange={e => setReviewChapterId(e.target.value || null)}
+                          onChange={e => {
+                            setReviewChapterId(e.target.value || null);
+                            setReviewArmedMode(null);  // 切章 → 出确认态
+                          }}
                           disabled={reviewing || streaming}
                         >
                           <option value="">最新章节</option>
@@ -2057,7 +2121,7 @@ export default function ChatPanel() {
                       </div>
                     )}
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={reviewPacks} onToggle={(id) => toggleSkillPack('review', id)} compact />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={reviewPacks} onToggle={(id) => toggleSkillPack('review', id)} compact sceneLabel="校审检查" />
 
                   {/* Q2 合并：🧩 事件日志素材管理（原工具栏浮层）
                      校审输入是"防遗忘/一致性检查"，事件日志是它们的素材来源与质量保障。
@@ -2109,64 +2173,257 @@ export default function ChatPanel() {
                     )}
                   </div>
 
-                  {/* Q2 合并：🧠 系统学习与优化建议（原工具栏浮层）
-                     "系统优化建议"本质是 FailureDB → prompt 补丁建议；它与校审是同一类"发现问题→给建议→改创作"流程，
-                     所以都归到「校审」Tab。防遗忘/一致性检查出错会进 FailureDB，这里会自动出现优化建议。 */}
+                  {/* Q2 合并 + C 闭环：🧠 系统学习与优化建议
+                     本质：校审/门禁/章节 PostGenValidator 出错 → 自动写入 FailureDB → 累积 ≥2 条同类 → 出 prompt 补丁建议
+                     用户可 ✅采纳（补丁自动追加到系统 prompt 末尾，后续所有维度/章节生成都生效）· 📝自定义编辑 · ❌忽略 */}
                   <div className="opt-report-inline impact-preview-panel">
-                    <div className="impact-preview-head" style={{cursor: 'default'}}>
-                      <span>🧠 系统学习与优化建议
+                    <div className="impact-preview-head">
+                      <span
+                        style={{cursor: 'pointer'}}
+                        onClick={() => setShowHowToUseOpt(v => !v)}
+                        title="点击展开/收起使用说明"
+                      >🧠 系统学习与优化建议
                         {optimizationReport && optimizationReport.failure_count > 0 && (
                           <span className="chat-tool-badge" style={{marginLeft:6,fontSize:10}}>{optimizationReport.failure_count}</span>
                         )}
+                        {optimizationReport && (optimizationReport.applied_patch_count || 0) > 0 && (
+                          <span className="chat-tool-badge" style={{marginLeft:4,fontSize:10,background:'var(--accent-light)',color:'var(--accent)'}}>
+                            ✓ {optimizationReport.applied_patch_count}
+                          </span>
+                        )}
+                        <span className="impact-preview-toggle" style={{marginLeft:6,fontSize:10,color:'var(--text-muted)'}}>
+                          {showHowToUseOpt ? '说明▲' : '说明▼'}
+                        </span>
                       </span>
                       <button className="btn-ghost-sm" onClick={async () => {
                         if (!bookId) return;
                         try {
-                          const r = await api.getOptimizationReport(bookId);
+                          const r: any = await api.getOptimizationReport(bookId);
                           setOptimizationReport(r);
                         } catch {}
-                      }} title="重新扫描 FailureDB">🔄 刷新</button>
+                      }} title="重新扫描 FailureDB（含已采纳/忽略状态）">🔄 刷新</button>
                     </div>
+
+                    {/* ── 使用说明（默认展开） ── */}
+                    {showHowToUseOpt && (
+                      <div className="opt-how-to-use" style={{
+                        padding: '10px 12px', fontSize: 12, lineHeight: 1.8,
+                        background: 'linear-gradient(180deg, #eff6ff 0%, transparent 100%)',
+                        borderBottom: '1px solid var(--border-color)',
+                      }}>
+                        <div style={{fontWeight: 600, marginBottom: 6, color: 'var(--accent)'}}>❓ 这个功能怎么用？</div>
+                        <ol style={{margin:0, paddingLeft: 18, color: 'var(--text-secondary)'}}>
+                          {(() => {
+                            const h = optimizationReport?.how_to_use;
+                            const steps = [
+                              h?.step1 || '① 跑校审（防遗忘/一致性）、门禁校验、或章节生成后校验，错误会自动写入 FailureDB',
+                              h?.step2 || '② 同类问题累积 ≥ 2 条 → 生成一条优化建议（出现越多越可信）',
+                              h?.step3 || '③ ✅ 采纳 → 建议文字作为「铁律补丁」追加到系统 prompt 末尾，后续生成任何维度都会带上',
+                              h?.step4 || '④ 📝 自定义编辑 → 可改补丁文字后再采纳；不认可 → 点 ❌ 忽略 不再提示',
+                            ];
+                            return steps.map((s, i) => <li key={i}>{s}</li>);
+                          })()}
+                        </ol>
+                        {/* 已采纳补丁预览 */}
+                        {optimizationReport && (optimizationReport.applied_patch_count || 0) > 0 && (
+                          <details style={{marginTop: 8}}>
+                            <summary style={{cursor:'pointer', color: 'var(--accent)', fontWeight: 500}}>
+                              📋 当前已采纳补丁（{optimizationReport.applied_patch_count} 条）
+                            </summary>
+                            <div style={{marginTop:6, display:'flex', flexDirection:'column', gap:6}}>
+                              {(optimizationReport.applied_patches || []).map((p: any) => (
+                                <div key={p.id} className="opt-applied-patch-card">
+                                  <div className="opt-applied-patch-head">
+                                    <span className="opt-report-cat">{p.category_cn || p.category}</span>
+                                    <span style={{fontSize:11, color:'var(--text-muted)'}}>{p.applied_at?.slice(0,16) || ''}</span>
+                                  </div>
+                                  <div style={{whiteSpace:'pre-wrap', wordBreak:'break-word', fontSize:12}}>{p.patch_text}</div>
+                                </div>
+                              ))}
+                              {optimizationReport.active_patch_preview && (
+                                <div style={{fontSize:11, color:'var(--text-muted)', marginTop:4}}>
+                                  💡 以上补丁已在后台自动拼接为系统 prompt 末尾段，下次生成直接生效。
+                                </div>
+                              )}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    )}
+
                     <div className="impact-preview-body">
-                      {!optimizationReport || optimizationReport.failure_count === 0 ? (
+                      {!optimizationReport ? (
+                        <div className="opt-report-empty" style={{padding: '10px 4px'}}>
+                          <div className="opt-report-empty-icon" style={{fontSize:20}}>🪄</div>
+                          <div style={{fontSize:12}}>点右上「🔄 刷新」扫描 FailureDB</div>
+                          <div className="opt-report-empty-sub" style={{fontSize:11}}>
+                            跑过校审/章节门禁后，这里会根据累积的失败记录自动生成优化建议。
+                          </div>
+                        </div>
+                      ) : optimizationReport.failure_count === 0 ||
+                           optimizationReport.suggestions.filter((s: any) => !locallyDismissedBuckets.has(s.bucket_key)).length === 0 ? (
                         <div className="opt-report-empty" style={{padding: '10px 4px'}}>
                           <div className="opt-report-empty-icon" style={{fontSize:20}}>✅</div>
-                          <div style={{fontSize:12}}>当前未检测到高频失败模式</div>
+                          <div style={{fontSize:12}}>
+                            {optimizationReport.ready ? '当前没有可处理的建议' : '暂无高频失败模式'}
+                          </div>
                           <div className="opt-report-empty-sub" style={{fontSize:11}}>
-                            校审/门禁/章节校验失败的记录会自动进 FailureDB，累积到一定量后自动生成 prompt 优化建议。
+                            {optimizationReport.reason ||
+                              '继续创作并多跑几次校审（防遗忘/一致性）、或章节生成，等同类问题出现 ≥2 次就会出具体建议。'}
+                            {optimizationReport.ignored_bucket_count ? ` 已忽略 ${optimizationReport.ignored_bucket_count} 类。` : ''}
                           </div>
                         </div>
                       ) : (
                         <>
                           <div className="opt-report-summary">
-                            累计发现 <strong>{optimizationReport.failure_count}</strong> 条失败记录，已生成 {optimizationReport.suggestions.length} 条优化建议
+                            累计发现 <strong>{optimizationReport.failure_count}</strong> 条失败记录
+                            {optimizationReport.ignored_bucket_count ? `（已忽略 ${optimizationReport.ignored_bucket_count} 类）` : ''}
+                            ，可处理 <strong>{optimizationReport.suggestions.filter((s:any)=>!locallyDismissedBuckets.has(s.bucket_key)).length}</strong> 条优化建议
                           </div>
                           <div className="opt-report-list">
-                            {optimizationReport.suggestions.map((s, idx) => (
-                              <div key={idx} className={`opt-report-item sev-${s.severity || 'medium'}`}>
-                                <div className="opt-report-item-head">
-                                  <span className="opt-report-cat">{s.category}</span>
-                                  <span className="opt-report-count">{s.count} 次</span>
-                                  <span className={`opt-report-sev sev-${s.severity || 'medium'}`}>{s.severity === 'high' ? '高' : s.severity === 'low' ? '低' : '中'}</span>
-                                </div>
-                                <div className="opt-report-pattern">{s.problem_pattern}</div>
-                                {s.affected_dims && s.affected_dims.length > 0 && (
-                                  <div className="opt-report-dims">
-                                    影响维度：{s.affected_dims.map((dk: string) => dimensions.find(d => d.key === dk)?.label || dk).join('、')}
+                            {optimizationReport.suggestions
+                              .filter((s: any) => !locallyDismissedBuckets.has(s.bucket_key))
+                              .map((s: any, idx: number) => {
+                                const isEditing = editingBucket === s.bucket_key;
+                                const isBusy = optBusyBucket === s.bucket_key;
+                                return (
+                                  <div key={s.bucket_key || idx} className={`opt-report-item sev-${s.severity || 'medium'}`}>
+                                    <div className="opt-report-item-head">
+                                      <span className="opt-report-cat">{s.category_cn || s.category}</span>
+                                      <span className="opt-report-count">{s.count} 次</span>
+                                      {s.dim_key && s.affected_dims && s.affected_dims.length === 0 && (
+                                        <span style={{fontSize:10, color:'var(--text-muted)'}}>
+                                          维度：{dimensions.find(d=>d.key===s.dim_key)?.label || s.dim_key}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="opt-report-pattern">{s.problem_pattern || s.pattern}</div>
+                                    {s.affected_dims && s.affected_dims.length > 0 && (
+                                      <div className="opt-report-dims">
+                                        影响维度：{s.affected_dims.map((dk: string) => dimensions.find(d => d.key === dk)?.label || dk).join('、')}
+                                      </div>
+                                    )}
+                                    {/* 示例片段（支持多条） */}
+                                    {s.examples && s.examples.length > 0 && (
+                                      <details className="opt-report-snippet" style={{marginTop:4}}>
+                                        <summary style={{cursor:'pointer', fontSize:11, color:'var(--text-muted)'}}>
+                                          📎 失败片段（{s.examples.length} 条）
+                                        </summary>
+                                        {s.examples.map((ex:any, i:number) => (
+                                          <div key={i} style={{marginTop:4, padding:'4px 6px', background:'var(--bg-secondary)', borderRadius:4}}>
+                                            {ex.chapter_num ? <div style={{fontSize:10, color:'var(--accent)'}}>第{ex.chapter_num}章 · {ex.ts?.slice(0,16) || ''}</div> : null}
+                                            <div style={{fontSize:11, marginBottom:2}}>{ex.summary}</div>
+                                            {ex.snippet && <pre style={{margin:0, fontSize:11, whiteSpace:'pre-wrap', wordBreak:'break-word'}}>{ex.snippet}</pre>}
+                                          </div>
+                                        ))}
+                                      </details>
+                                    )}
+                                    {(!s.examples || s.examples.length === 0) && s.sample_snippet && (
+                                      <div className="opt-report-snippet">
+                                        <div className="opt-report-snippet-title">示例片段：</div>
+                                        <pre>{s.sample_snippet}</pre>
+                                      </div>
+                                    )}
+                                    {/* 补丁区：可编辑/不可编辑两态 */}
+                                    <div className="opt-report-patch">
+                                      <div className="opt-report-patch-title">
+                                        补丁（采纳后追加到系统 prompt 末尾）：
+                                      </div>
+                                      {isEditing ? (
+                                        <>
+                                          <textarea
+                                            value={editingPatch}
+                                            onChange={e => setEditingPatch(e.target.value)}
+                                            disabled={isBusy}
+                                            style={{
+                                              width:'100%', minHeight:96, padding:'8px',
+                                              fontFamily:'var(--font-mono, ui-monospace, monospace)', fontSize:12,
+                                              border:'1px solid var(--accent)', borderRadius:6,
+                                              background:'var(--bg-secondary)', color:'var(--text-primary)',
+                                              resize:'vertical',
+                                            }}
+                                          />
+                                          <div style={{marginTop:6, display:'flex', gap:6, flexWrap:'wrap'}}>
+                                            <button className="btn-sm" disabled={isBusy || !editingPatch.trim()}
+                                              onClick={async () => {
+                                                if (!bookId) return;
+                                                setOptBusyBucket(s.bucket_key);
+                                                try {
+                                                  await (api as any).adoptOptimizationSuggestion(bookId, {
+                                                    bucket_key: s.bucket_key,
+                                                    category: s.category,
+                                                    dim_key: s.dim_key,
+                                                    patch_text: editingPatch.trim(),
+                                                  });
+                                                  setLocallyDismissedBuckets(prev => { const n=new Set(prev); n.add(s.bucket_key); return n; });
+                                                  // 刷新总面板（含 applied_patches 预览）
+                                                  const r: any = await api.getOptimizationReport(bookId);
+                                                  setOptimizationReport(r);
+                                                  setEditingBucket(null);
+                                                  setEditingPatch('');
+                                                } catch (e: any) {
+                                                  alert('采纳失败：' + (e.message || e));
+                                                } finally {
+                                                  setOptBusyBucket(null);
+                                                }
+                                              }}>💾 保存并采纳</button>
+                                            <button className="btn-ghost-sm" onClick={() => { setEditingBucket(null); setEditingPatch(''); }}>
+                                              取消
+                                            </button>
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <div className="opt-report-patch-body">{s.proposed_patch}</div>
+                                          <div className="opt-report-actions" style={{marginTop:8, display:'flex', gap:6, flexWrap:'wrap'}}>
+                                            <button className="btn-sm primary" disabled={isBusy}
+                                              onClick={async () => {
+                                                if (!bookId) return;
+                                                setOptBusyBucket(s.bucket_key);
+                                                try {
+                                                  await (api as any).adoptOptimizationSuggestion(bookId, {
+                                                    bucket_key: s.bucket_key,
+                                                    category: s.category,
+                                                    dim_key: s.dim_key,
+                                                    patch_text: s.proposed_patch,
+                                                  });
+                                                  setLocallyDismissedBuckets(prev => { const n=new Set(prev); n.add(s.bucket_key); return n; });
+                                                  const r: any = await api.getOptimizationReport(bookId);
+                                                  setOptimizationReport(r);
+                                                } catch (e: any) {
+                                                  alert('采纳失败：' + (e.message || e));
+                                                } finally {
+                                                  setOptBusyBucket(null);
+                                                }
+                                              }}>
+                                              {isBusy ? '处理中…' : '✅ 采纳建议'}
+                                            </button>
+                                            <button className="btn-ghost-sm" disabled={isBusy}
+                                              onClick={() => {
+                                                setEditingBucket(s.bucket_key);
+                                                setEditingPatch(s.proposed_patch || '');
+                                              }}>📝 自定义编辑</button>
+                                            <button className="btn-ghost-sm" disabled={isBusy}
+                                              onClick={async () => {
+                                                if (!bookId) return;
+                                                if (!window.confirm('确认忽略此建议？忽略后不会再显示，可刷新重新扫描。')) return;
+                                                setOptBusyBucket(s.bucket_key);
+                                                try {
+                                                  await (api as any).dismissOptimizationSuggestion(bookId, s.bucket_key);
+                                                  setLocallyDismissedBuckets(prev => { const n=new Set(prev); n.add(s.bucket_key); return n; });
+                                                } catch (e: any) {
+                                                  alert('忽略失败：' + (e.message || e));
+                                                } finally {
+                                                  setOptBusyBucket(null);
+                                                }
+                                              }}>❌ 忽略</button>
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
                                   </div>
-                                )}
-                                <div className="opt-report-patch">
-                                  <div className="opt-report-patch-title">建议优化：</div>
-                                  <div className="opt-report-patch-body">{s.proposed_patch}</div>
-                                </div>
-                                {s.sample_snippet && (
-                                  <div className="opt-report-snippet">
-                                    <div className="opt-report-snippet-title">示例片段：</div>
-                                    <pre>{s.sample_snippet}</pre>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
+                                );
+                              })}
                           </div>
                         </>
                       )}

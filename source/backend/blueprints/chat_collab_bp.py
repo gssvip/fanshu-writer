@@ -2981,18 +2981,83 @@ def backfill_eventlog():
 
 @chat_collab_bp.route('/api/ai/smart/optimization-report', methods=['GET'])
 def optimization_report():
-    """M4: 返回系统学习到的失败模式与 prompt 优化建议。"""
+    """M4: 返回系统学习到的失败模式与 prompt 优化建议（含使用说明 + 已采纳补丁列表）。"""
     from app import BookBible
     book_id = request.args.get('book_id')
     if not book_id:
         return jsonify({'error': '缺少 book_id'}), 400
     bb = BookBible.query.filter_by(book_id=book_id).first()
     if not bb:
-        return jsonify({'ready': False, 'failure_count': 0, 'suggestions': []})
+        return jsonify({'ready': False, 'failure_count': 0, 'suggestions': [],
+                        'how_to_use': {'step1': '先选择一本书', 'step2': '', 'step3': '', 'step4': ''},
+                        'applied_patches': [], 'applied_patch_count': 0})
     try:
         from meta_optimizer import get_optimization_report
         return jsonify(get_optimization_report(bb))
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@chat_collab_bp.route('/api/ai/smart/adopt-optimization-suggestion', methods=['POST'])
+def adopt_optimization_suggestion():
+    """M4b: 采纳一条优化建议 → 写入 prompt_patches_json（并忽略该 bucket）。
+
+    body:
+      book_id: str
+      bucket_key: str         # category::dim_key
+      category: str
+      dim_key: str (optional)
+      patch_text: str         # 用户可能在前端改过 proposed_patch，所以直接传最终文本
+    """
+    from app import BookBible, db
+    data = request.json or {}
+    book_id = data.get('book_id')
+    bucket_key = (data.get('bucket_key') or '').strip()
+    category = (data.get('category') or 'content').strip()
+    dim_key = (data.get('dim_key') or '').strip()
+    patch_text = (data.get('patch_text') or '').strip()
+    if not book_id or not bucket_key or not patch_text:
+        return jsonify({'error': '缺少 book_id / bucket_key / patch_text'}), 400
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': 'BookBible 不存在'}), 404
+    try:
+        from meta_optimizer import add_prompt_patch, build_active_patch_text
+        patch_obj = add_prompt_patch(bb, category=category, dim_key=dim_key,
+                                     patch_text=patch_text, bucket_key=bucket_key)
+        db.session.commit()
+        return jsonify({
+            'ok': True,
+            'patch': patch_obj,
+            'active_patch_preview': build_active_patch_text(bb)[:500],
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@chat_collab_bp.route('/api/ai/smart/dismiss-optimization-suggestion', methods=['POST'])
+def dismiss_optimization_suggestion():
+    """M4c: 忽略一条建议 → 写入 ignored_failure_buckets_json，不再出现在建议列表。
+
+    body: { book_id, bucket_key }
+    """
+    from app import BookBible, db
+    data = request.json or {}
+    book_id = data.get('book_id')
+    bucket_key = (data.get('bucket_key') or '').strip()
+    if not book_id or not bucket_key:
+        return jsonify({'error': '缺少 book_id / bucket_key'}), 400
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': 'BookBible 不存在'}), 404
+    try:
+        from meta_optimizer import add_ignored_bucket
+        add_ignored_bucket(bb, bucket_key)
+        db.session.commit()
+        return jsonify({'ok': True, 'bucket_key': bucket_key})
+    except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 

@@ -1,4 +1,4 @@
-import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, ImpactPreview } from './types';
+import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, AppliedPatchItem, ImpactPreview } from './types';
 
 // 后端 API 默认地址（内置，开箱即用）
 // 其他用户无需手动配置即可使用。如需切换到自部署的后端，可在「我的 → 服务器」覆盖。
@@ -950,6 +950,29 @@ export const api = {
   // M4: 获取系统优化报告（基于 FailureDB 的 Meta-LLM 分析）
   getOptimizationReport: (bookId: string) =>
     request<OptimizationReport>(`/ai/smart/optimization-report?book_id=${bookId}`),
+
+  // M4b: 采纳一条优化建议 → 写入 prompt_patches（该 bucket 不再提示）
+  adoptOptimizationSuggestion: (bookId: string, args: {
+    bucket_key: string;
+    category: string;
+    dim_key?: string;
+    patch_text: string;
+  }) =>
+    request<{
+      ok: boolean;
+      patch: AppliedPatchItem;
+      active_patch_preview: string;
+    }>(
+      '/ai/smart/adopt-optimization-suggestion',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, ...args }) }
+    ),
+
+  // M4c: 忽略一条优化建议 → 该 bucket 不再提示
+  dismissOptimizationSuggestion: (bookId: string, bucket_key: string) =>
+    request<{ ok: boolean; bucket_key: string }>(
+      '/ai/smart/dismiss-optimization-suggestion',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, bucket_key }) }
+    ),
 
   // M4: 预览动作级联影响（rename_entity / edit_dim）
   previewImpact: (bookId: string, action: 'rename_entity' | 'edit_dim', payload: Record<string, any>) =>

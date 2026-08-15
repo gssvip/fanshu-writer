@@ -637,6 +637,11 @@ class BookBible(db.Model):
     entity_registry_json = db.Column(db.Text, default='')
     # M4: 失败记录库（JSON），供 Meta-LLM 分析并优化 prompt
     failure_log_json = db.Column(db.Text, default='')
+    # M4b: 用户已采纳的 prompt 补丁列表（JSON 数组），每条含 id/category/patch_text/handled_bucket_key/applied_at
+    # 生成任何维度/章节时自动追加到 system prompt 末尾（tail-rule 之后）
+    prompt_patches_json = db.Column(db.Text, default='')
+    # M4c: 忽略的失败模式 bucket（JSON 数组），被忽略的 bucket 不出现在 optimization-report 里
+    ignored_failure_buckets_json = db.Column(db.Text, default='')
     # 总卷数 + 风格流派（与 Book 表同步，创作时从 bible 直接读取注入各维度）
     total_volumes = db.Column(db.Integer, default=10)
     novel_styles = db.Column(db.Text, default='[]')
@@ -667,6 +672,8 @@ class BookBible(db.Model):
             'event_log': json.loads(self.event_log_json or '[]'),
             'entity_registry': json.loads(self.entity_registry_json or '{}'),
             'failure_log': json.loads(self.failure_log_json or '[]'),
+            'prompt_patches': json.loads(self.prompt_patches_json or '[]'),
+            'ignored_failure_buckets': json.loads(self.ignored_failure_buckets_json or '[]'),
             'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None,
             # P1-2修复：补 total_volumes / novel_styles，让前端可见 bible 权威值
             'total_volumes': self.total_volumes if self.total_volumes else 10,
@@ -13605,6 +13612,9 @@ def init_db():
         _add_column('book_bible', 'entity_registry_json TEXT')
         # Migration M4: 失败记录库
         _add_column('book_bible', 'failure_log_json TEXT')
+        # Migration M4b: 用户采纳的 prompt 补丁列表 + 忽略的失败 bucket
+        _add_column('book_bible', 'prompt_patches_json TEXT')
+        _add_column('book_bible', 'ignored_failure_buckets_json TEXT')
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()

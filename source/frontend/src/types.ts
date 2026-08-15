@@ -139,18 +139,37 @@ export interface BookBible {
 
 // M4: 系统优化报告
 export interface OptimizationSuggestion {
+  bucket_key: string;           // 索引：category::dim_key
   category: string;
+  category_cn?: string;
+  dim_key?: string;
   count: number;
-  severity: 'high' | 'medium' | 'low';
-  problem_pattern: string;
+  severity?: 'high' | 'medium' | 'low';
+  pattern?: string;            // 新字段
+  problem_pattern: string;     // 兼容旧
   affected_dims: string[];
-  proposed_patch: string;
-  sample_snippet?: string;
+  suggestion?: string;         // 建议说明
+  proposed_patch: string;      // 要追加到 prompt 的补丁文本（可编辑后采纳）
+  sample_snippet?: string;     // 兼容旧
+  examples?: Array<{ summary: string; snippet: string; chapter_num?: number; ts?: string }>;
+}
+export interface AppliedPatchItem {
+  id: string;
+  category: string;
+  category_cn?: string;
+  patch_text: string;
+  applied_at?: string;
 }
 export interface OptimizationReport {
   ready: boolean;
   failure_count: number;
+  ignored_bucket_count?: number;
+  reason?: string;
   suggestions: OptimizationSuggestion[];
+  how_to_use?: { step1?: string; step2?: string; step3?: string; step4?: string };
+  applied_patches?: AppliedPatchItem[];
+  applied_patch_count?: number;
+  active_patch_preview?: string;
 }
 
 // M4: 动作影响预览
