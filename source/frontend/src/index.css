@@ -2344,6 +2344,35 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   border-radius: 8px; background: var(--bg-tertiary);
   display: flex; flex-direction: column; gap: 8px; overflow: hidden;
 }
+
+/* 智驾校审：事件日志 + 系统学习 同一行并排（桌面 + 手机端都并排） */
+.review-grid-row {
+  display: flex; flex-direction: row; gap: 8px; margin-top: 8px;
+}
+.review-grid-cell {
+  flex: 1 1 0; min-width: 0; margin-top: 0;
+}
+/* 手机端也强制同一行（不换行），并压缩头部省空间 */
+@media (max-width: 768px) {
+  .review-grid-row { flex-wrap: nowrap; gap: 6px; }
+  .review-grid-cell { flex: 1 1 0; min-width: 0; }
+  .review-grid-cell .impact-preview-head {
+    padding: 6px 8px; font-size: 11.5px;
+  }
+  .review-grid-cell .impact-preview-head > span:first-child {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 65%;
+  }
+  .review-grid-cell .impact-preview-body { padding: 0 8px 8px; gap: 8px; }
+}
+@media (max-width: 480px) {
+  .review-grid-cell .impact-preview-head {
+    padding: 6px 6px; font-size: 11px;
+  }
+  .review-grid-cell .impact-preview-head > span:first-child {
+    max-width: 70%;
+  }
+}
+
 .impact-preview-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 10px; font-size: 12px; font-weight: 600; color: var(--text-primary);

@@ -2091,13 +2091,15 @@ export default function ChatPanel() {
                     )}
                   </div>
 
+                  {/* 🧩 事件日志 + 🧠 系统学习：同一行（桌面+手机端都并排）*/}
+                  <div className="review-grid-row">
                   {/* Q2 合并：🧩 事件日志素材管理（原工具栏浮层）
                      校审输入是"防遗忘/一致性检查"，事件日志是它们的素材来源与质量保障。
                      重算后事件日志更准，校审出的防遗忘/一致性报告也更准。 */}
-                  <div className="impact-preview-panel">
+                  <div className="impact-preview-panel review-grid-cell">
                     <div className="impact-preview-head" onClick={() => setShowBackfill(s => !s)}>
-                      <span>🧩 事件日志·素材管理</span>
-                      <span className="impact-preview-toggle">{showBackfill ? '收起 ▲' : '展开 ▼'}</span>
+                      <span>🧩 事件日志</span>
+                      <span className="impact-preview-toggle">{showBackfill ? '▲' : '▼'}</span>
                     </div>
                     {showBackfill && (
                       <div className="impact-preview-body">
@@ -2144,7 +2146,7 @@ export default function ChatPanel() {
                   {/* Q2 合并 + C 闭环：🧠 系统学习与优化建议
                      本质：校审/门禁/章节 PostGenValidator 出错 → 自动写入 FailureDB → 累积 ≥2 条同类 → 出 prompt 补丁建议
                      用户可 ✅采纳（补丁自动追加到系统 prompt 末尾，后续所有维度/章节生成都生效）· 📝自定义编辑 · ❌忽略 */}
-                  <div className="opt-report-inline impact-preview-panel">
+                  <div className="opt-report-inline impact-preview-panel review-grid-cell">
                     <div className="impact-preview-head">
                       <span>🧠 系统学习与优化建议
                         {optimizationReport && optimizationReport.failure_count > 0 && (
@@ -2343,6 +2345,8 @@ export default function ChatPanel() {
                       )}
                     </div>
                   </div>
+
+                  </div>{/* /.review-grid-row */}
                 </>
               )}
             </div>
