@@ -70,7 +70,7 @@ class ContextManifest:
     chapter_num: int
     sources: list[ContextSource] = field(default_factory=list)
     total_tokens: int = 0
-    token_budget: int = 8000     # 默认 8k token 预算
+    token_budget: int = 12000    # S2：默认从 8k 升级到 12k
     state: ManifestState = ManifestState.READY
     created_at: float = field(default_factory=time.time)
     manifest_id: str = ""
@@ -158,7 +158,52 @@ class ContextOrchestrator:
         "skill_pack": 30,         # 技能包
     }
 
-    def __init__(self, token_budget: int = 8000):
+    # 模型上下文窗口（启发式）。命中关键词 → 用对应值，否则默认 16k
+    _MODEL_CONTEXT_WINDOWS: list[tuple[set[str], int]] = [
+        # 32k 档
+        ({'gpt-4o-mini', '4o-mini', 'claude-3-haiku', 'haiku', 'qwen2.5-14b', 'qwen2-14b', 'qwen2.5-7b', 'deepseek-v3', 'deepseek-chat-v3'}, 32768),
+        # 128k 档
+        ({'gpt-4o', '4o', 'o1', 'o3-mini', 'claude-3.5-sonnet', 'sonnet-4', 'sonnet', 'claude-3-opus', 'opus', 'gemini-2.0', 'gemini-1.5', 'gpt-4-turbo', 'qwen2.5-72b', 'qwen3-72b', 'yi-large', 'glm-4'}, 128000),
+        # 200k 档
+        ({'claude-sonnet-4', 'claude-opus', 'qwen-long', 'gemini-2.5', 'doubao-pro-32k', 'doubao-1.5-pro-256k', 'moonshot-v1-128k', 'moonshot-v1-8k-128k'}, 200000),
+    ]
+    DEFAULT_CONTEXT_WINDOW = 16384  # 未知模型：保守 16k
+
+    @staticmethod
+    def _heuristic_context_window(model_name: str | None) -> int:
+        if not model_name:
+            return ContextOrchestrator.DEFAULT_CONTEXT_WINDOW
+        m = (model_name or '').lower()
+        for keys, ctx in ContextOrchestrator._MODEL_CONTEXT_WINDOWS:
+            if any(k in m for k in keys):
+                return ctx
+        return ContextOrchestrator.DEFAULT_CONTEXT_WINDOW
+
+    @staticmethod
+    def dynamic_budget(
+        max_gen_tokens: int = 4000,
+        model_name: str | None = None,
+        system_prompt_estimate: int = 1000,
+        ceiling: int = 12000,
+    ) -> int:
+        """S2：动态上下文预算。
+
+        预算 = min( ceiling, 模型窗口 - 生成预算 - system_prompt - 1000(对话头余量) )
+        - 未知模型默认 16k 窗口 → 若 ceiling=12k 则直接 12k
+        - 128k 档模型：有必要时允许自动放宽到 ceiling（可传 ceiling=16k~20k）
+        """
+        ctx_win = ContextOrchestrator._heuristic_context_window(model_name)
+        headroom = 1000 + max(0, system_prompt_estimate) + max(0, max_gen_tokens)
+        budget = ctx_win - headroom
+        # 下限：至少 8k（保证 bible 最小可用片段能塞下）
+        if budget < 8000:
+            budget = 8000
+        if budget > ceiling:
+            budget = ceiling
+        return int(budget)
+
+    def __init__(self, token_budget: int = 12000):
+        # S2：默认预算 8k → 12k
         self.token_budget = token_budget
 
     def prepare(self, sources: dict[str, str], chapter_num: int,

@@ -154,14 +154,38 @@ export interface OptimizationReport {
 }
 
 // M4: 动作影响预览
+export interface ImpactConsistencyIssue {
+  severity: 'critical' | 'warning' | 'note';
+  rule: string;
+  source_quote: string;
+  target_quote: string;
+  suggestion: string;
+}
+export interface ImpactTaskResult {
+  status?: 'ok' | 'warn' | 'conflict' | string;
+  critical?: number;
+  warning?: number;
+  note?: number;
+  target_label?: string;
+  issues?: ImpactConsistencyIssue[];
+  preview_mode?: boolean;
+  note_msg?: string;
+  preview_error?: string;
+  [k: string]: any;
+}
 export interface ImpactTask {
   id: string;
   action: string;
+  op?: string;
   target_dim: string;
   target_label?: string;
   target_chapter?: number;
+  args?: Record<string, any>;
+  depends_on?: string[];
   reason: string;
   auto: boolean;
+  status?: 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+  result?: ImpactTaskResult;
 }
 export interface ImpactPreview {
   action: string;

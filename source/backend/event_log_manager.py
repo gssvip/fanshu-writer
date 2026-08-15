@@ -352,3 +352,95 @@ def append_chapter_events(bb, chapter, content: str,
         pass
 
     return {'events_added': len(events), 'event_ids': event_ids}
+
+
+# ---------- P1-1: 关键章判定 + 分阶段 LLM 抽取策略 ----------
+
+_KEY_CHAPTER_KEYWORDS = [
+    # 卷首
+    '序章', '楔子', '序幕', '开篇', '第一章', '第1章', '卷首',
+    # 卷高潮 / 转折（标题含以下词 → 卷高潮候选）
+    '决战', '大战', '高潮', '转折', '真相', '揭秘', '终局', '落幕',
+    '背叛', '牺牲', '死亡', '陨落', '觉醒', '突破', '入圣', '成神',
+    '封帝', '飞升', '渡劫', '大比', '擂台', '婚礼', '登基', '开国',
+    # 卷末
+    '尾声', '终章', '结尾', '后记', '完结', '卷末', '大结局',
+]
+
+
+def is_key_chapter(chapter, total_chapters: int = 0,
+                   chapter_title: str = '') -> Dict[str, Any]:
+    """判断一章是否为关键章（卷首 / 卷高潮 / 卷末）。
+    返回 {is_key: bool, reason: str, category: 'volume_start'|'volume_peak'|'volume_end'|None}。
+    分阶段策略：
+      · 每 50 章作为一个"卷"。卷首（N%50==1）/ 卷末（N%50==0）固定为关键章。
+      · 标题命中决战/高潮/转折等关键词 → 卷高潮候选。
+      · 总章数 < 3：全部按关键章。
+    """
+    result: Dict[str, Any] = {'is_key': False, 'reason': '', 'category': None}
+    title = chapter_title or (getattr(chapter, 'title', None) if chapter else '') or ''
+    order = getattr(chapter, 'order_index', 0) if chapter else 0
+    try:
+        order = int(order or 0)
+    except (TypeError, ValueError):
+        order = 0
+
+    # 总章数兜底
+    if total_chapters and total_chapters <= 3:
+        result['is_key'] = True
+        result['category'] = 'volume_start'
+        result['reason'] = '全书<=3章，全部按关键章处理'
+        return result
+
+    # A. 卷首（N%50 == 1，或标题命中序章/楔子/开篇）
+    if order > 0 and order % 50 == 1:
+        result['is_key'] = True
+        result['category'] = 'volume_start'
+        result['reason'] = f'第{order}章为卷首（每50章一卷）'
+    if any(kw in title for kw in ('序章', '楔子', '序幕', '开篇', '第1章', '第一章')):
+        result['is_key'] = True
+        result['category'] = 'volume_start'
+        result['reason'] = (result['reason'] + '；' if result['reason'] else '') + f'标题含「{next((k for k in _KEY_CHAPTER_KEYWORDS if k in title), "")}」判定为卷首'
+
+    # B. 卷末（N%50 == 0，N>=1，或标题含尾声/终章/结局类词）
+    if order > 0 and order % 50 == 0:
+        result['is_key'] = True
+        result['category'] = 'volume_end'
+        result['reason'] = (result['reason'] + '；' if result['reason'] else '') + f'第{order}章为卷末（每50章一卷）'
+    if any(kw in title for kw in ('尾声', '终章', '结局', '后记', '完结', '卷末', '大结局')):
+        result['is_key'] = True
+        result['category'] = 'volume_end'
+        result['reason'] = (result['reason'] + '；' if result['reason'] else '') + '标题判定为卷末'
+
+    # C. 卷高潮（标题命中关键词）
+    peak_hits = [k for k in _KEY_CHAPTER_KEYWORDS if k not in ('序章', '楔子', '序幕', '开篇', '第一章', '第1章', '卷首', '尾声', '终章', '结局', '后记', '完结', '卷末', '大结局') and k in title]
+    if peak_hits:
+        result['is_key'] = True
+        result['category'] = 'volume_peak'
+        result['reason'] = (result['reason'] + '；' if result['reason'] else '') + f'标题关键词{peak_hits}判定为卷高潮'
+
+    if not result['is_key']:
+        result['reason'] = '普通章，走正则抽取（如需全文LLM重算，请在智驾内点"事件回溯·全文重算"）'
+    return result
+
+
+def append_chapter_events_auto(bb, chapter, content: str,
+                               known_actors: List[str] = None,
+                               known_locations: List[str] = None,
+                               total_chapters: int = 0,
+                               gw=None, base_url: str = '',
+                               api_key: str = '', model: str = '') -> Dict:
+    """P1-1: 智能版入口。自动判定是否关键章，关键章 use_llm=True（若凭证齐全）。
+    返回结果 = is_key_chapter 结果 + append_chapter_events 结果。
+    """
+    key_info = is_key_chapter(chapter, total_chapters=total_chapters,
+                              chapter_title=getattr(chapter, 'title', ''))
+    # 关键章 & 凭证齐全 → LLM；否则正则
+    use_llm = bool(key_info['is_key'] and base_url and api_key and model)
+    result = append_chapter_events(
+        bb, chapter, content,
+        known_actors=known_actors, known_locations=known_locations,
+        use_llm=use_llm, gw=gw, base_url=base_url, api_key=api_key, model=model)
+    result['key_chapter'] = key_info
+    result['use_llm_actual'] = use_llm
+    return result

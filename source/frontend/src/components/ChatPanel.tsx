@@ -590,6 +590,16 @@ export default function ChatPanel() {
   const [impactEntityType, setImpactEntityType] = useState('character');
   const [impactDimKey, setImpactDimKey] = useState('character_profiles');
 
+  // P1-3: 全文重算事件日志（后台批处理）
+  const [showBackfill, setShowBackfill] = useState(false);
+  const [backfillLLM, setBackfillLLM] = useState<'auto' | 'always' | 'never'>('auto');
+  const [backfillRunning, setBackfillRunning] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState<{
+    text: string;
+    progress?: { done: number; total: number; added: number; llm: number; rule: number };
+    log: string[];
+  } | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef<string>('');
@@ -641,6 +651,95 @@ export default function ChatPanel() {
       setImpactLoading(false);
     }
   }, [bookId, impactAction, impactOldName, impactNewName, impactEntityType, impactDimKey]);
+
+  // P1-3: 事件全文重算（支持 JSON 与 SSE 两种模式）
+  const runBackfill = useCallback(async () => {
+    if (!bookId) return;
+    setBackfillRunning(true);
+    const log: string[] = [];
+    const pushLog = (line: string) => log.push(`[${new Date().toLocaleTimeString()}] ${line}`);
+    setBackfillStatus({ text: '准备请求…', log });
+    try {
+      // 走与 api.ts request() 完全相同的地址策略
+      const { getApiBaseUrl } = await import('../api');
+      const apiBase = getApiBaseUrl().replace(/\/+$/, '');
+      const resp = await fetch(`${apiBase}/ai/smart/backfill-eventlog`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ book_id: bookId, use_llm: backfillLLM }),
+      });
+      const ct = resp.headers.get('content-type') || '';
+      pushLog(`响应 content-type=${ct}`);
+      if (!ct.includes('text/event-stream')) {
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        pushLog(`重算完成（非流式）：事件+${data.added_total} / LLM ${data.llm_count} / 正则 ${data.rule_count}`);
+        setBackfillStatus({
+          text: `✅ 完成：共 ${data.total} 章，新增事件 ${data.added_total} 条（LLM=${data.llm_count}章，正则=${data.rule_count}章）`,
+          progress: { done: data.total, total: data.total, added: data.added_total, llm: data.llm_count, rule: data.rule_count },
+          log,
+        });
+      } else {
+        // SSE 流：逐行读 data: ... JSON
+        const reader = resp.body?.getReader();
+        if (!reader) throw new Error('流不可读');
+        const decoder = new TextDecoder('utf-8');
+        let buf = '';
+        let total = 0;
+        let added = 0;
+        let llmDone = 0;
+        let ruleDone = 0;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const events = buf.split('\n\n');
+          buf = events.pop() || '';
+          for (const evRaw of events) {
+            if (!evRaw.startsWith('data:')) continue;
+            const payload = JSON.parse(evRaw.slice(5).trim());
+            if (payload.type === 'start') {
+              total = payload.total;
+              pushLog(`流式任务启动：共 ${total} 章，策略=${payload.use_llm}`);
+              setBackfillStatus({ text: `🏃 流式启动：${total} 章…`, progress: { done: 0, total, added: 0, llm: 0, rule: 0 }, log });
+            } else if (payload.type === 'progress') {
+              added = payload.added_so_far;
+              llmDone = payload.llm_so_far;
+              ruleDone = payload.rule_so_far;
+              pushLog(`进度 ${payload.done}/${total}：事件+${added}`);
+              setBackfillStatus({
+                text: `🏃 流式运行中：${payload.done}/${total} 章`,
+                progress: { done: payload.done, total, added, llm: llmDone, rule: ruleDone },
+                log: [...log],
+              });
+            } else if (payload.type === 'warn') {
+              pushLog(`⚠️ 第${payload.chapter}章${payload.title}失败：${payload.error}`);
+            } else if (payload.type === 'done') {
+              added = payload.added_total;
+              llmDone = payload.llm_count;
+              ruleDone = payload.rule_count;
+              pushLog(`✅ 完成：共 ${payload.total} 章，新增事件 ${added} 条（LLM=${llmDone}章，正则=${ruleDone}章）`);
+              setBackfillStatus({
+                text: `✅ 完成：共 ${payload.total} 章，新增事件 ${added} 条（LLM=${llmDone}章，正则=${ruleDone}章）`,
+                progress: { done: payload.total, total: payload.total, added, llm: llmDone, rule: ruleDone },
+                log: [...log],
+              });
+            } else if (payload.type === 'error') {
+              pushLog(`❌ 错误：${payload.error}`);
+              setBackfillStatus({ text: `❌ 失败：${payload.error}`, log: [...log] });
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+      pushLog(`❌ 异常：${e?.message || e}`);
+      setBackfillStatus({ text: `❌ 失败：${e?.message || e}`, log });
+    } finally {
+      setBackfillRunning(false);
+      // 触发进度条刷新（EventLog 变了）
+      try { window.dispatchEvent(new CustomEvent('fanshu:progress-needs-refresh')); } catch {}
+    }
+  }, [bookId, backfillLLM]);
 
   const refreshHistory = useCallback(async () => {
     if (!bookId) return;
@@ -1804,6 +1903,51 @@ export default function ChatPanel() {
                     </div>
                   )}
 
+                  {/* P1-3: 全文重算事件日志（后台批处理入口） */}
+                  <div className="impact-preview-panel">
+                    <div className="impact-preview-head" onClick={() => setShowBackfill(s => !s)}>
+                      <span>🧩 事件日志·全文重算</span>
+                      <span className="impact-preview-toggle">{showBackfill ? '收起 ▲' : '展开 ▼'}</span>
+                    </div>
+                    {showBackfill && (
+                      <div className="impact-preview-body">
+                        <div className="impact-preview-actions">
+                          <label style={{fontSize:12,color:'var(--text-secondary)'}}>抽取策略：</label>
+                          <select value={backfillLLM} onChange={e => setBackfillLLM(e.target.value as any)} disabled={backfillRunning}>
+                            <option value="auto">auto（推荐：卷首/高潮/卷末用LLM，其他章正则）</option>
+                            <option value="always">always（全部LLM，成本高，保真度最佳）</option>
+                            <option value="never">never（只用正则，零成本，速度最快）</option>
+                          </select>
+                          <button onClick={runBackfill} disabled={streaming || backfillRunning} style={{minWidth:120}}>
+                            {backfillRunning ? '运行中…' : '🚀 开始重算'}
+                          </button>
+                        </div>
+                        {backfillStatus && (
+                          <div className="backfill-status">
+                            <div><strong>状态：</strong>{backfillStatus.text}</div>
+                            {(backfillStatus.progress !== undefined) && (
+                              <div className="backfill-progress-row">
+                                <div className="backfill-progress-bar">
+                                  <div className="backfill-progress-fill"
+                                       style={{width: `${Math.round(100 * backfillStatus.progress.done / (backfillStatus.progress.total || 1))}%`}} />
+                                </div>
+                                <span>{backfillStatus.progress.done}/{backfillStatus.progress.total} ·
+                                  事件+{backfillStatus.progress.added} · LLM {backfillStatus.progress.llm} · 正则 {backfillStatus.progress.rule}
+                                </span>
+                              </div>
+                            )}
+                            {backfillStatus.log.length > 0 && (
+                              <details>
+                                <summary>详细日志</summary>
+                                <pre className="backfill-log">{backfillStatus.log.join('\n')}</pre>
+                              </details>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   {/* M4: 动作影响预览（改人物/改维度前先看会联动哪些地方） */}
                   <div className="impact-preview-panel">
                     <div className="impact-preview-head" onClick={() => setShowImpactPreview(s => !s)}>
@@ -1850,15 +1994,52 @@ export default function ChatPanel() {
                             )}
                             {impactPreview.tasks.length > 0 ? (
                               <div className="impact-preview-tasks">
-                                {impactPreview.tasks.map((t, i) => (
-                                  <div key={i} className={`impact-task ${t.auto ? 'impact-task-auto' : 'impact-task-manual'}`}>
+                                {impactPreview.tasks.map((t, i) => {
+                                  const r = t.result || {};
+                                  const sev = (r.status === 'conflict') ? 'critical'
+                                    : (r.status === 'warn') ? 'warning'
+                                    : (r.issues && r.issues.some((x: any) => x.severity === 'critical')) ? 'critical'
+                                    : (r.issues && r.issues.some((x: any) => x.severity === 'warning')) ? 'warning' : 'ok';
+                                  const badge = sev === 'critical' ? '🔴 冲突'
+                                    : sev === 'warning' ? '🟡 警告'
+                                    : (r.critical || r.warning) ? (r.critical ? '🔴 冲突' : '🟡 警告')
+                                    : '✅ 通过';
+                                  return (
+                                  <div
+                                    key={i}
+                                    className={`impact-task ${t.auto ? 'impact-task-auto' : 'impact-task-manual'} ${sev === 'critical' ? 'impact-task-conflict' : sev === 'warning' ? 'impact-task-warn' : ''}`}
+                                  >
                                     <div className="impact-task-title">
                                       <span>{t.auto ? '🤖' : '✋'} {t.action}</span>
                                       <span className="impact-task-target">{t.target_label || t.target_dim}{t.target_chapter ? ` · 第${t.target_chapter}章` : ''}</span>
+                                      <span className={`impact-task-sev sev-${sev}`}>{badge}</span>
                                     </div>
                                     <div className="impact-task-reason">{t.reason}</div>
+                                    {(r.issues && r.issues.length > 0) && (
+                                      <div className="impact-consistency-issues">
+                                        {r.issues.map((it, idx) => (
+                                          <div key={idx} className={`consistency-issue consistency-issue-${it.severity}`}>
+                                            <div className="ci-head">
+                                              <span className={`ci-dot ci-dot-${it.severity}`}></span>
+                                              <span className="ci-rule">{it.rule}</span>
+                                              <span className="ci-sev-badge">
+                                                {it.severity === 'critical' && '严重'}
+                                                {it.severity === 'warning' && '警告'}
+                                                {it.severity === 'note' && '提示'}
+                                              </span>
+                                            </div>
+                                            <div className="ci-quote-row"><strong>新内容：</strong><span>{it.source_quote}</span></div>
+                                            <div className="ci-quote-row"><strong>已有内容：</strong><span>{it.target_quote}</span></div>
+                                            <div className="ci-suggestion">💡 {it.suggestion}</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {r.preview_mode && r.note && (
+                                      <div className="impact-task-preview-note">👁️ {r.note}</div>
+                                    )}
                                   </div>
-                                ))}
+                                );})}
                               </div>
                             ) : (
                               <div className="impact-preview-empty">未检测到需要联动的任务</div>

@@ -224,10 +224,11 @@ class SmartPlanner:
 class TaskRunner:
     """执行 TaskGraph，返回执行摘要"""
 
-    def __init__(self, book_id: str, db=None, app_context=None):
+    def __init__(self, book_id: str, db=None, app_context=None, preview_mode: bool = False):
         self.book_id = book_id
         self.db = db
         self.app_context = app_context
+        self.preview_mode = preview_mode  # True = 预览模式，所有写入任务返回 mock，不真正改数据
 
     def run(self, graph: TaskGraph, only_auto: bool = True) -> Dict:
         summary = {'executed': [], 'failed': [], 'skipped_manual': 0}
@@ -263,9 +264,13 @@ class TaskRunner:
             return self._exec_sync_entity_registry(task)
         if op == 'compute_chapter_mission':
             return self._exec_compute_chapter_mission(task)
+        if op == 'check_dim_consistency':
+            return self._exec_check_dim_consistency(task)
         return {'noop': True}
 
     def _exec_rename_entity(self, task: Task) -> Dict:
+        if self.preview_mode:
+            return {'preview_mode': True, 'note': '预览模式下不执行实体替换；实际应用时将整词替换 old→new（含JSON字段递归）'}
         from app import BookBible, Chapter
         from entity_registry import rename_entity
         bb = BookBible.query.filter_by(book_id=self.book_id).first()
@@ -280,6 +285,15 @@ class TaskRunner:
 
     def _exec_refresh_dim(self, task: Task) -> Dict:
         # 目前阶段：只做 DAG/结构重渲染，不调用 LLM 重写
+        if self.preview_mode:
+            field = task.target
+            if field == 'foreshadowing_graph':
+                return {'preview_mode': True, 'note': '预览模式：伏笔DAG重渲染被跳过，实际应用时将从 foreshadowing 文本重算并写入 bible'}
+            if field == 'event_log':
+                return {'preview_mode': True, 'note': 'event_log 由章节入库时增量维护，此处无操作'}
+            if field == 'entity_registry':
+                return {'preview_mode': True, 'note': '预览模式：实体注册表被跳过，实际应用时将从 Bible+Character 全量抽取实体'}
+            return {'preview_mode': True}
         from app import BookBible
         bb = BookBible.query.filter_by(book_id=self.book_id).first()
         if not bb:
@@ -316,6 +330,8 @@ class TaskRunner:
         return {'marked': len(dirty), 'chapters': dirty[:20]}
 
     def _exec_parse_foreshadowing_dag(self, task: Task) -> Dict:
+        if self.preview_mode:
+            return {'preview_mode': True, 'note': '预览模式：解析伏笔DAG被跳过；实际应用时会重算 foreshadowing_graph 并持久化'}
         from app import BookBible
         from foreshadowing_manager import parse_text_to_dag
         bb = BookBible.query.filter_by(book_id=self.book_id).first()
@@ -326,6 +342,8 @@ class TaskRunner:
         return {'nodes': len(graph.nodes)}
 
     def _exec_sync_entity_registry(self, task: Task) -> Dict:
+        if self.preview_mode:
+            return {'preview_mode': True, 'note': '预览模式：实体注册表同步被跳过；实际应用时同步 Character/Bible → entity_registry_json'}
         from app import BookBible, Character
         from entity_registry import extract_entities, register_chapter_entities
         bb = BookBible.query.filter_by(book_id=self.book_id).first()
@@ -343,6 +361,7 @@ class TaskRunner:
         return {'entities': sum(len(v) for v in entities.values())}
 
     def _exec_compute_chapter_mission(self, task: Task) -> Dict:
+        # 纯计算任务（伏笔 DAG 读操作），preview_mode 正常运行，不做写入
         from app import BookBible
         from foreshadowing_manager import ForeshadowingGraph, build_hooks_prompt_section
         bb = BookBible.query.filter_by(book_id=self.book_id).first()
@@ -362,3 +381,367 @@ class TaskRunner:
             if n.id not in payoff_ids:
                 forbidden.append({'id': n.id, 'content': n.content[:60]})
         return {'setup': setup, 'payoff': payoff, 'forbidden': forbidden}
+
+    def _exec_check_dim_consistency(self, task: Task) -> Dict[str, Any]:
+        """check_dim_consistency 执行器：
+        - source_dim = 被用户修改的维度（任务 args['source_dim'] 或 args['dim_key']）
+        - source_new_text = 用户新设定内容（args['new_text']，未提供时从 Bible 读当前字段）
+        - target_dim = 要核查的下游维度（task.target）
+        """
+        from app import BookBible
+        bb = BookBible.query.filter_by(book_id=self.book_id).first()
+        if not bb:
+            return {'error': 'bible not found'}
+        args = task.args or {}
+        source_dim = args.get('source_dim') or args.get('dim_key') or ''
+        target_dim = task.target or args.get('target') or ''
+        if not source_dim or not target_dim:
+            return {'error': 'missing dim key', 'source_dim': source_dim, 'target_dim': target_dim}
+
+        # source_text 优先级：参数 new_text > Bible 当前字段
+        src_text = args.get('new_text') or ''
+        if not src_text:
+            src_text = (getattr(bb, source_dim, None) or '') if source_dim else ''
+        tgt_text = (getattr(bb, target_dim, None) or '') if target_dim else ''
+
+        # 若目标维度是列表型字段（如 chapters/characters），拼接成文本
+        if not tgt_text and target_dim in ('chapters', 'character_profiles'):
+            try:
+                tgt_text = _dump_target_dim_list(bb, target_dim, self.book_id)
+            except Exception:
+                tgt_text = ''
+
+        result = run_dim_consistency_check(source_dim, src_text or '', target_dim, tgt_text or '')
+        # severity = critical 的冲突，在任务层面标记为 failed
+        if result.get('status') == 'conflict':
+            return {
+                'status': 'conflict',
+                'critical': result['critical'],
+                'warning': result['warning'],
+                'note': result.get('note', 0),
+                'target_label': result.get('target_label'),
+                'issues': result['issues'],
+                '_severity': 'conflict',
+            }
+        return {
+            'status': result['status'],
+            'critical': result['critical'],
+            'warning': result['warning'],
+            'note': result.get('note', 0),
+            'target_label': result.get('target_label'),
+            'issues': result['issues'],
+        }
+
+
+# ============================================================================
+# 维度一致性冲突检查器（check_dim_consistency 执行器核心逻辑）
+#
+# 设计原则：
+#   · 轻量（不依赖 LLM，全本地 regex/启发式，毫秒级）
+#   · 返回结构化 issues，前端直接渲染为"红/黄/蓝点 + 引用片段 + 建议"
+#   · severity = critical（冲突明确，建议硬阻断） / warning（疑似矛盾，需作者确认）
+#     / note（信息性提示，不产生冲突）
+# ============================================================================
+
+_DIM_LABEL_CN = {
+    'concept': '核心构思', 'key_rules': '核心规则/设定', 'worldbuilding': '世界观',
+    'character_profiles': '人物档案', 'plot_design': '大纲', 'timeline': '剧情时间线',
+    'foreshadowing': '伏笔', 'locations': '地点/地图', 'style_guide': '文风',
+    'relation_graph': '关系图', 'dynamic_volumes': '动态卷信息',
+    'outline_hierarchy': '大纲层级', 'entity_registry': '实体注册表',
+    'event_log': '事件日志', 'foreshadowing_graph': '伏笔结构图',
+}
+
+# 否定/限制词：规则中的"禁止/不能/仅限"等
+_NEGATIVE_WORDS = ['禁止', '不能', '无法', '不可', '绝不', '永远不', '不允许',
+                   '仅限', '只能', '只有…才', '需要…才', '代价是', '一旦…就会死亡']
+# 能力/许可词：人物/世界观中的"能够/可以/拥有"等
+_POSITIVE_WORDS = ['能够', '可以', '拥有', '具有', '会使用', '掌握', '精通',
+                   '随意', '无代价', '瞬间', '不死', '无敌', '永生']
+# 数值/量级词（检测强弱冲突）
+_SCALE_WORDS_PATTERN = r'(第[一二三四五六七八九十\d]+阶|境界[一二三四五六七八九十\d]+|[一二三四五六七八九十\d]+级|Lv\.?\d+|lv\.?\d+|[一二三四五六七八九十\d]+层|[一二三四五六七八九十\d]+品|天阶|地阶|玄阶|黄阶|S级|A级|B级|C级|SSR|SR|R|N)'
+
+
+def _find_contradiction_pairs(source_text: str, source_dim: str,
+                              target_text: str, target_dim: str) -> List[Dict[str, Any]]:
+    """在 source_text（新内容）与 target_text（旧已有内容）之间做启发式冲突扫描。"""
+    issues: List[Dict[str, Any]] = []
+    if not source_text or not target_text:
+        return issues
+
+    src = source_text
+    tgt = target_text
+
+    # --------------------------------------------------------------
+    # 1. 规则（key_rules）vs 人物/世界观：否定词 ↔ 肯定词 交叉命中
+    #    例：规则"主角不能飞" vs 人物"林墨能够御剑飞行"
+    # --------------------------------------------------------------
+    if source_dim == 'key_rules' and target_dim in ('character_profiles', 'worldbuilding', 'plot_design', 'timeline'):
+        for neg in _NEGATIVE_WORDS:
+            for line in src.splitlines():
+                if neg not in line:
+                    continue
+                # 抽出 line 中的"被约束的主体名词"（前 20 字汉字/字名词组）
+                subj_match = _extract_head_subject(line, neg)
+                for pos in _POSITIVE_WORDS:
+                    for tline in tgt.splitlines():
+                        if pos not in tline:
+                            continue
+                        # 同时主体/关键词有交集：看 neg 前面的词是否也出现在 tline
+                        if subj_match and not _has_overlap_word(subj_match, tline):
+                            continue
+                        # 同一句不能自己命中自己（全文复制粘贴场景）
+                        if _line_equalish(line, tline):
+                            continue
+                        issues.append({
+                            'severity': 'warning',
+                            'rule': '规则 ↔ 人物/剧情 的能力许可冲突',
+                            'source_quote': _clip(line, 60),
+                            'target_quote': _clip(tline, 60),
+                            'suggestion': '检查：新设定中是否已放宽此限制，或旧内容是否需要同步改写。',
+                        })
+
+    # --------------------------------------------------------------
+    # 2. 世界观/设定 ↔ 大纲剧情时间线：时间/地点 互相矛盾
+    #    例：世界观"大灾变发生在 500 年前" vs 剧情"距今 300 年前曾发生大灾变"
+    # --------------------------------------------------------------
+    if source_dim in ('worldbuilding', 'key_rules', 'concept') and target_dim in ('timeline', 'plot_design'):
+        for num_pat_src in re.findall(r'(\d+)\s*(年前|年后|年后|年|章|卷|代|世纪)', src):
+            n_src, unit = num_pat_src
+            key_src = _surrounding_keyword(src, n_src + unit, 12)
+            if not key_src:
+                continue
+            for num_pat_tgt in re.findall(r'(\d+)\s*(年前|年后|年后|年|章|卷|代|世纪)', tgt):
+                n_tgt, unit2 = num_pat_tgt
+                if unit != unit2:
+                    continue
+                key_tgt = _surrounding_keyword(tgt, n_tgt + unit2, 12)
+                if not key_tgt or not _has_overlap_word(key_src, key_tgt):
+                    continue
+                if n_src == n_tgt:
+                    continue
+                try:
+                    diff = abs(int(n_src) - int(n_tgt))
+                except ValueError:
+                    continue
+                sev = 'critical' if diff >= 200 and unit in ('年', '年前', '年后', '代', '世纪') else 'warning'
+                issues.append({
+                    'severity': sev,
+                    'rule': f'时间数值不一致（{unit}）',
+                    'source_quote': f'「{key_src}」{n_src}{unit}',
+                    'target_quote': f'「{key_tgt}」{n_tgt}{unit}',
+                    'suggestion': f'二者相差 {diff}{unit}，请核实哪个数字正确后统一。',
+                })
+
+    # --------------------------------------------------------------
+    # 3. 人物档案 ↔ 剧情时间线：同一人名 身份/生死 冲突
+    #    例：人物"林墨，战死第20章" vs 剧情"第50章林墨率军出征"
+    # --------------------------------------------------------------
+    if source_dim == 'character_profiles' and target_dim in ('timeline', 'foreshadowing', 'plot_design'):
+        from entity_registry import _chinese_name_extractor  # 复用已有抽取逻辑（若有）
+        names_src = _extract_person_names_simple(src)
+        for name in names_src:
+            # 在人物卡中查找 死亡/战死/失踪/离开/闭关 等状态词
+            status_src = _find_character_status(src, name)
+            if not status_src:
+                continue
+            # 在剧情中查找该人名 + 后续动作（出征/现身/说话/指挥）
+            status_tgt = _find_character_alive_actions(tgt, name)
+            if status_src in ('死', '战死', '失踪', '入灭', '魂飞魄散') and status_tgt:
+                issues.append({
+                    'severity': 'critical',
+                    'rule': f'人物「{name}」 生死/状态矛盾',
+                    'source_quote': f'人物档案：{status_src}',
+                    'target_quote': f'剧情/伏笔中仍有行为：{status_tgt}',
+                    'suggestion': '请确认人物是否真的死亡（或假死），若已死亡需改写剧情中的出现。',
+                })
+
+    # --------------------------------------------------------------
+    # 4. 文风 ↔ 大纲/人物：硬约束 vs 文风声明
+    #    例：文风"严禁使用比喻/古风措辞" vs 人物描写"翩若惊鸿婉若游龙"（非精确匹配，降为 info）
+    # --------------------------------------------------------------
+    if source_dim == 'style_guide' and target_dim in ('character_profiles', 'worldbuilding', 'plot_design'):
+        # 仅做 info 级：文风与正文语言不一致（正文通常还不存在，此处仅提示）
+        strict_words = ['禁用比喻', '禁用修辞', '严禁修辞', '无修辞', '无比喻', '白描', '直给', '口语化']
+        for w in strict_words:
+            if w in src:
+                issues.append({
+                    'severity': 'note',
+                    'rule': '文风风格约束提示',
+                    'source_quote': _clip(f'你在文风中设置了"{w}"', 40),
+                    'target_quote': '已有维度内容若有文学修辞，需同步调整以符合文风。',
+                    'suggestion': '生成正文时此约束会注入 prompt 生效；此处仅作预览。',
+                })
+                break
+
+    # --------------------------------------------------------------
+    # 5. 通用：等级/境界冲突 （key_rules / worldbuilding / character_profiles 内部互相打）
+    # --------------------------------------------------------------
+    if source_dim in ('key_rules', 'worldbuilding', 'character_profiles') and target_dim in source_dim:
+        for scale_src in re.findall(_SCALE_WORDS_PATTERN, src):
+            key_src = _surrounding_keyword(src, scale_src, 10)
+            for scale_tgt in re.findall(_SCALE_WORDS_PATTERN, tgt):
+                key_tgt = _surrounding_keyword(tgt, scale_tgt, 10)
+                if not key_src or not key_tgt:
+                    continue
+                same_subj = _has_overlap_word(key_src, key_tgt) and scale_src != scale_tgt
+                if not same_subj:
+                    continue
+                issues.append({
+                    'severity': 'warning',
+                    'rule': '等级/境界数值不一致',
+                    'source_quote': f'「{key_src}」→ {scale_src}',
+                    'target_quote': f'「{key_tgt}」→ {scale_tgt}',
+                    'suggestion': '确认哪个等级正确后统一。',
+                })
+
+    # 去重
+    seen = set()
+    uniq = []
+    for it in issues:
+        k = (it['severity'], it['rule'], it.get('source_quote', ''), it.get('target_quote', ''))
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append(it)
+    return uniq
+
+
+# ---------- 冲突扫描辅助函数 ----------
+
+import re  # noqa: E402 （文件顶部已 import，此处仅作防御性二次 import）
+
+
+def _extract_head_subject(line: str, anchor: str) -> str:
+    idx = line.find(anchor)
+    if idx <= 0:
+        return ''
+    head = line[:idx][-20:]
+    # 保留最后一个中文/英文名词词组（含空格过滤）
+    m = re.findall(r'[\u4e00-\u9fffA-Za-z·]+', head)
+    return m[-1] if m else ''
+
+
+def _has_overlap_word(a: str, b: str, min_len: int = 2) -> bool:
+    tokens_a = set(re.findall(r'[\u4e00-\u9fffA-Za-z]{2,}', a))
+    tokens_b = set(re.findall(r'[\u4e00-\u9fffA-Za-z]{2,}', b))
+    return bool(tokens_a & tokens_b)
+
+
+def _line_equalish(a: str, b: str) -> bool:
+    def norm(s): return re.sub(r'\s+', '', s)
+    na, nb = norm(a), norm(b)
+    return bool(na) and (na in nb or nb in na)
+
+
+def _clip(s: str, n: int) -> str:
+    s = s.strip()
+    if len(s) <= n:
+        return s
+    return s[:n] + '…'
+
+
+def _surrounding_keyword(text: str, anchor: str, window: int) -> str:
+    idx = text.find(anchor)
+    if idx < 0:
+        return ''
+    s = max(0, idx - window)
+    e = min(len(text), idx + len(anchor) + window)
+    return re.sub(r'\s+', '', text[s:e])
+
+
+def _extract_person_names_simple(text: str) -> List[str]:
+    """简化人名抽取：2-4 个汉字，且首字是中文姓氏常见字。兜底用 entity_registry 模块若存在。"""
+    try:
+        from entity_registry import _chinese_surname_set  # type: ignore
+    except Exception:
+        _chinese_surname_set = set('赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯昝管卢莫经房裘缪干解应宗丁宣贲邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴陆荣翁荀羊於惠甄曲家封芮羿储靳汲邴糜松井段富巫乌焦巴弓牧隗山谷车侯宓蓬全郗班仰秋仲伊宫宁仇栾暴甘钭厉戎祖武符刘景詹束龙叶幸司韶郜黎蓟薄印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴鬱胥能苍双闻莘党翟谭贡劳逄姬申扶堵冉宰郦雍卻璩桑桂濮牛寿通边扈燕冀郏浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾终暨居衡步都耿满弘匡国文寇广禄阙东殴殳沃利蔚越夔隆师巩厍聂晁勾敖融冷訾辛阚那简饶空曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓公万俟司马上官欧阳夏侯诸葛闻人东方赫连皇甫尉迟公羊澹台公冶宗政濮阳淳于单于太叔申屠公孙仲孙轩辕令狐钟离宇文长孙慕容鲜于闾丘司徒司空丌官司寇仉督子车颛孙端木巫马公西漆雕乐正壤驷公良拓跋夹谷宰父谷梁晋楚闫法汝鄢涂钦段干百里东郭南门呼延归海羊舌微生岳帅缑亢况后有琴梁丘左丘东门西门商牟佘佴伯赏南宫墨哈谯笪年爱阳佟第五言福百家姓续')
+    names = []
+    for m in re.finditer(r'([\u4e00-\u9fff]{2,4})', text):
+        s = m.group(1)
+        if len(s) < 2 or len(s) > 4:
+            continue
+        if s[0] in _chinese_surname_set:
+            names.append(s)
+    return list(dict.fromkeys(names))  # 有序去重
+
+
+_CHAR_STATUS_DEATH = {'战死', '牺牲', '去世', '死亡', '身陨', '陨落', '魂飞魄散', '入灭', '圆寂', '失踪', '下落不明', '杳无音信'}
+_CHAR_ALIVE_ACTION = {'率军', '出征', '现身', '出现', '说道', '说道：', '开口', '大笑', '冷笑', '点头', '摇头',
+                      '指挥', '下令', '提笔', '挥剑', '拔刀', '催动', '祭出', '飞上', '踏入', '亲自', '抵达'}
+
+
+def _find_character_status(text: str, name: str) -> Optional[str]:
+    i = text.find(name)
+    if i < 0:
+        return None
+    window = text[i: i + 40]
+    for w in _CHAR_STATUS_DEATH:
+        if w in window:
+            return w
+    return None
+
+
+def _find_character_alive_actions(text: str, name: str) -> Optional[str]:
+    actions_found = []
+    i = 0
+    while True:
+        j = text.find(name, i)
+        if j < 0:
+            break
+        window = text[j: j + 50]
+        for w in _CHAR_ALIVE_ACTION:
+            if w in window and w not in actions_found:
+                actions_found.append(w)
+                if len(actions_found) >= 3:
+                    break
+        if len(actions_found) >= 3:
+            break
+        i = j + 1
+    return '、'.join(actions_found[:3]) if actions_found else None
+
+
+def run_dim_consistency_check(source_dim: str, source_new_text: str,
+                               target_dim: str, target_text: str) -> Dict[str, Any]:
+    """对外统一入口：返回 {status: 'ok'|'warn'|'conflict', issues: [...]}。"""
+    issues = _find_contradiction_pairs(source_new_text, source_dim, target_text, target_dim)
+    critical = sum(1 for x in issues if x['severity'] == 'critical')
+    warning = sum(1 for x in issues if x['severity'] == 'warning')
+    if critical > 0:
+        status = 'conflict'
+    elif warning > 0:
+        status = 'warn'
+    else:
+        status = 'ok'
+    return {
+        'status': status,
+        'critical': critical,
+        'warning': warning,
+        'note': sum(1 for x in issues if x['severity'] == 'note'),
+        'source_dim': source_dim,
+        'target_dim': target_dim,
+        'target_label': _DIM_LABEL_CN.get(target_dim, target_dim),
+        'issues': issues,
+    }
+
+
+def _dump_target_dim_list(bb, target_dim: str, book_id: str) -> str:
+    """把 list 型维度（chapters 等）拼接成纯文本供一致性扫描。"""
+    try:
+        if target_dim == 'chapters':
+            from app import Chapter
+            chunks = []
+            for ch in Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all():
+                title = ch.title or ''
+                summary = (ch.summary or ch.content or '')[:800]
+                chunks.append(f'【第{ch.order_index}章】{title}\n{summary}')
+            return '\n\n'.join(chunks)
+        if target_dim == 'character_profiles':
+            from app import Character
+            chunks = []
+            for c in Character.query.filter_by(book_id=book_id).all():
+                chunks.append(f'{c.name or "未知"}|{c.role or ""}|{c.personality or ""}|{(c.background or "")[:600]}')
+            return '\n'.join(chunks)
+    except Exception:
+        return ''
+    return ''

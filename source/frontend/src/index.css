@@ -2341,11 +2341,96 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 }
 .impact-task-target { font-size: 11px; color: var(--accent); font-weight: 500; }
 .impact-task-reason { font-size: 11px; color: var(--text-secondary); line-height: 1.4; }
+
+/* P0 升级：任务结果严重度徽标 + 冲突/警告底色 + issues 卡片 */
+.impact-task-sev {
+  font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.impact-task-sev.sev-ok       { color: #065f46; background: #d1fae5; border: 1px solid #6ee7b7; }
+.impact-task-sev.sev-warning  { color: #92400e; background: #fef3c7; border: 1px solid #fcd34d; }
+.impact-task-sev.sev-critical { color: #7f1d1d; background: #fee2e2; border: 1px solid #fca5a5; }
+.impact-task-conflict {
+  border-color: #fecaca !important;
+  background: linear-gradient(90deg, rgba(239,68,68,0.07) 0%, var(--bg-secondary) 60%) !important;
+}
+.impact-task-warn {
+  border-color: #fde68a !important;
+  background: linear-gradient(90deg, rgba(245,158,11,0.07) 0%, var(--bg-secondary) 60%) !important;
+}
+.impact-task-preview-note {
+  margin-top: 4px; padding: 4px 8px; font-size: 11px; color: #1e40af;
+  background: #eff6ff; border: 1px dashed #93c5fd; border-radius: 4px;
+}
+
+/* 冲突项详情卡（consistency-issue） */
+.impact-consistency-issues {
+  margin-top: 6px; display: flex; flex-direction: column; gap: 6px;
+}
+.consistency-issue {
+  padding: 8px 10px; border-radius: 6px;
+  border: 1px solid var(--border-color); background: var(--bg-tertiary);
+}
+.consistency-issue-critical { border-color: #fca5a5; background: #fef2f2; }
+.consistency-issue-warning  { border-color: #fcd34d; background: #fffbeb; }
+.consistency-issue-note     { border-color: #93c5fd; background: #eff6ff; }
+.ci-head {
+  display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+}
+.ci-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: 0 0 8px; }
+.ci-dot-critical { background: #dc2626; box-shadow: 0 0 0 2px rgba(220,38,38,0.15); }
+.ci-dot-warning  { background: #d97706; box-shadow: 0 0 0 2px rgba(217,119,6,0.15); }
+.ci-dot-note     { background: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,0.15); }
+.ci-rule {
+  font-size: 12px; font-weight: 700; color: var(--text-primary); flex: 1;
+}
+.ci-sev-badge {
+  font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 700;
+  color: #fff;
+}
+.consistency-issue-critical .ci-sev-badge { background: #dc2626; }
+.consistency-issue-warning  .ci-sev-badge { background: #d97706; }
+.consistency-issue-note     .ci-sev-badge { background: #2563eb; }
+.ci-quote-row {
+  font-size: 11px; color: var(--text-secondary); line-height: 1.45;
+  margin: 2px 0; padding: 3px 6px; background: rgba(0,0,0,0.02); border-radius: 4px;
+}
+.ci-quote-row strong { color: var(--text-primary); font-weight: 600; margin-right: 4px; }
+.ci-suggestion {
+  margin-top: 4px; font-size: 11px; color: #166534;
+  background: #f0fdf4; padding: 4px 8px; border-radius: 4px; border: 1px dashed #86efac;
+}
+
 .impact-preview-empty {
   font-size: 12px; color: var(--text-muted); text-align: center; padding: 12px;
 }
 
 /* 多选意见列表（设定Tab） */
+
+/* P1-3: 事件日志重算面板的进度/状态样式 */
+.backfill-status {
+  margin-top: 6px; padding: 8px 10px; border-radius: 6px;
+  background: var(--bg-tertiary); border: 1px solid var(--border-color);
+  font-size: 12px; color: var(--text-secondary);
+}
+.backfill-progress-row {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px;
+}
+.backfill-progress-bar {
+  flex: 1; height: 8px; background: var(--bg-secondary);
+  border-radius: 999px; overflow: hidden; border: 1px solid var(--border-color);
+}
+.backfill-progress-fill {
+  height: 100%; background: linear-gradient(90deg, #16a34a, #10b981);
+  transition: width 0.2s;
+}
+.backfill-log {
+  max-height: 180px; overflow: auto; margin: 0; padding: 8px;
+  background: #0f172a; color: #e2e8f0; border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  white-space: pre-wrap; word-break: break-word;
+}
+
 .smart-suggestions {
   padding: 10px 12px; border-bottom: 1px solid var(--border-color);
   background: var(--bg-tertiary); display: flex; flex-direction: column; gap: 8px;

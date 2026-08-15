@@ -131,7 +131,12 @@ def gate_blueprint_check(content: str, bb, chapter_num: int) -> Dict:
 
 
 def run_all_gates(content: str, bb, chapter_num: int) -> Dict:
-    """运行全部3道门禁，返回汇总结果。"""
+    """运行全部3道门禁，返回汇总结果。
+
+    S1 升级：
+    - 有 critical 问题时默认 blocked=True（调用方应阻断落库，由前端二次确认 ignore_gates 才放行）
+    - 仅 warning 时仍 passed=True，但 issues 附带给 LLM/前端看
+    """
     results = []
     results.append(gate_protocol_check(content))
     results.append(gate_reference_check(content, bb))
@@ -142,10 +147,12 @@ def run_all_gates(content: str, bb, chapter_num: int) -> Dict:
         all_issues.extend(r['issues'])
 
     critical_count = sum(1 for i in all_issues if i['severity'] == 'critical')
+    warning_count = sum(1 for i in all_issues if i['severity'] == 'warning')
     return {
         'passed': critical_count == 0,
+        'blocked': critical_count > 0,   # S1：critical 默认 block
         'critical_count': critical_count,
-        'warning_count': sum(1 for i in all_issues if i['severity'] == 'warning'),
+        'warning_count': warning_count,
         'issues': all_issues,
     }
 

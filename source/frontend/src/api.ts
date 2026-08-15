@@ -957,4 +957,13 @@ export const api = {
       '/ai/smart/preview-impact',
       { method: 'POST', body: JSON.stringify({ book_id: bookId, action, ...payload }) }
     ),
+  // P1-3: 全文重算事件日志（后台批处理），<20章直接 JSON，>=20 章或 use_llm==always 返回 EventSource 流
+  backfillEventLog: (bookId: string, opts?: { use_llm?: 'auto' | 'always' | 'never'; start_chapter?: number; end_chapter?: number }) =>
+    request<{
+      status: string; total: number; added_total: number; llm_count: number; rule_count: number;
+      chapters?: Array<{ order: number; title: string; added?: number; use_llm?: boolean; error?: string }>;
+    }>(
+      '/ai/smart/backfill-eventlog',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, ...(opts || {}) }) }
+    ),
 };

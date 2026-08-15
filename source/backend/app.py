@@ -1596,10 +1596,19 @@ def create_chapter(book_id):
             _maybe_auto_trigger_anti_forget_check(book_id)
         except Exception:
             pass
+        # 【P1-2】章节落库后统一钩子：事件抽取 + 伏笔本章清单 + 实体注册
+        hook_meta = None
+        try:
+            hook_meta = _after_chapter_persisted(book_id, ch)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
     resp = ch.to_dict(include_content=True)
     if auto_report:
         resp['auto_report'] = auto_report
+    if hook_meta:
+        resp['event_log'] = hook_meta
     return jsonify(resp), 201
 
 @app.route('/api/books/<book_id>/chapters/<chapter_id>', methods=['PUT'])
@@ -1640,10 +1649,20 @@ def update_chapter(book_id, chapter_id):
             _maybe_auto_trigger_anti_forget_check(book_id)
         except Exception:
             pass
+        # 【P1-2】内容变更落库后统一钩子：事件抽取 + 伏笔本章清单 + 实体注册
+        hook_meta = None
+        if has_content_change:
+            try:
+                hook_meta = _after_chapter_persisted(book_id, ch)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
 
     resp = ch.to_dict(include_content=True)
     if auto_report:
         resp['auto_report'] = auto_report
+    if hook_meta:
+        resp['event_log'] = hook_meta
     return jsonify(resp)
 
 @app.route('/api/books/<book_id>/chapters/<chapter_id>', methods=['DELETE'])
@@ -3012,6 +3031,74 @@ def ai_import_recognize(book_id):
         'filled': filled,
         'bible': bb.to_dict()
     })
+
+
+
+
+def _after_chapter_persisted(book_id, chapter) -> Optional[Dict[str, Any]]:
+    """【P1-2】章节创建/内容变更落库后统一钩子：
+       · 事件抽取（关键章自动 LLM，普通章正则）
+       · 伏笔 DAG 反查本章应埋/应收
+       · 同步到实体注册表
+    返回附带给前端的元信息（可 None）。
+    """
+    if not chapter or chapter.is_volume or not (chapter.content or '').strip():
+        return None
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return None
+    try:
+        from event_log_manager import append_chapter_events_auto
+        from llm_gateway import LLMGateway, get_llm_config
+        known_actors = [c.name for c in Character.query.filter_by(book_id=book_id).all() if c.name]
+        known_locations = []
+        try:
+            _locs = json.loads(bb.locations or '[]')
+            if isinstance(_locs, list):
+                known_locations = [str(x) for x in _locs if x]
+        except Exception:
+            pass
+        total_chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).count()
+        _gw = None
+        _base = _api = _model = ''
+        try:
+            _base, _api, _model = get_llm_config()
+            if _base and _api and _model:
+                _gw = LLMGateway(_base, _api, _model)
+        except Exception:
+            _base = _api = _model = ''
+        ev = append_chapter_events_auto(
+            bb, chapter, chapter.content or '',
+            known_actors=known_actors,
+            known_locations=known_locations,
+            total_chapters=total_chs,
+            gw=_gw, base_url=_base, api_key=_api, model=_model,
+        )
+        # 伏笔 DAG 反查本章埋/收
+        hooks_chapter = None
+        if bb.foreshadowing_graph:
+            try:
+                from foreshadowing_manager import ForeshadowingGraph, build_hooks_prompt_section
+                graph = ForeshadowingGraph.from_dict(json.loads(bb.foreshadowing_graph))
+                hooks = graph.get_nodes_for_chapter(chapter.order_index or 0)
+                hooks_chapter = {
+                    'setup_ids': [n.id for n in hooks.get('setup', [])],
+                    'payoff_ids': [n.id for n in hooks.get('payoff', [])],
+                }
+                chapter.hooks_set_json = json.dumps(hooks_chapter, ensure_ascii=False)
+                # 同步内容中伏笔命中项：如果正文中包含 setup 内容文本即认为已埋/已收
+                hooks_chapter['section'] = build_hooks_prompt_section(graph, chapter.order_index or 0)
+            except Exception:
+                pass
+        return {
+            'events_added': ev.get('events_added', 0),
+            'use_llm': ev.get('use_llm_actual', False),
+            'key_chapter': ev.get('key_chapter'),
+            'hooks': hooks_chapter,
+        }
+    except Exception:
+        # 不阻塞主流程：失败静默
+        return None
 
 
 def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
@@ -6928,10 +7015,20 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
                     pass
             if semantic_query:
                 def _provider():
+                    # P2 升级：给 semantic retriever 传 content（整章 chunk 化做语义向量），
+                    # 不传 content 会退化为旧 summary-300 字模式。
                     chs = Chapter.query.filter_by(book_id=book_id, is_volume=False).filter(
                         Chapter.order_index < current_chapter_num
                     ).order_by(Chapter.order_index.desc()).limit(300).all()
-                    return [{'chapter_num': c.order_index, 'title': c.title or '', 'summary': (getattr(c, 'summary', '') or '')} for c in chs]
+                    out = []
+                    for c in chs:
+                        out.append({
+                            'chapter_num': c.order_index,
+                            'title': c.title or '',
+                            'summary': (getattr(c, 'summary', '') or ''),
+                            'content': (getattr(c, 'content', '') or ''),
+                        })
+                    return out
                 semantic_results = recall_semantic_chapters(
                     book_id, semantic_query, current_chapter_num,
                     exclude_recent=4, max_chapters=6 - len(recalled_chapters),
@@ -7176,6 +7273,8 @@ def ai_continue(book_id):
     prev_chapter_content = request.json.get('prev_chapter_content')
     # 章节正文语言风格（行文文风，最多3个叠加）
     chapter_lang_styles = request.json.get('chapter_lang_styles', [])
+    # S1：critical 门禁被 block 后，前端二次确认可传 ignore_gates=True 强制落库
+    ignore_gates = bool(request.json.get('ignore_gates', False))
 
     try:
         ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles)
@@ -7192,7 +7291,21 @@ def ai_continue(book_id):
         context_manifest_data = None
         if ContextOrchestrator is not None:
             try:
-                _orch = ContextOrchestrator(token_budget=min(max_tokens, 8000))
+                # S2：动态预算（启发式按模型窗口 + 生成预算 + system_prompt 估算）
+                # 默认 ceiling 12k；若模型上下文 ≥ 32k（GPT-4o-mini 档），自动放宽到 16k
+                ctx_win = ContextOrchestrator._heuristic_context_window(model)
+                auto_ceiling = 16000 if ctx_win >= 32768 else 12000
+                # 粗估 system_prompt tokens
+                _sys_cn = len([c for c in system_prompt if '\u4e00' <= c <= '\u9fff'])
+                _sys_other = len(system_prompt) - _sys_cn
+                _sys_tok = int(_sys_cn / 1.5 + _sys_other / 4)
+                dynamic_budget = ContextOrchestrator.dynamic_budget(
+                    max_gen_tokens=max_tokens,
+                    model_name=model,
+                    system_prompt_estimate=_sys_tok,
+                    ceiling=auto_ceiling,
+                )
+                _orch = ContextOrchestrator(token_budget=dynamic_budget)
                 _sources = {
                     'key_rules': getattr(bb, 'key_rules', '') or '',
                     'worldbuilding': getattr(bb, 'worldbuilding', '') or '',
@@ -7494,8 +7607,26 @@ def ai_continue(book_id):
         if run_all_gates and polished_content and polished_content.strip():
             try:
                 gate_result = run_all_gates(polished_content, bb, ctx['current_chapter_num'])
+                # S1：critical 默认 block；用户二次确认传 ignore_gates 则放行
+                if gate_result.get('blocked') and not ignore_gates:
+                    return jsonify({
+                        'gate_blocked': True,
+                        'ignore_gates_required': True,
+                        'content': polished_content,
+                        'draft': draft_content if deai_status == 'success' else None,
+                        'review_notes': review_notes,
+                        'deai_status': deai_status,
+                        'chapter_plan': ctx.get('chapter_plan', ''),
+                        'current_chapter_num': ctx['current_chapter_num'],
+                        'vol_index': ctx.get('vol_index', 0),
+                        'vol_title': ctx.get('vol_chapter').title if ctx.get('vol_chapter') else '',
+                        'temperature': temperature,
+                        'gate_result': gate_result,
+                        'block_reason': '落地门禁检测到 critical 问题（如正文过短/为空等）。默认拦截自动落库，'
+                                        '请在前端确认「忽略门禁强制保存」后再次提交。',
+                    }), 428
                 if not gate_result.get('passed'):
-                    pass  # 门禁未通过只做 warning，不阻断返回
+                    pass  # 仅 warning：不阻断
             except Exception:
                 pass
 
@@ -7837,6 +7968,8 @@ def ai_continue_batch(book_id):
     chapter_lang_styles = data.get('chapter_lang_styles', [])
     count = max(1, min(10, int(data.get('count', 3))))  # 1-10 章
     start_chapter_num = data.get('start_chapter_num')
+    # S1：批量模式下，任意一章触发 critical 时的处理策略
+    ignore_gates = bool(data.get('ignore_gates', False))
 
     bb = BookBible.query.filter_by(book_id=book_id).first()
     if not bb:
@@ -8036,6 +8169,24 @@ def ai_continue_batch(book_id):
             }
             if gate_result_batch and not gate_result_batch.get('passed'):
                 result_entry['gate_warning'] = gate_result_batch
+            # S1：批量模式 critical 命中时：
+            # - 若 ignore_gates=False：整批回滚 + 返回 gate_blocked（前端弹窗让用户选择重试）
+            # - 若 ignore_gates=True：照常写入，只附 gate_warning
+            if gate_result_batch and gate_result_batch.get('blocked') and not ignore_gates:
+                db.session.rollback()
+                # 收集已完成的章节摘要一起返回，方便用户知道是哪一章触发
+                return jsonify({
+                    'gate_blocked': True,
+                    'ignore_gates_required': True,
+                    'blocked_at_chapter': cur_ch,
+                    'block_reason': (
+                        f'批量创作第{cur_ch}章触发落地门禁 critical，为避免半成品写入已回滚整批。'
+                        '请在前端勾选「忽略门禁强制保存」后再次提交整批。'
+                    ),
+                    'gate_result': gate_result_batch,
+                    'partial_results': [{'chapter_num': r['chapter_num'], 'title': r['title'],
+                                         'word_count': r.get('word_count', 0)} for r in results],
+                }), 428
             results.append(result_entry)
             # Bug5 修复：缓存本章正文供下一章承接
             prev_polished = polished_content
@@ -8199,6 +8350,8 @@ def ai_continue_batch_stream(book_id):
     chapter_lang_styles = data.get('chapter_lang_styles', [])
     count = max(1, min(10, int(data.get('count', 3))))
     start_chapter_num = data.get('start_chapter_num')
+    # S1：流式批量模式下，critical 命中时推送 gate_blocked 事件并提前结束
+    ignore_gates = bool(data.get('ignore_gates', False))
 
     bb = BookBible.query.filter_by(book_id=book_id).first()
     if not bb:
@@ -8476,6 +8629,15 @@ def ai_continue_batch_stream(book_id):
                 }
                 if gate_result_bstream and not gate_result_bstream.get('passed'):
                     chapter_info['gate_warning'] = gate_result_bstream
+                # S1：流式批量模式 critical 命中：
+                # - 回滚本批 DB 改动 + 推送 gate_blocked 事件 + 结束流
+                if gate_result_bstream and gate_result_bstream.get('blocked') and not ignore_gates:
+                    try: db.session.rollback()
+                    except Exception: pass
+                    yield f'data: {json.dumps({"type": "gate_blocked", "ignore_gates_required": True, "chapter_num": cur_ch, "gate_result": gate_result_bstream, "block_reason": f"第{cur_ch}章触发落地门禁 critical，已回滚本批写入。勾选忽略门禁后再提交。"}, ensure_ascii=False)}\n\n'
+                    # 直接结束流
+                    yield f'data: {json.dumps({"type": "batch_done", "total": i, "failed_count": 1, "failed": [{"chapter_num": cur_ch, "error": "gate_blocked"}]}, ensure_ascii=False)}\n\n'
+                    return
                 results.append(chapter_info)
                 prev_polished = polished_content
 
