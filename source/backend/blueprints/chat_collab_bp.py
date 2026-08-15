@@ -3084,6 +3084,9 @@ def smart_suggest():
     dim_key = data.get('dimension')
     requirement = (data.get('requirement') or '').strip()
     skill_pack_ids = data.get('skill_pack_ids') or []
+    # 用户在智驾窗口直接贴了自己的完整内容（>300字且维度空时前端会传）：
+    # 把"用户方案"放在 AI 方案最前面，供作者选择"按我的直接落地"。
+    user_paste = (data.get('user_paste') or '').strip()
 
     if not book_id or dim_key not in _DIM_KEY_TO_SPEC:
         return jsonify({'error': '缺少 book_id 或 dimension 无效'}), 400
@@ -3348,7 +3351,29 @@ def smart_suggest():
         s['id'] = f'sug_{i + 1}'
 
     if not suggestions:
-        return jsonify({'error': 'AI 未返回有效方案，请重试或调整需求'}), 500
+        # 只有用户方案时，允许 suggestions 仅有 1 条（用户自己的），不强制要求 3-5 条
+        if not user_paste:
+            return jsonify({'error': 'AI 未返回有效方案，请重试或调整需求'}), 500
+
+    # 把用户贴的完整内容作为"我的方案"放在 AI 方案最前面
+    if user_paste:
+        _title = re.sub(r'\s+', ' ', user_paste[:30]).strip()
+        if len(_title) > 18:
+            _title = _title[:18] + '…'
+        _preview = user_paste[:160] + ('…' if len(user_paste) > 160 else '')
+        suggestions.insert(0, {
+            'id': 'user_0',
+            'title': f'我的方案：{_title or "用户自定义"}',
+            'preview': _preview,
+            '_from_user': True,
+        })
+    # 重新编号 id（用户方案保持 user_0，AI 方案从 sug_1 开始）
+    _ai_idx = 0
+    for s in suggestions:
+        if s.get('_from_user'):
+            continue
+        _ai_idx += 1
+        s['id'] = f'sug_{_ai_idx}'
 
     # 返回值里带上参数同步备注（若用户在需求里说"改成25卷"等），前端可在智驾里显示小字提示
     meta = {}
@@ -3384,6 +3409,8 @@ def smart_generate():
     requirement = (data.get('requirement') or '').strip()
     skill_pack_ids = data.get('skill_pack_ids') or []
     session_id = data.get('session_id')
+    # 用户选中了"我的方案"并要直接落地：跳过 LLM，原样 delta 输出 suggestion 并产卡片，保证内容不被 AI 改写
+    from_user_paste = bool(data.get('from_user_paste'))
 
     if not book_id or dim_key not in _DIM_KEY_TO_SPEC or not suggestion:
         return jsonify({'error': '参数无效：需要 book_id/dimension/suggestion'}), 400
@@ -3598,6 +3625,54 @@ def smart_generate():
                     yield sse({'type': 'meta', 'kind': 'dependency_warning', 'info': readiness})
             except Exception:
                 pass
+
+            # 用户方案直接落地：不调用 LLM，原样流式 delta，保证用户原文一字不改
+            if from_user_paste:
+                clean_content = suggestion
+                if dim_key == 'timeline':
+                    # 保留 JSON 结构，仅剥 markdown 代码块包裹
+                    fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', clean_content)
+                    if fence:
+                        clean_content = fence.group(1).strip()
+                else:
+                    clean_content = _clean_text_to_plain(clean_content)
+                    if dim_key == 'character_profiles' and clean_content.lstrip().startswith('['):
+                        clean_content = _character_profiles_to_text(clean_content)
+                # 流式 delta：按 80 字/块输出，保持前端打字效果一致
+                _chunk_sz = 80
+                for _i in range(0, len(clean_content), _chunk_sz):
+                    yield sse({'type': 'delta', 'content': clean_content[_i:_i + _chunk_sz]})
+                # 世界观/核心设定 维度：用户原文中如果没有卡片，也不 AI 衍生（用户贴啥就是啥）
+                extra_cards = _parse_card_markers(clean_content)
+                if extra_cards:
+                    if dim_key == 'timeline':
+                        body = _strip_card_markers(clean_content)
+                    else:
+                        body = _clean_text_to_plain(_strip_card_markers(clean_content))
+                else:
+                    body = clean_content
+                card = {
+                    'id': str(uuid.uuid4())[:8],
+                    'type': spec['card'],
+                    'title': f'{spec["label"]}（用户方案直接落地）',
+                    'content': body,
+                    'target': _CARD_TARGET.get(spec['card'], spec['label']),
+                }
+                yield sse({'type': 'card', 'card': card, 'session_id': session_id})
+                for ec in extra_cards:
+                    ec['content'] = _clean_text_to_plain(ec.get('content', ''))
+                    if ec.get('title'):
+                        ec['title'] = _clean_text_to_plain(ec['title'])
+                    yield sse({'type': 'card', 'card': ec, 'session_id': session_id})
+                history = load_session_messages(session)
+                history.append({'role': 'user', 'content': f'落地用户{spec["label"]}方案'})
+                history.append({'role': 'assistant', 'content': body,
+                                'cards': [{**c, 'status': 'pending'} for c in [card] + extra_cards]})
+                session.messages_json = json.dumps(history, ensure_ascii=False)
+                session.updated_at = datetime.now(timezone.utc)
+                db.session.commit()
+                yield sse({'type': 'done', 'session_id': session_id})
+                return
 
             # timeline 维度需要更多 token（全书各卷 JSON 输出较长）
             max_tok = 6000 if dim_key == 'timeline' else 2000

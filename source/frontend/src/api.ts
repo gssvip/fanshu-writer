@@ -807,20 +807,20 @@ export const api = {
       '/ai/smart/dimensions'
     ),
   // 设定Tab：多选意见生成（用户提需求 → AI给 3-5 个方案）
-  smartSuggest: (bookId: string, dimension: string, requirement: string, skillPackIds: string[] = []) =>
-    request<{ suggestions: Array<{ id: string; title: string; preview: string }>; dimension: string; dimension_label: string; requirement: string }>(
+  smartSuggest: (bookId: string, dimension: string, requirement: string, skillPackIds: string[] = [], userPaste?: string) =>
+    request<{ suggestions: Array<{ id: string; title: string; preview: string; _from_user?: boolean; _full_content?: string }>; dimension: string; dimension_label: string; requirement: string }>(
       '/ai/smart/suggest',
-      { method: 'POST', body: JSON.stringify({ book_id: bookId, dimension, requirement, skill_pack_ids: skillPackIds }) }
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, dimension, requirement, skill_pack_ids: skillPackIds, user_paste: userPaste }) }
     ),
   // 设定Tab：基于选中意见生成最终内容（SSE 流式）
-  smartGenerateStream: (bookId: string, dimension: string, suggestion: string, requirement: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal) => {
+  smartGenerateStream: (bookId: string, dimension: string, suggestion: string, requirement: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal, fromUserPaste?: boolean) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const cfg: RequestInit = {
       method: 'POST',
       headers,
-      body: JSON.stringify({ book_id: bookId, dimension, suggestion, requirement, skill_pack_ids: skillPackIds, session_id: sessionId }),
+      body: JSON.stringify({ book_id: bookId, dimension, suggestion, requirement, skill_pack_ids: skillPackIds, session_id: sessionId, from_user_paste: fromUserPaste }),
     };
     if (signal) cfg.signal = signal;
     return fetch(`${getApiBaseUrl()}/ai/smart/generate`, cfg);

@@ -552,8 +552,8 @@ export default function ChatPanel() {
   // 智驾专属状态
   const [dimensions, setDimensions] = useState<DimSpec[]>([]);
   const [selectedDim, setSelectedDim] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<Array<{ id: string; title: string; preview: string }>>([]);
-  const [selectedSuggestion, setSelectedSuggestion] = useState<{ id: string; title: string; preview: string } | null>(null);
+  const [suggestions, setSuggestions] = useState<Array<{ id: string; title: string; preview: string; _from_user?: boolean; _full_content?: string }>>([]);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<{ id: string; title: string; preview: string; _from_user?: boolean; _full_content?: string } | null>(null);
   const [loadingSuggest, setLoadingSuggest] = useState(false);
   const [bible, setBible] = useState<BookBible | null>(null);
   const [skillPacks, setSkillPacks] = useState<SkillPack[]>([]);
@@ -665,6 +665,17 @@ export default function ChatPanel() {
       setNextChapterNum(r.next_chapter_num);
     }).catch(() => {});
   }, [chatPanelOpen, bookId, refreshProgress, refreshHistory]);
+
+  // 监听创作进度需要刷新事件（在各维度编辑面板保存后派发）
+  useEffect(() => {
+    const handler = () => {
+      if (chatPanelOpen && bookId) {
+        refreshProgress();
+      }
+    };
+    window.addEventListener('fanshu:progress-needs-refresh', handler);
+    return () => window.removeEventListener('fanshu:progress-needs-refresh', handler);
+  }, [chatPanelOpen, bookId, refreshProgress]);
 
   // 加载聊天会话：优先 chatPanelSessionId 指定的，否则最新
   // 用 ref 记录上次已加载的 sessionId，避免 sessionId 同步回 store 后重复加载导致消息闪烁
@@ -926,6 +937,9 @@ export default function ChatPanel() {
     if (!bookId || !selectedDim || streaming) return;
     // 仅方案选择型维度才走多选意见流程
     if (!shouldShowSuggestions(selectedDim)) return;
+    const dimStatus = progress?.dims.find(d => d.field === selectedDim)?.status;
+    const isUserPaste = dimStatus === 'empty' && text.length > 300;
+    const userRawContent = text;
     setInput('');
     setStreamError('');
     setSuggestions([]);
@@ -933,15 +947,20 @@ export default function ChatPanel() {
     setLoadingSuggest(true);
     appendUserAi(`【${dimensions.find(d => d.key === selectedDim)?.label || selectedDim}】${text}`);
     try {
-      const r = await api.smartSuggest(bookId, selectedDim, text, settingPacks);
+      const r = await api.smartSuggest(bookId, selectedDim, text, settingPacks, isUserPaste ? userRawContent : undefined);
+      // 给用户方案补充完整内容字段
+      if (isUserPaste && r.suggestions?.length > 0 && r.suggestions[0]._from_user) {
+        r.suggestions[0]._full_content = userRawContent;
+      }
       setSuggestions(r.suggestions || []);
       setMessages(prev => {
         const next = [...prev];
         const last = next[next.length - 1];
         if (last && last.role === 'assistant') {
+          const userPasteHint = isUserPaste ? '（检测到你已粘贴完整创作内容，第一个方案「📝 我的创作内容」可直接按你的内容落地）' : '';
           next[next.length - 1] = {
             ...last,
-            content: `已为你生成 ${r.suggestions.length} 个「${r.dimension_label}」方案，请选择一个（点击下方方案）：`,
+            content: `已为你生成 ${r.suggestions.length} 个「${r.dimension_label}」方案，请选择一个（点击下方方案）：${userPasteHint}`,
           };
         }
         return next;
@@ -952,7 +971,7 @@ export default function ChatPanel() {
     } finally {
       setLoadingSuggest(false);
     }
-  }, [input, bookId, selectedDim, streaming, settingPacks, dimensions, appendUserAi, removeEmptyAi]);
+  }, [input, bookId, selectedDim, streaming, settingPacks, dimensions, progress, appendUserAi, removeEmptyAi]);
 
   // 2. 选中意见 → 进入"基于该方案修改/生成"模式
   const handleGenerate = useCallback((suggestion: { id: string; title: string; preview: string }, index: number) => {
@@ -979,7 +998,9 @@ export default function ChatPanel() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.smartGenerateStream(bookId, selectedDim, selectedSuggestion.preview, modification, settingPacks, sessionId || undefined, ctrl.signal);
+      const isFromUser = !!selectedSuggestion._from_user;
+      const suggestionContent = isFromUser ? (selectedSuggestion._full_content || selectedSuggestion.preview) : selectedSuggestion.preview;
+      const res = await api.smartGenerateStream(bookId, selectedDim, suggestionContent, modification, settingPacks, sessionId || undefined, ctrl.signal, isFromUser);
       await consumeSSE(res, ctrl);
       refreshProgress();
       refreshHistory();
@@ -2071,15 +2092,25 @@ export default function ChatPanel() {
               <div className="smart-suggestions">
                 <div className="smart-suggestions-head">请选择一个方案，AI 将基于它生成完整内容：</div>
                 {suggestions.map((s, i) => {
-                  const schemeLabel = ['方案一', '方案二', '方案三', '方案四', '方案五'][i] || `方案${i + 1}`;
+                  let schemeLabel = ['方案一', '方案二', '方案三', '方案四', '方案五'][i] || `方案${i + 1}`;
+                  if (s._from_user) {
+                    const userSchemeCount = suggestions.filter(x => x._from_user).length;
+                    schemeLabel = `📝 我的方案${userSchemeCount > 1 ? ` ${i + 1}` : ''}`;
+                  }
                   return (
                     <button
                       key={s.id}
-                      className="smart-suggestion-item"
+                      className={`smart-suggestion-item ${s._from_user ? 'user-suggestion' : ''}`}
                       onClick={() => handleGenerate(s, i)}
                       disabled={streaming}
                     >
-                      <div className="smart-suggestion-title">{schemeLabel}：{s.title}</div>
+                      {s._from_user && (
+                        <div className="user-suggestion-badge">📝 我的创作内容 · 直接落地不改动原文</div>
+                      )}
+                      <div className="smart-suggestion-title">
+                        {!s._from_user && <>{schemeLabel}：</>}
+                        {s.title}
+                      </div>
                       <div className="smart-suggestion-preview">{s.preview}</div>
                     </button>
                   );

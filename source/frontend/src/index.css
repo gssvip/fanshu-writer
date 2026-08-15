@@ -2374,6 +2374,23 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   color: var(--text-muted); background: transparent; border: none; cursor: pointer;
 }
 .smart-suggestion-cancel:hover { color: var(--danger); }
+.user-suggestion {
+  border-left: 4px solid #e67e22 !important;
+  background: linear-gradient(90deg, rgba(230,126,34,0.08) 0%, var(--bg-secondary) 60%) !important;
+}
+.user-suggestion:hover:not(:disabled) {
+  border-color: #e67e22 !important;
+  background: linear-gradient(90deg, rgba(230,126,34,0.15) 0%, var(--accent-light) 100%) !important;
+}
+.user-suggestion-badge {
+  display: inline-block; margin-bottom: 6px;
+  padding: 3px 10px; border-radius: 12px;
+  background: #e67e22; color: #fff;
+  font-size: 11px; font-weight: 600; line-height: 1.4;
+}
+.user-suggestion .smart-suggestion-title {
+  color: #e67e22 !important;
+}
 
 /* 主操作栏（去AI Tab） */
 .smart-main-action-bar {
