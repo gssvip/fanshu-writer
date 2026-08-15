@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useStore } from '../store';
 import { api } from '../api';
-import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible, ImpactPreview } from '../types';
+import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible } from '../types';
 import CarLogo from './CarLogo';
+// Q1：直接复用现有实体管理弹窗（跨维度重命名/合并），不再在 ChatPanel 里重复造"动作影响预览"轮子
+import EntityRegistryModal from '../pages/EntityRegistryModal';
 
 const __BUILD_TAG__ = 'v3-0814';
 
@@ -577,20 +579,12 @@ export default function ChatPanel() {
   const [reviewing, setReviewing] = useState(false);
   // 修正任务清单（从防遗忘报告违规项带入，支持多章/多维度连续修正并追踪进度）
   const [fixTasks, setFixTasks] = useState<Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string; done?: boolean; chapterId?: string | null }>>([]);
-  // M4: 系统优化建议
+  // Q1：实体管理弹窗（复用 WritePage 里已有的 EntityRegistryModal）
+  const [showEntityRegistry, setShowEntityRegistry] = useState(false);
+  // Q2：系统优化建议（从顶栏移入「校审」Tab，保留数据模型）
   const [optimizationReport, setOptimizationReport] = useState<{ ready: boolean; failure_count: number; suggestions: Array<any> } | null>(null);
-  const [showOptimizationReport, setShowOptimizationReport] = useState(false);
-  // M4: 动作影响预览
-  const [showImpactPreview, setShowImpactPreview] = useState(false);
-  const [impactPreview, setImpactPreview] = useState<ImpactPreview | null>(null);
-  const [impactLoading, setImpactLoading] = useState(false);
-  const [impactAction, setImpactAction] = useState<'rename_entity' | 'edit_dim'>('rename_entity');
-  const [impactOldName, setImpactOldName] = useState('');
-  const [impactNewName, setImpactNewName] = useState('');
-  const [impactEntityType, setImpactEntityType] = useState('character');
-  const [impactDimKey, setImpactDimKey] = useState('character_profiles');
 
-  // P1-3: 全文重算事件日志（后台批处理）
+  // Q2 合并：事件日志重算（原先在工具栏浮层，现在合并进「校审」Tab 子面板）
   const [showBackfill, setShowBackfill] = useState(false);
   const [backfillLLM, setBackfillLLM] = useState<'auto' | 'always' | 'never'>('auto');
   const [backfillRunning, setBackfillRunning] = useState(false);
@@ -599,6 +593,7 @@ export default function ChatPanel() {
     progress?: { done: number; total: number; added: number; llm: number; rule: number };
     log: string[];
   } | null>(null);
+  // Q2 合并：系统优化建议（原先 showOptimizationReport 浮层 → 合并进校审 Tab，不需要独立浮层开关了）
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -635,24 +630,8 @@ export default function ChatPanel() {
     } catch { /* ignore */ }
   }, [bookId]);
 
-  // M4: 拉取动作级联影响预览
-  const fetchImpactPreview = useCallback(async () => {
-    if (!bookId) return;
-    setImpactLoading(true);
-    try {
-      const payload = impactAction === 'rename_entity'
-        ? { old_name: impactOldName, new_name: impactNewName, entity_type: impactEntityType }
-        : { dim_key: impactDimKey };
-      const r = await api.previewImpact(bookId, impactAction, payload);
-      setImpactPreview(r);
-    } catch (e: any) {
-      setImpactPreview({ action: impactAction, summary: e?.message || '获取影响预览失败', tasks: [], warnings: [] });
-    } finally {
-      setImpactLoading(false);
-    }
-  }, [bookId, impactAction, impactOldName, impactNewName, impactEntityType, impactDimKey]);
-
   // P1-3: 事件全文重算（支持 JSON 与 SSE 两种模式）
+  // 位置：原工具栏浮层，Q2 合并后进入「校审」Tab 的子面板。这里只保留函数本体不变。
   const runBackfill = useCallback(async () => {
     if (!bookId) return;
     setBackfillRunning(true);
@@ -1696,8 +1675,8 @@ export default function ChatPanel() {
               </div>
               <div className="chat-panel-tools">
                 <button className="chat-tool-btn" onClick={() => { setShowProgress(s => !s); }} title="创作进度">🗺️<span className="chat-tool-label">创作进度</span></button>
-                <button className="chat-tool-btn" onClick={() => { setShowOptimizationReport(s => !s); }} title="系统优化建议">
-                  🧠{optimizationReport && optimizationReport.failure_count > 0 && <span className="chat-tool-badge">{optimizationReport.failure_count}</span>}<span className="chat-tool-label">系统优化</span>
+                <button className="chat-tool-btn" onClick={() => { setShowEntityRegistry(true); }} title="实体管理（跨维度重命名/合并实体）">
+                  🏗️<span className="chat-tool-label">实体管理</span>
                 </button>
                 <button className="chat-tool-btn" onClick={() => { setShowHistory(s => !s); refreshHistory(); }} title="历史会话">🕘<span className="chat-tool-label">历史会话</span></button>
                 <button className="chat-tool-btn" onClick={handleNewSession} title="新会话">✨<span className="chat-tool-label">新会话</span></button>
@@ -1739,56 +1718,13 @@ export default function ChatPanel() {
               </div>
             )}
 
-            {/* 系统优化建议浮层 */}
-            {showOptimizationReport && (
-              <div className="chat-panel-side">
-                <div className="opt-report">
-                  <div className="opt-report-head">
-                    <span>🧠 系统优化建议</span>
-                    <button className="opt-report-close" onClick={() => setShowOptimizationReport(false)}>×</button>
-                  </div>
-                  {!optimizationReport || optimizationReport.failure_count === 0 ? (
-                    <div className="opt-report-empty">
-                      <div className="opt-report-empty-icon">✅</div>
-                      <div>当前未检测到高频失败模式</div>
-                      <div className="opt-report-empty-sub">系统会在生成自检发现 error 时自动学习并给出 prompt 优化建议</div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="opt-report-summary">
-                        累计发现 <strong>{optimizationReport.failure_count}</strong> 条失败记录，已生成 {optimizationReport.suggestions.length} 条优化建议
-                      </div>
-                      <div className="opt-report-list">
-                        {optimizationReport.suggestions.map((s, idx) => (
-                          <div key={idx} className={`opt-report-item sev-${s.severity || 'medium'}`}>
-                            <div className="opt-report-item-head">
-                              <span className="opt-report-cat">{s.category}</span>
-                              <span className="opt-report-count">{s.count} 次</span>
-                              <span className={`opt-report-sev sev-${s.severity || 'medium'}`}>{s.severity === 'high' ? '高' : s.severity === 'low' ? '低' : '中'}</span>
-                            </div>
-                            <div className="opt-report-pattern">{s.problem_pattern}</div>
-                            {s.affected_dims && s.affected_dims.length > 0 && (
-                              <div className="opt-report-dims">
-                                影响维度：{s.affected_dims.map((dk: string) => dimensions.find(d => d.key === dk)?.label || dk).join('、')}
-                              </div>
-                            )}
-                            <div className="opt-report-patch">
-                              <div className="opt-report-patch-title">建议优化：</div>
-                              <div className="opt-report-patch-body">{s.proposed_patch}</div>
-                            </div>
-                            {s.sample_snippet && (
-                              <div className="opt-report-snippet">
-                                <div className="opt-report-snippet-title">示例片段：</div>
-                                <pre>{s.sample_snippet}</pre>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
+            {/* Q1：直接复用实体管理弹窗（跨维度重命名/合并），替换掉原来动作影响预览里的弱版 rename 界面 */}
+            {showEntityRegistry && bookId && (
+              <EntityRegistryModal
+                bookId={bookId}
+                onClose={() => setShowEntityRegistry(false)}
+                onRenamed={() => { refreshProgress(); }}
+              />
             )}
 
             {/* Tab 工具区（根据当前Tab显示不同工具） */}
@@ -1903,152 +1839,10 @@ export default function ChatPanel() {
                     </div>
                   )}
 
-                  {/* P1-3: 全文重算事件日志（后台批处理入口） */}
-                  <div className="impact-preview-panel">
-                    <div className="impact-preview-head" onClick={() => setShowBackfill(s => !s)}>
-                      <span>🧩 事件日志·全文重算</span>
-                      <span className="impact-preview-toggle">{showBackfill ? '收起 ▲' : '展开 ▼'}</span>
-                    </div>
-                    {showBackfill && (
-                      <div className="impact-preview-body">
-                        <div className="impact-preview-actions">
-                          <label style={{fontSize:12,color:'var(--text-secondary)'}}>抽取策略：</label>
-                          <select value={backfillLLM} onChange={e => setBackfillLLM(e.target.value as any)} disabled={backfillRunning}>
-                            <option value="auto">auto（推荐：卷首/高潮/卷末用LLM，其他章正则）</option>
-                            <option value="always">always（全部LLM，成本高，保真度最佳）</option>
-                            <option value="never">never（只用正则，零成本，速度最快）</option>
-                          </select>
-                          <button onClick={runBackfill} disabled={streaming || backfillRunning} style={{minWidth:120}}>
-                            {backfillRunning ? '运行中…' : '🚀 开始重算'}
-                          </button>
-                        </div>
-                        {backfillStatus && (
-                          <div className="backfill-status">
-                            <div><strong>状态：</strong>{backfillStatus.text}</div>
-                            {(backfillStatus.progress !== undefined) && (
-                              <div className="backfill-progress-row">
-                                <div className="backfill-progress-bar">
-                                  <div className="backfill-progress-fill"
-                                       style={{width: `${Math.round(100 * backfillStatus.progress.done / (backfillStatus.progress.total || 1))}%`}} />
-                                </div>
-                                <span>{backfillStatus.progress.done}/{backfillStatus.progress.total} ·
-                                  事件+{backfillStatus.progress.added} · LLM {backfillStatus.progress.llm} · 正则 {backfillStatus.progress.rule}
-                                </span>
-                              </div>
-                            )}
-                            {backfillStatus.log.length > 0 && (
-                              <details>
-                                <summary>详细日志</summary>
-                                <pre className="backfill-log">{backfillStatus.log.join('\n')}</pre>
-                              </details>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* M4: 动作影响预览（改人物/改维度前先看会联动哪些地方） */}
-                  <div className="impact-preview-panel">
-                    <div className="impact-preview-head" onClick={() => setShowImpactPreview(s => !s)}>
-                      <span>⚡ 动作影响预览</span>
-                      <span className="impact-preview-toggle">{showImpactPreview ? '收起 ▲' : '展开 ▼'}</span>
-                    </div>
-                    {showImpactPreview && (
-                      <div className="impact-preview-body">
-                        <div className="impact-preview-actions">
-                          <select value={impactAction} onChange={e => { setImpactAction(e.target.value as any); setImpactPreview(null); }} disabled={streaming || impactLoading}>
-                            <option value="rename_entity">改名/替换实体</option>
-                            <option value="edit_dim">修改设定维度</option>
-                          </select>
-                          {impactAction === 'rename_entity' ? (
-                            <>
-                              <input type="text" placeholder="旧名称" value={impactOldName} onChange={e => setImpactOldName(e.target.value)} disabled={streaming || impactLoading} />
-                              <input type="text" placeholder="新名称" value={impactNewName} onChange={e => setImpactNewName(e.target.value)} disabled={streaming || impactLoading} />
-                              <select value={impactEntityType} onChange={e => setImpactEntityType(e.target.value)} disabled={streaming || impactLoading}>
-                                <option value="character">人物</option>
-                                <option value="faction">势力</option>
-                                <option value="location">地点</option>
-                                <option value="item">物品</option>
-                                <option value="skill">技能</option>
-                              </select>
-                            </>
-                          ) : (
-                            <select value={impactDimKey} onChange={e => setImpactDimKey(e.target.value)} disabled={streaming || impactLoading}>
-                              {dimensions.filter(d => d.key !== 'general').map(d => (
-                                <option key={d.key} value={d.key}>{d.label}</option>
-                              ))}
-                            </select>
-                          )}
-                          <button onClick={fetchImpactPreview} disabled={streaming || impactLoading || (impactAction === 'rename_entity' && (!impactOldName.trim() || !impactNewName.trim()))}>
-                            {impactLoading ? '计算中…' : '预览影响'}
-                          </button>
-                        </div>
-                        {impactPreview && (
-                          <div className="impact-preview-result">
-                            <div className="impact-preview-summary">{impactPreview.summary}</div>
-                            {impactPreview.warnings.length > 0 && (
-                              <div className="impact-preview-warnings">
-                                {impactPreview.warnings.map((w, i) => <div key={i}>⚠️ {w}</div>)}
-                              </div>
-                            )}
-                            {impactPreview.tasks.length > 0 ? (
-                              <div className="impact-preview-tasks">
-                                {impactPreview.tasks.map((t, i) => {
-                                  const r = t.result || {};
-                                  const sev = (r.status === 'conflict') ? 'critical'
-                                    : (r.status === 'warn') ? 'warning'
-                                    : (r.issues && r.issues.some((x: any) => x.severity === 'critical')) ? 'critical'
-                                    : (r.issues && r.issues.some((x: any) => x.severity === 'warning')) ? 'warning' : 'ok';
-                                  const badge = sev === 'critical' ? '🔴 冲突'
-                                    : sev === 'warning' ? '🟡 警告'
-                                    : (r.critical || r.warning) ? (r.critical ? '🔴 冲突' : '🟡 警告')
-                                    : '✅ 通过';
-                                  return (
-                                  <div
-                                    key={i}
-                                    className={`impact-task ${t.auto ? 'impact-task-auto' : 'impact-task-manual'} ${sev === 'critical' ? 'impact-task-conflict' : sev === 'warning' ? 'impact-task-warn' : ''}`}
-                                  >
-                                    <div className="impact-task-title">
-                                      <span>{t.auto ? '🤖' : '✋'} {t.action}</span>
-                                      <span className="impact-task-target">{t.target_label || t.target_dim}{t.target_chapter ? ` · 第${t.target_chapter}章` : ''}</span>
-                                      <span className={`impact-task-sev sev-${sev}`}>{badge}</span>
-                                    </div>
-                                    <div className="impact-task-reason">{t.reason}</div>
-                                    {(r.issues && r.issues.length > 0) && (
-                                      <div className="impact-consistency-issues">
-                                        {r.issues.map((it, idx) => (
-                                          <div key={idx} className={`consistency-issue consistency-issue-${it.severity}`}>
-                                            <div className="ci-head">
-                                              <span className={`ci-dot ci-dot-${it.severity}`}></span>
-                                              <span className="ci-rule">{it.rule}</span>
-                                              <span className="ci-sev-badge">
-                                                {it.severity === 'critical' && '严重'}
-                                                {it.severity === 'warning' && '警告'}
-                                                {it.severity === 'note' && '提示'}
-                                              </span>
-                                            </div>
-                                            <div className="ci-quote-row"><strong>新内容：</strong><span>{it.source_quote}</span></div>
-                                            <div className="ci-quote-row"><strong>已有内容：</strong><span>{it.target_quote}</span></div>
-                                            <div className="ci-suggestion">💡 {it.suggestion}</div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                    {r.preview_mode && r.note && (
-                                      <div className="impact-task-preview-note">👁️ {r.note}</div>
-                                    )}
-                                  </div>
-                                );})}
-                              </div>
-                            ) : (
-                              <div className="impact-preview-empty">未检测到需要联动的任务</div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                  {/* (Q1) 原来的"⚡动作影响预览"面板已移除：
+                      · rename_entity → 直接走顶栏「🏗️实体管理」打开 EntityRegistryModal（与创作页实体管理同一套API/UI）
+                      · edit_dim → 未来若有需要再加，不与实体管理功能重复
+                  */}
                 </>
               )}
 
@@ -2264,6 +2058,120 @@ export default function ChatPanel() {
                     )}
                   </div>
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={reviewPacks} onToggle={(id) => toggleSkillPack('review', id)} compact />
+
+                  {/* Q2 合并：🧩 事件日志素材管理（原工具栏浮层）
+                     校审输入是"防遗忘/一致性检查"，事件日志是它们的素材来源与质量保障。
+                     重算后事件日志更准，校审出的防遗忘/一致性报告也更准。 */}
+                  <div className="impact-preview-panel">
+                    <div className="impact-preview-head" onClick={() => setShowBackfill(s => !s)}>
+                      <span>🧩 事件日志·素材管理</span>
+                      <span className="impact-preview-toggle">{showBackfill ? '收起 ▲' : '展开 ▼'}</span>
+                    </div>
+                    {showBackfill && (
+                      <div className="impact-preview-body">
+                        <div className="impact-preview-actions">
+                          <label style={{fontSize:12,color:'var(--text-secondary)'}}>抽取策略：</label>
+                          <select value={backfillLLM} onChange={e => setBackfillLLM(e.target.value as any)} disabled={backfillRunning}>
+                            <option value="auto">auto（推荐：卷首/高潮/卷末用LLM，其他章正则）</option>
+                            <option value="always">always（全部LLM，成本高，保真度最佳）</option>
+                            <option value="never">never（只用正则，零成本，速度最快）</option>
+                          </select>
+                          <button onClick={runBackfill} disabled={streaming || backfillRunning} style={{minWidth:120}}>
+                            {backfillRunning ? '运行中…' : '🚀 全文重算'}
+                          </button>
+                        </div>
+                        <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>
+                          重算完成后，再点上方「🔍 防遗忘 / ⚖️ 一致性」会基于最新事件日志给出更准的校审报告。
+                        </div>
+                        {backfillStatus && (
+                          <div className="backfill-status">
+                            <div><strong>状态：</strong>{backfillStatus.text}</div>
+                            {(backfillStatus.progress !== undefined) && (
+                              <div className="backfill-progress-row">
+                                <div className="backfill-progress-bar">
+                                  <div className="backfill-progress-fill"
+                                       style={{width: `${Math.round(100 * backfillStatus.progress.done / (backfillStatus.progress.total || 1))}%`}} />
+                                </div>
+                                <span>{backfillStatus.progress.done}/{backfillStatus.progress.total} ·
+                                  事件+{backfillStatus.progress.added} · LLM {backfillStatus.progress.llm} · 正则 {backfillStatus.progress.rule}
+                                </span>
+                              </div>
+                            )}
+                            {backfillStatus.log.length > 0 && (
+                              <details>
+                                <summary>详细日志</summary>
+                                <pre className="backfill-log">{backfillStatus.log.join('\n')}</pre>
+                              </details>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Q2 合并：🧠 系统学习与优化建议（原工具栏浮层）
+                     "系统优化建议"本质是 FailureDB → prompt 补丁建议；它与校审是同一类"发现问题→给建议→改创作"流程，
+                     所以都归到「校审」Tab。防遗忘/一致性检查出错会进 FailureDB，这里会自动出现优化建议。 */}
+                  <div className="opt-report-inline impact-preview-panel">
+                    <div className="impact-preview-head" style={{cursor: 'default'}}>
+                      <span>🧠 系统学习与优化建议
+                        {optimizationReport && optimizationReport.failure_count > 0 && (
+                          <span className="chat-tool-badge" style={{marginLeft:6,fontSize:10}}>{optimizationReport.failure_count}</span>
+                        )}
+                      </span>
+                      <button className="btn-ghost-sm" onClick={async () => {
+                        if (!bookId) return;
+                        try {
+                          const r = await api.getOptimizationReport(bookId);
+                          setOptimizationReport(r);
+                        } catch {}
+                      }} title="重新扫描 FailureDB">🔄 刷新</button>
+                    </div>
+                    <div className="impact-preview-body">
+                      {!optimizationReport || optimizationReport.failure_count === 0 ? (
+                        <div className="opt-report-empty" style={{padding: '10px 4px'}}>
+                          <div className="opt-report-empty-icon" style={{fontSize:20}}>✅</div>
+                          <div style={{fontSize:12}}>当前未检测到高频失败模式</div>
+                          <div className="opt-report-empty-sub" style={{fontSize:11}}>
+                            校审/门禁/章节校验失败的记录会自动进 FailureDB，累积到一定量后自动生成 prompt 优化建议。
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="opt-report-summary">
+                            累计发现 <strong>{optimizationReport.failure_count}</strong> 条失败记录，已生成 {optimizationReport.suggestions.length} 条优化建议
+                          </div>
+                          <div className="opt-report-list">
+                            {optimizationReport.suggestions.map((s, idx) => (
+                              <div key={idx} className={`opt-report-item sev-${s.severity || 'medium'}`}>
+                                <div className="opt-report-item-head">
+                                  <span className="opt-report-cat">{s.category}</span>
+                                  <span className="opt-report-count">{s.count} 次</span>
+                                  <span className={`opt-report-sev sev-${s.severity || 'medium'}`}>{s.severity === 'high' ? '高' : s.severity === 'low' ? '低' : '中'}</span>
+                                </div>
+                                <div className="opt-report-pattern">{s.problem_pattern}</div>
+                                {s.affected_dims && s.affected_dims.length > 0 && (
+                                  <div className="opt-report-dims">
+                                    影响维度：{s.affected_dims.map((dk: string) => dimensions.find(d => d.key === dk)?.label || dk).join('、')}
+                                  </div>
+                                )}
+                                <div className="opt-report-patch">
+                                  <div className="opt-report-patch-title">建议优化：</div>
+                                  <div className="opt-report-patch-body">{s.proposed_patch}</div>
+                                </div>
+                                {s.sample_snippet && (
+                                  <div className="opt-report-snippet">
+                                    <div className="opt-report-snippet-title">示例片段：</div>
+                                    <pre>{s.sample_snippet}</pre>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 </>
               )}
             </div>
