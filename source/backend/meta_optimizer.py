@@ -161,7 +161,7 @@ def log_failure(bb, category: str, dim_key: str = '', chapter_num: int = 0,
 
 
 def get_optimization_report(bb) -> Dict:
-    """返回给前端的"系统学习报告""""
+    """返回给前端的系统学习报告"""
     records = FailureDB.load(bb)
     analysis = MetaPromptOptimizer.analyze(records, min_count=3)
     return {

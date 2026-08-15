@@ -2762,6 +2762,7 @@ def optimization_report():
 def preview_impact():
     """M2: 动作影响预览。当前支持 rename_entity / edit_dim。"""
     from app import BookBible
+    from smart_planner import SmartPlanner
     data = request.json or {}
     book_id = data.get('book_id')
     action = data.get('action')
