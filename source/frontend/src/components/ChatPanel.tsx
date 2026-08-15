@@ -562,8 +562,6 @@ export default function ChatPanel() {
   // 各 Tab 独立的技能包选择（切换 Tab 互不干扰）
   const [settingPacks, setSettingPacks] = useState<string[]>([]);
   const [chapterPacks, setChapterPacks] = useState<string[]>([]);
-  const [deaiPacks_selected, setDeaiPacksSelected] = useState<string[]>([]);
-  const [reviewPacks, setReviewPacks] = useState<string[]>([]);
   const [latestChapter, setLatestChapter] = useState<{ id: string; title: string; order_index: number; word_count: number; status: string } | null>(null);
   const [nextChapterNum, setNextChapterNum] = useState(1);
   const [chapters, setChapters] = useState<Array<{ id: string; title: string; order_index: number; word_count: number; status: string }>>([]);
@@ -898,7 +896,7 @@ export default function ChatPanel() {
 
   // 各 Tab 独立的技能包切换
   const toggleSkillPack = useCallback((tab: SmartTab, id: string) => {
-    const setter = tab === 'setting' ? setSettingPacks : tab === 'chapter' ? setChapterPacks : tab === 'deai' ? setDeaiPacksSelected : setReviewPacks;
+    const setter = tab === 'setting' ? setSettingPacks : setChapterPacks;
     setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   }, []);
 
@@ -1299,7 +1297,7 @@ export default function ChatPanel() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.smartDeaiStream(bookId, targetId, deaiPacks_selected, sessionId || undefined, ctrl.signal);
+      const res = await api.smartDeaiStream(bookId, targetId, [], sessionId || undefined, ctrl.signal);
       await consumeSSE(res, ctrl, (card, meta) => {
         (card as any).__meta = meta;
       });
@@ -1314,7 +1312,7 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [bookId, deaiTargetId, streaming, chapters, deaiPacks_selected, sessionId, input, appendUserAi, removeEmptyAi, consumeSSE, refreshHistory]);
+  }, [bookId, deaiTargetId, streaming, chapters, sessionId, input, appendUserAi, removeEmptyAi, consumeSSE, refreshHistory]);
 
   // ========== 校审Tab：防遗忘 / 一致性检查（按卷，拉取动态文件+伏笔）==========
   // B：两步确认机制
@@ -1345,7 +1343,7 @@ export default function ChatPanel() {
       const r = await api.smartReview(
         bookId, mode,
         mode === 'consistency' ? (reviewChapterId || undefined) : undefined,
-        reviewPacks,
+        [],
         reviewVolumeIds
       );
       setMessages(prev => {
@@ -1396,7 +1394,7 @@ export default function ChatPanel() {
       setReviewing(false);
       setReviewArmedMode(null);  // 执行完解除确认，下一轮从头来
     }
-  }, [bookId, reviewing, reviewArmedMode, reviewChapterId, reviewVolumeIds, reviewPacks, volumes, chapters, appendUserAi, removeEmptyAi, refreshHistory]);
+  }, [bookId, reviewing, reviewArmedMode, reviewChapterId, reviewVolumeIds, volumes, chapters, appendUserAi, removeEmptyAi, refreshHistory]);
 
   // ========== 消息长按操作：编辑/删除/重新生成 ==========
   const handleEditMessage = useCallback((index: number, newContent: string) => {
@@ -2029,7 +2027,6 @@ export default function ChatPanel() {
                   {chapters.length > 10 && (
                     <div className="smart-deai-hint">💡 仅显示最新10章，其他章节可在下方消息框输入「第N章」指定</div>
                   )}
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={deaiPacks_selected} onToggle={(id) => toggleSkillPack('deai', id)} compact />
                 </>
               )}
 
@@ -2093,7 +2090,6 @@ export default function ChatPanel() {
                       </div>
                     )}
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={reviewPacks} onToggle={(id) => toggleSkillPack('review', id)} compact />
 
                   {/* Q2 合并：🧩 事件日志素材管理（原工具栏浮层）
                      校审输入是"防遗忘/一致性检查"，事件日志是它们的素材来源与质量保障。
