@@ -1,4 +1,8 @@
 #!/bin/bash
+# ⚠️ 已废弃（2026-08-15）：日常部署请勿手动跑此脚本。
+# 唯一事实源 = source/frontend/src + source/backend，push 到 main 后由
+# .github/workflows/ci.yml 自动完成：构建 → 同步 backend/static + 根目录 + dist
+# → 推 gh-pages → 触发 Render。本脚本仅作 CI 故障时的应急手动通道。
 set -e
 
 echo "=== 构建前端 ==="

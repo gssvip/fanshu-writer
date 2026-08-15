@@ -1,10 +1,22 @@
 name: CI
 
+# ============================================================================
+# 唯一事实源：source/frontend/src + source/backend
+# 前端产物（dist）由本 CI 构建一次，自动同步到全部发布位置：
+#   1. source/backend/static  → Render 后端托管的前端（后端 serve_frontend 优先级最高）
+#   2. source/frontend/dist   → 本地开发 / Render FANSHU_FRONTEND_DIST 环境变量指向
+#   3. 仓库根目录             → app.py 根目录兜底 fallback
+#   4. gh-pages 分支          → GitHub Pages（legacy 分支部署模式）
+# 禁止手动构建/手动同步产物（旧 deploy.sh 已废弃，仅留作应急）。
+# ============================================================================
+
 on:
   pull_request:
     paths:
       - "source/backend/**"
       - "source/frontend/src/**"
+      - "source/frontend/package.json"
+      - "source/frontend/package-lock.json"
       - "source/scripts/check-architecture.py"
       - ".github/workflows/ci.yml"
   push:
@@ -12,8 +24,13 @@ on:
     paths:
       - "source/backend/**"
       - "source/frontend/src/**"
+      - "source/frontend/package.json"
+      - "source/frontend/package-lock.json"
       - "source/scripts/check-architecture.py"
       - ".github/workflows/ci.yml"
+
+permissions:
+  contents: write  # deploy job 需回写构建产物到 main 并推送 gh-pages
 
 jobs:
   architecture-gate:
@@ -59,25 +76,87 @@ jobs:
       - name: 运行 pytest
         run: python -m pytest tests/ -v
 
-  # 部署：main 分支 push 且测试全绿后，自动触发 Render 部署
-  # 无需手动刷新 Render Dashboard
+  # 统一发布：测试全绿后 → 构建前端一次 → 同步所有产物位置 → 触发 Render
   deploy:
-    name: 触发 Render 部署
+    name: 统一构建发布（static/root/gh-pages/Render）
     needs: [architecture-gate, backend-test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: 调用 Render Deploy Hook
-        # RENDER_DEPLOY_HOOK_URL 需在 GitHub 仓库 Settings → Secrets → Actions 中配置
-        # 获取方式：Render Dashboard → 你的服务 → Settings → Deploy Hook → 复制 URL
+      - name: 拉取 main 最新代码
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: source/frontend/package-lock.json
+
+      - name: 构建前端
+        working-directory: source/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: 生成 version.json 与缓存戳
+        working-directory: source/frontend
+        run: |
+          TS=$(date +%s)
+          SHA="${{ github.sha }}"
+          JS_FILE=$(grep -oE 'assets/index-[^"]+\.js' dist/index.html | head -1)
+          printf '{"v":"%s","t":%s,"js":"%s"}' "$SHA" "$TS" "$JS_FILE" > dist/version.json
+          echo "version.json: $(cat dist/version.json)"
+          # 给 JS/CSS 引用加版本戳，防中间缓存（与旧 deploy.sh 行为一致）
+          sed -i "s|src=\"\(\./assets/index-[^\"]*\.js\)\"|src=\"\1?v=$TS\"|g" dist/index.html
+          sed -i "s|href=\"\(\./assets/index-[^\"]*\.css\)\"|href=\"\1?v=$TS\"|g" dist/index.html
+
+      - name: 同步产物 → source/backend/static（Render 托管源）
+        run: |
+          rm -rf source/backend/static
+          mkdir -p source/backend/static
+          cp -r source/frontend/dist/. source/backend/static/
+          echo "backend/static 已同步："
+          ls source/backend/static/assets/
+
+      - name: 同步产物 → 仓库根目录（app.py 兜底 fallback）
+        run: |
+          cp -f source/frontend/dist/index.html .
+          cp -f source/frontend/dist/version.json .
+          rm -rf assets && mkdir -p assets
+          cp -rf source/frontend/dist/assets/. assets/
+
+      - name: 提交产物回 main（含 source/frontend/dist）
+        run: |
+          git config user.name "fanshu-ci"
+          git config user.email "ci@fanshu.dev"
+          git add source/backend/static source/frontend/dist index.html version.json assets
+          if git diff --cached --quiet; then
+            echo "产物无变化，跳过提交"
+          else
+            git commit -m "deploy: 构建产物自动同步 ${{ github.sha }} [skip ci]"
+            git push
+            echo "已提交产物到 main"
+          fi
+
+      - name: 发布 gh-pages（GitHub Pages）
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./source/frontend/dist
+          publish_branch: gh-pages
+          force_orphan: true
+          commit_message: "deploy: auto ${{ github.sha }}"
+
+      - name: 触发 Render 部署
+        # 若 Render 服务已开启 Auto-Deploy on push（默认开启），上一步产物提交已触发部署，
+        # 此 Hook 作为兜底双保险；secret 未配置时静默跳过。
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
           if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
-            echo "⚠️  未配置 RENDER_DEPLOY_HOOK_URL secret，跳过自动部署"
-            echo "配置方法：GitHub 仓库 Settings → Secrets and variables → Actions → New repository secret"
-            echo "名称：RENDER_DEPLOY_HOOK_URL"
-            echo "值：Render Dashboard → 你的服务 → Settings → Deploy Hook 复制的 URL"
+            echo "⚠️  未配置 RENDER_DEPLOY_HOOK_URL secret（Render Auto-Deploy 开启时无需配置）"
             exit 0
           fi
           echo "🚀 触发 Render 部署..."
