@@ -52,6 +52,27 @@ class PostGenValidator:
             'timeline': self._validate_timeline,
             'plot_design': self._validate_outline,
             'character_profiles': self._validate_character,
+            'concept': lambda c: self._validate_length_and_sections(c, 'concept', 1200, [
+                '一句话故事核', '主题曲线', '核心冲突三角', '目标分层', '爽感机制',
+                '金手指', '魅力公式', '对手', '卖点钩子', '情感底色'
+            ]),
+            'key_rules': lambda c: self._validate_length_and_sections(c, 'key_rules', 1500, [
+                '力量总体系', '等级阶梯', '提升路径', '技能树', '资源与货币', '装备', '副职业',
+                '硬约束', '种族', '硬规则', '文明水平'
+            ]),
+            'worldbuilding': lambda c: self._validate_length_and_sections(c, 'worldbuilding', 2000, [
+                '世界总览', '起源', '地理', '气候', '势力', '阶级', '律法', '经济', '种族',
+                '宗教', '语言', '风俗', '军事', '交通', '未解之谜'
+            ]),
+            'locations': lambda c: self._validate_length_and_sections(c, 'locations', 1200, [
+                '归属势力', '核心建筑', '人口与阶层', '经济命脉', '剧情作用', '隐藏信息'
+            ], min_matches=5),
+            'foreshadowing': lambda c: self._validate_length_and_sections(c, 'foreshadowing', 1000, [
+                '埋设方式', '埋设位置', '回收位置', '权重', '依赖项', '爆点'
+            ], min_matches=5),
+            'style_guide': lambda c: self._validate_length_and_sections(c, 'style_guide', 1000, [
+                '调性', '节奏', '描写比例', '战斗描写', '对话风格', '视角', '爽点', '高压线'
+            ]),
         }
         handler = handlers.get(dim_key)
         if not handler:
@@ -81,6 +102,49 @@ class PostGenValidator:
     # ------------------------------------------------------------------
     # 维度专属校验
     # ------------------------------------------------------------------
+
+    _DIM_LABELS_CN = {
+        'concept': '构思',
+        'key_rules': '设定',
+        'worldbuilding': '世界观',
+        'locations': '地图',
+        'foreshadowing': '伏笔',
+        'style_guide': '文风',
+        'plot_design': '大纲',
+        'character_profiles': '人物',
+    }
+
+    def _validate_length_and_sections(self, content: str, dim_key: str,
+                                      min_chars: int, required_keywords: list,
+                                      min_matches: Optional[int] = None) -> List[ValidationIssue]:
+        """通用"字数下限 + 分节关键词命中"自检：防 AI 两句话应付。
+
+        - min_chars：强字数下限（低于 → error，触发重试）
+        - required_keywords：要求命中的分节关键词/节标题关键词池；命中数 < min(len(keywords)*0.6, min_matches or len(keywords)) → warn
+        """
+        issues: List[ValidationIssue] = []
+        dim_label = self._DIM_LABELS_CN.get(dim_key, dim_key)
+        # 字数下限：低于就 error 级（会自动重试一次），避免敷衍
+        n = len((content or '').strip())
+        if n < min_chars:
+            issues.append(ValidationIssue(
+                f'{dim_key.upper()}_TOO_SHORT', 'error',
+                f'【{dim_label}】内容过短：仅 {n} 字，铁律要求至少 {min_chars} 字，禁止两句话应付。',
+                auto_fix=f'严格按分节清单把每一节都写满细节（具体数字/例子/剧情落点），总量至少写 {min_chars} 字；宁可不那么精炼，也要把下游剧情/人物能复用的设定写全。'
+            ))
+        # 分节关键词命中检查（warn 级，不阻断但提示作者/触发 meta 回传让前端显示黄色警告）
+        if required_keywords:
+            threshold = min_matches or max(1, int(round(len(required_keywords) * 0.6)))
+            hits = [kw for kw in required_keywords if kw in (content or '')]
+            if len(hits) < threshold:
+                miss = [kw for kw in required_keywords if kw not in (content or '')]
+                issues.append(ValidationIssue(
+                    f'{dim_key.upper()}_SECTIONS_MISSING', 'warn',
+                    f'【{dim_label}】缺少明显的分节细项：命中 {len(hits)}/{len(required_keywords)} 个要求的分节关键词，应至少命中 {threshold} 个。疑似缺项关键词：{"、".join(miss[:8])}',
+                    auto_fix=f'按【{dim_label}】维度专属分节铁律，依次输出每一个分节，节标题保留，不要跳节。'
+                ))
+        return issues
+
     def _validate_timeline(self, content: str) -> List[ValidationIssue]:
         issues: List[ValidationIssue] = []
         # 剥离代码块包裹
