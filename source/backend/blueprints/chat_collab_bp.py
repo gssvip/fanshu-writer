@@ -2527,6 +2527,39 @@ def _clean_text_to_plain(text: str) -> str:
     return s.strip()
 
 
+def _downgrade_prompt_for_retry(messages, keep_dim=None):
+    """【空内容自动重试】用户反馈经常 EMPTY_OUTPUT，很常见一个根因是：
+    首调 messages 过长（铁律+上下文+N条历史）→ 模型 tokens 超限或因 system prompt 过长拒答 →
+    直接吐空内容 / 只有 think tokens / 前置空白。
+    这里做一个"降级精简"：
+    - 保留首条 system 但砍到 <= 2400 字（过长的铁律只留开头 2400 字核心约束）
+    - 保留最后 user/assistant 对话 8 条（含 retry_hint 那条），中间历史清空
+    - 若 keep_dim 提供了 timeline/character_profiles 这类，还会在 system 尾部加一句"请直接输出内容，不要空答"
+    """
+    if not messages:
+        return messages
+    try:
+        msgs = list(messages)
+        max_system_chars = 2400
+        processed = []
+        for i, m in enumerate(msgs):
+            if i == 0 and isinstance(m, dict) and m.get('role') == 'system':
+                s = m.get('content') or ''
+                if len(s) > max_system_chars:
+                    s = s[:max_system_chars] + '\n……（中间过长铁律已精简，直接输出有效内容即可）'
+                    if keep_dim:
+                        s += f'\n当前维度：{keep_dim}，请立刻输出对应内容，不要空答。'
+                processed.append({'role': 'system', 'content': s})
+                continue
+            processed.append(m)
+        # 保留最后 8 条（如果是重试场景 最后两条是 assistant_old + user_retry_hint，一定要带）
+        if len(processed) > 10:
+            processed = [processed[0]] + processed[-8:]
+        return processed
+    except Exception:
+        return messages
+
+
 # ============================================================================
 # AI 智驾：四Tab（设定/正文/去AI/校审）统一接口
 # 整合原 AI副驾 + AI总创作 + 章节AI创作 能力，统一入口
@@ -4133,47 +4166,77 @@ def smart_generate():
             content = ''
             cur_messages = messages
             retry_done = False
-            for _attempt in range(2):  # 首次 + 最多 1 次重试
+            max_attempts = 3  # 首次 + 最多 2 次重试（用户反馈经常空，提高到 2 次重试保障率）
+            for _attempt in range(max_attempts):
                 full = []
-                for chunk in gw.chat_stream(cur_messages, temperature=0.85, max_tokens=max_tok):
+                # 重试策略：温度 + max_tokens 逐次放宽，避免每次一模一样的参数又空回来
+                _temp = 0.85 + min(_attempt * 0.1, 0.2)
+                _max_tok = max_tok
+                if _attempt == 1:
+                    _max_tok = min(int(max_tok * 1.5), 8000)
+                elif _attempt >= 2:
+                    _max_tok = min(int(max_tok * 2), 8000)
+                # 第二次/第三次重试：进入"精简模式"——若消息序列太长，会截断中间过长的 system/铁律，避免 prompt tokens 溢出 → 模型直接拒答吐空
+                _msgs_for_this_call = cur_messages
+                if _attempt >= 1:
+                    _msgs_for_this_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
+                for chunk in gw.chat_stream(_msgs_for_this_call, temperature=_temp, max_tokens=_max_tok):
                     full.append(chunk)
                     yield sse({'type': 'delta', 'content': chunk})
-                content = ''.join(full).strip()
-                # timeline 维度：不清理 JSON 结构，仅剥离代码块包裹
+                raw_joined = ''.join(full)
+                # ====== 【EMPTY_OUTPUT 兜底】LLM 经常吐空但 raw chunks 实际有内容 ======
+                # 常见触发：think tokens / 前置空白 / 代码块被清完 / <p><br>被清完 / fence stripping 吞掉正文。
+                # 处理策略：若"清理后 content 为空"但"原始拼接内容 >= 80 字"，
+                # 则退回保守清理（仅去 fence，不做强清理），不要把模型真正写出的内容判定为空。
+                cleaned = raw_joined.strip()
                 if dim_key == 'timeline':
-                    fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+                    # timeline：仅 fence 清理 + JSON 规整（原逻辑）
+                    fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
                     if fence:
-                        content = fence.group(1).strip()
-                    # 尝试规范化为纯 JSON 数组
+                        cleaned = fence.group(1).strip()
                     try:
-                        parsed = json.loads(content)
+                        parsed = json.loads(cleaned)
                         if isinstance(parsed, dict):
                             for k in ['volumes', 'data', 'result', 'items', 'list']:
                                 if isinstance(parsed.get(k), list):
                                     parsed = parsed[k]
                                     break
                         if isinstance(parsed, list):
-                            content = json.dumps(parsed, ensure_ascii=False, indent=2)
+                            cleaned = json.dumps(parsed, ensure_ascii=False, indent=2)
                     except (json.JSONDecodeError, ValueError, TypeError):
                         pass
                 else:
-                    # 平台级纯文本清理（先清再解析卡片）
-                    content = _clean_text_to_plain(content)
-                    # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言，避免带符号英文内容
-                    if dim_key == 'character_profiles' and content.lstrip().startswith('['):
-                        content = _character_profiles_to_text(content)
-                # 自检校验
-                issues = validator.validate(dim_key, content)
+                    # 保守清理
+                    cleaned = _clean_text_to_plain(cleaned)
+                    # 人物维度：JSON 数组转自然语言
+                    if dim_key == 'character_profiles' and cleaned.lstrip().startswith('['):
+                        cleaned = _character_profiles_to_text(cleaned)
+                # EMPTY_OUTPUT 二次保护：清理后仍空 但 raw 内容有明显字数 → 用 raw(仅去 fence)
+                if (not cleaned or len(cleaned.strip()) < 2) and len(raw_joined.strip()) >= 80:
+                    # 仅剥离最外层围栏 + HTML 换行标签，保留一切内容，宁可脏也不要空
+                    fallback = raw_joined.strip()
+                    m = re.match(r'```(?:\w+)?\s*([\s\S]*?)\s*```\s*$', fallback)
+                    if m:
+                        fallback = m.group(1).strip()
+                    fallback = re.sub(r'<br\s*/?>', '\n', fallback)
+                    fallback = re.sub(r'</?p>', '\n', fallback)
+                    if len(fallback.strip()) >= 80:
+                        cleaned = fallback.strip()
+                content = cleaned
+                # 自检校验（raw 内容长度传入 → EMPTY_OUTPUT 报错信息能区分"模型完全没吐字"和"清理后变空"）
+                issues = validator.validate(dim_key, content, raw_length_hint=len((raw_joined or '').strip()))
                 _log_validation_issues(bb, dim_key, issues)
-                if not validator.should_retry(issues) or _attempt >= 1:
+                if not validator.should_retry(issues) or _attempt >= max_attempts - 1:
                     validation_meta = validator.to_meta(issues)
                     break
-                # 需要重试：带错误反馈重新生成
+                # 需要重试：带错误反馈重新生成（附带 attempt info 给前端显示"已自动重试 N"）
                 retry_hint = validator.build_retry_hint(issues)
                 yield sse({'type': 'meta', 'kind': 'validation_retry',
-                          'info': {'attempt': _attempt + 1, 'issues': validator.to_meta(issues)}})
+                          'info': {'attempt': _attempt + 1,
+                                   'max_attempts': max_attempts,
+                                   'issues': validator.to_meta(issues)}})
                 cur_messages = messages + [
-                    {'role': 'assistant', 'content': content},
+                    {'role': 'assistant', 'content': content or raw_joined},
                     {'role': 'user', 'content': retry_hint}
                 ]
             else:
@@ -4512,41 +4575,67 @@ def smart_batch():
                 validation_meta = []
                 try:
                     max_tok = 6000 if _is_tl else 1500
-                    # 【P0改进】自检重试循环
-                    for _attempt in range(2):
-                        content = ''
-                        for chunk in gw.chat_stream(cur_messages, temperature=0.8, max_tokens=max_tok):
-                            content += chunk
+                    # 【P0改进】自检重试循环（首次 + 最多 2 次重试，空内容兜底）
+                    max_attempts = 3
+                    for _attempt in range(max_attempts):
+                        raw_chunks = []
+                        # 重试策略：温度/max_tokens 逐次放宽
+                        _temp = 0.8 + min(_attempt * 0.1, 0.2)
+                        _max_tok = max_tok
+                        if _attempt == 1:
+                            _max_tok = min(int(max_tok * 1.5), 8000)
+                        elif _attempt >= 2:
+                            _max_tok = min(int(max_tok * 2), 8000)
+                        _msgs_call = cur_messages
+                        if _attempt >= 1:
+                            _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
+                        for chunk in gw.chat_stream(_msgs_call, temperature=_temp, max_tokens=_max_tok):
+                            raw_chunks.append(chunk)
                             yield sse({'type': 'delta', 'content': chunk})
+                        raw_joined = ''.join(raw_chunks)
+                        cleaned = raw_joined.strip()
                         # 清理/规范化
                         if _is_tl:
-                            fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', content.strip())
+                            fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
                             if fence:
-                                content = fence.group(1).strip()
+                                cleaned = fence.group(1).strip()
                             try:
-                                parsed = json.loads(content)
+                                parsed = json.loads(cleaned)
                                 if isinstance(parsed, dict):
                                     for k in ['volumes', 'data', 'result', 'items', 'list']:
                                         if isinstance(parsed.get(k), list):
                                             parsed = parsed[k]
                                             break
                                 if isinstance(parsed, list):
-                                    content = json.dumps(parsed, ensure_ascii=False, indent=2)
+                                    cleaned = json.dumps(parsed, ensure_ascii=False, indent=2)
                             except (json.JSONDecodeError, ValueError, TypeError):
                                 pass
                         else:
-                            content = _clean_text_to_plain(content.strip())
-                        # 自检
-                        issues = validator.validate(dim_key, content)
+                            cleaned = _clean_text_to_plain(cleaned)
+                        # EMPTY_OUTPUT 兜底：清理后空但 raw ≥80 字 → 保守清理仅去 fence/html
+                        if (not cleaned or len(cleaned.strip()) < 2) and len(raw_joined.strip()) >= 80:
+                            fallback = raw_joined.strip()
+                            fence_m = re.match(r'```(?:\w+)?\s*([\s\S]*?)\s*```\s*$', fallback)
+                            if fence_m:
+                                fallback = fence_m.group(1).strip()
+                            fallback = re.sub(r'<br\s*/?>', '\n', fallback)
+                            fallback = re.sub(r'</?p>', '\n', fallback)
+                            if len(fallback.strip()) >= 80:
+                                cleaned = fallback.strip()
+                        content = cleaned
+                        # 自检（raw 内容长度传入 → EMPTY_OUTPUT 报错信息能区分"模型吐空"和"清理后变空"）
+                        issues = validator.validate(dim_key, content, raw_length_hint=len((raw_joined or '').strip()))
                         _log_validation_issues(bb, dim_key, issues)
-                        if not validator.should_retry(issues) or _attempt >= 1:
+                        if not validator.should_retry(issues) or _attempt >= max_attempts - 1:
                             validation_meta = validator.to_meta(issues)
                             break
                         retry_hint = validator.build_retry_hint(issues)
                         yield sse({'type': 'meta', 'kind': 'validation_retry',
-                                  'info': {'dim': dim_key, 'attempt': _attempt + 1, 'issues': validator.to_meta(issues)}})
+                                  'info': {'dim': dim_key, 'attempt': _attempt + 1,
+                                           'max_attempts': max_attempts,
+                                           'issues': validator.to_meta(issues)}})
                         cur_messages = messages + [
-                            {'role': 'assistant', 'content': content},
+                            {'role': 'assistant', 'content': content or raw_joined},
                             {'role': 'user', 'content': retry_hint}
                         ]
                 except Exception as e:

@@ -35,10 +35,19 @@ class PostGenValidator:
     # ------------------------------------------------------------------
     # 对外主入口
     # ------------------------------------------------------------------
-    def validate(self, dim_key: str, content: str) -> List[ValidationIssue]:
-        """返回校验问题列表，空列表表示通过"""
+    def validate(self, dim_key: str, content: str, raw_length_hint: int = 0) -> List[ValidationIssue]:
+        """返回校验问题列表，空列表表示通过
+        raw_length_hint：SSE 流里原始拼接内容长度（仅在清理后 content 为空时用于提示用户"其实有内容但被清理/模型拒答空"，
+        帮助判断 EMPTY_OUTPUT 究竟是模型完全没吐字，还是 fence+清理把内容清干净了。）
+        """
         if not content or not content.strip():
-            return [ValidationIssue('EMPTY_OUTPUT', 'error', '生成内容为空')]
+            msg = '生成内容为空'
+            if raw_length_hint and raw_length_hint > 0:
+                if raw_length_hint <= 20:
+                    msg = f'生成内容为空（仅 {raw_length_hint} 字符，模型大概率未输出有效内容），请重试或补充需求后重试'
+                else:
+                    msg = f'生成内容为空（模型实际返回了 {raw_length_hint} 字符，但清理后为空，已自动重试并放宽清理/参数；若仍空请补充更具体的生成要求）'
+            return [ValidationIssue('EMPTY_OUTPUT', 'error', msg)]
         handlers = {
             'timeline': self._validate_timeline,
             'plot_design': self._validate_outline,
