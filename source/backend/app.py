@@ -6172,17 +6172,72 @@ def _sync_book_meta_to_bible(book, bb):
 
 
 def _get_total_volumes(bb, book=None):
-    """获取总卷数（优先 BookBible，回退 Book，默认10）。卷数不设上限，仅校验下限≥1。"""
+    """获取总卷数：严格按用户设定（BB→Book→Bible文本正则提取），不再硬编码默认 10。
+    优先级：
+      1) BookBible.total_volumes（用户在智驾同步流中写入或作品侧设置同步）
+      2) Book.total_volumes
+      3) 从 Bible 的 concept / plot_design / timeline / key_rules / worldbuilding 等文本正则提取
+         "全书N卷/按N卷/N卷规划..."（防止用户把卷数写进卡片正文但没写入字段）
+      4) 最后兜底：若用户仍未设置，返回 0（上游 _core_params_iron_block 会感知 tv=0，
+         整条"总卷数N卷/越界拦截N卷"铁律不再输出，避免把 LLM 误导到 10 卷）。
+    卷数不设上限，仅校验下限 ≥1（当 tv≥1 时 clamp）。"""
     tv = None
     try:
         tv = getattr(bb, 'total_volumes', None)
     except Exception:
         tv = None
     if (not tv) and book is not None:
-        tv = getattr(book, 'total_volumes', None)
+        try:
+            tv = getattr(book, 'total_volumes', None)
+        except Exception:
+            tv = None
+
+    # 第 3 层兜底：正则从已写入的 Bible 维度文本里找"全书N卷/按N卷..."
     if not tv:
-        tv = 10
-    return max(1, int(tv))
+        import re
+        _RE = re.compile(
+            r'(?:总卷数|全书|全本|整本书|一共|总共|合计|总计|计划|准备|打算|想|要|需要|改成|改为|设置为|设为|调整为|调成|调为|按|做成|写成|做|写|搞|设计成|规划成|规划|控制在|就|那就|那就按|就按|至少|最多|左右|大概|约|差不多)'
+            r'\s*(\d{1,4})\s*卷')
+        cand_texts = []
+        if bb:
+            for fld in ('concept', 'plot_design', 'timeline', 'key_rules', 'worldbuilding',
+                        'style_guide', 'character_profiles', 'locations', 'foreshadowing',
+                        'outline'):
+                try:
+                    v = getattr(bb, fld, None)
+                except Exception:
+                    v = None
+                if isinstance(v, str) and v:
+                    cand_texts.append(v)
+        if book is not None:
+            for fld in ('description', 'summary', 'outline'):
+                try:
+                    v = getattr(book, fld, None)
+                except Exception:
+                    v = None
+                if isinstance(v, str) and v:
+                    cand_texts.append(v)
+        for txt in cand_texts:
+            try:
+                m = _RE.search(txt)
+                if m:
+                    cand = int(m.group(1))
+                    if 1 <= cand <= 500:
+                        tv = cand
+                        break
+            except Exception:
+                continue
+
+    # 最后：如果用户仍未显式设置卷数，返回 0。
+    # 这样上游就不会输出"总卷数：10 卷 / 越界...10 卷"的错误铁律，
+    # 也不会给 LLM 任何"默认十卷"的暗示。真正的创作完全由用户定义。
+    try:
+        tv_i = int(tv) if tv else 0
+    except Exception:
+        tv_i = 0
+    if tv_i <= 0:
+        return 0
+    return max(1, tv_i)
 
 
 def _get_chapters_per_volume(bb, book=None):

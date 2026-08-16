@@ -359,22 +359,40 @@ def _core_params_iron_block(bb, book):
         genre_label = _get_genre_label(book, bb)
         styles_text = _get_novel_styles_text(bb, book)
         cpv = _get_chapters_per_volume(bb, book)
-        max_chapters = tv * cpv  # 总章数上限 = 总卷数 × 每卷章数
+        max_chapters = (tv or 0) * cpv  # 总章数上限 = 总卷数 × 每卷章数（tv 未设置时为 0，下文铁律跳过）
         bt = getattr(book, 'book_type', 'novel') or 'novel'
         parts = ['【核心创作参数·铁律·不可违反】']
-        parts.append(f'1. 总卷数：{tv} 卷（全书所有分卷/五幕总纲/剧情大纲严格按此卷数规划，不得多不得少）')
+        if tv and tv >= 1:
+            parts.append(f'1. 总卷数：{tv} 卷（全书所有分卷/五幕总纲/剧情大纲严格按此卷数规划，不得多不得少）')
+        else:
+            # 用户仍未显式设置总卷数 → 不给任何默认暗示（十/五/十二都不出现），
+            # 等用户真正设定后，后续调用会按上面那条真正绑定。
+            parts.append('1. 总卷数：由作者定义（创作时请按作者已经给定的分卷规模规划；若作者尚未指定分卷，请先把分卷规模显式写在方案里给作者确认）')
         parts.append(f'2. 题材：{genre_label}（人物设定、世界观、剧情走向、爽点类型须契合该题材的读者期待）')
         if bt == 'novel':
-            parts.append(f'3. 每卷章数：约 {cpv} 章/卷（全书总章数上限约 {max_chapters} 章，总字数约 {tv*12} 万字）')
+            if tv and tv >= 1:
+                parts.append(f'3. 每卷章数：约 {cpv} 章/卷（全书总章数上限约 {max_chapters} 章，总字数约 {tv*12} 万字）')
+            else:
+                parts.append(f'3. 每卷章数：约 {cpv} 章/卷（总章数上限按作者后续指定的总卷数 × {cpv} 章来计算；在作者未指定前，请先把分卷规模明确写在方案里）')
         else:
-            parts.append(f'3. 短篇结构：{tv} 个单元/幕')
+            if tv and tv >= 1:
+                parts.append(f'3. 短篇结构：{tv} 个单元/幕')
+            else:
+                parts.append('3. 短篇结构：单元/幕数由作者定义，先在方案里明确给出再推进。')
         if styles_text:
             parts.append(f'4. 风格流派：{styles_text}（人物塑造、节奏、爽点设计、叙事手法须契合所选流派，这是硬约束）')
-        parts.append('')
-        parts.append('【越界拦截警示·生成前自检】')
-        parts.append(f'1. 生成五幕总纲/分卷大纲/剧情线时，卷数必须严格等于 {tv} 卷，多一卷或少一卷都不合格，必须重写。')
-        parts.append(f'2. 生成正文章节时，章节号上限为第 {max_chapters} 章（= {tv} 卷 × {cpv} 章/卷），禁止产出超过此上限的章节号。')
-        parts.append('3. 讨论规划或生成卡片前先对照上述铁律，若你的方案会突破卷数/章数上限，请立刻自我修正到范围内再输出。')
+        # 越界拦截：只有 tv 明确设置后才给具体 N 卷/N 章的硬上限，避免把 0/默认 当成越界依据
+        if tv and tv >= 1:
+            parts.append('')
+            parts.append('【越界拦截警示·生成前自检】')
+            parts.append(f'1. 生成五幕总纲/分卷大纲/剧情线时，卷数必须严格等于 {tv} 卷，多一卷或少一卷都不合格，必须重写。')
+            parts.append(f'2. 生成正文章节时，章节号上限为第 {max_chapters} 章（= {tv} 卷 × {cpv} 章/卷），禁止产出超过此上限的章节号。')
+            parts.append('3. 讨论规划或生成卡片前先对照上述铁律，若你的方案会突破卷数/章数上限，请立刻自我修正到范围内再输出。')
+        else:
+            parts.append('')
+            parts.append('【分卷规则·用户定义优先】')
+            parts.append('1. 在作者未显式给出总卷数前，禁止在方案/卡片/正文里擅自默认"十卷/五卷/八卷/十二卷/十余卷/5-8卷"等固定数字，必须先把"全书建议按 N 卷规划"写清楚让作者确认，或直接沿用作者方案里的数字。')
+            parts.append('2. 生成正文章节时，章号连续、不重复、不跳号即可；等作者指定总卷数后再按上限收紧。')
         return '\n'.join(parts)
     except Exception:
         return ''
@@ -3197,6 +3215,22 @@ def smart_general():
         return jsonify({'error': '书籍不存在'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
+    # ===== 【卷数/章数意图·落地前置】通用聊天也可能直接说"改成25卷/每卷60章" =====
+    try:
+        _auto_sync_params_from_user_message(book, bb, message)
+        # 同步后可能新建 bb → 重新取
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+        # Book ↔ Bible 双表同步（任一侧有值都合并到另一侧，防止后续 _get_total_volumes 取不到）
+        from app import _sync_book_meta_to_bible
+        if bb is None:
+            bb = BookBible(book_id=book_id)
+            db.session.add(bb)
+        _sync_book_meta_to_bible(book, bb)
+        db.session.commit()
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+    except Exception:
+        pass
+
     # ===== 最近章节 + 下一章号（与 chat_smart 口径一致）=====
     recent_chapters = []
     next_chapter_num = None
@@ -3422,10 +3456,24 @@ def smart_suggest():
     # 【用户截图的根源】以前用的 _build_core_params_block 太弱，AI仍然按网文常识写"十卷"
     # 现在强制用 _core_params_iron_block（同 chat_smart 那条铁律），且对 preview 简介做专门约束
     core_params = ''
-    tv_for_suggest = 10
+    # tv_for_suggest 不再写死初始 10，避免 DB 未设定时被"默认十卷"污染。
+    # 仅在用户 requirement / bb 字段 / book 字段 里真正解析到 N 卷，才注入铁律。
+    tv_for_suggest = 0
     try:
         from app import _get_total_volumes
         tv_for_suggest = _get_total_volumes(bb, book) or 0
+    except Exception:
+        tv_for_suggest = 0
+    # 二次兜底：如果 requirement 用户需求文本里明确出现了「N卷」描述，
+    # 哪怕 DB 里还没写（_auto_sync_params_from_user_message 还没 commit）也按 N 来提要求，
+    # 这样生成的卡片预览就跟用户说的一致，不会出现"用户说 18 卷，卡片写十卷"这种问题。
+    try:
+        if (tv_for_suggest == 0 or tv_for_suggest is None) and requirement:
+            m = _RE_TV.search(requirement or '')
+            if m:
+                cand = int(m.group(1))
+                if 1 <= cand <= 500:
+                    tv_for_suggest = cand
     except Exception:
         pass
     try:
@@ -3471,14 +3519,15 @@ def smart_suggest():
     if dim_key == 'plot_design':
         try:
             from app import _get_total_volumes, _cultivation_dimension_hint
-            tv = _get_total_volumes(bb, book)
-            act1_end = max(1, tv*5//100)
-            act2_end = tv*25//100
-            act3_end = tv*50//100
-            act4_end = tv*75//100
-            # 构造一个按 tv 卷精确分配的五幕示例，直接给 AI 照抄
-            five_act_example = f'立身第1~{act1_end}卷、立足第{act1_end+1}~{act2_end}卷、立势第{act2_end+1}~{act3_end}卷、立威第{act3_end+1}~{act4_end}卷、立命第{act4_end+1}~{tv}卷'
-            outline_extra = f"""\n\n【大纲维度专属要求】请生成“五幕式总纲”方向的差异化方案。
+            tv = _get_total_volumes(bb, book) or 0
+            if tv >= 2:
+                # 作者已指定卷数 → 给出精确的五幕卷号映射
+                act1_end = max(1, tv*5//100)
+                act2_end = tv*25//100
+                act3_end = tv*50//100
+                act4_end = tv*75//100
+                five_act_example = f'立身第1~{act1_end}卷、立足第{act1_end+1}~{act2_end}卷、立势第{act2_end+1}~{act3_end}卷、立威第{act3_end+1}~{act4_end}卷、立命第{act4_end+1}~{tv}卷'
+                outline_extra = f"""\n\n【大纲维度专属要求】请生成“五幕式总纲”方向的差异化方案。
 全书严格 {tv} 卷，每卷约50章12万字。
 五幕模型按{tv}卷比例的精确卷号映射如下（必须严格遵守，不得擅自改动）：
 - 立身(前5%)：第1~{act1_end}卷
@@ -3491,6 +3540,11 @@ def smart_suggest():
 "{five_act_example}"
 严禁出现"第2至{tv}卷""第7至{tv}卷""第X至{tv}卷"这种把多幕压缩到同一卷的错误写法；每一幕必须对应独立的卷号区间。
 只输出多方案供作者选择，每个方案 preview 简介必须说明对应的五幕怎么分配到 {tv} 卷。"""
+            else:
+                # 作者未指定卷数 → 先提出"建议按 N 卷规划"的候选，不写死 10
+                outline_extra = """\n\n【大纲维度专属要求】请生成“五幕式总纲”方向的差异化方案。
+作者尚未指定总卷数，因此你每条方案**必须**在 preview 简介里先明确写出一个你建议的分卷规模（例如"建议按 20 卷规划，五幕对应..."），禁止擅自默认"十卷/五卷/十二卷/5-8卷"等固定值；
+为每条方案给出对应卷数下的五幕卷号映射（立身/立足/立势/立威/立命，五幕从 1 卷 连续递增 到 方案建议卷数），每幕必须对应独立的卷号区间，不得把多幕压缩成同一区间。"""
             try:
                 outline_extra += _cultivation_dimension_hint('plot_design', book, bb)
             except Exception:
@@ -3763,8 +3817,11 @@ def smart_generate():
     if dim_key == 'plot_design':
         try:
             from app import _get_total_volumes
-            tv = _get_total_volumes(bb, book)
-            outline_extra = f'\n\n【大纲维度专属要求】请生成“五幕式总纲”，全书严格 {tv} 卷，每卷约50章12万字。五幕模型：立身(1-5%)/立足(5-25%)/立势(25-50%)/立威(50-75%)/立命(75-100%)。为每卷输出：卷号卷名、所属幕、本卷核心目标、主要冲突、关键转折点(2-3个)、卷尾高潮与悬念。只输出总纲文本，不输出详细情节节点。'
+            tv = _get_total_volumes(bb, book) or 0
+            if tv >= 2:
+                outline_extra = f'\n\n【大纲维度专属要求】请生成“五幕式总纲”，全书严格 {tv} 卷，每卷约50章12万字。五幕模型：立身(1-5%)/立足(5-25%)/立势(25-50%)/立威(50-75%)/立命(75-100%)。为每卷输出：卷号卷名、所属幕、本卷核心目标、主要冲突、关键转折点(2-3个)、卷尾高潮与悬念。只输出总纲文本，不输出详细情节节点。'
+            else:
+                outline_extra = '\n\n【大纲维度专属要求】请生成“五幕式总纲”方向的方案。作者尚未指定总卷数，因此方案内先给出你建议的分卷规模（N卷，N≥2，禁止擅自默认十卷/五卷/十二卷/5-8卷等固定值），再按建议的 N 卷输出五幕式内容：立身/立足/立势/立威/立命对应到连续卷号区间，并为每卷输出：卷号卷名、所属幕、本卷核心目标、主要冲突、关键转折点(2-3个)、卷尾高潮与悬念。只输出总纲文本，不输出详细情节节点。'
             try:
                 from app import _cultivation_dimension_hint
                 outline_extra += _cultivation_dimension_hint('plot_design', book, bb)
@@ -3780,35 +3837,65 @@ def smart_generate():
     if dim_key == 'timeline':
         try:
             from app import _get_total_volumes, _get_chapters_per_volume
-            tv = _get_total_volumes(bb, book)
+            tv = _get_total_volumes(bb, book) or 0
             cpv = _get_chapters_per_volume(bb, book)
-            total_chapters = tv * cpv
-            # 注入已有卷剧情作为连贯约束
-            existing_volumes = ''
-            if bb and bb.timeline:
-                try:
-                    vols = json.loads(bb.timeline)
-                    if isinstance(vols, list) and vols:
-                        vol_lines = []
-                        for v in vols:
-                            vi = v.get('volume_index') or v.get('volume_id') or '?'
-                            vn = v.get('volume', f'第{vi}卷')
-                            mp = (v.get('main_plot') or '')[:200]
-                            vol_lines.append(f'第{vi}卷《{vn}》：{mp}')
-                        existing_volumes = '\n'.join(vol_lines)
-                except Exception:
-                    pass
-            timeline_extra = f'\n\n【剧情维度专属要求】全书严格 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章。请基于五幕式总纲生成全部 {tv} 卷的剧情，各卷剧情连贯、卷间衔接（ending_hook与下一卷开头承接），每卷剧情须支撑 {cpv} 章容量。'
-            if existing_volumes:
-                timeline_extra += f'\n\n【已有卷剧情（须保持连贯，可在其基础上完善）】\n{existing_volumes}'
-            # JSON 数组格式铁律（与 ai_master_create 保持一致，落地端按 volume_index upsert）
-            timeline_extra += f'''
+            if tv >= 1:
+                total_chapters = tv * cpv
+                # 注入已有卷剧情作为连贯约束
+                existing_volumes = ''
+                if bb and bb.timeline:
+                    try:
+                        vols = json.loads(bb.timeline)
+                        if isinstance(vols, list) and vols:
+                            vol_lines = []
+                            for v in vols:
+                                vi = v.get('volume_index') or v.get('volume_id') or '?'
+                                vn = v.get('volume', f'第{vi}卷')
+                                mp = (v.get('main_plot') or '')[:200]
+                                vol_lines.append(f'第{vi}卷《{vn}》：{mp}')
+                            existing_volumes = '\n'.join(vol_lines)
+                    except Exception:
+                        pass
+                timeline_extra = f'\n\n【剧情维度专属要求】全书严格 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章。请基于五幕式总纲生成全部 {tv} 卷的剧情，各卷剧情连贯、卷间衔接（ending_hook与下一卷开头承接），每卷剧情须支撑 {cpv} 章容量。'
+                if existing_volumes:
+                    timeline_extra += f'\n\n【已有卷剧情（须保持连贯，可在其基础上完善）】\n{existing_volumes}'
+                # JSON 数组格式铁律（与 ai_master_create 保持一致，落地端按 volume_index upsert）
+                timeline_extra += f'''
 
 【分卷铁律·必读】**全书共 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章**。卷序号从 1 开始连续递增到 {tv}。卷名格式"第N卷 副标题"。必须覆盖全部 {tv} 卷，不得多不得少。
 
 【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 chapters 全书连续编号。
 
 【分卷章节分配】全书 {total_chapters} 章 → {tv} 卷（每卷 {cpv} 章）：第1卷 1-{cpv}、第2卷 {cpv + 1}-{cpv * 2}、... 第{tv}卷 {(tv - 1) * cpv + 1}-{total_chapters}；每卷 nodes 章节连续不重叠。
+
+【输出格式铁律·绝对】严格输出 JSON 数组（不要包裹在 markdown 代码块中，不要任何解释性文字），每卷结构如下：
+[
+  {{
+    "volume_id": "1",
+    "volume": "第1卷 副标题",
+    "volume_index": 1,
+    "act": "立身",
+    "main_plot": "本卷主线剧情（100-200字）",
+    "core_conflict": "本卷核心冲突",
+    "ending_hook": "本卷卷尾钩子具体内容",
+    "nodes": [
+      {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
+    ]
+  }}
+]
+直接输出 JSON 数组，不要寒暄，不要解释，不要加任何 Markdown 标题或文字。'''
+            else:
+                # 作者未指定总卷数（tv=0）：让 LLM 先给出建议 N 卷，再按 N 卷输出 JSON
+                # 禁止任何默认十卷/五卷/十二卷/5-8卷的数字；JSON 结构与 tv 明确时完全一致
+                timeline_extra = f'\n\n【剧情维度专属要求】作者尚未指定总卷数。请你先自行确定一个合理的分卷规模 N（N≥2，禁止擅自默认十卷/五卷/十二卷/十余卷/5-8卷等固定值），再按 N 卷生成完整剧情，每卷剧情须支撑约 {cpv} 章容量，卷间衔接（ending_hook 与下一卷开头承接）。'
+                # JSON 数组格式铁律（同上，卷数改成"N卷/第N卷"占位规则）
+                timeline_extra += f'''
+
+【分卷铁律·必读】方案建议 N 卷、每卷约 {cpv} 章、全书约 N×{cpv} 章（N 就是你方案里确定的卷数，禁止擅自写死 10）。卷序号从 1 开始连续递增到 N，卷名格式"第N卷 副标题"。必须覆盖全部 N 卷，不得多不得少。
+
+【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 chapters 全书连续编号。
+
+【分卷章节分配】N×{cpv} 章 → N 卷（每卷 {cpv} 章）：第1卷 1-{cpv}、第2卷 {cpv + 1}-{cpv * 2}、...、第N卷 {(cpv * (N - 1)) + 1}-{cpv * N}；每卷 nodes 章节连续不重叠。
 
 【输出格式铁律·绝对】严格输出 JSON 数组（不要包裹在 markdown 代码块中，不要任何解释性文字），每卷结构如下：
 [
