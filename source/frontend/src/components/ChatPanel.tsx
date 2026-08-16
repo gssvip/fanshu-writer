@@ -109,6 +109,36 @@ function chineseToInt(s: string): number | null {
   return total + num;
 }
 
+// ============================================================================
+// 章节显示格式化：避免「第{order_index}章」与「第N章」标题重复显示两次章节号
+// - 若 title 开头就是合法 "第N章/回/卷…"（parseChapterNumber 能解出）→ 直接用 title
+// - 否则用 order_index+1 兜底（内部 order_index 是 0-based）
+// ============================================================================
+function formatChapterTitle(c: { order_index: number; title?: string | null }): string {
+  const title = (c.title ?? '').trim();
+  if (
+    title &&
+    parseChapterNumber(title) != null &&
+    /^第\s*[0-9零一二三四五六七八九十百千万亿两〇]+\s*[章节回卷部篇话集幕折更段讲课夜日年季场]/.test(title)
+  ) {
+    return title;
+  }
+  const fallbackNum =
+    typeof c.order_index === 'number' && !Number.isNaN(c.order_index)
+      ? Math.max(1, c.order_index + 1)
+      : 1;
+  return `第${fallbackNum}章${title ? ' ' + title : ''}`;
+}
+function formatChapterOption(c: {
+  order_index: number;
+  title?: string | null;
+  word_count?: number | null;
+}): string {
+  const head = formatChapterTitle(c);
+  const wc = typeof c.word_count === 'number' ? c.word_count : 0;
+  return `${head}（${wc}字）`;
+}
+
 // 判断维度是否走"方案选择"流程：构思/核心设定/世界观 需要发散多方案；
 // 大纲/剧情/人物/伏笔 等下游维度已由上游确定，直接生成或修改即可。
 function shouldShowSuggestions(dimKey: string | null): boolean {
@@ -1794,10 +1824,11 @@ export default function ChatPanel() {
       if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
         const ch = r as any;
         const actionLabel = ch.action === 'updated' ? '已覆盖同章号章节' : '已新建章节';
+        const chNum = Math.max(1, parseChapterNumber(ch.chapter_title) ?? (typeof ch.order_index === 'number' ? ch.order_index + 1 : 1));
         setStreamError('');
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: `✅ ${actionLabel}：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。可在「章节」Tab 查看。`,
+          content: `✅ ${actionLabel}：${ch.chapter_title}（${ch.word_count}字，第${chNum}章）。可在「章节」Tab 查看。`,
         }]);
         // 刷新章节列表
         api.smartLatestChapter(bookId).then(rr => {
@@ -1827,9 +1858,10 @@ export default function ChatPanel() {
       if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
         const ch = r as any;
         const actionLabel = ch.action === 'updated' ? '已覆盖同章号章节' : '已新建章节';
+        const chNum2 = Math.max(1, parseChapterNumber(ch.chapter_title) ?? (typeof ch.order_index === 'number' ? ch.order_index + 1 : 1));
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: `✅ ${actionLabel}：${ch.chapter_title}（${ch.word_count}字，第${ch.order_index}章）。`,
+          content: `✅ ${actionLabel}：${ch.chapter_title}（${ch.word_count}字，第${chNum2}章）。`,
         }]);
         api.smartLatestChapter(bookId).then(rr => {
           setLatestChapter(rr.latest);
@@ -2256,7 +2288,7 @@ export default function ChatPanel() {
                   <div className="smart-chapter-info smart-chapter-info-row">
                     <span className="smart-chapter-info-text">
                       {latestChapter ? (
-                        <>📖 最新：<strong>{latestChapter.title}</strong>（{latestChapter.word_count}字，第{latestChapter.order_index}章）</>
+                        <>📖 最新：<strong>{formatChapterTitle(latestChapter)}</strong>（{latestChapter.word_count}字，第{Math.max(1, (parseChapterNumber(latestChapter.title) ?? latestChapter.order_index + 1))}章）</>
                       ) : (
                         <>📖 还没有章节，将创建第 1 章</>
                       )}
@@ -2281,7 +2313,7 @@ export default function ChatPanel() {
                       >
                         <option value="">从输入框解析章节号</option>
                         {[...chapters].sort((a, b) => b.order_index - a.order_index).map(c => (
-                          <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}（{c.word_count}字）</option>
+                          <option key={c.id} value={c.id}>{formatChapterOption(c)}</option>
                         ))}
                       </select>
                     )}
@@ -2394,7 +2426,7 @@ export default function ChatPanel() {
                       >
                         <option value="">请选择章节…</option>
                         {[...chapters].sort((a, b) => b.order_index - a.order_index).slice(0, 10).map(c => (
-                          <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}（{c.word_count}字）</option>
+                          <option key={c.id} value={c.id}>{formatChapterOption(c)}</option>
                         ))}
                       </select>
                     )}
@@ -2460,7 +2492,7 @@ export default function ChatPanel() {
                         >
                           <option value="">最新章节</option>
                           {chapters.map(c => (
-                            <option key={c.id} value={c.id}>第{c.order_index}章 {c.title}</option>
+                            <option key={c.id} value={c.id}>{formatChapterTitle(c)}</option>
                           ))}
                         </select>
                       </div>
