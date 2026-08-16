@@ -2273,12 +2273,32 @@ def delete_ai_session(session_id):
 @app.route('/api/books/<book_id>/entities', methods=['GET'])
 @login_required
 def list_entities(book_id):
-    """抽取作品全部实体（角色/势力/地点/物品）。"""
+    """抽取作品全部实体（角色/势力/地点/物品/技能）。
+    升级：每次 GET 都会实时扫描：
+    - Bible 十个维度文本 + JSON 字段（含智驾采纳落地写入的 JSON 人物卡 / 冒号分点实体）
+    - 最近 10 章标题/正文
+    抽取后合并写回 bb.entity_registry_json，确保增量事件识别能共享同一套实体库。"""
     bb = BookBible.query.filter_by(book_id=book_id).first()
     if not bb:
-        return jsonify({'characters': [], 'factions': [], 'locations': [], 'items': []})
-    from entity_registry import extract_entities
-    return jsonify(extract_entities(bb))
+        return jsonify({'characters': [], 'factions': [], 'locations': [], 'items': [], 'skills': []})
+    from entity_registry import extract_and_save_registry
+    # 把最近 10 章也作为扫描源（正文/标题里出现的角色/地点自动入表）
+    recent_chapters = []
+    try:
+        recent_chapters = (
+            Chapter.query.filter_by(book_id=book_id, is_volume=False)
+            .order_by(Chapter.order_index.desc())
+            .limit(10)
+            .all()
+        ) or []
+    except Exception:
+        recent_chapters = []
+    entities = extract_and_save_registry(bb, chapters_query=recent_chapters)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return jsonify(entities)
 
 
 @app.route('/api/books/<book_id>/entities/rename', methods=['POST'])

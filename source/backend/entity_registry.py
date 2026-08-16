@@ -18,11 +18,16 @@ import re
 from typing import Dict, List, Tuple
 
 
-# 需要扫描的 bible 文本字段（不含 JSON 结构字段，那些走结构化替换）
+# 需要扫描的 bible 文本字段（JSON 结构字段也加进来：当 JSON 解析失败时，它们可能仍是带实体的纯文本，
+# 智驾采纳落地卡片常写成"【标题】\n分点冒号实体名：内容"这种，即使是 JSON 字符串里也会包含实体线索）。
 BIBLE_TEXT_FIELDS = [
     'concept', 'key_rules', 'worldbuilding', 'character_profiles',
     'timeline', 'foreshadowing', 'style_guide', 'plot_design',
     'generated_summary', 'relation_graph',
+    # 以下本来是 JSON 结构字段，但智驾落地/用户手动写的内容可能不是严格 JSON，而是自然语言块
+    # 文本扫描会把字符串内容里的实体也抽出来，不影响结构化抽取那一条分支
+    'locations', 'inventory', 'dynamic_volumes', 'foreshadowing_graph',
+    'outline_hierarchy', 'chapter_changes_log',
 ]
 
 # JSON 结构字段及其抽取键
@@ -62,9 +67,11 @@ def _extract_names_from_locations(loc_json) -> List[str]:
     return names
 
 
-def extract_entities(bb) -> Dict:
-    """从 BookBible 全部十个维度抽取实体，返回 {characters, factions, locations, items, skills}。
-    每个实体：{name, aliases:[], dim_refs:[字段名...]}"""
+def extract_entities(bb, chapters_query=None) -> Dict:
+    """从 BookBible 全部十个维度 + 最近章节抽取实体。
+    chapters_query: 可选 SQLAlchemy query / Chapter 对象 list（或 None），
+                   传入后会额外从 chapters 标题/卷标题/正文中抽取出现的实体。
+    返回：{characters:[{name,aliases,dim_refs}], factions, locations, items, skills}"""
     characters: Dict[str, set] = {}  # name -> dim_refs
     factions: Dict[str, set] = {}
     locations: Dict[str, set] = {}
@@ -73,25 +80,60 @@ def extract_entities(bb) -> Dict:
 
     def _add(bucket: Dict, name: str, ref: str):
         name = (name or '').strip()
-        if not name or len(name) > 50:
+        # 常见标点清理（中文人名前后带引号/顿号/书名号）
+        if name:
+            name = re.sub(r'^[\s“"《〈【\(（,，、；:：]+|[\s”"》〉】\)）,，、；:：]+$', '', name)
+        if not name or len(name) > 50 or len(name) < 2:
+            return
+        # 纯数字/英文短词等直接丢（与 registry._is_valid_name 一致）
+        if re.match(r'^\d+$', name):
+            return
+        if re.match(r'^[a-zA-Z]{1,3}$', name):
             return
         if name not in bucket:
             bucket[name] = set()
         bucket[name].add(ref)
 
-    # 1. character_profiles 文本：## 角色：<姓名>
+    # ====== 1. character_profiles 分两种格式：智驾人物卡落地为 JSON 数组 / 旧版 Markdown ## 角色： ======
     cp_text = bb.character_profiles or ''
+    # 1a) 优先 JSON 数组解析（智驾人物卡落地默认写成 JSON，这是用户截图里"识别不到"的根因）
+    try:
+        cp_json = json.loads(cp_text) if cp_text else None
+    except Exception:
+        cp_json = None
+    if isinstance(cp_json, list):
+        for p in cp_json:
+            if not isinstance(p, dict):
+                continue
+            for key in ('name', '姓名', 'character', '角色名'):
+                v = p.get(key)
+                if v:
+                    _add(characters, str(v), 'character_profiles.json')
+                    break
+            # 人物卡关系/能力/物品里也会带相关实体（顺路抽取）
+            for key, bucket in (('关系', characters), ('relationships', characters),
+                                ('能力', skills), ('abilities', skills),
+                                ('物品', items), ('items', items),
+                                ('身份', characters), ('identity', characters)):
+                v = p.get(key)
+                if isinstance(v, str):
+                    _extract_generic_text_entities(v, bucket, f'character_profiles.json.{key}', _add)
+                elif isinstance(v, list):
+                    for x in v:
+                        if isinstance(x, str):
+                            _extract_generic_text_entities(x, bucket, f'character_profiles.json.{key}', _add)
+    # 1b) Markdown 旧版兜底：## 角色：<姓名>
     for m in re.finditer(r'##\s*角色[：:]\s*(.+?)(?:\n|$)', cp_text):
         _add(characters, m.group(1).strip(), 'character_profiles')
 
-    # 2. Character 表（通过 relationship 访问）
+    # ====== 2. Character 表（通过 relationship 访问） ======
     try:
         for ch in bb.book.characters:
             _add(characters, ch.name, 'characters_table')
     except Exception:
         pass
 
-    # 3. inventory JSON: name + owner；type=功法/技能 归入 skills，其余归入 items
+    # ====== 3. inventory JSON ======
     inv = _safe_json_loads(bb.inventory, [])
     if isinstance(inv, list):
         for it in inv:
@@ -105,12 +147,12 @@ def extract_entities(bb) -> Dict:
                 if it.get('owner'):
                     _add(characters, it['owner'], 'inventory.owner')
 
-    # 4. locations JSON: 三级 name
+    # ====== 4. locations JSON（三级嵌套） ======
     loc = _safe_json_loads(bb.locations, [])
     for n in _extract_names_from_locations(loc):
         _add(locations, n, 'locations')
 
-    # 5. dynamic_volumes JSON: characters/events/timeline/locations/factions 文本字段
+    # ====== 5. dynamic_volumes JSON ======
     dv = _safe_json_loads(bb.dynamic_volumes, [])
     if isinstance(dv, list):
         for vol in dv:
@@ -120,12 +162,11 @@ def extract_entities(bb) -> Dict:
                 txt = vol.get(field, '')
                 if not txt:
                     continue
-                # 按常见分隔符切分后取每段首词作为候选实体名
-                for seg in re.split(r'[；;\n]', txt):
+                # 同时做结构化冒号抽取 + 通用文本抽取（双保险）
+                for seg in re.split(r'[；;\n]', str(txt)):
                     seg = seg.strip()
                     if not seg:
                         continue
-                    # 取冒号前的部分作为名（"林墨：筑基" → "林墨"）
                     if '：' in seg or ':' in seg:
                         name = re.split(r'[：:]', seg, 1)[0].strip()
                         if name and 1 < len(name) <= 20:
@@ -135,22 +176,72 @@ def extract_entities(bb) -> Dict:
                                 _add(locations, name, f'dynamic_volumes.{field}')
                             else:
                                 _add(characters, name, f'dynamic_volumes.{field}')
+                _extract_generic_text_entities(str(txt), {
+                    'characters': characters, 'factions': factions,
+                    'locations': locations, 'items': items, 'skills': skills,
+                }, f'dynamic_volumes.{field}', _add)
 
-    # 6. 从全部文本维度扫描：势力/门派/阵营 关键词 → factions；
-    #    "## 功法/## 技能/<功法名>" 标题 → skills
-    SKILL_TITLE_RE = re.compile(r'##\s*(?:功法|技能)[：:]\s*(.+?)(?:\n|$)')
+    # ====== 6. 从全部文本维度做通用扫描（修复用户反馈的"各维度已有实体识别不到"根因） ======
+    SKILL_TITLE_RE = re.compile(r'##\s*(?:功法|技能|术法|神通|秘法)[：:]\s*(.+?)(?:\n|$)')
+    FACTION_TITLE_RE = re.compile(r'##\s*(?:势力|门派|宗门|宗派|阵营|家族|商会|军团)[：:]\s*(.+?)(?:\n|$)')
+    LOC_TITLE_RE = re.compile(r'##\s*(?:地点|区域|地图|秘境|遗迹|城池|大陆|海域|山脉)[：:]\s*(.+?)(?:\n|$)')
+    ITEM_TITLE_RE = re.compile(r'##\s*(?:物品|宝物|法器|法宝|丹药|灵药|材料|装备)[：:]\s*(.+?)(?:\n|$)')
+    CHAR_TITLE_RE = re.compile(r'##\s*(?:人物|角色|配角|龙套|反派|主角)[：:]\s*(.+?)(?:\n|$)')
+
     for field in BIBLE_TEXT_FIELDS:
         txt = getattr(bb, field, '') or ''
         if not txt:
             continue
-        # 势力关键词上下文（行内出现"势力/门派/宗派/阵营：XXX"）
-        for m in re.finditer(r'(?:势力|门派|宗派|阵营)[：:]\s*([^\n，,；;]{1,20})', txt):
+        # 势力关键词上下文（行内出现"势力/门派/宗派/阵营/宗门/家族/商会：XXX"）
+        for m in re.finditer(r'(?:势力|门派|宗派|宗门|阵营|家族|商会|军团)[：:]\s*([^\n，,；;]{1,20})', txt):
             _add(factions, m.group(1).strip(), field)
+        # 地点关键词
+        for m in re.finditer(r'(?:地点|区域|城池|秘境|遗迹|山脉|海域|大陆|村庄|小镇|学院|宗门驻地)[：:]\s*([^\n，,；;]{1,25})', txt):
+            _add(locations, m.group(1).strip(), field)
+        # 物品关键词
+        for m in re.finditer(r'(?:物品|宝物|法宝|法器|丹药|灵药|材料|装备|储物袋)[：:]\s*([^\n，,；;]{1,25})', txt):
+            _add(items, m.group(1).strip(), field)
         # 功法/技能标题
         for m in SKILL_TITLE_RE.finditer(txt):
             _add(skills, m.group(1).strip(), field)
+        # 人物/角色标题块（手动在设定 Tab 写的"## 主角：XXX"这种）
+        for m in CHAR_TITLE_RE.finditer(txt):
+            _add(characters, m.group(1).strip(), field)
+        # 势力标题块
+        for m in FACTION_TITLE_RE.finditer(txt):
+            _add(factions, m.group(1).strip(), field)
+        # 地点标题块
+        for m in LOC_TITLE_RE.finditer(txt):
+            _add(locations, m.group(1).strip(), field)
+        # 物品标题块
+        for m in ITEM_TITLE_RE.finditer(txt):
+            _add(items, m.group(1).strip(), field)
+        # 通用格式抽取：智驾采纳落地卡片经常写"【标题】\n分点：实体名 | 信息"这种
+        _extract_generic_text_entities(txt, {
+            'characters': characters, 'factions': factions,
+            'locations': locations, 'items': items, 'skills': skills,
+        }, field, _add)
 
-    # 7. foreshadowing 文本：## 伏笔N：<标题> 不算实体，但内容里出现的人名靠章节正文交叉验证（略）
+    # ====== 7. 最近 N 章正文（智驾落地人物后如果只在正文出现也要能被抓到） ======
+    if chapters_query is not None:
+        try:
+            ch_iter = iter(chapters_query)
+        except Exception:
+            ch_iter = []
+        for ch in ch_iter:
+            title = getattr(ch, 'title', '') or ''
+            content = getattr(ch, 'content', '') or ''
+            if title:
+                _extract_generic_text_entities(title, {
+                    'characters': characters, 'factions': factions,
+                    'locations': locations, 'items': items, 'skills': skills,
+                }, 'chapter.title', _add)
+            if content:
+                # 仅从章节正文抽取 人物/地点 出现的已知候选（不做大规模无差别识别以免噪声）
+                _extract_generic_text_entities(content, {
+                    'characters': characters, 'factions': factions,
+                    'locations': locations, 'items': items, 'skills': skills,
+                }, 'chapter.content', _add)
 
     def _serialize(bucket: Dict) -> List[Dict]:
         return [{'name': k, 'aliases': [], 'dim_refs': sorted(v)} for k, v in sorted(bucket.items())]
@@ -162,6 +253,113 @@ def extract_entities(bb) -> Dict:
         'items': _serialize(items),
         'skills': _serialize(skills),
     }
+
+
+# ==================== 辅助：从自由文本里无差别抽取实体（冒号/竖线/【】/引号/分点） ====================
+
+# 常见"实体关键词前缀"（出现在冒号/竖线前，用来判定这行冒号前的东西是什么类型）
+_CATEGORY_HINTS = {
+    'characters': {'姓名', '名字', '人物', '角色', '主角', '反派', '配角', '龙套', '师父', '师傅',
+                   '师兄', '师弟', '师姐', '师妹', '父亲', '母亲', '儿子', '女儿', '兄弟', '姐妹',
+                   '族长', '长老', '掌门', '城主', '皇帝', '殿下', '公子', '小姐'},
+    'factions': {'势力', '门派', '宗门', '宗派', '阵营', '家族', '商会', '军团', '联盟', '道统', '教', '寺', '楼'},
+    'locations': {'地点', '区域', '地图', '城池', '秘境', '遗迹', '大陆', '山脉', '海域', '宗门',
+                  '驻地', '学院', '村庄', '小镇', '城市', '府', '阁', '殿', '楼', '塔', '山', '谷'},
+    'items': {'物品', '宝物', '法宝', '法器', '丹药', '灵药', '材料', '装备', '储物袋',
+              '令牌', '剑', '刀', '枪', '弓', '甲', '船', '车', '印', '符', '阵', '丹'},
+    'skills': {'功法', '技能', '术法', '神通', '秘法', '心法', '招式', '武学', '法术', '咒语'},
+}
+
+
+def _category_from_label(label: str):
+    if not label:
+        return None
+    for cat, hints in _CATEGORY_HINTS.items():
+        for h in hints:
+            if h in label:
+                return cat
+    return None
+
+
+def _extract_generic_text_entities(text: str, buckets, ref: str, add_fn):
+    """智驾落地/用户手动写的实体，格式千差万别：
+    - 「【标题】\n姓名：林墨\n身份：玄骨宗弟子\n宗门：玄骨宗\n师父：姜无涯」
+    - 「林墨 | 男 | 19 岁 | 主角」
+    - 「主要势力：玄骨宗、镇魔司、大胤皇室」
+    - 「核心人物：林墨、苏清鸢、老骨」
+    - 出现于引号、【】、《》里的 2-6 字中文实体
+    这里统一抽取，用户反馈的"各维度已有实体识别不到"就由这里兜底。
+    buckets: {'characters': {...set}, 'factions': ..., 'locations': ..., 'items': ..., 'skills': ...}
+             或单个 dict bucket(按 ref 直接加)
+    """
+    if not text:
+        return
+    # 兼容两种传法：单桶(dict) / 多桶(dict of dict)
+    # add_fn(bucket, name, ref)
+    is_multi = isinstance(buckets, dict) and buckets and next(iter(buckets.values())) and isinstance(next(iter(buckets.values())), dict)
+
+    def add(cat_or_bucket, name):
+        if is_multi:
+            if cat_or_bucket in buckets:
+                add_fn(buckets[cat_or_bucket], name, ref)
+        else:
+            add_fn(cat_or_bucket, name, ref)
+
+    # A. 行级扫："XX 标签(类别提示)：实体名1、实体名2、实体名3"
+    for line in re.split(r'[\r\n]+', text):
+        if not line or len(line) > 400:
+            continue
+        # 冒号：前半是标签，后半是"顿号/逗号/分号"枚举实体
+        m = re.match(r'^\s*[-*•·]*\s*([^：:\n]{1,20})\s*[：:]\s*(.+?)\s*$', line)
+        if m:
+            label = m.group(1).strip()
+            content = m.group(2).strip()
+            cat = _category_from_label(label)
+            # 后半按顿号/逗号/分号切
+            candidates = [x.strip(' 、') for x in re.split(r'[、,，;；]+', content) if x.strip()]
+            for cand in candidates:
+                # 有时会写成"林墨（男·19岁）" → 先保留括号前主名
+                main = re.split(r'[（(（【《]', cand, 1)[0].strip()
+                if not main:
+                    continue
+                # 如果能判定类别就直接加；否则默认先当人物（中文冒号前出现的姓名最常见）
+                if cat:
+                    add(cat, main)
+                else:
+                    # 没有类别提示时，名字长度合理 → 当人物候选加入
+                    if 2 <= len(main) <= 8 and re.search(r'[\u4e00-\u9fa5]', main):
+                        add('characters', main)
+            continue
+        # 竖线分隔："林墨 | 男 | 主角" → 第1段当人名
+        if '|' in line:
+            parts = [p.strip() for p in line.split('|') if p.strip()]
+            if len(parts) >= 2 and 2 <= len(parts[0]) <= 8 and re.search(r'[\u4e00-\u9fa5]', parts[0]):
+                add('characters', parts[0])
+
+    # B. 段级扫：
+    #    1) 「主要人物：林墨、苏清鸢」"人物/势力/地点/物品/功法" 前缀枚举实体
+    m2 = re.findall(r'(?:主要|核心|关键|重要|其他|已登场)?\s*'
+                    r'(人物|角色|势力|门派|宗门|阵营|地点|区域|物品|功法|技能|法宝|丹药)'
+                    r'[：:]\s*([^\n]{2,200})', text)
+    for label, body in m2:
+        cat = _category_from_label(label) or 'characters'
+        for cand in re.split(r'[、,，;；\s]+', body):
+            cand = cand.strip()
+            if not cand:
+                continue
+            main = re.split(r'[（(【《]', cand, 1)[0].strip()
+            if 2 <= len(main) <= 12 and re.search(r'[\u4e00-\u9fa5]', main):
+                add(cat, main)
+
+    # C. 【姓名】/"姓名"/《功法名》：2-8 字中文实体
+    #    仅在能抓到线索时使用，避免整段正文无差别扫入噪声
+    brackets = re.findall(r'[【“\"《〈]([^\]】”\"》〉]{1,12})[】”\"》〉]', text)
+    for cand in brackets:
+        cand = cand.strip()
+        if 2 <= len(cand) <= 10 and re.search(r'[\u4e00-\u9fa5]', cand):
+            # 默认当人物；后续由用户手动改类型或由 Character 表/技能标题纠正
+            add('characters', cand)
+
 
 
 def _word_boundary_replace(text: str, old: str, new: str) -> Tuple[str, int]:
@@ -389,3 +587,42 @@ def register_chapter_entities(bb, chapter_num: int, content: str, known_actors: 
                 registry['characters'][name].get('last_seen_ch', 0), chapter_num)
 
     _save_registry(bb, registry)
+
+
+def extract_and_save_registry(bb, chapters_query=None) -> Dict:
+    """统一入口：运行全量抽取（extract_entities）后，把结果合并写回 bb.entity_registry_json。
+    - 返回的格式与 extract_entities 一致（{characters, factions, ...} 列表），前端 list_entities 直接用。
+    - 同步写入 entity_registry_json（后续 register_event_entities 增量更新能识别到）。
+    - chapters_query 可选：传入 Chapter list 后会额外从章节标题/正文抽实体。"""
+    if not bb:
+        return {'characters': [], 'factions': [], 'locations': [], 'items': [], 'skills': []}
+    entities = extract_entities(bb, chapters_query=chapters_query)
+    # 合并写入 registry：不覆盖 first_seen_ch/last_seen_ch/weight 已有值，缺失字段用默认值补
+    registry = _load_registry(bb)
+    ref_type = 'bible_scan'
+    for bucket_name in ENTITY_TYPES:
+        bucket = entities.get(bucket_name) or []
+        for item in bucket:
+            name = (item.get('name') or '').strip()
+            if not _is_valid_name(name):
+                continue
+            if name not in registry[bucket_name]:
+                dim_refs = item.get('dim_refs') or []
+                registry[bucket_name][name] = {
+                    'aliases': [],
+                    'refs': list(dim_refs) if isinstance(dim_refs, list) else [ref_type],
+                    'first_seen_ch': 0,
+                    'last_seen_ch': 0,
+                    'weight': ENTITY_TYPES[bucket_name]['default_weight'],
+                }
+            else:
+                entry = registry[bucket_name][name]
+                dim_refs = item.get('dim_refs') or []
+                if isinstance(dim_refs, list):
+                    refs = entry.setdefault('refs', [])
+                    for r in dim_refs:
+                        if r not in refs:
+                            refs.append(r)
+    _save_registry(bb, registry)
+    return entities
+

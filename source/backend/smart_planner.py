@@ -195,11 +195,16 @@ class SmartPlanner:
             ))
 
         # 人物维度落地后，同步实体注册表
-        if dim_key == 'character_profiles':
+        # 【用户反馈的实体识别不到】不止 character_profiles：世界观/剧情/分卷/构思/宗门/物品
+        # 等维度里也大量包含人物/势力/地点/物品/技能，统一在"会写入实体的维度"落地后同步。
+        sync_reg_dims = {'character_profiles', 'worldbuilding', 'timeline', 'concept',
+                         'plot_design', 'dynamic_volumes', 'locations', 'inventory',
+                         'foreshadowing', 'key_rules'}
+        if dim_key in sync_reg_dims:
             g.add(Task(
                 id='t_sync_entity', op='sync_entity_registry', target='entity_registry',
                 auto=True,
-                reason='从人物档案同步实体注册表'
+                reason=f'从「{spec.get("label", dim_key)}」维度同步实体注册表（人物/势力/地点/物品/技能）'
             ))
 
         return g
@@ -344,21 +349,39 @@ class TaskRunner:
     def _exec_sync_entity_registry(self, task: Task) -> Dict:
         if self.preview_mode:
             return {'preview_mode': True, 'note': '预览模式：实体注册表同步被跳过；实际应用时同步 Character/Bible → entity_registry_json'}
-        from app import BookBible, Character
-        from entity_registry import extract_entities, register_chapter_entities
+        from app import BookBible, Character, Chapter, db
+        from entity_registry import extract_and_save_registry, register_chapter_entities
         bb = BookBible.query.filter_by(book_id=self.book_id).first()
         if not bb:
             return {'error': 'bible not found'}
-        entities = extract_entities(bb)
-        # 同步 Character 表到注册表
+        # 把最近 30 章也作为扫描源（正文/标题里的实体自动入表）
+        recent_chapters = []
+        try:
+            recent_chapters = (
+                Chapter.query.filter_by(book_id=self.book_id, is_volume=False)
+                .order_by(Chapter.order_index.desc())
+                .limit(30)
+                .all()
+            ) or []
+        except Exception:
+            recent_chapters = []
+        # 1) 全量扫描 Bible + 最近章节 → 合并写入 entity_registry_json
+        entities = extract_and_save_registry(bb, chapters_query=recent_chapters)
+        # 2) Character 表兜底：确保 Character 表中的人物至少出现在注册表
         known_actors = [c.name for c in Character.query.filter_by(book_id=self.book_id).all() if c.name]
-        # 找一个最新章节号兜底
-        from app import Chapter
-        latest = Chapter.query.filter_by(book_id=self.book_id, is_volume=False).order_by(
-            Chapter.order_index.desc()).first()
-        ch_num = latest.order_index if latest else 0
+        latest = recent_chapters[0] if recent_chapters else None
+        ch_num = (latest.order_index if latest else 0)
         register_chapter_entities(bb, ch_num, '', known_actors=known_actors)
-        return {'entities': sum(len(v) for v in entities.values())}
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return {'entities': sum(len(v) for v in entities.values()),
+                'characters': len(entities.get('characters', [])),
+                'factions': len(entities.get('factions', [])),
+                'locations': len(entities.get('locations', [])),
+                'items': len(entities.get('items', [])),
+                'skills': len(entities.get('skills', []))}
 
     def _exec_compute_chapter_mission(self, task: Task) -> Dict:
         # 纯计算任务（伏笔 DAG 读操作），preview_mode 正常运行，不做写入

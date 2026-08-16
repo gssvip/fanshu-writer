@@ -1211,6 +1211,26 @@ def apply_card():
                     pass
 
         db.session.commit()
+
+        # ====== 落地卡片保存到 Bible 后，立即同步实体注册表 ======
+        # 用户反馈：实体注册表经常"识别不到智驾刚采纳落地/各维度已写入"的实体，
+        # 原因是之前要等用户手动打开实体 Tab 调 list_entities 或触发 planner sync。
+        # 现在每张落地卡片保存后就抽一次，实体注册表会立刻更新：
+        #  含人物卡(character_profiles JSON) / 剧情 timeline / 世界观 / 宗门 / 功法 / 地点……
+        try:
+            from app import Chapter
+            from entity_registry import extract_and_save_registry
+            recent_chs = (
+                Chapter.query.filter_by(book_id=book_id, is_volume=False)
+                .order_by(Chapter.order_index.desc())
+                .limit(10)
+                .all()
+            ) or []
+            extract_and_save_registry(bb, chapters_query=recent_chs)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
     except Exception as e:
         db.session.rollback()
         import traceback
