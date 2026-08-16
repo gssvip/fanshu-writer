@@ -1265,7 +1265,8 @@ def apply_card():
             bb.character_profiles = json.dumps(existing_list, ensure_ascii=False)
         elif spec['mode'] == 'timeline':
             # 剧情线卡：content 是 JSON 数组（按卷），需按 volume_index upsert 到已有 timeline
-            # 尝试解析 content 为 JSON 数组（可能被 _clean_text_to_plain 清理或被 markdown 包裹）
+            # 修复 main_events/summary 丢失：合并时保留旧 nodes，缺字段时用 summary 回填 main_plot，
+            # 确保 summary/main_events/nodes 三层结构在 DB 里完整保留，不被旧 UI 判定为"只采纳了概要"。
             raw = content.strip()
             # 剥离可能的 markdown 代码块包裹
             fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', raw)
@@ -1289,7 +1290,48 @@ def apply_card():
                 except (json.JSONDecodeError, ValueError, TypeError):
                     existing_vols = []
 
-                # 按 volume_index upsert（覆盖同卷、追加新卷）
+                def _merge_volume(old_v: dict, new_v: dict) -> dict:
+                    """同卷合并：新结构覆盖大部分字段，但保留旧卷已有的 nodes（新卷自带非空 nodes 除外）。
+                       并保证向后兼容：summary → main_plot，end_hook → ending_hook，核心字段不空。"""
+                    if not isinstance(new_v, dict):
+                        return new_v
+                    merged = dict(new_v)
+                    # 保留旧 nodes（节点设计结果不被上层重新生成 timeline 覆盖丢失）
+                    if isinstance(old_v, dict):
+                        new_has_nodes = isinstance(merged.get('nodes'), list) and len(merged['nodes']) > 0
+                        old_has_nodes = isinstance(old_v.get('nodes'), list) and len(old_v['nodes']) > 0
+                        if old_has_nodes and not new_has_nodes:
+                            merged['nodes'] = old_v['nodes']
+                    # 向后兼容：summary → main_plot（旧代码/旧 UI 只认 main_plot）
+                    if (not merged.get('main_plot') or not str(merged['main_plot']).strip()) and merged.get('summary'):
+                        merged['main_plot'] = str(merged['summary'])
+                    # 核心冲突/结尾钩子兜底：用 summary/end_hook 填，避免空
+                    if (not merged.get('core_conflict') or not str(merged['core_conflict']).strip()) and isinstance(old_v, dict):
+                        merged['core_conflict'] = old_v.get('core_conflict') or merged.get('core_conflict') or ''
+                    if not merged.get('ending_hook'):
+                        merged['ending_hook'] = merged.get('end_hook') or merged.get('ending') or (isinstance(old_v, dict) and old_v.get('ending_hook')) or ''
+                    # main_events 缺字段兜底：保证 main_events 是数组，元素至少含 index/title
+                    me = merged.get('main_events')
+                    if not isinstance(me, list) and isinstance(old_v, dict) and isinstance(old_v.get('main_events'), list):
+                        merged['main_events'] = old_v['main_events']
+                    elif isinstance(me, list):
+                        cleaned = []
+                        for idx, ev in enumerate(me):
+                            if not isinstance(ev, dict):
+                                continue
+                            ev.setdefault('index', idx + 1)
+                            ev.setdefault('title', f'事件{idx+1}')
+                            ev.setdefault('summary', ev.get('summary') or ev.get('event') or ev.get('events') or '')
+                            ev.setdefault('bury', '')
+                            ev.setdefault('payoff', '')
+                            cleaned.append(ev)
+                        merged['main_events'] = cleaned
+                    # nodes 兜底：确保至少空数组
+                    if not isinstance(merged.get('nodes'), list):
+                        merged['nodes'] = (isinstance(old_v, dict) and isinstance(old_v.get('nodes'), list) and old_v['nodes']) or []
+                    return merged
+
+                # 按 volume_index upsert（覆盖同卷时走 _merge_volume 保字段）
                 for nv in new_vols:
                     if not isinstance(nv, dict):
                         continue
@@ -1300,12 +1342,11 @@ def apply_card():
                             continue
                         ev_idx = ev.get('volume_index') or _extract_volume_index_safe(ev)
                         if str(ev_idx) == str(nv_idx):
-                            # 覆盖同卷
-                            existing_vols[i] = nv
+                            existing_vols[i] = _merge_volume(ev, nv)
                             matched = True
                             break
                     if not matched:
-                        existing_vols.append(nv)
+                        existing_vols.append(_merge_volume({}, nv))
 
                 # 按 volume_index 排序
                 existing_vols.sort(key=lambda v: (
@@ -4118,25 +4159,39 @@ def smart_generate():
 
 【分卷铁律·必读】**全书共 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章**。卷序号从 1 开始连续递增到 {tv}。卷名格式"第N卷 副标题"。必须覆盖全部 {tv} 卷，不得多不得少。
 
-【两层结构铁律（首次生成 = 总概要 + 主要剧情事件，不要写 nodes[]）】
-  第一层：每卷必须有 summary + main_events[]
+【卷级 6 要素铁律（每卷必须在顶层字段标注）】
+  · characters：本卷核心出场人物（主角+关键配角，20-40字，如"姜辰、云青瑶、骨三、北戎主帅"）
+  · timeline_anchor：本卷时间锚点（距开篇多久+关键日期，如"开篇第 3-8 月，仲夏至深秋"）
+  · location：本卷主要地点（20-40字，按先后次序，如"黑骨矿场→黑石城外黑市→天云宗外门山门"）
+  · realm_change：本卷境界变化区间（主角起→止，如"淬骨一重→淬骨七重·凝纹巅峰"）
+  · age_change：本卷年龄变化（主角起→止，如"16岁→16岁8个月"）
+
+【两层结构铁律（首次生成 = 卷级6要素+总概要 + 主要剧情事件，不要写 nodes[]）】
+  第一层：每卷必须有 卷级6要素 + summary + main_events[]
     · summary：本卷总体剧情概要（覆盖整卷的总故事走向，150-250字）
     · main_events：本卷 **8-12 个主要剧情事件（默认 10 个）{_density_hint}**
     · 10 个主要剧情事件 × 平均 5 章 × 2400字/章 = 本卷约 12 万字正文
-    · 每一个 main_event 结构如下：
+    · **【本次修改·关键】main_event 不套章节（不要 chapters 字段）！** 章节分配由后续「节点设计」阶段精确到每章。
+    · 每一个 main_event 必须给出"预计支撑章数"用于密度自检（不写章节区间，只写一个 estimated_chapters 数字，10 个事件的 estimated_chapters 加起来必须等于 {cpv}）。
+    · 每一个 main_event 结构如下（6 要素齐全，缺一不可）：
         {{
           "index": 1,
-          "title": "事件标题",
-          "chapters": "1-5",                       // 本事件覆盖的章节区间，全书连续不重叠
-          "summary": "事件概要（80-160字，具体可落地写5章内容的剧情推进）",
-          "bury": "第3章埋下：XXX；预计回收：第X卷第YY章",     // 没埋就空串
-          "payoff": "第5章回收：前卷/前文埋下的XXX；效果：XXX"  // 没收就空串
+          "title": "事件标题（动宾结构，如"黑骨矿场暴动夺刀"）",
+          "estimated_chapters": 5,                        // 本事件预计可支撑的章数，合计必须={cpv}
+          "summary": "事件概要（80-160字，具体可落地写约5章内容的剧情推进：起→承→转→合→钩子）",
+          "characters": "本事件核心人物（2-5人，按出场权重排序）",
+          "events": "事件核心推进（20-40字：谁在什么场景做了什么，造成什么关键后果）",
+          "time": "本事件时间锚（相对卷级的位置，如"卷首前10天" / "卷中·仲夏祭当天"）",
+          "location": "本事件发生地点（精确到具体场景，如"黑骨矿场·丙字采区·骨奴窝棚"）",
+          "realm_change": "本事件结束时主角的境界变化描述（如"突破淬骨三重，右臂骨纹点亮" / "境界不动，根基扎实"）",
+          "age_change": "本事件结束时主角的年龄/时程变化（如"16岁1个月零5天" / "距开篇3周"）",
+          "bury": "（第X卷节点阶段再精确到章，事件层只写"本事件中段埋下：XXX；预计第Y卷回收"。没埋就空串。）",
+          "payoff": "（第X卷节点阶段再精确到章，事件层只写"本事件结尾回收：前文/前卷埋下的XXX；效果：XXX"。没收就空串。）"
         }}
-    · main_events 的 chapters 合计必须刚好覆盖本卷 {cpv} 章（第1卷 1-{cpv}、第2卷 {cpv+1}-{cpv*2} ……）
-  第二层：nodes[]（详细情节节点）**首次生成一律留空数组 []**，由用户在剧情维度点击每卷「节点设计」按钮后，把每个 main_event 再拆成 5-10 个节点事件生成。首次生成严禁把 nodes[] 写满，严禁越俎代庖替用户做节点设计。
+    · 10 个主要剧情事件的 estimated_chapters 相加必须恰好等于 {cpv}（缺/多 1 章都不行）；每个 estimated_chapters 建议 4-6，少数可以 3 或 7，但总计严格={cpv}。
+  第二层：nodes[]（详细情节节点）**首次生成一律留空数组 []**，由用户在剧情维度点击每卷「节点设计」按钮后，把每个 main_event 再拆成 5-10 个节点事件生成（节点阶段再补 chapters + 精确到章的 bury/payoff）。首次生成严禁把 nodes[] 写满，严禁越俎代庖替用户做节点设计。
 
-【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；第N卷最后一个 main_event 的结尾悬念必须能被第N+1卷第一个 main_event 承接；伏笔 payoff 能跨卷指向第N±K卷具体 main_event。
-【分卷章节分配】全书 {total_chapters} 章 → {tv} 卷（每卷 {cpv} 章）：第1卷 1-{cpv}、第2卷 {cpv+1}-{cpv*2}、... 第{tv}卷 {(tv-1)*cpv+1}-{total_chapters}；main_events[*].chapters 合计刚好本卷 {cpv} 章，连续不重叠不缺口。
+【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；第N卷最后一个 main_event 的结尾悬念必须能被第N+1卷第一个 main_event 承接；伏笔 payoff 能跨卷指向第N±K卷 main_event。
 
 【输出格式铁律·绝对】严格输出 JSON 数组（不要包裹在 markdown 代码块中，不要任何解释性文字），每卷结构如下：
 [
@@ -4145,18 +4200,23 @@ def smart_generate():
     "volume": "第1卷 副标题",
     "volume_index": 1,
     "act": "立身",
+    "characters": "本卷核心人物（20-40字）",
+    "timeline_anchor": "本卷时间锚（距开篇X月-XX月，关键节气/节日）",
+    "location": "本卷主要地点路线（20-40字）",
+    "realm_change": "本卷境界起→止，如"淬骨一重→淬骨七重·凝纹巅峰"",
+    "age_change": "本卷年龄起→止，如"16岁→16岁8个月"",
     "summary": "本卷总体剧情概要（150-250字，覆盖整卷总走向）",
     "main_plot": "本卷主线剧情（卷内主线推进路径，100-160字）",
     "core_conflict": "本卷核心冲突（对手/阵营/目标冲突）",
     "ending_hook": "本卷卷尾钩子（动态悬念/冲突/转折，承接下一卷开头）",
     "main_events": [
-      {{"index":1,"title":"事件1","chapters":"1-5","summary":"事件概要（可落地写约5章的具体推进）","bury":"","payoff":""}},
-      {{"index":2,"title":"事件2","chapters":"6-10","summary":"...","bury":"","payoff":""}}
+      {{"index":1,"title":"事件1","estimated_chapters":5,"summary":"事件概要（可落地写约5章的具体推进）","characters":"","events":"","time":"","location":"","realm_change":"","age_change":"","bury":"","payoff":""}},
+      {{"index":2,"title":"事件2","estimated_chapters":5,"summary":"...","characters":"","events":"","time":"","location":"","realm_change":"","age_change":"","bury":"","payoff":""}}
     ],
     "nodes": []
   }}
 ]
-直接输出 JSON 数组，不要寒暄，不要解释，不要加任何 Markdown 标题或文字。nodes 必须是空数组，首次不要写节点内容！'''
+直接输出 JSON 数组，不要寒暄，不要解释，不要加任何 Markdown 标题或文字。nodes 必须是空数组，首次不要写节点内容！main_events 禁止出现 chapters 字段！'''
             else:
                 # 作者未指定总卷数（tv=0）：让 LLM 先给出建议 N 卷，再按 N 卷输出 JSON
                 # 禁止任何默认十卷/五卷/十二卷/5-8卷的数字；JSON 结构与 tv 明确时完全一致
@@ -4170,17 +4230,26 @@ def smart_generate():
 
 【分卷铁律·必读】方案建议 N 卷、每卷约 {cpv} 章、全书约 N×{cpv} 章（N 就是你方案里确定的卷数，禁止擅自写死 10）。卷序号从 1 开始连续递增到 N，卷名格式"第N卷 副标题"。必须覆盖全部 N 卷，不得多不得少。
 
-【两层结构铁律（首次生成 = 总概要 + 主要剧情事件，不要写 nodes[]）】
-  第一层：每卷必须有 summary + main_events[]
+【卷级 6 要素铁律（每卷必须在顶层字段标注）】
+  · characters：本卷核心出场人物（主角+关键配角，20-40字）
+  · timeline_anchor：本卷时间锚点（距开篇多久+关键日期/节气）
+  · location：本卷主要地点路线（20-40字，按先后）
+  · realm_change：本卷境界变化区间（主角起→止）
+  · age_change：本卷年龄变化（主角起→止）
+
+【两层结构铁律（首次生成 = 卷级6要素+总概要 + 主要剧情事件，不要写 nodes[]）】
+  第一层：每卷必须有 卷级6要素 + summary + main_events[]
     · summary：本卷总体剧情概要（覆盖整卷的总故事走向，150-250字）
     · main_events：本卷 **8-12 个主要剧情事件（默认 10 个）{_density_hint}**
     · 10 个主要剧情事件 × 平均 5 章 × 2400字/章 = 本卷约 12 万字正文
-    · 每一个 main_event 结构：{{"index":1,"title":"事件1","chapters":"1-5","summary":"事件概要（80-160字，可落地写约5章的推进）","bury":"","payoff":""}}
-    · main_events 的 chapters 合计刚好覆盖本卷 {cpv} 章，连续不重叠不缺口
-  第二层：nodes[]（详细情节节点）**首次生成一律留空数组 []**，由用户在剧情维度点击每卷「节点设计」按钮后，把每个 main_event 再拆成 5-10 个节点事件生成。首次严禁写 nodes 内容。
+    · **【本次修改·关键】main_event 不套章节（不要 chapters 字段）！** 章节分配由「节点设计」阶段再精确到每章。
+    · 每个 main_event 必须给出 estimated_chapters（预计支撑章数），N 卷下每卷 main_events[*].estimated_chapters 加起来必须恰好等于 {cpv}。
+    · 每个 main_event 结构如下（6 要素齐全，缺一不可）：
+        {{"index":1,"title":"事件1","estimated_chapters":5,"summary":"事件概要（80-160字，可落地写约5章推进）","characters":"核心人物2-5人","events":"谁在何场景做了什么→关键后果（20-40字）","time":"相对卷级时间锚（卷首X天/卷中·祭典当天）","location":"精确场景地点","realm_change":"结束时境界变化描述","age_change":"结束时年龄/时程","bury":"本事件X段埋下：XXX；预计第Y卷回收","payoff":"本事件X段回收：前文/前卷埋下的XXX；效果…"}}
+    · 合计 estimated_chapters 刚好 {cpv} 章，密度自检不要错。
+  第二层：nodes[]（详细情节节点）**首次生成一律留空数组 []**，由用户在剧情维度点击每卷「节点设计」按钮后，把每个 main_event 再拆成 5-10 个节点事件生成（节点阶段补 chapters + 精确到章的 bury/payoff）。首次严禁写 nodes 内容。
 
-【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；第N卷最后一个 main_event 的结尾悬念必须能被第N+1卷第一个 main_event 承接；伏笔 payoff 能跨卷指向第N±K卷 main_event。
-【分卷章节分配】N×{cpv} 章 → N 卷（每卷 {cpv} 章）：第1卷 1-{cpv}、第2卷 {cpv+1}-{cpv*2}、...、第N卷 {(cpv*(N-1))+1}-{cpv*N}；main_events[*].chapters 合计刚好本卷 {cpv} 章，连续不重叠不缺口。
+【卷间衔接铁律】第K卷 ending_hook 必须与第K+1卷开头严格衔接；第K卷最后一个 main_event 的结尾悬念必须能被第K+1卷第一个 main_event 承接；伏笔 payoff 能跨卷指向第K±M卷 main_event。
 
 【输出格式铁律·绝对】严格输出 JSON 数组（不要包裹代码块，不要任何解释文字），每卷结构如下：
 [
@@ -4189,18 +4258,22 @@ def smart_generate():
     "volume": "第1卷 副标题",
     "volume_index": 1,
     "act": "立身",
-    "summary": "本卷总体剧情概要（150-250字，覆盖整卷总走向）",
-    "main_plot": "本卷主线剧情（卷内主线推进路径，100-160字）",
-    "core_conflict": "本卷核心冲突（对手/阵营/目标冲突）",
-    "ending_hook": "本卷卷尾钩子（动态悬念/冲突/转折，承接下一卷开头）",
+    "characters": "本卷核心人物（20-40字）",
+    "timeline_anchor": "本卷时间锚",
+    "location": "本卷主要地点路线",
+    "realm_change": "主角境界 起→止",
+    "age_change": "主角年龄 起→止",
+    "summary": "本卷总体剧情概要（150-250字）",
+    "main_plot": "本卷主线推进路径（100-160字）",
+    "core_conflict": "本卷核心冲突",
+    "ending_hook": "卷尾钩子承接下卷",
     "main_events": [
-      {{"index":1,"title":"事件1","chapters":"1-5","summary":"事件概要（可落地写约5章的具体推进）","bury":"","payoff":""}},
-      {{"index":2,"title":"事件2","chapters":"6-10","summary":"...","bury":"","payoff":""}}
+      {{"index":1,"title":"事件1","estimated_chapters":5,"summary":"...","characters":"","events":"","time":"","location":"","realm_change":"","age_change":"","bury":"","payoff":""}}
     ],
     "nodes": []
   }}
 ]
-直接输出 JSON 数组，不要寒暄，不要解释，不要加任何 Markdown 标题或文字。nodes 必须是空数组，首次不要写节点内容！'''
+直接输出 JSON 数组，不要寒暄，不要解释，不要加任何 Markdown 标题或文字。nodes 必须是空数组，首次不要写节点内容！main_events 禁止出现 chapters 字段！'''
             # 修炼体系小说：节点须含修炼进展/境界区间/年龄区间/时间线锚点
             try:
                 from app import _cultivation_dimension_hint

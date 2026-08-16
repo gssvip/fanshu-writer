@@ -119,8 +119,8 @@ class PostGenValidator:
                 auto_fix=f'生成 {self.tv} 卷的 JSON 数组'
             )]
 
-        # 卷数校验
-        if len(vols) != self.tv:
+        # 卷数校验（tv=1 时允许模型自定 N 卷，不强校验数量一致）
+        if self.tv > 1 and len(vols) != self.tv:
             issues.append(ValidationIssue(
                 'VOL_COUNT_MISMATCH', 'error',
                 f'铁律要求 {self.tv} 卷，实际 {len(vols)} 卷',
@@ -141,15 +141,16 @@ class PostGenValidator:
                 pass
         if indices:
             indices.sort()
-            expected = list(range(1, self.tv + 1))
+            n = len(indices)
+            expected = list(range(1, n + 1))
             if indices != expected:
                 issues.append(ValidationIssue(
                     'VOL_INDEX_GAP', 'warn',
-                    f'卷号不连续：{indices}，应为 {expected[:len(indices)]}',
+                    f'卷号不连续：{indices}，应为 {expected}',
                     auto_fix='卷号从 1 开始连续递增'
                 ))
 
-        # 章号溢出校验
+        # 章号溢出校验（仅 nodes 和已落章节的节点）
         for v in vols:
             if not isinstance(v, dict):
                 continue
@@ -158,33 +159,116 @@ class PostGenValidator:
                 if not isinstance(n, dict):
                     continue
                 ch = str(n.get('chapters', ''))
-                m = re.match(r'(\d+)\s*-\s*(\d+)', ch)
-                if m:
-                    start_n, end_n = int(m.group(1)), int(m.group(2))
-                    if end_n > self.max_chapters:
-                        issues.append(ValidationIssue(
-                            'CH_NUM_OVERFLOW', 'error',
-                            f'卷 {vol_idx} 节点章号 {ch} 超过上限 {self.max_chapters}',
-                            auto_fix=f'章号上限 {self.max_chapters}'
-                        ))
-                    if start_n < 1:
-                        issues.append(ValidationIssue(
-                            'CH_NUM_UNDERFLOW', 'error',
-                            f'卷 {vol_idx} 节点章号 {ch} 起始小于 1'
-                        ))
+                nums = re.findall(r'\d+', ch)
+                if not nums:
+                    continue
+                end_n = int(nums[-1])
+                start_n = int(nums[0])
+                if end_n > self.max_chapters:
+                    issues.append(ValidationIssue(
+                        'CH_NUM_OVERFLOW', 'error',
+                        f'卷 {vol_idx} 节点章号 {ch} 超过上限 {self.max_chapters}',
+                        auto_fix=f'章号上限 {self.max_chapters}'
+                    ))
+                if start_n < 1:
+                    issues.append(ValidationIssue(
+                        'CH_NUM_UNDERFLOW', 'error',
+                        f'卷 {vol_idx} 节点章号 {ch} 起始小于 1'
+                    ))
 
-        # 必填字段校验
-        required_fields = ['volume_index', 'main_plot']
+        # 新结构校验：main_events 必须有且不含 chapters 字段，且 estimated_chapters 合计 = cpv
         for v in vols:
             if not isinstance(v, dict):
                 continue
-            for f in required_fields:
-                val = v.get(f)
-                if val is None or (isinstance(val, str) and not val.strip()):
+            vlabel = f'卷 {v.get("volume_index") or v.get("volume_id") or "?"}'
+            # 卷级 6 要素（warn 级，缺字段提示但不强制失败）
+            for f in ('characters', 'timeline_anchor', 'location', 'realm_change', 'age_change'):
+                if not str(v.get(f) or '').strip():
                     issues.append(ValidationIssue(
-                        'FIELD_MISSING', 'warn',
-                        f'卷 {v.get("volume_id") or v.get("volume_index") or "?"} 缺少字段 {f}'
+                        'VOL_6TUPLE_MISSING', 'warn',
+                        f'{vlabel} 缺少卷级 6 要素字段 {f}'
                     ))
+            main_events = v.get('main_events')
+            if not isinstance(main_events, list) or len(main_events) == 0:
+                # 兼容旧结构：如果有 nodes 也放行，但优先提示缺 main_events
+                if not isinstance(v.get('nodes'), list) or len(v.get('nodes')) == 0:
+                    issues.append(ValidationIssue(
+                        'MAIN_EVENTS_MISSING', 'error',
+                        f'{vlabel} 缺少 main_events（8-12 个主要剧情事件）',
+                        auto_fix='每卷必须提供 8-12 个 main_event，不要写空数组'
+                    ))
+                continue
+            if len(main_events) < 8:
+                issues.append(ValidationIssue(
+                    'MAIN_EVENTS_TOO_FEW', 'warn',
+                    f'{vlabel} main_events 只有 {len(main_events)} 个，建议 8-12 个',
+                    auto_fix='补足到至少 8 个主要剧情事件'
+                ))
+            if len(main_events) > 12:
+                issues.append(ValidationIssue(
+                    'MAIN_EVENTS_TOO_MANY', 'warn',
+                    f'{vlabel} main_events 有 {len(main_events)} 个，建议不超过 12 个',
+                    auto_fix='合并/精简到最多 12 个主要剧情事件'
+                ))
+            total_est = 0
+            for i, ev in enumerate(main_events):
+                if not isinstance(ev, dict):
+                    continue
+                evlabel = f'{vlabel} 事件 {ev.get("index") or (i+1)}'
+                if ev.get('chapters') is not None and str(ev.get('chapters', '')).strip():
+                    issues.append(ValidationIssue(
+                        'MAIN_EVENT_CHAPTERS_FORBIDDEN', 'error',
+                        f'{evlabel} 出现了 chapters 字段，事件层禁止套章节（留空/不写）',
+                        auto_fix='删除 main_event.chapters，改为 estimated_chapters 整数；chapters 只在节点设计阶段生成 nodes 时使用'
+                    ))
+                ec = ev.get('estimated_chapters')
+                try:
+                    ec_int = int(ec) if ec is not None else 0
+                    if ec_int < 0:
+                        ec_int = 0
+                except (TypeError, ValueError):
+                    ec_int = 0
+                total_est += ec_int
+                if ec_int <= 0:
+                    issues.append(ValidationIssue(
+                        'EST_CHAPTERS_MISSING', 'warn',
+                        f'{evlabel} 缺少或非法 estimated_chapters（应是正整数，该事件预计支撑多少章正文）'
+                    ))
+                # 事件级 6 要素（缺一 warn）
+                for f in ('characters', 'events', 'time', 'location', 'realm_change', 'age_change'):
+                    if not str(ev.get(f) or '').strip():
+                        issues.append(ValidationIssue(
+                            'EVENT_6TUPLE_MISSING', 'warn',
+                            f'{evlabel} 缺少 6 要素字段 {f}'
+                        ))
+            # 密度自检：合计 estimated_chapters ≈ cpv（允许±1误差，但尽量严格）
+            if total_est > 0 and abs(total_est - self.cpv) > max(1, int(round(self.cpv * 0.05))):
+                issues.append(ValidationIssue(
+                    'EST_CHAPTERS_SUM_MISMATCH', 'error',
+                    f'{vlabel} main_events.estimated_chapters 合计 {total_est}，与本卷 {self.cpv} 章不匹配（误差允许±{max(1, int(round(self.cpv * 0.05)))}）',
+                    auto_fix=f'调整每个事件的 estimated_chapters，使总和刚好 {self.cpv}'
+                ))
+            # nodes 若已存在则允许，但首次应为空（非强制，仅提示）
+            nds = v.get('nodes')
+            if isinstance(nds, list) and len(nds) > 0 and total_est > 0:
+                pass  # 节点阶段产物，通过
+
+        # 必填字段（保留向后兼容：volume_index + main_plot/summary 至少一个）
+        for v in vols:
+            if not isinstance(v, dict):
+                continue
+            if v.get('volume_index') is None and v.get('volume_id') is None:
+                issues.append(ValidationIssue(
+                    'FIELD_MISSING', 'warn',
+                    f'卷 {v.get("volume_id") or v.get("volume_index") or "?"} 缺少字段 volume_index/volume_id'
+                ))
+            has_summary = str(v.get('summary') or '').strip()
+            has_main_plot = str(v.get('main_plot') or '').strip()
+            if not has_summary and not has_main_plot:
+                issues.append(ValidationIssue(
+                    'FIELD_MISSING', 'warn',
+                    f'卷 {v.get("volume_id") or v.get("volume_index") or "?"} 缺少 summary/main_plot（至少要有一个总体剧情概要）'
+                ))
         return issues
 
     def _validate_outline(self, content: str) -> List[ValidationIssue]:

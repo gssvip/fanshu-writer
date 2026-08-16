@@ -9657,16 +9657,30 @@ def ai_outline_volume(book_id):
         # ===== 节点设计模式（升级：按每个 main_event 拆 5-10 个子节点事件） =====
         existing_summary = current_vol_existing.get('summary') or current_vol_existing.get('main_plot') or ''
         existing_main_plot = current_vol_existing.get('main_plot') or current_vol_existing.get('core_goal') or ''
-        # 优先级：新结构 main_events[]（8-12个主要剧情事件） → 旧 key_events/turning_points 数组 → 兜底旧结构空
+        # 优先级：新结构 main_events[]（8-12个主要剧情事件，含 6 要素+estimated_chapters，无 chapters）
+        #   → 旧 key_events/turning_points 数组 → 兜底旧结构空
         existing_main_events = current_vol_existing.get('main_events') or []
         existing_key_events = current_vol_existing.get('key_events') or current_vol_existing.get('turning_points') or []
+        # 卷级 6 要素（喂给 LLM 作为子节点的区间锚）
+        vol_characters = current_vol_existing.get('characters') or ''
+        vol_timeline_anchor = current_vol_existing.get('timeline_anchor') or ''
+        vol_location = current_vol_existing.get('location') or ''
+        vol_realm_change = current_vol_existing.get('realm_change') or ''
+        vol_age_change = current_vol_existing.get('age_change') or ''
         # 如果用户还没生成过 main_events（旧 timeline），从关键事件数组里推断出 main_events 的框架
         if not isinstance(existing_main_events, list) or len(existing_main_events) == 0:
             _ev_idx = 0
             _tmp = []
             for ke in (existing_key_events or []):
                 _ev_idx += 1
-                _tmp.append({'index': _ev_idx, 'title': str(ke), 'chapters': '', 'summary': str(ke), 'bury': '', 'payoff': ''})
+                _tmp.append({
+                    'index': _ev_idx, 'title': str(ke),
+                    'estimated_chapters': max(1, chapters_per_volume // max(1, len(existing_key_events or [_tmp]))),
+                    'summary': str(ke),
+                    'characters': '', 'events': str(ke), 'time': '', 'location': '',
+                    'realm_change': '', 'age_change': '',
+                    'bury': '', 'payoff': '',
+                })
             existing_main_events = _tmp
         existing_climax = current_vol_existing.get('climax') or ''
         existing_ending = current_vol_existing.get('ending') or current_vol_existing.get('ending_hook') or ''
@@ -9674,32 +9688,67 @@ def ai_outline_volume(book_id):
         existing_core_conflict = current_vol_existing.get('core_conflict') or ''
         existing_emotion = current_vol_existing.get('emotion_driver') or ''
 
-        # 把 main_events 列表序列化成多行文本，喂给 LLM 明确要求"按事件逐事件拆子节点"
-        _me_lines = []
+        # ---------- 节点阶段：按 estimated_chapters 把 main_events 顺序拆成章程序列 ----------
+        # 先做一遍事件章区间的分配（按卷起始章 start_chapter + 事件 estimated_chapters 累加连续分配），
+        # 再在 system prompt 里显式告诉 LLM 每个 main_event 对应的 chapters 区间，
+        # 这样 LLM 拆子节点时就能在区间内精确到每章，并保证节点 chapters 与父事件对齐。
+        _evt_start = start_chapter
+        _evt_end = start_chapter + chapters_per_volume - 1
+        _evt_alloc = []  # list[(me_index, me_title, ch_start, ch_end)]
+        _cur_ch = _evt_start
         for _me in existing_main_events:
             if not isinstance(_me, dict):
                 continue
+            try:
+                _ec = int(_me.get('estimated_chapters') or 0)
+                if _ec <= 0:
+                    _ec = max(1, chapters_per_volume // max(1, len(existing_main_events)))
+            except (TypeError, ValueError):
+                _ec = max(1, chapters_per_volume // max(1, len(existing_main_events)))
+            _me_start = _cur_ch
+            _me_end = min(_evt_end, _cur_ch + _ec - 1)
+            if _me_end < _me_start:
+                _me_end = _me_start
+            _evt_alloc.append((int(_me.get('index') or 0) or (len(_evt_alloc) + 1),
+                               str(_me.get('title') or ''),
+                               _me_start, _me_end,
+                               _ec,
+                               _me))
+            _cur_ch = _me_end + 1
+        # 若最后一个事件分配有缺口/溢出，拉齐到 _evt_end
+        if _evt_alloc and _evt_alloc[-1][3] != _evt_end:
+            *head, (idx, ttl, s, e, ec, raw) = _evt_alloc
+            e = _evt_end
+            _evt_alloc = head + [(idx, ttl, s, e, (e - s + 1), raw)]
+
+        # 把 main_events 列表 + 已分派的章区间序列化成多行文本喂给 LLM
+        _me_lines = []
+        for _alloc in _evt_alloc:
+            idx, ttl, s, e, ec, _me = _alloc
             _me_lines.append(
-                f'  · 事件{_me.get("index", "?")}《{_me.get("title","")}》'
-                + (f' 覆盖章节：{_me.get("chapters","")}' if _me.get("chapters") else '')
-                + f'\n    概要：{str(_me.get("summary",""))[:300]}'
+                f'  · 事件{idx}《{ttl}》（应分配章节：{s}-{e}，共 {e - s + 1} 章，支撑 ec={ec} 章）'
+                f'\n    概要：{str(_me.get("summary",""))[:300]}'
+                f'\n    ·人物：{_me.get("characters","")}'
+                f'\n    ·事件：{_me.get("events","")}'
+                f'\n    ·时间：{_me.get("time","")}'
+                f'\n    ·地点：{_me.get("location","")}'
+                f'\n    ·境界：{_me.get("realm_change","")}'
+                f'\n    ·年龄：{_me.get("age_change","")}'
                 + (f'\n    埋：{_me.get("bury","")}' if _me.get("bury") else '')
                 + (f'\n    收：{_me.get("payoff","")}' if _me.get("payoff") else '')
             )
         main_events_block = '\n'.join(_me_lines) if _me_lines else '（本卷尚未按新结构生成主要剧情事件，将基于旧的关键事件设计子节点）'
-        # 计算本卷起始章号；如果 main_events 中第一个事件已经有章号就用它，否则用全局推算
-        _evt_start = start_chapter
-        for _me in existing_main_events:
-            if isinstance(_me, dict) and _me.get('chapters'):
-                nums = re.findall(r'\d+', str(_me['chapters']))
-                if nums:
-                    _evt_start = min(_evt_start, int(nums[0]))
-                    break
-        _evt_end = start_chapter + chapters_per_volume - 1
 
         system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
 任务：基于第 {volume_index} 卷“{volume_title}”已有的主要剧情事件（main_events），**按每个主要剧情事件分别拆成 5-10 个子节点事件（nodes）**。
-子节点事件总数 = 主要剧情事件数 × 平均 7-8 个子节点 ≈ 足以覆盖本卷 {chapters_per_volume} 章 × 2400字/章 ≈ {chapters_per_volume * 2400} 字正文。
+子节点事件总数 ≈ 主要剧情事件数 × 平均 7-8 个子节点 ≈ 足以覆盖本卷 {chapters_per_volume} 章 × 2400字/章 ≈ {chapters_per_volume * 2400} 字正文。
+
+【本卷 6 要素锚（所有子节点都要在这个大框架内推进，不能超界）】
+  · 核心人物：{vol_characters}
+  · 时间锚：{vol_timeline_anchor}
+  · 地点路线：{vol_location}
+  · 境界变化区间：{vol_realm_change}
+  · 年龄变化区间：{vol_age_change}
 
 【模式说明】本卷已有完整卷剧情，你的任务是把 main_events 中每一个主要剧情事件，分别拆成 5-10 个 nodes 子节点。
 - 不要修改本卷的 summary / main_plot / main_events / core_conflict / ending_hook 等卷级字段
@@ -9707,25 +9756,34 @@ def ai_outline_volume(book_id):
 - 各子节点之间必须剧情连贯：上一节点末尾自然衔接到下一节点开头
 - 卷与卷之间的节点更要连贯：本卷第一个节点必须承接上一卷卷尾钩子，本卷最后一个节点必须埋下卷尾钩子承接本卷 ending_hook
 - 每个子节点必须严格归属到一个 main_event，不得脱离对应主要剧情事件自创剧情
-- 同一 main_event 内部，子节点 chapters 区间要连续不重叠，刚好覆盖该 main_event 的 chapters
+- 同一 main_event 内部，子节点 chapters 区间要**连续不重叠**，刚好覆盖该 main_event 被分派的章节区间（下方"两层对应铁律"里给了每事件的区间）
 
-【两层对应铁律】
+【两层对应铁律·升级（事件→子节点 + 精确章节分派）】
   · 输入 main_events 共 {len(existing_main_events)} 个事件
   · 每个 main_event → 展开 5-10 个 nodes 子节点事件
-  · 每个子节点节点须标注：它从属于哪个主要剧情事件（在 main_event_index 字段填对应 main_event.index）
-  · 子节点覆盖总章数必须刚好等于本卷 {chapters_per_volume} 章（从第 {_evt_start} 章到第 {_evt_end} 章），
-    且从属于 main_event.N 的子节点，其 chapters 区间合计要等于 main_event.N 的 chapters 区间。
+  · 每个子节点必须标注：它从属于哪个主要剧情事件（main_event_index = main_event.index）
+  · 子节点覆盖总章数必须刚好等于本卷 {chapters_per_volume} 章（从第 {_evt_start} 章到第 {_evt_end} 章）
+  · 关键：每个 main_event 被分派的章节区间如下，归属该事件的所有子节点的 chapters 加起来必须**精确**等于这个区间，连续不重叠不缺口：
+{chr(10).join(f'      - main_event.{idx}《{ttl}》 → 章节 {s}-{e}（共 {e-s+1} 章）' for idx, ttl, s, e, ec, raw in _evt_alloc)}
 
 【五幕模型对齐】本卷对应五幕中的“{current_act}”幕：{act_descriptions.get(current_act, '')}
 节点设计必须服务于该幕的核心目标。
 
 {cool_system_prompt}
 
-【伏笔埋收标注铁律（绝对要填）】
-每个子节点节点必须明确标注哪里埋了什么伏笔、后面哪一章回收：
-  · bury = "第XX章埋下：XXX；预计回收：第YY章（第Z卷）"
-  · payoff = "第XX章回收：前文第YY章埋下的XXX；效果：XXX"
-无埋/收填空字符串，但绝不乱填。要和归属的 main_event 的 bury/payoff 对齐。
+【节点 6 要素铁律（每个节点必须齐全）】
+  · characters：本节点核心出场人物（按权重排序，含小角色）
+  · events：本节点核心推进（20-40字：谁在什么场景做了什么→关键后果，直接对应能写进正文的剧情句）
+  · time：本节点时间锚（相对卷级 + 绝对章号，如"卷首第3周·第4章当晚三更"）
+  · location：本节点发生地点（精确到场景，如"黑骨矿场·丙字采区·第7巷道口"）
+  · realm_change：本节点结束时主角的境界/根基/金手指变化（如"淬骨三重巅峰，右腿骨纹半亮" / "境界不动，攒下突破契机"）
+  · age_change：本节点结束时主角的年龄/时程变化（如"16岁1个月零9天" / "距开篇24天"）
+
+【伏笔埋收标注铁律（绝对要填·精确到章）】
+每个子节点必须明确标注哪里埋了什么伏笔、后面哪一章回收：
+  · bury = "第XX章埋下：XXX；预计回收：第YY章（第Z卷）" （本节点真的埋下了才写，没埋就空串）
+  · payoff = "第XX章回收：前文第YY章埋下的XXX；效果：XXX" （本节点真的回收了才写，没收就空串）
+要和归属的 main_event 的 bury/payoff 对齐，不要自相矛盾；跨卷的 payoff 要指明第X卷。
 
 【输出格式】严格输出以下JSON（不要包裹在markdown代码块中，只输出 nodes 数组与必要元信息）：
 {{
@@ -9734,16 +9792,23 @@ def ai_outline_volume(book_id):
   "nodes": [
     {{
       "main_event_index": 1,
+      "index": 1,
       "title": "节点标题（动宾结构，如：街市遭袭反杀三名劫修）",
       "chapters": "{_evt_start}-{_evt_start+1}",
       "type": "M（M主线/C角色/W世界观/D日常/F伏笔）",
+      "characters": "本节点核心人物，按出场权重",
+      "events": "本节点核心推进：谁在哪做了什么→关键后果（20-40字）",
+      "time": "本节点时间锚（相对卷级+章号）",
+      "location": "本节点精确场景地点",
+      "realm_change": "本节点结束时境界/根基/金手指变化",
+      "age_change": "本节点结束时主角年龄/时程变化",
       "summary": "本节点详细剧情概要（支撑 chapters 范围内章节数×2400字的容量，含起因→发展→高潮→收尾→钩子，不可太简）",
       "cool_type": "爽点类型（八选一）",
       "cool_structure": "爽点结构（先抑后扬/直接碾压/默默装完逼）",
       "cool_contrast": "衬托方式（旁人震惊/不敢置信/事后佩服）",
       "cool_level": "爽点层级（微爽/小爽/中爽/大爽）",
-      "bury": "",
-      "payoff": "",
+      "bury": "第XX章埋下：XXX；预计回收：第YY章（第Z卷）/空串",
+      "payoff": "第XX章回收：第YY章埋下的XXX/空串",
       "hook": "本节点章尾钩子（七种钩子之一）"
     }}
   ]
@@ -9753,7 +9818,7 @@ def ai_outline_volume(book_id):
 【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
 【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（1-2章一个子节点，正好可直接写正文）
 本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），拆 {len(existing_main_events)} 个主要剧情事件 × 5-10 个子节点事件。
-节点 chapters 必须从 {_evt_start} 开始连续递增，合计到第 {_evt_end} 章，不能超出本卷边界。
+节点 chapters 必须从 {_evt_start} 开始连续递增，合计到第 {_evt_end} 章，不能超出本卷边界；同一 main_event 内的子节点 chapters 加起来精确等于分派的区间。
 【节点容量铁律】每个子节点 summary 必须足够支撑其 chapters 范围的字数容量（按每章2400字估算），不得简略。
 【节点连贯铁律】各节点 summary 末尾必须自然过渡到下一节点开头；本卷最后一个节点必须埋下并承接本卷 ending_hook：{existing_ending[:120]}
 
@@ -9773,15 +9838,16 @@ def ai_outline_volume(book_id):
 - 卷名：第{volume_index}卷“{volume_title}”
 - 总体剧情概要（summary）：{existing_summary or '（无）'}
 - 主线推进路径（main_plot）：{existing_main_plot or '（无）'}
+- 卷级6要素：人物={vol_characters}；时间={vol_timeline_anchor}；地点={vol_location}；境界={vol_realm_change}；年龄={vol_age_change}
 - 核心冲突：{existing_core_conflict or '（无）'}
 - 情感驱动：{existing_emotion or '（无）'}
-- 主要剧情事件（main_events）—— **每个事件需单独展开成 5-10 个子节点事件**：
+- 主要剧情事件（main_events）—— **每个事件需单独展开成 5-10 个子节点事件，且子节点 chapters 必须严格卡在分派区间内**：
 {main_events_block}
 - 高潮：{existing_climax or '（无）'}
 - 结局/卷尾钩子：{existing_ending or '（无）'}
 - 新埋伏笔：{', '.join(existing_foreshadowing) if existing_foreshadowing else '（无）'}
 
-请基于以上本卷 main_events 的每个事件，分别逐事件展开成 5-10 个情节子节点事件（nodes），子节点间剧情连贯，并按爽点系统配置爽点、标注伏笔埋收的具体章节号。
+请基于以上本卷 main_events 的每个事件，分别逐事件展开成 5-10 个情节子节点事件（nodes），子节点间剧情连贯，并按爽点系统配置爽点、标注**精确到章**的伏笔埋收章节号、补齐节点 6 要素（人物/事件/时间/地点/境界变化/年龄变化）。
 
 【世界观设定】
 {worldbuilding_ctx or '（暂无）'}

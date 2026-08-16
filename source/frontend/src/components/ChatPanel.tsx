@@ -278,6 +278,27 @@ const TimelineCardBody = memo(function TimelineCardBody({
                     <div style={{ color: '#4b5563' }}>{v.main_plot}</div>
                   </div>
                 )}
+
+                {/* 卷级 6 要素展示 */}
+                {(v.characters || v.timeline_anchor || v.location || v.realm_change || v.age_change) && (
+                  <div style={{
+                    margin: '6px 0 10px',
+                    padding: 8,
+                    borderRadius: 6,
+                    background: 'linear-gradient(90deg,#f5f3ff,#faf5ff)',
+                    border: '1px solid #ede9fe',
+                  }}>
+                    <div style={{ fontWeight: 600, color: '#5b21b6', marginBottom: 6 }}>📘 本卷 6 要素（节点阶段以这个为锚）</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px', fontSize: 12, color: '#4b5563' }}>
+                      {v.characters && <div><b>人物：</b>{v.characters}</div>}
+                      {v.timeline_anchor && <div><b>时间：</b>{v.timeline_anchor}</div>}
+                      {v.location && <div><b>地点：</b>{v.location}</div>}
+                      {v.realm_change && <div><b>境界变化：</b>{v.realm_change}</div>}
+                      {v.age_change && <div style={{ gridColumn: '1 / -1' }}><b>年龄变化：</b>{v.age_change}</div>}
+                    </div>
+                  </div>
+                )}
+
                 {(v.core_conflict || v.ending_hook) && (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
                     {v.core_conflict && (
@@ -298,23 +319,53 @@ const TimelineCardBody = memo(function TimelineCardBody({
                 {main_events.length > 0 && (
                   <div style={{ margin: '8px 0' }}>
                     <div style={{ fontWeight: 600, color: '#1f2937', marginBottom: 4 }}>
-                      主要剧情事件（{main_events.length} 个，合计约{chaptersPerVolume || 50}章/12万字正文）
+                      主要剧情事件（{main_events.length} 个，合计约{chaptersPerVolume || 50}章/12万字正文 · 事件层不含章节，由「节点设计」精确落章）
                     </div>
                     <ol style={{ paddingLeft: 22, margin: 0 }}>
                       {main_events.map((ev: any, ei: number) => (
-                        <li key={ei} style={{ marginBottom: 8, padding: 6, background: '#fafafa', borderRadius: 6 }}>
-                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                        <li key={ei} style={{ marginBottom: 10, padding: 8, background: '#fafafa', borderRadius: 6, border: '1px solid #f0f0f0' }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
                             <span style={{ fontWeight: 600, color: '#111827' }}>
                               事件{ev.index ?? (ei + 1)}《{ev.title || '未命名'}》
                             </span>
-                            {ev.chapters && (
-                              <span style={{ color: '#2563eb', fontSize: 12, fontWeight: 500 }}>章节 {ev.chapters}</span>
+                            {typeof ev.estimated_chapters === 'number' && ev.estimated_chapters > 0 && (
+                              <span style={{
+                                color: '#dc2626',
+                                fontSize: 12,
+                                background: '#fef2f2',
+                                border: '1px solid #fecaca',
+                                padding: '1px 6px',
+                                borderRadius: 4,
+                                fontWeight: 500,
+                              }}>预计支撑 {ev.estimated_chapters} 章</span>
                             )}
                           </div>
-                          {ev.summary && <div style={{ color: '#374151', marginTop: 2, whiteSpace: 'pre-wrap' }}>{ev.summary}</div>}
-                          <div style={{ marginTop: 4, fontSize: 12, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                            {ev.bury && <span>🔸 埋：{ev.bury}</span>}
-                            {ev.payoff && <span>🔹 收：{ev.payoff}</span>}
+                          {ev.summary && <div style={{ color: '#1f2937', marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{ev.summary}</div>}
+                          {/* 事件级 6 要素 */}
+                          {(ev.characters || ev.events || ev.time || ev.location || ev.realm_change || ev.age_change) && (
+                            <div style={{
+                              marginTop: 6,
+                              padding: 6,
+                              background: '#fffbeb',
+                              border: '1px solid #fde68a',
+                              borderRadius: 4,
+                              fontSize: 12,
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                              gap: '4px 10px',
+                              color: '#78350f',
+                            }}>
+                              {ev.characters && <div><b>人物：</b>{ev.characters}</div>}
+                              {ev.events && <div><b>事件：</b>{ev.events}</div>}
+                              {ev.time && <div><b>时间：</b>{ev.time}</div>}
+                              {ev.location && <div><b>地点：</b>{ev.location}</div>}
+                              {ev.realm_change && <div><b>境界：</b>{ev.realm_change}</div>}
+                              {ev.age_change && <div><b>年龄/时程：</b>{ev.age_change}</div>}
+                            </div>
+                          )}
+                          <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                            {ev.bury && <span title="伏笔埋设（当前层按事件描述，精确章号在节点里）" style={{ color: '#c2410c' }}>🔸 埋：{ev.bury}</span>}
+                            {ev.payoff && <span title="伏笔回收（当前层按事件描述，精确章号在节点里）" style={{ color: '#0369a1' }}>🔹 收：{ev.payoff}</span>}
                           </div>
                         </li>
                       ))}
@@ -322,44 +373,87 @@ const TimelineCardBody = memo(function TimelineCardBody({
                   </div>
                 )}
 
-                {nodes.length > 0 && (
-                  <div style={{ margin: '8px 0' }}>
-                    <div style={{ fontWeight: 600, color: '#1f2937', marginBottom: 4 }}>
-                      情节子节点事件（共 {nodes.length} 个，可直接展开成章节正文）
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {nodes.map((n: any, ni: number) => (
-                        <div key={ni} style={{
-                          padding: 6,
-                          background: n.main_event_index ? '#eff6ff' : '#f9fafb',
-                          border: '1px solid ' + (n.main_event_index ? '#bfdbfe' : '#f3f4f6'),
-                          borderRadius: 6,
-                          fontSize: 12,
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
-                            <span style={{ fontWeight: 600, color: '#111827' }}>
-                              {(n.main_event_index ? `E${n.main_event_index}-` : '')}N{ni + 1} {n.title}
-                            </span>
-                            {n.chapters && <span style={{ color: '#2563eb' }}>章节 {n.chapters}</span>}
-                            {n.type && <span style={{ color: '#059669' }}>类型 {n.type}</span>}
-                            {n.cool_type && <span style={{ color: '#c2410c' }}>爽点 {n.cool_type}</span>}
-                            {n.cool_level && <span style={{ color: '#7c3aed' }}>{n.cool_level}</span>}
+                {nodes.length > 0 && (() => {
+                  // 按 main_event_index 分组展示，方便与父事件对照
+                  const groups = new Map<number, any[]>();
+                  nodes.forEach((n: any) => {
+                    const k = Number(n.main_event_index) || 0;
+                    if (!groups.has(k)) groups.set(k, []);
+                    groups.get(k)!.push(n);
+                  });
+                  return (
+                    <div style={{ margin: '10px 0' }}>
+                      <div style={{ fontWeight: 600, color: '#1f2937', marginBottom: 4 }}>
+                        情节子节点事件（共 {nodes.length} 个 · 已精确到章 · 可直接展开成章节正文）
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {Array.from(groups.entries()).sort((a, b) => a[0] - b[0]).map(([mei, list]) => (
+                          <div key={mei} style={{
+                            padding: 6,
+                            background: mei ? '#eff6ff' : '#f9fafb',
+                            border: '1px solid ' + (mei ? '#bfdbfe' : '#f3f4f6'),
+                            borderRadius: 6,
+                          }}>
+                            {mei ? <div style={{ fontSize: 12, color: '#1d4ed8', fontWeight: 600, marginBottom: 4 }}>归属：主要剧情事件 E{mei}</div> : null}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {list.map((n: any, ni: number) => (
+                                <div key={ni} style={{
+                                  padding: 8,
+                                  background: '#ffffff',
+                                  border: '1px solid #e5e7eb',
+                                  borderRadius: 5,
+                                  fontSize: 12,
+                                }}>
+                                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                                    <span style={{ fontWeight: 600, color: '#111827' }}>
+                                      N{n.index || (ni + 1)} {n.title}
+                                    </span>
+                                    {n.chapters && <span style={{ color: '#2563eb', fontWeight: 500 }}>📖 {n.chapters}</span>}
+                                    {n.type && <span style={{ color: '#059669' }}>类型 {n.type}</span>}
+                                    {n.cool_type && <span style={{ color: '#c2410c' }}>爽点 {n.cool_type}</span>}
+                                    {n.cool_level && <span style={{ color: '#7c3aed' }}>{n.cool_level}</span>}
+                                  </div>
+                                  {/* 节点 6 要素 */}
+                                  {(n.characters || n.events || n.time || n.location || n.realm_change || n.age_change) && (
+                                    <div style={{
+                                      marginTop: 4,
+                                      padding: 6,
+                                      background: '#ecfeff',
+                                      border: '1px solid #a5f3fc',
+                                      borderRadius: 4,
+                                      fontSize: 12,
+                                      color: '#155e75',
+                                      display: 'grid',
+                                      gridTemplateColumns: 'repeat(2, minmax(0,1fr))',
+                                      gap: '4px 10px',
+                                    }}>
+                                      {n.characters && <div><b>人物：</b>{n.characters}</div>}
+                                      {n.events && <div><b>事件：</b>{n.events}</div>}
+                                      {n.time && <div><b>时间：</b>{n.time}</div>}
+                                      {n.location && <div><b>地点：</b>{n.location}</div>}
+                                      {n.realm_change && <div><b>境界：</b>{n.realm_change}</div>}
+                                      {n.age_change && <div><b>年龄/时程：</b>{n.age_change}</div>}
+                                    </div>
+                                  )}
+                                  {n.summary && <div style={{ color: '#374151', marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{n.summary}</div>}
+                                  <div style={{ marginTop: 6, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                    {n.bury && <span style={{ color: '#c2410c' }} title="伏笔埋设（精确到章）">🔸 埋：{n.bury}</span>}
+                                    {n.payoff && <span style={{ color: '#0369a1' }} title="伏笔回收（精确到章）">🔹 收：{n.payoff}</span>}
+                                    {n.hook && <span>🪝 钩子：{n.hook}</span>}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                          {n.summary && <div style={{ color: '#374151', marginTop: 2, whiteSpace: 'pre-wrap' }}>{n.summary}</div>}
-                          <div style={{ marginTop: 4, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                            {n.bury && <span>🔸 埋：{n.bury}</span>}
-                            {n.payoff && <span>🔹 收：{n.payoff}</span>}
-                            {n.hook && <span>🪝 钩子：{n.hook}</span>}
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {nodes.length === 0 && (
                   <div style={{ color: '#9ca3af', fontSize: 12, padding: 6 }}>
-                    尚未生成详细情节子节点事件。点击右上角「🎯 节点设计」，按每个主要剧情事件展开成 5-10 个子节点事件，满足所涉章节内容要求。
+                    尚未生成详细情节子节点事件。点击右上角「🎯 节点设计」，按每个主要剧情事件展开成 5-10 个子节点事件，子节点会补全所涉章节 + 精确到章的伏笔埋收 + 节点 6 要素。
                   </div>
                 )}
               </div>
