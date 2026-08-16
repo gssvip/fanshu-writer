@@ -625,6 +625,143 @@ def load_session_messages(session) -> list[dict]:
     return msgs if isinstance(msgs, list) else []
 
 
+# ============================================================================
+# 会话历史瘦身 + 安全提交（解决 messages_json 150KB+ 导致 PG SSL 断连）
+#
+# 根因：ai_sessions.messages_json 把完整卡片内容（章节正文/timeline JSON 数组）
+#       连同历史消息一起存进一个大 JSON 字符串，一次 UPDATE 动辄 100~300KB，
+#       Render/Neon 的 PG 代理层对大包+SSL 非常敏感，直接掐断连接 → OperationalError。
+#
+# 解法：
+#   1. 落盘前瘦身：卡片内容只保留元信息（id/type/title/target/status），不存正文；
+#      单条消息截到 800 字；总轮次上限 12；总 JSON 上限约 48KB。
+#   2. 提交捕获断连异常：rollback → 引擎 dispose 丢弃所有死连接 → 重查 session → 重试一次。
+# ============================================================================
+
+# 落盘前单条消息最大字符（正文写作单条 AI assistant 内容可能 6000+ 字，会超）
+_PERSIST_MSG_MAX_CHARS = 800
+# 落盘前卡片内容最大字符（卡片正文其实会落地到 Chapter/BookBible，session 里仅作回显，不需要完整）
+_PERSIST_CARD_CONTENT_MAX_CHARS = 120
+# 落盘前最多保留的"消息条数上限"（12 轮 = 24 条消息；一般够用）
+_PERSIST_MAX_MSGS = 24
+# 总 JSON 字符硬上限：超过就继续砍中间轮次，直到 ≤ 这个值 或 只剩最后 4 条
+_PERSIST_TOTAL_MAX_CHARS = 48 * 1024
+
+
+def _compact_history_for_persist(history: list) -> list:
+    """落盘前瘦身：把历史消息压到 PG 小包安全线以内。
+
+    规则（顺序执行）：
+      1. 砍卡片 content：每条 cards[*].content 截断到 120 字（卡片正文已落地在 BookBible/Chapter，session 里不用冗余保存全文）
+      2. 砍消息 content：每条 message.content 截断到 800 字
+      3. 砍历史深度：只保留最后 24 条消息
+      4. 若总 JSON 还超 48KB：循环砍中间消息，直到合规或只剩最后 4 条
+
+    返回：新的 list（不原地修改传入 history，避免影响 SSE 正在发的卡片内容）
+    """
+    import copy
+    if not history:
+        return []
+    # 深拷贝，防止改到 SSE 还在用的引用
+    h = copy.deepcopy(history)
+    if not isinstance(h, list):
+        return []
+
+    # Step1 + Step2：逐条瘦身
+    for m in h:
+        if not isinstance(m, dict):
+            continue
+        # 消息正文截断
+        c = m.get('content')
+        if isinstance(c, str) and len(c) > _PERSIST_MSG_MAX_CHARS:
+            m['content'] = c[:_PERSIST_MSG_MAX_CHARS] + '\n…（会话历史超长已截断，完整内容以采纳落地后的维度/章节为准）'
+        # 卡片列表内容截断（最关键，卡片 content 可能是 6000 字正文或 80KB timeline JSON）
+        cards = m.get('cards')
+        if isinstance(cards, list):
+            for c2 in cards:
+                if not isinstance(c2, dict):
+                    continue
+                cc = c2.get('content')
+                if isinstance(cc, str) and len(cc) > _PERSIST_CARD_CONTENT_MAX_CHARS:
+                    c2['content'] = cc[:_PERSIST_CARD_CONTENT_MAX_CHARS] + '…'
+
+    # Step3：深度限制（保留最后 N 条，避免几十轮对话堆起来）
+    if len(h) > _PERSIST_MAX_MSGS:
+        h = h[-_PERSIST_MAX_MSGS:]
+
+    # Step4：总字符兜底 —— 还超 48KB 就砍中间消息，保留首尾
+    def _total_chars(xs):
+        return len(json.dumps(xs, ensure_ascii=False))
+
+    _safety = 0
+    while _total_chars(h) > _PERSIST_TOTAL_MAX_CHARS and len(h) > 4 and _safety < 30:
+        _safety += 1
+        mid = len(h) // 2
+        # 砍中间 2 条（一般是一对 user+assistant），加速收敛
+        if mid - 1 >= 1:
+            del h[mid - 1:mid + 1]
+        else:
+            del h[mid:mid + 1]
+    return h
+
+
+def _safe_save_session_messages(session, history: list) -> None:
+    """会话消息落盘 + 处理 PG SSL 断连（OperationalError）重试。
+
+    流程：
+      1. 对 history 做瘦身（卡片/消息截断、深度限制、48KB 总上限）
+      2. 设置 session.messages_json / updated_at 并 commit
+      3. 命中 OperationalError（连接被掐断）时：
+         - rollback → engine.dispose() 扔僵尸连接 → 重查 session → 再 commit 1 次
+    """
+    from sqlalchemy.exc import OperationalError as SAOperationalError
+    from app import db as _db, app as _app
+
+    slim_history = _compact_history_for_persist(history)
+    session.messages_json = json.dumps(slim_history, ensure_ascii=False)
+    session.updated_at = datetime.now(timezone.utc)
+
+    def _do_commit(sess_obj):
+        _db.session.add(sess_obj)
+        _db.session.commit()
+
+    try:
+        _do_commit(session)
+    except SAOperationalError as e1:
+        try:
+            _db.session.rollback()
+        except Exception:
+            pass
+        # dispose 扔掉池中所有连接（彻底重置 SSL 管道）
+        try:
+            _db.get_engine(_app).dispose()
+        except Exception:
+            pass
+        # 新连接重查 session，再提交一次
+        try:
+            from app import AISession
+            sess2 = AISession.query.get(session.id)
+            if sess2 is None:
+                raise
+            sess2.messages_json = json.dumps(_compact_history_for_persist(history), ensure_ascii=False)
+            sess2.updated_at = datetime.now(timezone.utc)
+            # 如果调用方还改了 session.title（例如 _persist_action_session），同步过去
+            if getattr(session, 'title', None):
+                sess2.title = session.title
+            _do_commit(sess2)
+            try:
+                session.messages_json = sess2.messages_json
+                session.updated_at = sess2.updated_at
+                if getattr(sess2, 'title', None):
+                    session.title = sess2.title
+            except Exception:
+                pass
+        except Exception as e2:
+            raise RuntimeError(
+                f'Session 保存失败（首次 {type(e1).__name__}: {e1}；重试 {type(e2).__name__}: {e2}）'
+            )
+
+
 def build_context_messages(system_prompt: str, history: list[dict], user_msg: str) -> list[dict]:
     """组装发给 LLM 的完整 messages：system + 滑窗历史 + 当前用户消息。"""
     # 截断每条历史消息
@@ -859,9 +996,7 @@ def chat_smart():
             history.append({'role': 'user', 'content': message})
             history.append({'role': 'assistant', 'content': clean_text,
                             'cards': persisted_cards})
-            session.messages_json = json.dumps(history, ensure_ascii=False)
-            session.updated_at = datetime.now(timezone.utc)
-            db.session.commit()
+            _safe_save_session_messages(session, history)
 
             yield f'data: {json.dumps({"type": "done", "session_id": session_id}, ensure_ascii=False)}\n\n'
         except Exception as e:
@@ -895,9 +1030,7 @@ def _persist_card_status(session_id, card_id, new_status, new_content=None):
                         c['content'] = new_content
                     changed = True
         if changed:
-            session.messages_json = json.dumps(msgs, ensure_ascii=False)
-            session.updated_at = datetime.now(timezone.utc)
-            db.session.commit()
+            _safe_save_session_messages(session, msgs)
     except Exception:
         try:
             from app import db
@@ -2266,11 +2399,10 @@ def _persist_action_session(session, title, generated, dims, cards_out=None):
                     'status': 'pending',
                 })
     history.append({'role': 'assistant', 'content': title, 'cards': cards})
-    session.messages_json = json.dumps(history, ensure_ascii=False)
-    session.updated_at = datetime.now(timezone.utc)
+    # session.title 先改好，_safe_save_session_messages 的断连重试分支会同步它
     if not session.title or session.title == 'AI动作':
         session.title = title[:30]
-    db.session.commit()
+    _safe_save_session_messages(session, history)
     yield f'data: {json.dumps({"type": "done", "session_id": session.id}, ensure_ascii=False)}\n\n'
 
 
@@ -3467,9 +3599,7 @@ def smart_general():
             history.append({'role': 'user', 'content': message})
             history.append({'role': 'assistant', 'content': clean_content,
                             'cards': [{**c, 'status': 'pending'} for c in cards] if cards else None})
-            session.messages_json = json.dumps(history, ensure_ascii=False)
-            session.updated_at = datetime.now(timezone.utc)
-            db.session.commit()
+            _safe_save_session_messages(session, history)
             yield sse({'type': 'done', 'session_id': session_id})
         except Exception as e:
             yield sse({'type': 'error', 'error': str(e)})
@@ -4197,9 +4327,7 @@ def smart_generate():
                 history.append({'role': 'user', 'content': f'落地用户{spec["label"]}方案'})
                 history.append({'role': 'assistant', 'content': body,
                                 'cards': [{**c, 'status': 'pending'} for c in [card] + extra_cards]})
-                session.messages_json = json.dumps(history, ensure_ascii=False)
-                session.updated_at = datetime.now(timezone.utc)
-                db.session.commit()
+                _safe_save_session_messages(session, history)
                 yield sse({'type': 'done', 'session_id': session_id})
                 return
 
@@ -4322,9 +4450,7 @@ def smart_generate():
             history.append({'role': 'user', 'content': f'生成{spec["label"]}：{requirement or suggestion[:50]}'})
             history.append({'role': 'assistant', 'content': clean_content,
                             'cards': [{**c, 'status': 'pending'} for c in [card] + extra_cards]})
-            session.messages_json = json.dumps(history, ensure_ascii=False)
-            session.updated_at = datetime.now(timezone.utc)
-            db.session.commit()
+            _safe_save_session_messages(session, history)
             yield sse({'type': 'done', 'session_id': session_id})
         except Exception as e:
             yield sse({'type': 'error', 'error': str(e)})
@@ -4538,9 +4664,7 @@ def smart_dim_edit():
             history.append({'role': 'user', 'content': f'修订{spec["label"]}：{edit_request}'})
             history.append({'role': 'assistant', 'content': content,
                             'cards': [{**card, 'status': 'pending'}]})
-            session.messages_json = json.dumps(history, ensure_ascii=False)
-            session.updated_at = datetime.now(timezone.utc)
-            db.session.commit()
+            _safe_save_session_messages(session, history)
             yield sse({'type': 'done', 'session_id': session_id})
         except Exception as e:
             yield sse({'type': 'error', 'error': str(e)})
@@ -4789,9 +4913,7 @@ def smart_batch():
                         'status': 'pending',
                     })
             history.append({'role': 'assistant', 'content': f'已生成 {len(cards)} 个维度', 'cards': cards})
-            session.messages_json = json.dumps(history, ensure_ascii=False)
-            session.updated_at = datetime.now(timezone.utc)
-            db.session.commit()
+            _safe_save_session_messages(session, history)
             yield sse({'type': 'done', 'session_id': session_id})
         except Exception as e:
             yield sse({'type': 'error', 'error': str(e)})
@@ -5047,9 +5169,7 @@ def smart_deai():
             history.append({'role': 'user', 'content': f'去AI味：{chapter.title}'})
             history.append({'role': 'assistant', 'content': body_content,
                             'cards': [{**card, 'status': 'pending'}]})
-            session.messages_json = json.dumps(history, ensure_ascii=False)
-            session.updated_at = datetime.now(timezone.utc)
-            db.session.commit()
+            _safe_save_session_messages(session, history)
             yield sse({'type': 'done', 'session_id': session_id})
         except Exception as e:
             yield sse({'type': 'error', 'error': str(e)})

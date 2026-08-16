@@ -185,17 +185,30 @@ else:
     print(f'[DB] ⚠️ 本地开发模式使用 SQLite：{DATA_DIR}/fanshu.db（生产环境会拒绝启动）', flush=True)
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-# 连接池配置：防止 Neon/PG 空闲断连导致 500
+# 连接池配置：防止 Neon/Render PG 空闲断连 + 大包 SSL 断连
 # - pool_pre_ping: 每次取连接前 ping 一下，剔除死连接
-# - pool_recycle: 每 1 小时回收连接，避免服务端已断开的僵尸连接
+# - pool_recycle: 每 15 分钟回收（原 30 分钟，Render 空闲超时更激进）
 # - pool_size / max_overflow: 控制总连接数，适配免费层限制
+# - connect_args: TCP keepalive + connect_timeout + keepalives_idle 防止 SSL 大包中途被代理掐断
 if DATABASE_URL:
-    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    _engine_opts = {
         'pool_pre_ping': True,
-        'pool_recycle': 1800,  # 30分钟回收，小于 Neon/Render 空闲超时
+        'pool_recycle': 900,  # 15 分钟回收，小于 Neon/Render 空闲超时
         'pool_size': 5,
         'max_overflow': 5,
     }
+    # psycopg2 专属：keepalives 防止中间代理（Render/Cloudflare/PGBouncer）在大事务时静默断连
+    # 典型触发：UPDATE ai_sessions SET messages_json 写 100KB+ 大包，SSL 管道被掐
+    if 'psycopg2' in DATABASE_URL or DATABASE_URL.startswith('postgresql://') or DATABASE_URL.startswith('postgres://'):
+        _engine_opts['connect_args'] = {
+            'connect_timeout': 15,          # 建连超时 15s
+            'keepalives': 1,                # 启用 TCP keepalive
+            'keepalives_idle': 30,          # 空闲 30s 开始探测
+            'keepalives_interval': 10,      # 每 10s 一个探测包
+            'keepalives_count': 5,          # 5 次探测失败判死（总 80s）
+            'tcp_user_timeout': 120000,     # 大包未 ACK 2 分钟判死（毫秒，Linux ≥ 2.6.37）
+        }
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = _engine_opts
 
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 db = SQLAlchemy(app)
