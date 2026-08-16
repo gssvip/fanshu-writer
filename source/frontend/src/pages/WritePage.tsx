@@ -6697,6 +6697,7 @@ function DynamicMemoryPanel(props: {
   // 按卷动态识别
   const [dynVolumes, setDynVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
+  const [generatingVolReport, setGeneratingVolReport] = useState('');
   const [collapsedVolDyn, setCollapsedVolDyn] = useState<Set<number>>(new Set());
   // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
   const dynCollapseInitRef = useRef(false);
@@ -6878,6 +6879,33 @@ function DynamicMemoryPanel(props: {
         alert('AI识别失败：' + (e.message || '请检查AI配置'));
       }
       setAnalyzingVol('');
+    });
+  }
+
+  // 按卷批量生成动态报告：每5章一份，自动补齐该卷所有5章区间（报告按钮）
+  async function handleGenerateVolumeReports(volId: string, volTitle: string) {
+    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，按每5章一份生成该卷所有动态报告（已存在的将跳过），报告会显示在这一卷下方。是否继续？`, async () => {
+      setGeneratingVolReport(volId || volTitle);
+      setError('');
+      try {
+        const result = await api.batchGenerateDynamicReports(bookId, {
+          volume_id: volId,
+          volume_title: volTitle,
+          skill_pack_ids: selectedSkillPackIds,
+          overwrite: false,
+        });
+        // 重新拉取报告列表（按章号排序）
+        const fresh = await api.listDynamicReports(bookId);
+        setReports(fresh.sort((a, b) => Number(a.chapter_start) - Number(b.chapter_start)));
+        const msg = `✅ 报告生成完成！\n卷「${result.volume_title}」（第${result.chapter_range[0]}-${result.chapter_range[1]}章）\n` +
+          `本次生成 ${result.generated_count} 份，跳过已存在 ${result.skipped_count} 份` +
+          (result.error_count > 0 ? `，失败 ${result.error_count} 份` : '');
+        alert(msg);
+      } catch (e: any) {
+        setError(e.message || '生成失败');
+        alert('报告生成失败：' + (e.message || '请检查AI配置'));
+      }
+      setGeneratingVolReport('');
     });
   }
 
@@ -7178,17 +7206,23 @@ function DynamicMemoryPanel(props: {
 
       {error && <div className="error-msg" style={{ marginBottom: 8 }}>{error}</div>}
 
-      {/* 按卷动态文件识别 */}
-      {displayDynVolumes.length > 0 && (
+          {displayDynVolumes.length > 0 && (
         <div className="plot-volume-list" style={{marginBottom:16}}>
           <div style={{marginBottom:8}}>
             <p className="text-muted" style={{fontSize:12, margin:0}}>
-              📚 点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下
+              📚 按卷查看：摘要（📝）→ 按5章一份生成报告（📄）→ 编辑（✏️）→ 删除（🗑️）；生成的报告显示在对应卷下方。
             </p>
           </div>
           {displayDynVolumes.map((vol, idx) => {
             const d = vol.data || {};
             const hasData = vol.data && (d.summary || d.characters || d.events);
+            // 从按卷分组报告里定位该卷对应分组（与"下方报告区域"共享同一个 reportsByVolume，不重复计算）
+            const groupKey = `vol-${vol.volume_id}`;
+            const volReportGroup = reportsByVolume.find(g => g.key === groupKey);
+            const volReports = (volReportGroup?.reports || [])
+              .slice()
+              .sort((a, b) => Number(a.chapter_start) - Number(b.chapter_start));
+            const isReportCollapsed = collapsedReportVols.has(groupKey);
             return (
               <div key={idx} className="plot-volume-card">
                 <div className="plot-volume-header" onClick={() => toggleVolDyn(idx)} style={{cursor:'pointer'}}>
@@ -7197,9 +7231,10 @@ function DynamicMemoryPanel(props: {
                   {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                   {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
                   <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                    {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
-                    {/* P0-4: 新增"识别卷动态摘要"按钮，调用 analyzeDynamicVolume 写入 dynamic_volumes */}
-                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeDynamicVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={!!analyzingVol} title="AI识别本卷动态摘要（人物/事件/伏笔/关系）写入按卷动态文件">📝 摘要</button>
+                    {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 摘要识别中...</span>}
+                    {generatingVolReport === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 生成报告中...</span>}
+                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeDynamicVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={!!analyzingVol || !!generatingVolReport} title="AI识别本卷动态摘要（人物/事件/伏笔/关系）写入按卷动态文件">📝 摘要</button>
+                    <button className="btn-ghost-sm" onClick={() => handleGenerateVolumeReports(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={!!analyzingVol || !!generatingVolReport} title="按每5章生成一份动态报告，自动覆盖整卷并显示在本卷下方">📄 报告</button>
                     <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolDynamic(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷动态文件数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
                     {hasData && (
                       <button className="btn-ghost-sm" onClick={() => deleteVolumeDynamic(idx)} style={{color:'#e74c3c'}} title="删除此卷动态文件数据">🗑️</button>
@@ -7218,7 +7253,7 @@ function DynamicMemoryPanel(props: {
                         </div>
                       </div>
                     ) : !hasData ? (
-                      <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据，点击「🔍 AI识别」选择此卷生成摘要</p>
+                      <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据：点击「📝 摘要」AI识别本卷综合摘要；点击「📄 报告」按每5章一份生成本卷所有动态报告。</p>
                     ) : (
                       <div className="plot-events">
                         {d.summary && <p><b>综合摘要：</b>{safeText(d.summary)}</p>}
@@ -7232,6 +7267,41 @@ function DynamicMemoryPanel(props: {
                         {d.relationships && <p><b>关系变化：</b>{safeText(d.relationships)}</p>}
                       </div>
                     )}
+
+                    {/* 报告位置：本卷下的动态报告分组（按5章一份），生成按钮点完后显示在这里 */}
+                    <div style={{marginTop:12}}>
+                      {volReports.length === 0 ? (
+                        <p className="text-muted" style={{fontSize:12, margin:0}}>
+                          🗒️ 本卷暂未生成动态报告；点击右上角「📄 报告」按每5章一份批量生成，生成结果显示在此。
+                        </p>
+                      ) : (
+                        <div className="dm-volume-group" style={{borderTop:'1px solid var(--border)', paddingTop:8}}>
+                          <div
+                            className="dm-volume-group-header"
+                            onClick={e => { e.stopPropagation(); toggleReportVol(groupKey); }}
+                            style={{cursor:'pointer',display:'flex',alignItems:'center',gap:6,padding:'4px 0',marginBottom:6,userSelect:'none'}}
+                          >
+                            <span style={{fontSize:10,color:'var(--text-muted)'}}>{isReportCollapsed ? '▶' : '▼'}</span>
+                            <span style={{fontWeight:600,fontSize:13}}>📄 本卷动态报告（{volReports.length}份）</span>
+                          </div>
+                          {!isReportCollapsed && (
+                            <div className="dm-tab-bar" style={{marginBottom:4}}>
+                              {volReports.map(r => (
+                                <button
+                                  key={r.id}
+                                  className={`dm-tab-chip ${selectedId === r.id ? 'active' : ''}`}
+                                  onClick={e => { e.stopPropagation(); selectReport(r); }}
+                                  title={r.title}
+                                >
+                                  <span className="dm-tab-chip-range">{r.chapter_start}-{r.chapter_end}</span>
+                                  {r.auto_generated && <span className="dm-tab-chip-badge">自</span>}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
