@@ -3721,6 +3721,33 @@ def smart_generate():
     bb = BookBible.query.filter_by(book_id=book_id).first()
     ctx, self_content = _build_dim_context(book, bb, dim_key)
 
+    # =====【卷数/章数·真正写入 DB·截图的矛盾根源修复】=====
+    # 场景：用户在"构思"维度，选了一张预览写着"全书按25卷设计"的方案卡片
+    # → 点"按此方案直接生成" → smart_generate 被调用，suggestion = 那 25 卷方案全文
+    # → 但之前没有把"25卷"真的写入 DB（bb.total_volumes / book.total_volumes）
+    # → _get_total_volumes 取不到就回退默认 10
+    # → _core_params_iron_block 后面告诉 LLM"全书10卷"
+    # → LLM 落地卡片输出"全书定为十卷"，跟用户选的25卷方案互相矛盾
+    #
+    # 修复：在注入铁律 / 调用 LLM 之前，先把 suggestion（即用户选中的方案全文，
+    # 含 title/preview/full_content 拼合）和 requirement 用户意见，一起塞进
+    # _auto_sync_params_from_user_message → 正则解析 → 真正写入 DB，
+    # 这样后面 _core_params_iron_block 读到的就是正确卷数，不再 10 卷。
+    try:
+        _auto_sync_params_from_user_message(book, bb, (suggestion or '') + '\n' + (requirement or ''))
+        # 同步完可能刚刚新建 bb，必须再取一次
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+        # 顺带把 Book 表侧的 meta 也同步到 Bible，防止一侧改了另一侧没改
+        from app import _sync_book_meta_to_bible
+        if bb is None:
+            bb = BookBible(book_id=book_id)
+            db.session.add(bb)
+        _sync_book_meta_to_bible(book, bb)
+        db.session.commit()
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+    except Exception:
+        pass
+
     # 注入核心创作参数铁律（卷数/题材/风格），让大纲/剧情等维度严格按全书卷数规划
     core_params = _core_params_iron_block(bb, book)
 
