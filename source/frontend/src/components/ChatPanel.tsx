@@ -127,6 +127,12 @@ interface CardViewProps {
   onIgnore: (card: ActionCard) => void;
   applying: boolean;
   onReplaceChapter?: (card: ActionCard, meta: any) => void;
+  // 剧情维度专属：节点设计需要 bookId、写回 bible
+  bookId?: string;
+  bible?: any;
+  onBibleUpdate?: (nextBible: any) => void;
+  selectedSkillPackIds?: string[];
+  chaptersPerVolume?: number;
 }
 
 const CARD_ICON: Record<string, string> = {
@@ -134,6 +140,236 @@ const CARD_ICON: Record<string, string> = {
   SAVE_OUTLINE_NODE: '📋', SAVE_PLOT: '📖', SAVE_LOCATION: '🗺️',
   SAVE_RULE: '⚙️', APPLY_STYLE: '✍️', SAVE_CONCEPT: '💡', SAVE_CHAPTER: '📚',
 };
+
+// 解析 timeline 文本为卷数组（容错：markdown 代码块、包装对象）
+function _parseTimelineVols(content: string): any[] {
+  if (!content) return [];
+  let raw = content.trim();
+  if (!raw) return [];
+  // 剥离代码块围栏
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fence) raw = fence[1].trim();
+  try {
+    let parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const k of ['volumes', 'data', 'result', 'items', 'list']) {
+        if (Array.isArray((parsed as any)[k])) { parsed = (parsed as any)[k]; break; }
+      }
+    }
+    if (Array.isArray(parsed)) return parsed;
+  } catch { /* not json */ }
+  return [];
+}
+
+// 剧情维度卡片 body：按卷可折叠、每卷显示概要/主要事件/节点，并提供「节点设计」按钮
+const TimelineCardBody = memo(function TimelineCardBody({
+  content, bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume,
+  onContentMutated,
+}: {
+  content: string;
+  bookId?: string;
+  bible?: any;
+  onBibleUpdate?: (next: any) => void;
+  selectedSkillPackIds?: string[];
+  chaptersPerVolume?: number;
+  // 当 nodes 被节点设计改写后，把新 content 回传给 ActionCardView（用于编辑/采纳的内容同步）
+  onContentMutated?: (nextContent: string) => void;
+}) {
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
+  const [designing, setDesigning] = useState<number | null>(null);
+  const vols = useMemo(() => _parseTimelineVols(content), [content]);
+  const toggleVol = (idx: number) => setCollapsed(prev => ({ ...prev, [idx]: !prev[idx] }));
+
+  // 点击某卷的「节点设计」：调用 api.aiOutlineVolume(node_only=true) → 用新 nodes 替换该卷并写回 Bible + 回传 content
+  const handleDesignNodes = async (vol: any, idx: number) => {
+    if (!bookId || !onBibleUpdate) {
+      alert('缺少 bookId / bible 回调，无法进行节点设计');
+      return;
+    }
+    const volIdx = vol.volume_index ?? vol.volume_id ?? (idx + 1);
+    const volTitle = vol.volume || `第${volIdx}卷`;
+    const vi_int = typeof volIdx === 'number' ? volIdx : parseInt(String(volIdx), 10) || (idx + 1);
+    const hint = (vol.main_events?.length
+      ? `检测到本卷《${volTitle}》已有 ${vol.main_events.length} 个主要剧情事件，将逐事件展开成 5-10 个子节点事件（总节点≈50-80个，满足${chaptersPerVolume || 50}章正文密度）。是否继续？`
+      : `将基于《${volTitle}》已有卷剧情生成详细情节子节点。是否继续？`);
+    if (!window.confirm(hint)) return;
+    setDesigning(vi_int);
+    try {
+      const r = await api.aiOutlineVolume(bookId, vi_int, volTitle, selectedSkillPackIds || [], chaptersPerVolume || 50, true);
+      // 后端返回 r.bible 是新 Bible（bb.timeline 已合并过 nodes）
+      if (r?.bible) onBibleUpdate(r.bible);
+      // 同时直接把最新 timeline 作为卡片内容，保证编辑/采纳看到的是最新 nodes 数据
+      if (r?.timeline && onContentMutated) onContentMutated(r.timeline);
+      const newNodesCount = r?.volume_data?.nodes?.length ?? 0;
+      alert(`《${volTitle}》情节子节点事件设计完成！共生成 ${newNodesCount} 个子节点（覆盖约 ${chaptersPerVolume || 50} 章）`);
+    } catch (e: any) {
+      alert('节点设计失败：' + (e?.message || '请检查 AI 配置'));
+    } finally {
+      setDesigning(null);
+    }
+  };
+
+  if (vols.length === 0) {
+    // 非 JSON 的普通文本：原样显示
+    return <div className="chat-card-body">{content}</div>;
+  }
+
+  return (
+    <div className="chat-card-body" style={{ padding: 8 }}>
+      {vols.map((v: any, idx: number) => {
+        const vIdx = v.volume_index ?? v.volume_id ?? (idx + 1);
+        const vi_int = typeof vIdx === 'number' ? vIdx : parseInt(String(vIdx), 10) || idx + 1;
+        const vTitle = v.volume || `第${vIdx}卷`;
+        const isCollapsed = !!collapsed[idx];
+        const main_events = Array.isArray(v.main_events) ? v.main_events : [];
+        const nodes = Array.isArray(v.nodes) ? v.nodes : [];
+        const designingThis = designing === vi_int;
+        return (
+          <div key={vIdx + '-' + idx} style={{
+            marginBottom: 10,
+            border: '1px solid #eaeaea',
+            borderRadius: 8,
+            overflow: 'hidden',
+            background: '#fff',
+          }}>
+            <div
+              onClick={() => toggleVol(idx)}
+              style={{
+                padding: '8px 10px',
+                background: 'linear-gradient(90deg,#fafafa,#fff)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 13,
+              }}
+            >
+              <span style={{ fontWeight: 600 }}>{vTitle}</span>
+              {v.act && <span style={{ color: '#888', fontSize: 12 }}>[{v.act}]</span>}
+              <span style={{ color: '#999', fontSize: 12 }}>
+                · {main_events.length} 主要剧情事件 · {nodes.length} 节点
+              </span>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                <button
+                  className="btn-ghost-sm"
+                  disabled={designingThis || !bookId || !onBibleUpdate}
+                  onClick={() => handleDesignNodes(v, idx)}
+                  title="基于本卷主要剧情事件，AI 逐事件展开成 5-10 个详细情节子节点"
+                  style={{ fontSize: 12 }}
+                >
+                  {designingThis ? '⏳ 节点设计中…' : '🎯 节点设计'}
+                </button>
+                <span style={{ fontSize: 12, color: '#999', minWidth: 48, textAlign: 'right' }}>
+                  {isCollapsed ? '展开 ▼' : '收起 ▲'}
+                </span>
+              </div>
+            </div>
+            {!isCollapsed && (
+              <div style={{ padding: '8px 12px', borderTop: '1px solid #f0f0f0', fontSize: 13 }}>
+                {v.summary && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontWeight: 600, color: '#374151', marginBottom: 2 }}>总体剧情概要</div>
+                    <div style={{ color: '#4b5563', whiteSpace: 'pre-wrap' }}>{v.summary}</div>
+                  </div>
+                )}
+                {v.main_plot && !v.summary && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontWeight: 600, color: '#374151', marginBottom: 2 }}>主线剧情</div>
+                    <div style={{ color: '#4b5563' }}>{v.main_plot}</div>
+                  </div>
+                )}
+                {(v.core_conflict || v.ending_hook) && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                    {v.core_conflict && (
+                      <div>
+                        <div style={{ fontWeight: 600, color: '#374151', marginBottom: 2 }}>核心冲突</div>
+                        <div style={{ color: '#4b5563' }}>{v.core_conflict}</div>
+                      </div>
+                    )}
+                    {v.ending_hook && (
+                      <div>
+                        <div style={{ fontWeight: 600, color: '#374151', marginBottom: 2 }}>卷尾钩子</div>
+                        <div style={{ color: '#4b5563' }}>{v.ending_hook}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {main_events.length > 0 && (
+                  <div style={{ margin: '8px 0' }}>
+                    <div style={{ fontWeight: 600, color: '#1f2937', marginBottom: 4 }}>
+                      主要剧情事件（{main_events.length} 个，合计约{chaptersPerVolume || 50}章/12万字正文）
+                    </div>
+                    <ol style={{ paddingLeft: 22, margin: 0 }}>
+                      {main_events.map((ev: any, ei: number) => (
+                        <li key={ei} style={{ marginBottom: 8, padding: 6, background: '#fafafa', borderRadius: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                            <span style={{ fontWeight: 600, color: '#111827' }}>
+                              事件{ev.index ?? (ei + 1)}《{ev.title || '未命名'}》
+                            </span>
+                            {ev.chapters && (
+                              <span style={{ color: '#2563eb', fontSize: 12, fontWeight: 500 }}>章节 {ev.chapters}</span>
+                            )}
+                          </div>
+                          {ev.summary && <div style={{ color: '#374151', marginTop: 2, whiteSpace: 'pre-wrap' }}>{ev.summary}</div>}
+                          <div style={{ marginTop: 4, fontSize: 12, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                            {ev.bury && <span>🔸 埋：{ev.bury}</span>}
+                            {ev.payoff && <span>🔹 收：{ev.payoff}</span>}
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+
+                {nodes.length > 0 && (
+                  <div style={{ margin: '8px 0' }}>
+                    <div style={{ fontWeight: 600, color: '#1f2937', marginBottom: 4 }}>
+                      情节子节点事件（共 {nodes.length} 个，可直接展开成章节正文）
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {nodes.map((n: any, ni: number) => (
+                        <div key={ni} style={{
+                          padding: 6,
+                          background: n.main_event_index ? '#eff6ff' : '#f9fafb',
+                          border: '1px solid ' + (n.main_event_index ? '#bfdbfe' : '#f3f4f6'),
+                          borderRadius: 6,
+                          fontSize: 12,
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 600, color: '#111827' }}>
+                              {(n.main_event_index ? `E${n.main_event_index}-` : '')}N{ni + 1} {n.title}
+                            </span>
+                            {n.chapters && <span style={{ color: '#2563eb' }}>章节 {n.chapters}</span>}
+                            {n.type && <span style={{ color: '#059669' }}>类型 {n.type}</span>}
+                            {n.cool_type && <span style={{ color: '#c2410c' }}>爽点 {n.cool_type}</span>}
+                            {n.cool_level && <span style={{ color: '#7c3aed' }}>{n.cool_level}</span>}
+                          </div>
+                          {n.summary && <div style={{ color: '#374151', marginTop: 2, whiteSpace: 'pre-wrap' }}>{n.summary}</div>}
+                          <div style={{ marginTop: 4, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                            {n.bury && <span>🔸 埋：{n.bury}</span>}
+                            {n.payoff && <span>🔹 收：{n.payoff}</span>}
+                            {n.hook && <span>🪝 钩子：{n.hook}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {nodes.length === 0 && (
+                  <div style={{ color: '#9ca3af', fontSize: 12, padding: 6 }}>
+                    尚未生成详细情节子节点事件。点击右上角「🎯 节点设计」，按每个主要剧情事件展开成 5-10 个子节点事件，满足所涉章节内容要求。
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
 
 // 已落地卡片（adopted/edited）：默认折叠，点击展开查看内容
 const AdoptedCardCollapsed = memo(function AdoptedCardCollapsed({ card }: { card: ActionCard }) {
@@ -158,16 +394,29 @@ const AdoptedCardCollapsed = memo(function AdoptedCardCollapsed({ card }: { card
   );
 });
 
-const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onIgnore, applying, onReplaceChapter }: CardViewProps) {
+const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
+  const { card, onAdopt, onEdit, onIgnore, applying, onReplaceChapter,
+    bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume } = props;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(card.content);
+  // node 设计后卡片内容会被 TimelineCardBody 异步改写，draft / content 都要同步
+  const handleContentMutated = (nextContent: string) => {
+    setDraft(nextContent);
+    // 注：不直接 onEdit，留给用户在 UI 上点击"采纳/编辑后覆盖"来决定是否正式落盘。
+    // 但 card.content 要同步更新，否则 TimelineCardBody 重渲染时会回到旧内容：
+    try { card.content = nextContent; } catch { /* frozen */ }
+  };
   const status = card.status || 'pending';
-  // 去AI味卡片：meta.replace=true 时主按钮变为"替换本章正文"
   const cardMeta = (card as any).__meta as any;
   const isReplaceMode = !!(onReplaceChapter && cardMeta?.replace && cardMeta?.chapter_id);
-  // 【P0改进】自检校验结果：error 级红色提示，warn 级黄色提示
   const validation: any[] = cardMeta?.validation || [];
   const hasError = validation.some(v => v.severity === 'error');
+  // 剧情维度：card.target==='剧情' 或 card.type==='SAVE_PLOT' 或 card.type==='SAVE_OUTLINE_NODE'
+  const isTimelineCard = !!(
+    card.target === '剧情' ||
+    card.type === 'SAVE_PLOT' ||
+    card.type === 'SAVE_OUTLINE_NODE'
+  );
 
   const handleSaveEdit = () => {
     if (!draft.trim()) return;
@@ -188,9 +437,26 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
   }
 
   if (status === 'adopted' || status === 'edited') {
-    // 已落地卡片默认折叠，点击展开/收起（避免重开聊天时已采纳内容占满屏幕）
     return <AdoptedCardCollapsed card={card} />;
   }
+
+  // 剧情卡片 adopted / edited 折叠态的内容 body：若能解析 timeline，仍然用 TimelineCardBody 美化展示
+  const renderBody = (bodyContent: string) => {
+    if (isTimelineCard) {
+      return (
+        <TimelineCardBody
+          content={bodyContent}
+          bookId={bookId}
+          bible={bible}
+          onBibleUpdate={onBibleUpdate}
+          selectedSkillPackIds={selectedSkillPackIds}
+          chaptersPerVolume={chaptersPerVolume}
+          onContentMutated={handleContentMutated}
+        />
+      );
+    }
+    return <div className="chat-card-body">{bodyContent}</div>;
+  };
 
   return (
     <div className="chat-card">
@@ -199,7 +465,6 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
         <span className="chat-card-title">{card.title}</span>
         <span className="chat-card-target">→ {card.target}</span>
       </div>
-      {/* 【P0改进】自检校验结果展示 */}
       {validation.length > 0 && (
         <div style={{
           padding: '6px 10px',
@@ -225,7 +490,7 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
             className="chat-card-edit"
             value={draft}
             onChange={e => setDraft(e.target.value)}
-            rows={Math.min(10, Math.max(4, draft.split('\n').length))}
+            rows={Math.min(16, Math.max(4, draft.split('\n').length))}
           />
           <div className="chat-card-actions">
             <button className="chat-card-btn primary" onClick={handleSaveEdit} disabled={!draft.trim()}>
@@ -238,14 +503,14 @@ const ActionCardView = memo(function ActionCardView({ card, onAdopt, onEdit, onI
         </>
       ) : (
         <>
-          <div className="chat-card-body">{card.content}</div>
+          {renderBody(draft || card.content)}
           <div className="chat-card-actions">
             {isReplaceMode ? (
               <button className="chat-card-btn primary" onClick={() => onReplaceChapter!(card, cardMeta)} disabled={applying}>
                 {applying ? '替换中…' : '替换本章正文'}
               </button>
             ) : (
-              <button className="chat-card-btn primary" onClick={() => onAdopt(card)} disabled={applying}>
+              <button className="chat-card-btn primary" onClick={() => onAdopt({ ...card, content: draft || card.content })} disabled={applying}>
                 {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '采纳(覆盖同章)' : '采纳(追加)')}
               </button>
             )}
@@ -317,12 +582,18 @@ interface MessageBubbleProps {
   onEditMessage?: (index: number, newContent: string) => void;
   onDeleteMessage?: (index: number) => void;
   onRegenerate?: (index: number) => void;
+  // 剧情卡片节点设计专用
+  bookId?: string;
+  bible?: any;
+  onBibleUpdate?: (next: any) => void;
+  selectedSkillPackIds?: string[];
+  chaptersPerVolume?: number;
 }
 
 // 长按计时器
 const LONG_PRESS_MS = 500;
 
-const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onEdit, onIgnore, applyingCardId, streaming, onReplaceChapter, onEditMessage, onDeleteMessage, onRegenerate }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onEdit, onIgnore, applyingCardId, streaming, onReplaceChapter, onEditMessage, onDeleteMessage, onRegenerate, bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const [collapsed, setCollapsed] = useState(true);
   const [showMenu, setShowMenu] = useState(false);
@@ -468,7 +739,7 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
             )}
           </div>
         )}
-        {message.cards && message.cards.length > 0 && (
+            {message.cards && message.cards.length > 0 && (
           <div className="chat-msg-cards">
             {message.cards.map((c, idx) => (
               <ActionCardView
@@ -479,6 +750,11 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
                 onIgnore={onIgnore}
                 applying={applyingCardId === c.id}
                 onReplaceChapter={onReplaceChapter}
+                bookId={bookId}
+                bible={bible}
+                onBibleUpdate={onBibleUpdate}
+                selectedSkillPackIds={selectedSkillPackIds}
+                chaptersPerVolume={chaptersPerVolume}
               />
             ))}
           </div>
@@ -2424,6 +2700,11 @@ export default function ChatPanel() {
                   onEditMessage={handleEditMessage}
                   onDeleteMessage={handleDeleteMessage}
                   onRegenerate={handleRegenerate}
+                  bookId={bookId || undefined}
+                  bible={bible || undefined}
+                  onBibleUpdate={setBible}
+                  selectedSkillPackIds={activeTab === 'deai' ? deaiPacks_selected : activeTab === 'chapter' ? chapterPacks : settingPacks}
+                  chaptersPerVolume={50}
                 />
               ))}
               {streamError && <div className="chat-error">{streamError}</div>}

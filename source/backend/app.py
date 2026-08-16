@@ -9654,30 +9654,78 @@ def ai_outline_volume(book_id):
 """
 
     if node_only and current_vol_existing:
-        # ===== 节点设计模式：基于已有卷剧情详细拆分本卷情节节点 =====
-        # 已有卷剧情信息（作为节点拆分依据，不重新生成卷主线）
+        # ===== 节点设计模式（升级：按每个 main_event 拆 5-10 个子节点事件） =====
+        existing_summary = current_vol_existing.get('summary') or current_vol_existing.get('main_plot') or ''
         existing_main_plot = current_vol_existing.get('main_plot') or current_vol_existing.get('core_goal') or ''
+        # 优先级：新结构 main_events[]（8-12个主要剧情事件） → 旧 key_events/turning_points 数组 → 兜底旧结构空
+        existing_main_events = current_vol_existing.get('main_events') or []
         existing_key_events = current_vol_existing.get('key_events') or current_vol_existing.get('turning_points') or []
+        # 如果用户还没生成过 main_events（旧 timeline），从关键事件数组里推断出 main_events 的框架
+        if not isinstance(existing_main_events, list) or len(existing_main_events) == 0:
+            _ev_idx = 0
+            _tmp = []
+            for ke in (existing_key_events or []):
+                _ev_idx += 1
+                _tmp.append({'index': _ev_idx, 'title': str(ke), 'chapters': '', 'summary': str(ke), 'bury': '', 'payoff': ''})
+            existing_main_events = _tmp
         existing_climax = current_vol_existing.get('climax') or ''
         existing_ending = current_vol_existing.get('ending') or current_vol_existing.get('ending_hook') or ''
         existing_foreshadowing = current_vol_existing.get('foreshadowing') or []
         existing_core_conflict = current_vol_existing.get('core_conflict') or ''
         existing_emotion = current_vol_existing.get('emotion_driver') or ''
 
-        system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
-任务：基于第 {volume_index} 卷“{volume_title}”已有的卷剧情，详细拆分为情节节点。
+        # 把 main_events 列表序列化成多行文本，喂给 LLM 明确要求"按事件逐事件拆子节点"
+        _me_lines = []
+        for _me in existing_main_events:
+            if not isinstance(_me, dict):
+                continue
+            _me_lines.append(
+                f'  · 事件{_me.get("index", "?")}《{_me.get("title","")}》'
+                + (f' 覆盖章节：{_me.get("chapters","")}' if _me.get("chapters") else '')
+                + f'\n    概要：{str(_me.get("summary",""))[:300]}'
+                + (f'\n    埋：{_me.get("bury","")}' if _me.get("bury") else '')
+                + (f'\n    收：{_me.get("payoff","")}' if _me.get("payoff") else '')
+            )
+        main_events_block = '\n'.join(_me_lines) if _me_lines else '（本卷尚未按新结构生成主要剧情事件，将基于旧的关键事件设计子节点）'
+        # 计算本卷起始章号；如果 main_events 中第一个事件已经有章号就用它，否则用全局推算
+        _evt_start = start_chapter
+        for _me in existing_main_events:
+            if isinstance(_me, dict) and _me.get('chapters'):
+                nums = re.findall(r'\d+', str(_me['chapters']))
+                if nums:
+                    _evt_start = min(_evt_start, int(nums[0]))
+                    break
+        _evt_end = start_chapter + chapters_per_volume - 1
 
-【模式说明】本卷已有完整卷剧情，你的任务是把本卷剧情详细拆分为 5-8 个情节节点。
-- 不要修改本卷的 main_plot / key_events / turning_points / climax / ending / foreshadowing 等卷级字段
+        system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
+任务：基于第 {volume_index} 卷“{volume_title}”已有的主要剧情事件（main_events），**按每个主要剧情事件分别拆成 5-10 个子节点事件（nodes）**。
+子节点事件总数 = 主要剧情事件数 × 平均 7-8 个子节点 ≈ 足以覆盖本卷 {chapters_per_volume} 章 × 2400字/章 ≈ {chapters_per_volume * 2400} 字正文。
+
+【模式说明】本卷已有完整卷剧情，你的任务是把 main_events 中每一个主要剧情事件，分别拆成 5-10 个 nodes 子节点。
+- 不要修改本卷的 summary / main_plot / main_events / core_conflict / ending_hook 等卷级字段
 - 只输出 nodes 数组（保留原卷级字段由后端合并）
-- 各情节节点之间必须剧情连贯：上一节点的结尾要自然衔接到下一节点的开头
-- 卷与卷之间的情节节点更要连贯：本卷第一个节点必须承接上一卷卷尾钩子，本卷最后一个节点必须埋下下一卷的钩子
-- 每个节点必须符合本卷卷剧情的设定（核心目标、关键事件、转折点），不得脱离卷剧情自创主线
+- 各子节点之间必须剧情连贯：上一节点末尾自然衔接到下一节点开头
+- 卷与卷之间的节点更要连贯：本卷第一个节点必须承接上一卷卷尾钩子，本卷最后一个节点必须埋下卷尾钩子承接本卷 ending_hook
+- 每个子节点必须严格归属到一个 main_event，不得脱离对应主要剧情事件自创剧情
+- 同一 main_event 内部，子节点 chapters 区间要连续不重叠，刚好覆盖该 main_event 的 chapters
+
+【两层对应铁律】
+  · 输入 main_events 共 {len(existing_main_events)} 个事件
+  · 每个 main_event → 展开 5-10 个 nodes 子节点事件
+  · 每个子节点节点须标注：它从属于哪个主要剧情事件（在 main_event_index 字段填对应 main_event.index）
+  · 子节点覆盖总章数必须刚好等于本卷 {chapters_per_volume} 章（从第 {_evt_start} 章到第 {_evt_end} 章），
+    且从属于 main_event.N 的子节点，其 chapters 区间合计要等于 main_event.N 的 chapters 区间。
 
 【五幕模型对齐】本卷对应五幕中的“{current_act}”幕：{act_descriptions.get(current_act, '')}
 节点设计必须服务于该幕的核心目标。
 
 {cool_system_prompt}
+
+【伏笔埋收标注铁律（绝对要填）】
+每个子节点节点必须明确标注哪里埋了什么伏笔、后面哪一章回收：
+  · bury = "第XX章埋下：XXX；预计回收：第YY章（第Z卷）"
+  · payoff = "第XX章回收：前文第YY章埋下的XXX；效果：XXX"
+无埋/收填空字符串，但绝不乱填。要和归属的 main_event 的 bury/payoff 对齐。
 
 【输出格式】严格输出以下JSON（不要包裹在markdown代码块中，只输出 nodes 数组与必要元信息）：
 {{
@@ -9685,14 +9733,17 @@ def ai_outline_volume(book_id):
   "volume_title": "{volume_title}",
   "nodes": [
     {{
+      "main_event_index": 1,
       "title": "节点标题（动宾结构，如：街市遭袭反杀三名劫修）",
-      "chapters": "{start_chapter}-{start_chapter+9}",
+      "chapters": "{_evt_start}-{_evt_start+1}",
       "type": "M（M主线/C角色/W世界观/D日常/F伏笔）",
-      "summary": "本节点详细剧情概要（200-400字，包含起因→发展→高潮→收尾→钩子，须支撑 chapters 范围内的字数容量）",
+      "summary": "本节点详细剧情概要（支撑 chapters 范围内章节数×2400字的容量，含起因→发展→高潮→收尾→钩子，不可太简）",
       "cool_type": "爽点类型（八选一）",
       "cool_structure": "爽点结构（先抑后扬/直接碾压/默默装完逼）",
       "cool_contrast": "衬托方式（旁人震惊/不敢置信/事后佩服）",
       "cool_level": "爽点层级（微爽/小爽/中爽/大爽）",
+      "bury": "",
+      "payoff": "",
       "hook": "本节点章尾钩子（七种钩子之一）"
     }}
   ]
@@ -9700,10 +9751,11 @@ def ai_outline_volume(book_id):
 {cohesion_constraint}
 
 【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
-【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（5-8章）
-本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），分5-8个情节节点。节点 chapters 必须从 {start_chapter} 开始连续递增。
-【节点容量铁律】每个情节节点的 summary 必须足够支撑其 chapters 范围内的字数容量（按每章2400字估算），不得过于简略。
-【节点连贯铁律】各节点 summary 末尾必须自然过渡到下一节点开头；本卷最后一个节点必须埋下卷尾钩子，承接本卷 ending 设定。
+【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（1-2章一个子节点，正好可直接写正文）
+本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），拆 {len(existing_main_events)} 个主要剧情事件 × 5-10 个子节点事件。
+节点 chapters 必须从 {_evt_start} 开始连续递增，合计到第 {_evt_end} 章，不能超出本卷边界。
+【节点容量铁律】每个子节点 summary 必须足够支撑其 chapters 范围的字数容量（按每章2400字估算），不得简略。
+【节点连贯铁律】各节点 summary 末尾必须自然过渡到下一节点开头；本卷最后一个节点必须埋下并承接本卷 ending_hook：{existing_ending[:120]}
 
 {skill_note}"""
 
@@ -9719,15 +9771,17 @@ def ai_outline_volume(book_id):
 
 【本卷已有卷剧情】（节点拆分的唯一依据，必须严格符合）
 - 卷名：第{volume_index}卷“{volume_title}”
-- 核心目标（main_plot）：{existing_main_plot or '（无）'}
+- 总体剧情概要（summary）：{existing_summary or '（无）'}
+- 主线推进路径（main_plot）：{existing_main_plot or '（无）'}
 - 核心冲突：{existing_core_conflict or '（无）'}
 - 情感驱动：{existing_emotion or '（无）'}
-- 关键事件：{', '.join(existing_key_events) if existing_key_events else '（无）'}
+- 主要剧情事件（main_events）—— **每个事件需单独展开成 5-10 个子节点事件**：
+{main_events_block}
 - 高潮：{existing_climax or '（无）'}
 - 结局/卷尾钩子：{existing_ending or '（无）'}
 - 新埋伏笔：{', '.join(existing_foreshadowing) if existing_foreshadowing else '（无）'}
 
-请基于以上本卷卷剧情，详细拆分为 5-8 个情节节点，节点之间剧情连贯，并按爽点系统为每个节点配置爽点。
+请基于以上本卷 main_events 的每个事件，分别逐事件展开成 5-10 个情节子节点事件（nodes），子节点间剧情连贯，并按爽点系统配置爽点、标注伏笔埋收的具体章节号。
 
 【世界观设定】
 {worldbuilding_ctx or '（暂无）'}
@@ -9738,10 +9792,10 @@ def ai_outline_volume(book_id):
 【人物档案】
 {characters_ctx or '（暂无）'}
 
-【上一卷结尾章节正文】（卷间衔接依据，本卷第一个节点必须承接）
+【上一卷结尾章节正文】（卷间衔接依据，本卷第一个子节点必须承接）
 {prev_volume_end_summary or '（本卷为第一卷，无前文）'}
 
-请为第 {volume_index} 卷设计情节节点。"""
+请为第 {volume_index} 卷逐 main_event 设计情节子节点事件。"""
 
     else:
         # ===== 整卷生成模式（默认）：生成完整卷大纲+情节节点 =====

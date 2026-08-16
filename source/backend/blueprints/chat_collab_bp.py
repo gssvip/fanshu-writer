@@ -2552,9 +2552,13 @@ TIMELINE_NARRATIVE_RULES = ("""
 【叙事工艺铁律·剧情维度专用·JSON 字段文本必须遵守】
 你输出的是按卷 JSON 数组，但以下所有自然语言文本字段同样要遵守叙事工艺铁律：
   - volume 卷名
-  - main_plot 本卷主线剧情
+  - summary 每卷总体剧情概要（覆盖整卷，150-250字）
+  - main_plot 本卷主线剧情（卷内主线推进路径，100-160字）
   - core_conflict 核心冲突
   - ending_hook 卷尾钩子
+  - main_events[].title 主要剧情事件标题
+  - main_events[].summary 主要剧情事件概要
+  - main_events[].bury / main_events[].payoff（伏笔埋收）
   - nodes[].title 节点标题
   - nodes[].summary 节点概要
   - nodes[].cool_type 爽感类型
@@ -2570,10 +2574,11 @@ TIMELINE_NARRATIVE_RULES = ("""
 · 水上1/8（情节/爽点/打脸/升级/赚钱）清晰直白，直接喂给读者；
 · 水下7/8（动机/伏笔/创伤/执念/世界观深层）让读者能脑补，不写成设定说明书。
 · 每卷 ending_hook 必须是动态悬念/冲突/转折，禁抒情总结升华。
-· nodes[] 中的情节节点必须能被后续章节回收（契诃夫之枪原则）。
+· main_events[] 中的主要剧情事件必须能被后续章节回收（契诃夫之枪原则）。
+· 节点设计（nodes[]，由用户点「节点设计」生成）要承接对应 main_event，不能脱离主线。
 
 【2. 人物】
-· main_plot / nodes[].summary 中禁止贴"冷酷/温柔/腹黑"这类标签，须用反常行为刻画；
+· summary / main_plot / main_events[].summary / nodes[].summary 中禁止贴"冷酷/温柔/腹黑"这类标签，须用反常行为刻画；
 · 水面行为下埋可脑补动机；背景只露一角；人物有瑕疵/纠结/口是心非；禁完美人设。
 
 【3. 去 AI 味】
@@ -2581,10 +2586,17 @@ TIMELINE_NARRATIVE_RULES = ("""
 · 禁工整句式：多段排比三连/段尾总总结升华/路标词密集/观点句+解释+段尾总结模板；
 · 禁典型 AI 短语：一股杀气/一抹笑意/不由得/不禁/随即/与此同时/缓缓/淡淡/微微/眼中闪过一丝/心中暗想/心念电转/恍然大悟/面无表情/淡漠/眸子/嘴角微微上扬/如同/宛如/犹如/周身/威压/那道身影/话音未落/当即/顿时；
 · 推荐口语化表达：合着/整半天/好家伙/说白了/得了吧/啥情况/搁这/没跑了/差不离/差不多得了/说实话；
-· main_plot/ending_hook/summary 结尾停在动态动作或悬念，禁总结升华句；
+· summary / main_plot / ending_hook / 事件概要 / 节点概要结尾停在动态动作或悬念，禁总结升华句；
 · 爽感类型（cool_type）用精确分类名（实力碾压/智商碾压/扮猪吃虎/打脸装逼/信息差爽感/情感爆发/悬念反转…），不说空话。
 
-【4. JSON 兼容排版约束】
+【4. 伏笔埋收标注铁律（绝对要填）】
+· 主要剧情事件（main_events）和节点（nodes）都要明确标注：哪里埋了什么伏笔、后面哪一卷/哪一章回收。
+· 埋伏笔字段：bury = "第XX章（或第X卷前期/中期/后期）埋下：XXX；预计回收：第YY章（第Z卷）"
+· 回收伏笔字段：payoff = "第XX章回收：前文第YY章埋下的XXX；效果：XXX"
+· 若无埋/收，字段留空字符串，但绝不乱填。
+· 卷与卷的连贯：第N卷最后一个 main_event 的 payoff 允许关联第N+1卷的 bury 或第N-1卷伏笔回收。
+
+【5. JSON 兼容排版约束】
 · 为保持 JSON 语法合法，所有字符串值内：
   1）绝对禁止出现未转义的反斜杠 \\ ；
   2）绝对禁止出现未转义的双引号 " ；
@@ -2593,11 +2605,11 @@ TIMELINE_NARRATIVE_RULES = ("""
   5）强调用书名号《》或中文引号，不要 **加粗** 不要 *斜体* 。
 · 直接写干净中文短句，段落感用中文标点自然体现。
 
-【5. 自检清单】
+【6. 自检清单】
 · 设定一致：人物行为/性格/语言与大纲一致；势力数量/分布/关系一致；战力不超设定；物品/技能不超前；关系转变有铺垫。
-· 卷间连贯：第N卷 ending_hook 与第N+1卷开头严格衔接；各卷 nodes 连续编号不重叠。
+· 卷间连贯：第N卷 ending_hook 与第N+1卷开头严格衔接；各卷 main_events 连续编号不重叠；卷间伏笔埋收跨卷对应。
 · AI 味特征：总结升华/排比抒情/精确比喻超1个/评价旁白/对称结构/三连排/解释性叙述/不是A是B结构 → 即砍。
-· 情节节点：每个 node 的 title+summary 必须是一个具体可写章节的情节推进，不是空话。
+· 主要剧情事件：每个 main_event 的 title+summary 必须是一个明确的、可用约5章展开的事件推进（10个≈支撑50章12万字），不是空话。
 """).strip()
 
 PLAIN_TEXT_LAYOUT_RULES = """
@@ -4092,17 +4104,39 @@ def smart_generate():
                             existing_volumes = '\n'.join(vol_lines)
                     except Exception:
                         pass
-                timeline_extra = f'\n\n【剧情维度专属要求】全书严格 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章。请基于五幕式总纲生成全部 {tv} 卷的剧情，各卷剧情连贯、卷间衔接（ending_hook与下一卷开头承接），每卷剧情须支撑 {cpv} 章容量。'
+                timeline_extra = f'\n\n【剧情维度专属要求】全书严格 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章。请基于五幕式总纲生成全部 {tv} 卷的剧情，各卷剧情连贯、卷间衔接（ending_hook与下一卷开头承接）。'
                 if existing_volumes:
                     timeline_extra += f'\n\n【已有卷剧情（须保持连贯，可在其基础上完善）】\n{existing_volumes}'
-                # JSON 数组格式铁律（与 ai_master_create 保持一致，落地端按 volume_index upsert）
+                # 核心密度约束：每卷 summary(总概要) + main_events(8-12个主要剧情事件，默认10)
+                # 10个主要事件 × 平均5章 = 刚好支撑 50章 × 约2400字/章 ≈ 12万字正文
+                _density_hint = ''
+                if cpv and cpv > 0:
+                    # 按5章/事件做倒推：期望事件数 = cpv/5
+                    expected_events = max(8, min(12, int(round(cpv / 5))))
+                    _density_hint = f'（按每卷约 {cpv} 章计算，本卷主要剧情事件建议正好 {expected_events} 个；每个事件平均约 {int(round(cpv / expected_events))} 章正文，1个事件可扩成5-10个节点）'
                 timeline_extra += f'''
 
 【分卷铁律·必读】**全书共 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章**。卷序号从 1 开始连续递增到 {tv}。卷名格式"第N卷 副标题"。必须覆盖全部 {tv} 卷，不得多不得少。
 
-【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 chapters 全书连续编号。
+【两层结构铁律（首次生成 = 总概要 + 主要剧情事件，不要写 nodes[]）】
+  第一层：每卷必须有 summary + main_events[]
+    · summary：本卷总体剧情概要（覆盖整卷的总故事走向，150-250字）
+    · main_events：本卷 **8-12 个主要剧情事件（默认 10 个）{_density_hint}**
+    · 10 个主要剧情事件 × 平均 5 章 × 2400字/章 = 本卷约 12 万字正文
+    · 每一个 main_event 结构如下：
+        {{
+          "index": 1,
+          "title": "事件标题",
+          "chapters": "1-5",                       // 本事件覆盖的章节区间，全书连续不重叠
+          "summary": "事件概要（80-160字，具体可落地写5章内容的剧情推进）",
+          "bury": "第3章埋下：XXX；预计回收：第X卷第YY章",     // 没埋就空串
+          "payoff": "第5章回收：前卷/前文埋下的XXX；效果：XXX"  // 没收就空串
+        }}
+    · main_events 的 chapters 合计必须刚好覆盖本卷 {cpv} 章（第1卷 1-{cpv}、第2卷 {cpv+1}-{cpv*2} ……）
+  第二层：nodes[]（详细情节节点）**首次生成一律留空数组 []**，由用户在剧情维度点击每卷「节点设计」按钮后，把每个 main_event 再拆成 5-10 个节点事件生成。首次生成严禁把 nodes[] 写满，严禁越俎代庖替用户做节点设计。
 
-【分卷章节分配】全书 {total_chapters} 章 → {tv} 卷（每卷 {cpv} 章）：第1卷 1-{cpv}、第2卷 {cpv + 1}-{cpv * 2}、... 第{tv}卷 {(tv - 1) * cpv + 1}-{total_chapters}；每卷 nodes 章节连续不重叠。
+【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；第N卷最后一个 main_event 的结尾悬念必须能被第N+1卷第一个 main_event 承接；伏笔 payoff 能跨卷指向第N±K卷具体 main_event。
+【分卷章节分配】全书 {total_chapters} 章 → {tv} 卷（每卷 {cpv} 章）：第1卷 1-{cpv}、第2卷 {cpv+1}-{cpv*2}、... 第{tv}卷 {(tv-1)*cpv+1}-{total_chapters}；main_events[*].chapters 合计刚好本卷 {cpv} 章，连续不重叠不缺口。
 
 【输出格式铁律·绝对】严格输出 JSON 数组（不要包裹在 markdown 代码块中，不要任何解释性文字），每卷结构如下：
 [
@@ -4111,44 +4145,62 @@ def smart_generate():
     "volume": "第1卷 副标题",
     "volume_index": 1,
     "act": "立身",
-    "main_plot": "本卷主线剧情（100-200字）",
-    "core_conflict": "本卷核心冲突",
-    "ending_hook": "本卷卷尾钩子具体内容",
-    "nodes": [
-      {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
-    ]
+    "summary": "本卷总体剧情概要（150-250字，覆盖整卷总走向）",
+    "main_plot": "本卷主线剧情（卷内主线推进路径，100-160字）",
+    "core_conflict": "本卷核心冲突（对手/阵营/目标冲突）",
+    "ending_hook": "本卷卷尾钩子（动态悬念/冲突/转折，承接下一卷开头）",
+    "main_events": [
+      {{"index":1,"title":"事件1","chapters":"1-5","summary":"事件概要（可落地写约5章的具体推进）","bury":"","payoff":""}},
+      {{"index":2,"title":"事件2","chapters":"6-10","summary":"...","bury":"","payoff":""}}
+    ],
+    "nodes": []
   }}
 ]
-直接输出 JSON 数组，不要寒暄，不要解释，不要加任何 Markdown 标题或文字。'''
+直接输出 JSON 数组，不要寒暄，不要解释，不要加任何 Markdown 标题或文字。nodes 必须是空数组，首次不要写节点内容！'''
             else:
                 # 作者未指定总卷数（tv=0）：让 LLM 先给出建议 N 卷，再按 N 卷输出 JSON
                 # 禁止任何默认十卷/五卷/十二卷/5-8卷的数字；JSON 结构与 tv 明确时完全一致
                 timeline_extra = f'\n\n【剧情维度专属要求】作者尚未指定总卷数。请你先自行确定一个合理的分卷规模 N（N≥2，禁止擅自默认十卷/五卷/十二卷/十余卷/5-8卷等固定值），再按 N 卷生成完整剧情，每卷剧情须支撑约 {cpv} 章容量，卷间衔接（ending_hook 与下一卷开头承接）。'
                 # JSON 数组格式铁律（同上，卷数改成"N卷/第N卷"占位规则）
+                _density_hint = ''
+                if cpv and cpv > 0:
+                    expected_events = max(8, min(12, int(round(cpv / 5))))
+                    _density_hint = f'（按每卷约 {cpv} 章计算，每卷主要剧情事件建议正好 {expected_events} 个；每个事件平均约 {int(round(cpv / expected_events))} 章正文，1个事件可扩成5-10个节点）'
                 timeline_extra += f'''
 
 【分卷铁律·必读】方案建议 N 卷、每卷约 {cpv} 章、全书约 N×{cpv} 章（N 就是你方案里确定的卷数，禁止擅自写死 10）。卷序号从 1 开始连续递增到 N，卷名格式"第N卷 副标题"。必须覆盖全部 N 卷，不得多不得少。
 
-【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；各卷 chapters 全书连续编号。
+【两层结构铁律（首次生成 = 总概要 + 主要剧情事件，不要写 nodes[]）】
+  第一层：每卷必须有 summary + main_events[]
+    · summary：本卷总体剧情概要（覆盖整卷的总故事走向，150-250字）
+    · main_events：本卷 **8-12 个主要剧情事件（默认 10 个）{_density_hint}**
+    · 10 个主要剧情事件 × 平均 5 章 × 2400字/章 = 本卷约 12 万字正文
+    · 每一个 main_event 结构：{{"index":1,"title":"事件1","chapters":"1-5","summary":"事件概要（80-160字，可落地写约5章的推进）","bury":"","payoff":""}}
+    · main_events 的 chapters 合计刚好覆盖本卷 {cpv} 章，连续不重叠不缺口
+  第二层：nodes[]（详细情节节点）**首次生成一律留空数组 []**，由用户在剧情维度点击每卷「节点设计」按钮后，把每个 main_event 再拆成 5-10 个节点事件生成。首次严禁写 nodes 内容。
 
-【分卷章节分配】N×{cpv} 章 → N 卷（每卷 {cpv} 章）：第1卷 1-{cpv}、第2卷 {cpv + 1}-{cpv * 2}、...、第N卷 {(cpv * (N - 1)) + 1}-{cpv * N}；每卷 nodes 章节连续不重叠。
+【卷间衔接铁律】第N卷 ending_hook 必须与第N+1卷开头严格衔接；第N卷最后一个 main_event 的结尾悬念必须能被第N+1卷第一个 main_event 承接；伏笔 payoff 能跨卷指向第N±K卷 main_event。
+【分卷章节分配】N×{cpv} 章 → N 卷（每卷 {cpv} 章）：第1卷 1-{cpv}、第2卷 {cpv+1}-{cpv*2}、...、第N卷 {(cpv*(N-1))+1}-{cpv*N}；main_events[*].chapters 合计刚好本卷 {cpv} 章，连续不重叠不缺口。
 
-【输出格式铁律·绝对】严格输出 JSON 数组（不要包裹在 markdown 代码块中，不要任何解释性文字），每卷结构如下：
+【输出格式铁律·绝对】严格输出 JSON 数组（不要包裹代码块，不要任何解释文字），每卷结构如下：
 [
   {{
     "volume_id": "1",
     "volume": "第1卷 副标题",
     "volume_index": 1,
     "act": "立身",
-    "main_plot": "本卷主线剧情（100-200字）",
-    "core_conflict": "本卷核心冲突",
-    "ending_hook": "本卷卷尾钩子具体内容",
-    "nodes": [
-      {{"title": "节点1", "chapters": "1-10", "type": "M", "summary": "概要", "cool_type": "实力碾压"}}
-    ]
+    "summary": "本卷总体剧情概要（150-250字，覆盖整卷总走向）",
+    "main_plot": "本卷主线剧情（卷内主线推进路径，100-160字）",
+    "core_conflict": "本卷核心冲突（对手/阵营/目标冲突）",
+    "ending_hook": "本卷卷尾钩子（动态悬念/冲突/转折，承接下一卷开头）",
+    "main_events": [
+      {{"index":1,"title":"事件1","chapters":"1-5","summary":"事件概要（可落地写约5章的具体推进）","bury":"","payoff":""}},
+      {{"index":2,"title":"事件2","chapters":"6-10","summary":"...","bury":"","payoff":""}}
+    ],
+    "nodes": []
   }}
 ]
-直接输出 JSON 数组，不要寒暄，不要解释，不要加任何 Markdown 标题或文字。'''
+直接输出 JSON 数组，不要寒暄，不要解释，不要加任何 Markdown 标题或文字。nodes 必须是空数组，首次不要写节点内容！'''
             # 修炼体系小说：节点须含修炼进展/境界区间/年龄区间/时间线锚点
             try:
                 from app import _cultivation_dimension_hint
