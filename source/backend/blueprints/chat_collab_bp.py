@@ -2491,6 +2491,49 @@ PLAIN_TEXT_LAYOUT_RULES = """
 """.strip()
 
 
+# 拒答/客套模板关键词：如果内容主要由这些构成（即使有几百字），也算"有效为空"，应当作 EMPTY_OUTPUT 触发重试
+_REFUSAL_OR_FLUFF_PATTERNS = [
+    re.compile(r'(?:作(?:为|成).{0,6}AI|我.{0,6}(?:无法|不能|抱歉|抱歉.{0,4}无法|做不到))', re.S),
+    re.compile(r'(?:好的|没问题|收到|明白|了解|好哒|好嘞|OK)[，。！,.!\s]*$', re.S),
+    re.compile(r'(?:我来(?:帮你|为你|给你)|我会(?:帮你|为你|给你)|下面我(?:将|会|来))[^。！\n]{0,30}$', re.S),
+]
+# 合理客套最大长度：如果内容 <= 这个长度 且 主要是客套/道歉，则视为空
+_FLUFF_MAX_LEN = 60
+
+
+def _strip_think_tags(text: str) -> str:
+    """统一剥离推理模型的 <think>...</think> 标签。
+    很多深度推理模型（R1 系列）会先吐出一大段 <think> 内省文字，占满 max_tokens 后正文还没开始，
+    结果就是 raw_joined 很长但实际全是 think，清理后内容为空 → 触发 EMPTY_OUTPUT。
+    这里在所有内容清理前先把 think 整块剥离，让正文真正进入后续流程。
+    """
+    if not text:
+        return ''
+    s = text
+    # 标准配对 <think>...</think>（允许跨行、贪婪匹配到最后一个闭合）
+    s = re.sub(r'<think[^>]*>[\s\S]*?</think>', '', s, flags=re.IGNORECASE)
+    # 兼容未闭合的 <think ...>（开到文尾）
+    s = re.sub(r'<think[^>]*>[\s\S]*$', '', s, flags=re.IGNORECASE)
+    # 兼容 </think> 残留闭合标签（有闭合没开始）
+    s = re.sub(r'</think[^>]*>', '', s, flags=re.IGNORECASE)
+    return s
+
+
+def _is_refusal_or_fluff(text: str) -> bool:
+    """判断内容是否是"拒答/客套道歉/承诺开头但没实质内容"。
+    这是模型实际"吐字了但等于没吐"的一大类，是 EMPTY_OUTPUT 的隐性来源。
+    """
+    if not text:
+        return True
+    s = text.strip()
+    if not s:
+        return True
+    for p in _REFUSAL_OR_FLUFF_PATTERNS:
+        if p.search(s) and len(s) <= _FLUFF_MAX_LEN:
+            return True
+    return False
+
+
 def _clean_text_to_plain(text: str) -> str:
     """统一后处理：移除 Markdown (#、##、###, **xxx**, *xxx*, 行首 *, 行首 -, 代码块 ```，数字. 列表前缀)
     同时保留中文顿号数字+顿号排版（一、二、三、1）2））。输出排版好看的纯文字。
@@ -2498,7 +2541,7 @@ def _clean_text_to_plain(text: str) -> str:
     """
     if not text:
         return ''
-    s = text
+    s = _strip_think_tags(text)  # 先去 think 标签（推理模型常见前置垃圾）
     # 1) 三重反代码块围栏（整行 ``` 或 ```lang）
     s = re.sub(r'^```[a-zA-Z0-9_\-]*\s*$', '', s, flags=re.M)
     # 2) 行首 #/##/### + 空格 → 改成原标题文本（前置空一行 + 标题）
@@ -2530,31 +2573,41 @@ def _clean_text_to_plain(text: str) -> str:
 def _downgrade_prompt_for_retry(messages, keep_dim=None):
     """【空内容自动重试】用户反馈经常 EMPTY_OUTPUT，很常见一个根因是：
     首调 messages 过长（铁律+上下文+N条历史）→ 模型 tokens 超限或因 system prompt 过长拒答 →
-    直接吐空内容 / 只有 think tokens / 前置空白。
-    这里做一个"降级精简"：
-    - 保留首条 system 但砍到 <= 2400 字（过长的铁律只留开头 2400 字核心约束）
-    - 保留最后 user/assistant 对话 8 条（含 retry_hint 那条），中间历史清空
-    - 若 keep_dim 提供了 timeline/character_profiles 这类，还会在 system 尾部加一句"请直接输出内容，不要空答"
+    直接吐空内容 / 只有 think tokens / 前置空白 / 道歉客套话。
+    这里做一个"激进降级精简"：
+    - 保留首条 system 但砍到 <= 1800 字（更狠，首条都精简）
+    - **末尾追加强制指令**：不要道歉、不要客套、不要 think 标签、直接输出正文
+    - 保留最后 6 条对话（retry 场景 last 2 必须带），中间历史全部扔掉
     """
     if not messages:
         return messages
     try:
         msgs = list(messages)
-        max_system_chars = 2400
+        max_system_chars = 1800
         processed = []
+        # 尾部强制指令（重试时才加，首调不加 —— 否则相当于告诉模型你会吐空）
+        _force_block = """
+————————————————
+【重试·强制输出铁律·违反即失败】
+1. 绝对禁止道歉/客套/解释：不要说"好的/抱歉/我来帮你/作为AI"这类废话
+2. 绝对禁止输出 <think> 标签或任何推理过程
+3. 绝对禁止空答：哪怕内容不够完美，也必须输出实质性的创作内容
+4. 直接开始输出正文，不要任何前置语，不要总结
+————————————————""".strip()
         for i, m in enumerate(msgs):
             if i == 0 and isinstance(m, dict) and m.get('role') == 'system':
                 s = m.get('content') or ''
                 if len(s) > max_system_chars:
                     s = s[:max_system_chars] + '\n……（中间过长铁律已精简，直接输出有效内容即可）'
-                    if keep_dim:
-                        s += f'\n当前维度：{keep_dim}，请立刻输出对应内容，不要空答。'
+                if keep_dim:
+                    s += f'\n当前维度：{keep_dim}。'
+                s += '\n\n' + _force_block
                 processed.append({'role': 'system', 'content': s})
                 continue
             processed.append(m)
-        # 保留最后 8 条（如果是重试场景 最后两条是 assistant_old + user_retry_hint，一定要带）
-        if len(processed) > 10:
-            processed = [processed[0]] + processed[-8:]
+        # 保留最后 6 条（如果是重试场景，最后两条是 assistant_old + user_retry_hint，必须带）
+        if len(processed) > 8:
+            processed = [processed[0]] + processed[-6:]
         return processed
     except Exception:
         return messages
@@ -4166,17 +4219,18 @@ def smart_generate():
             content = ''
             cur_messages = messages
             retry_done = False
-            max_attempts = 3  # 首次 + 最多 2 次重试（用户反馈经常空，提高到 2 次重试保障率）
+            max_attempts = 4  # 首次 + 最多 3 次重试（用户反馈经常空，再提高一次保障率）
+            _EMPTY_FALLBACK_LEN = 30  # 兜底阈值从 80 降到 30，人物/文风/伏笔这类短内容维度也能触发
             for _attempt in range(max_attempts):
                 full = []
-                # 重试策略：温度 + max_tokens 逐次放宽，避免每次一模一样的参数又空回来
-                _temp = 0.85 + min(_attempt * 0.1, 0.2)
+                # 重试策略：初始温度从 0.7 起步（原 0.85 太高，容易天马行空或拒答），重试再微增
+                _temp = 0.7 + min(_attempt * 0.08, 0.2)
                 _max_tok = max_tok
                 if _attempt == 1:
                     _max_tok = min(int(max_tok * 1.5), 8000)
                 elif _attempt >= 2:
                     _max_tok = min(int(max_tok * 2), 8000)
-                # 第二次/第三次重试：进入"精简模式"——若消息序列太长，会截断中间过长的 system/铁律，避免 prompt tokens 溢出 → 模型直接拒答吐空
+                # 从第二次开始进入"精简模式"——截断过长 system/铁律，防 prompt 溢出 → 模型直接拒答吐空
                 _msgs_for_this_call = cur_messages
                 if _attempt >= 1:
                     _msgs_for_this_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
@@ -4184,11 +4238,10 @@ def smart_generate():
                     full.append(chunk)
                     yield sse({'type': 'delta', 'content': chunk})
                 raw_joined = ''.join(full)
-                # ====== 【EMPTY_OUTPUT 兜底】LLM 经常吐空但 raw chunks 实际有内容 ======
-                # 常见触发：think tokens / 前置空白 / 代码块被清完 / <p><br>被清完 / fence stripping 吞掉正文。
-                # 处理策略：若"清理后 content 为空"但"原始拼接内容 >= 80 字"，
-                # 则退回保守清理（仅去 fence，不做强清理），不要把模型真正写出的内容判定为空。
-                cleaned = raw_joined.strip()
+                # ====== 【EMPTY_OUTPUT 兜底增强版】 ======
+                # Step1：先全局剥离 think 标签（R1 系列模型最多的问题）
+                raw_no_think = _strip_think_tags(raw_joined)
+                cleaned = raw_no_think.strip()
                 if dim_key == 'timeline':
                     # timeline：仅 fence 清理 + JSON 规整（原逻辑）
                     fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
@@ -4211,20 +4264,23 @@ def smart_generate():
                     # 人物维度：JSON 数组转自然语言
                     if dim_key == 'character_profiles' and cleaned.lstrip().startswith('['):
                         cleaned = _character_profiles_to_text(cleaned)
-                # EMPTY_OUTPUT 二次保护：清理后仍空 但 raw 内容有明显字数 → 用 raw(仅去 fence)
-                if (not cleaned or len(cleaned.strip()) < 2) and len(raw_joined.strip()) >= 80:
+                # EMPTY_OUTPUT 二次保护：清理后仍空 但 raw(去think后) 内容有明显字数 → 用原始仅去 fence/html 的版本
+                if (not cleaned or len(cleaned.strip()) < 2) and len(raw_no_think.strip()) >= _EMPTY_FALLBACK_LEN:
                     # 仅剥离最外层围栏 + HTML 换行标签，保留一切内容，宁可脏也不要空
-                    fallback = raw_joined.strip()
+                    fallback = raw_no_think.strip()
                     m = re.match(r'```(?:\w+)?\s*([\s\S]*?)\s*```\s*$', fallback)
                     if m:
                         fallback = m.group(1).strip()
                     fallback = re.sub(r'<br\s*/?>', '\n', fallback)
                     fallback = re.sub(r'</?p>', '\n', fallback)
-                    if len(fallback.strip()) >= 80:
+                    if len(fallback.strip()) >= _EMPTY_FALLBACK_LEN:
                         cleaned = fallback.strip()
+                # EMPTY_OUTPUT 三次保护：客套/拒答检测（"好的没问题"这种内容也当空）
+                if cleaned and _is_refusal_or_fluff(cleaned):
+                    cleaned = ''
                 content = cleaned
-                # 自检校验（raw 内容长度传入 → EMPTY_OUTPUT 报错信息能区分"模型完全没吐字"和"清理后变空"）
-                issues = validator.validate(dim_key, content, raw_length_hint=len((raw_joined or '').strip()))
+                # 自检校验（raw 内容长度用去 think 后版本，更准确反映模型真实吐字量）
+                issues = validator.validate(dim_key, content, raw_length_hint=len((raw_no_think or '').strip()))
                 _log_validation_issues(bb, dim_key, issues)
                 if not validator.should_retry(issues) or _attempt >= max_attempts - 1:
                     validation_meta = validator.to_meta(issues)
@@ -4236,7 +4292,7 @@ def smart_generate():
                                    'max_attempts': max_attempts,
                                    'issues': validator.to_meta(issues)}})
                 cur_messages = messages + [
-                    {'role': 'assistant', 'content': content or raw_joined},
+                    {'role': 'assistant', 'content': content or raw_no_think},
                     {'role': 'user', 'content': retry_hint}
                 ]
             else:
@@ -4385,34 +4441,90 @@ def smart_dim_edit():
         return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
     def generate():
-        full = []
+        from .post_gen_validator import PostGenValidator
+        try:
+            from app import _get_total_volumes, _get_chapters_per_volume
+            _tv = _get_total_volumes(bb, book)
+            _cpv = _get_chapters_per_volume(bb, book)
+        except Exception:
+            _tv, _cpv = 1, 50
+        validator = PostGenValidator(_tv, _cpv, max_retries=1)
+
+        content = ''
+        cur_messages = messages
+        validation_meta = []
         try:
             max_tok = 6000 if dim_key == 'timeline' else 2000
-            for chunk in gw.chat_stream(messages, temperature=0.7, max_tokens=max_tok):
-                full.append(chunk)
-                yield sse({'type': 'delta', 'content': chunk})
-            content = ''.join(full).strip()
-            # timeline 维度：不清理 JSON 结构
-            if dim_key == 'timeline':
-                fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
-                if fence:
-                    content = fence.group(1).strip()
-                try:
-                    parsed = json.loads(content)
-                    if isinstance(parsed, dict):
-                        for k in ['volumes', 'data', 'result', 'items', 'list']:
-                            if isinstance(parsed.get(k), list):
-                                parsed = parsed[k]
-                                break
-                    if isinstance(parsed, list):
-                        content = json.dumps(parsed, ensure_ascii=False, indent=2)
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    pass
-            else:
-                content = _clean_text_to_plain(content)
-                # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言
-                if dim_key == 'character_profiles' and content.lstrip().startswith('['):
-                    content = _character_profiles_to_text(content)
+            max_attempts = 4
+            _EMPTY_FALLBACK_LEN = 30
+            for _attempt in range(max_attempts):
+                full = []
+                _temp = 0.7 + min(_attempt * 0.08, 0.2)
+                _max_tok = max_tok
+                if _attempt == 1:
+                    _max_tok = min(int(max_tok * 1.5), 8000)
+                elif _attempt >= 2:
+                    _max_tok = min(int(max_tok * 2), 8000)
+                _msgs_call = cur_messages
+                if _attempt >= 1:
+                    _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
+                for chunk in gw.chat_stream(_msgs_call, temperature=_temp, max_tokens=_max_tok):
+                    full.append(chunk)
+                    yield sse({'type': 'delta', 'content': chunk})
+                raw_joined = ''.join(full)
+                # Step1：剥离 think 标签
+                raw_no_think = _strip_think_tags(raw_joined)
+                cleaned = raw_no_think.strip()
+                # timeline 维度：不清理 JSON 结构
+                if dim_key == 'timeline':
+                    fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
+                    if fence:
+                        cleaned = fence.group(1).strip()
+                    try:
+                        parsed = json.loads(cleaned)
+                        if isinstance(parsed, dict):
+                            for k in ['volumes', 'data', 'result', 'items', 'list']:
+                                if isinstance(parsed.get(k), list):
+                                    parsed = parsed[k]
+                                    break
+                        if isinstance(parsed, list):
+                            cleaned = json.dumps(parsed, ensure_ascii=False, indent=2)
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        pass
+                else:
+                    cleaned = _clean_text_to_plain(cleaned)
+                    # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言
+                    if dim_key == 'character_profiles' and cleaned.lstrip().startswith('['):
+                        cleaned = _character_profiles_to_text(cleaned)
+                # EMPTY_OUTPUT 兜底：清理后空但 raw(去think后) ≥30 字 → 保守清理
+                if (not cleaned or len(cleaned.strip()) < 2) and len(raw_no_think.strip()) >= _EMPTY_FALLBACK_LEN:
+                    fallback = raw_no_think.strip()
+                    m = re.match(r'```(?:\w+)?\s*([\s\S]*?)\s*```\s*$', fallback)
+                    if m:
+                        fallback = m.group(1).strip()
+                    fallback = re.sub(r'<br\s*/?>', '\n', fallback)
+                    fallback = re.sub(r'</?p>', '\n', fallback)
+                    if len(fallback.strip()) >= _EMPTY_FALLBACK_LEN:
+                        cleaned = fallback.strip()
+                # 客套/拒答检测
+                if cleaned and _is_refusal_or_fluff(cleaned):
+                    cleaned = ''
+                content = cleaned
+                # 自检
+                issues = validator.validate(dim_key, content, raw_length_hint=len((raw_no_think or '').strip()))
+                _log_validation_issues(bb, dim_key, issues)
+                if not validator.should_retry(issues) or _attempt >= max_attempts - 1:
+                    validation_meta = validator.to_meta(issues)
+                    break
+                retry_hint = validator.build_retry_hint(issues)
+                yield sse({'type': 'meta', 'kind': 'validation_retry',
+                          'info': {'dim': dim_key, 'attempt': _attempt + 1,
+                                   'max_attempts': max_attempts,
+                                   'issues': validator.to_meta(issues)}})
+                cur_messages = messages + [
+                    {'role': 'assistant', 'content': content or raw_no_think},
+                    {'role': 'user', 'content': retry_hint}
+                ]
             card = {
                 'id': str(uuid.uuid4())[:8],
                 'type': spec['card'],
@@ -4420,7 +4532,8 @@ def smart_dim_edit():
                 'content': content,
                 'target': _CARD_TARGET.get(spec['card'], spec['label']),
             }
-            yield sse({'type': 'card', 'card': card, 'session_id': session_id})
+            card_meta = {'validation': validation_meta} if validation_meta else None
+            yield sse({'type': 'card', 'card': card, 'session_id': session_id, 'meta': card_meta})
             history = load_session_messages(session)
             history.append({'role': 'user', 'content': f'修订{spec["label"]}：{edit_request}'})
             history.append({'role': 'assistant', 'content': content,
@@ -4575,12 +4688,13 @@ def smart_batch():
                 validation_meta = []
                 try:
                     max_tok = 6000 if _is_tl else 1500
-                    # 【P0改进】自检重试循环（首次 + 最多 2 次重试，空内容兜底）
-                    max_attempts = 3
+                    # 自检重试循环（首次 + 最多 3 次重试，think 剥离 + 客套检测 + 低阈值兜底）
+                    max_attempts = 4
+                    _EMPTY_FALLBACK_LEN = 30
                     for _attempt in range(max_attempts):
                         raw_chunks = []
-                        # 重试策略：温度/max_tokens 逐次放宽
-                        _temp = 0.8 + min(_attempt * 0.1, 0.2)
+                        # 初始温度 0.7（原 0.8 偏高），重试时微增
+                        _temp = 0.7 + min(_attempt * 0.08, 0.2)
                         _max_tok = max_tok
                         if _attempt == 1:
                             _max_tok = min(int(max_tok * 1.5), 8000)
@@ -4593,7 +4707,9 @@ def smart_batch():
                             raw_chunks.append(chunk)
                             yield sse({'type': 'delta', 'content': chunk})
                         raw_joined = ''.join(raw_chunks)
-                        cleaned = raw_joined.strip()
+                        # Step1：剥离 think 标签（R1 系列模型最大坑）
+                        raw_no_think = _strip_think_tags(raw_joined)
+                        cleaned = raw_no_think.strip()
                         # 清理/规范化
                         if _is_tl:
                             fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
@@ -4612,19 +4728,22 @@ def smart_batch():
                                 pass
                         else:
                             cleaned = _clean_text_to_plain(cleaned)
-                        # EMPTY_OUTPUT 兜底：清理后空但 raw ≥80 字 → 保守清理仅去 fence/html
-                        if (not cleaned or len(cleaned.strip()) < 2) and len(raw_joined.strip()) >= 80:
-                            fallback = raw_joined.strip()
+                        # EMPTY_OUTPUT 兜底：清理后空但 raw(去think后) ≥30 字 → 保守清理仅去 fence/html
+                        if (not cleaned or len(cleaned.strip()) < 2) and len(raw_no_think.strip()) >= _EMPTY_FALLBACK_LEN:
+                            fallback = raw_no_think.strip()
                             fence_m = re.match(r'```(?:\w+)?\s*([\s\S]*?)\s*```\s*$', fallback)
                             if fence_m:
                                 fallback = fence_m.group(1).strip()
                             fallback = re.sub(r'<br\s*/?>', '\n', fallback)
                             fallback = re.sub(r'</?p>', '\n', fallback)
-                            if len(fallback.strip()) >= 80:
+                            if len(fallback.strip()) >= _EMPTY_FALLBACK_LEN:
                                 cleaned = fallback.strip()
+                        # 客套/拒答检测
+                        if cleaned and _is_refusal_or_fluff(cleaned):
+                            cleaned = ''
                         content = cleaned
-                        # 自检（raw 内容长度传入 → EMPTY_OUTPUT 报错信息能区分"模型吐空"和"清理后变空"）
-                        issues = validator.validate(dim_key, content, raw_length_hint=len((raw_joined or '').strip()))
+                        # 自检（用去think后长度做提示）
+                        issues = validator.validate(dim_key, content, raw_length_hint=len((raw_no_think or '').strip()))
                         _log_validation_issues(bb, dim_key, issues)
                         if not validator.should_retry(issues) or _attempt >= max_attempts - 1:
                             validation_meta = validator.to_meta(issues)
@@ -4635,7 +4754,7 @@ def smart_batch():
                                            'max_attempts': max_attempts,
                                            'issues': validator.to_meta(issues)}})
                         cur_messages = messages + [
-                            {'role': 'assistant', 'content': content or raw_joined},
+                            {'role': 'assistant', 'content': content or raw_no_think},
                             {'role': 'user', 'content': retry_hint}
                         ]
                 except Exception as e:
@@ -4848,17 +4967,72 @@ def smart_deai():
         return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
     def generate():
-        full = []
+        from .post_gen_validator import PostGenValidator
+        # 去AI味走通用校验（只卡 EMPTY_OUTPUT，不做其他维度校验），用 tv=1, cpv=50 占位即可
+        validator = PostGenValidator(1, 50, max_retries=1)
+        _EMPTY_FALLBACK_LEN = 30  # 章节正文一般很长，30字兜底足够
+        content = ''
+        body_content = ''
+        cur_messages = messages
+        validation_meta = []
         try:
+            max_tok = 4096
+            max_attempts = 4
             yield sse({'type': 'delta', 'content': f'正在为《{chapter.title}》去AI味…\n\n'})
-            for chunk in gw.chat_stream(messages, temperature=0.5, max_tokens=4096):
-                full.append(chunk)
-                yield sse({'type': 'delta', 'content': chunk})
-            content = ''.join(full).strip()
-            # 平台级纯文本清理（统一去 * 和 #），再处理代码块/标题行
-            content = _clean_text_to_plain(content)
-            # 防御性剥离标题行：保证 card.content 为纯正文（与落地字数口径一致）
-            _, body_content = _strip_chapter_title(content, fallback_title=chapter.title or '')
+            for _attempt in range(max_attempts):
+                full = []
+                # 去AI味温度保持偏低：0.5 起步（忠实原文），重试微增到 0.58/0.66，避免高温乱改
+                _temp = 0.5 + min(_attempt * 0.08, 0.2)
+                _max_tok = max_tok
+                if _attempt == 1:
+                    _max_tok = min(int(max_tok * 1.5), 8000)
+                elif _attempt >= 2:
+                    _max_tok = min(int(max_tok * 2), 8000)
+                _msgs_call = cur_messages
+                if _attempt >= 1:
+                    _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim='chapter_deai')
+                for chunk in gw.chat_stream(_msgs_call, temperature=_temp, max_tokens=_max_tok):
+                    full.append(chunk)
+                    yield sse({'type': 'delta', 'content': chunk})
+                raw_joined = ''.join(full)
+                # Step1：剥离 think 标签（R1 模型常见前置坑）
+                raw_no_think = _strip_think_tags(raw_joined)
+                cleaned = raw_no_think.strip()
+                # 平台级纯文本清理（统一去 * 和 #）
+                cleaned = _clean_text_to_plain(cleaned)
+                # EMPTY_OUTPUT 兜底：清理后空但 raw(去think后) ≥30 字 → 保守清理仅去 fence/html
+                if (not cleaned or len(cleaned.strip()) < 2) and len(raw_no_think.strip()) >= _EMPTY_FALLBACK_LEN:
+                    fallback = raw_no_think.strip()
+                    m = re.match(r'```(?:\w+)?\s*([\s\S]*?)\s*```\s*$', fallback)
+                    if m:
+                        fallback = m.group(1).strip()
+                    fallback = re.sub(r'<br\s*/?>', '\n', fallback)
+                    fallback = re.sub(r'</?p>', '\n', fallback)
+                    if len(fallback.strip()) >= _EMPTY_FALLBACK_LEN:
+                        cleaned = fallback.strip()
+                # 客套/拒答检测（去AI味也可能碰到模型道歉"我无法帮你做去AI味"）
+                if cleaned and _is_refusal_or_fluff(cleaned):
+                    cleaned = ''
+                content = cleaned
+                # 防御性剥离标题行：保证 card.content 为纯正文
+                _, body_content = _strip_chapter_title(content, fallback_title=chapter.title or '')
+                # 自检：用 body_content（去掉标题后的正文）做校验，提示长度用去 think 后长度
+                issues = validator.validate('chapter_deai', body_content, raw_length_hint=len((raw_no_think or '').strip()))
+                _log_validation_issues(bb, 'deai', issues)
+                if not validator.should_retry(issues) or _attempt >= max_attempts - 1:
+                    validation_meta = validator.to_meta(issues)
+                    break
+                retry_hint = validator.build_retry_hint(issues)
+                # 去AI味失败重试提示更具体：不能空答，必须输出正文
+                retry_hint += '\n额外要求：必须输出完整的去AI味后正文，不能空答，不能道歉，不能只输出"好的/收到"这类客套话。'
+                yield sse({'type': 'meta', 'kind': 'validation_retry',
+                          'info': {'attempt': _attempt + 1,
+                                   'max_attempts': max_attempts,
+                                   'issues': validator.to_meta(issues)}})
+                cur_messages = messages + [
+                    {'role': 'assistant', 'content': content or raw_no_think},
+                    {'role': 'user', 'content': retry_hint}
+                ]
             card = {
                 'id': str(uuid.uuid4())[:8],
                 'type': 'SAVE_CHAPTER',
@@ -4866,8 +5040,9 @@ def smart_deai():
                 'content': body_content,
                 'target': '章节正文',
             }
+            card_meta = {'chapter_id': chapter_id, 'replace': True, 'validation': validation_meta} if validation_meta else {'chapter_id': chapter_id, 'replace': True}
             yield sse({'type': 'card', 'card': card, 'session_id': session_id,
-                       'meta': {'chapter_id': chapter_id, 'replace': True}})
+                       'meta': card_meta})
             history = load_session_messages(session)
             history.append({'role': 'user', 'content': f'去AI味：{chapter.title}'})
             history.append({'role': 'assistant', 'content': body_content,
