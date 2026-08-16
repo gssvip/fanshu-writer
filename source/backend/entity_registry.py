@@ -111,17 +111,24 @@ def extract_entities(bb, chapters_query=None) -> Dict:
                     _add(characters, str(v), 'character_profiles.json')
                     break
             # 人物卡关系/能力/物品里也会带相关实体（顺路抽取）
-            for key, bucket in (('关系', characters), ('relationships', characters),
-                                ('能力', skills), ('abilities', skills),
-                                ('物品', items), ('items', items),
-                                ('身份', characters), ('identity', characters)):
+            # 【关键】统一构造多桶字典，避免 _extract_generic_text_entities 的 is_multi 误判成多桶后 KeyError
+            for key, cat in (('关系', 'characters'), ('relationships', 'characters'),
+                            ('能力', 'skills'), ('abilities', 'skills'),
+                            ('物品', 'items'), ('items', 'items'),
+                            ('身份', 'characters'), ('identity', 'characters')):
                 v = p.get(key)
-                if isinstance(v, str):
-                    _extract_generic_text_entities(v, bucket, f'character_profiles.json.{key}', _add)
+                if isinstance(v, str) and v:
+                    mini = {k: (bucket if cat == k else characters if k == 'characters' else factions if k == 'factions' else locations if k == 'locations' else items if k == 'items' else skills)
+                            for k, bucket in
+                            [('characters', characters), ('factions', factions), ('locations', locations), ('items', items), ('skills', skills)]}
+                    _extract_generic_text_entities(v, mini, f'character_profiles.json.{key}', _add)
                 elif isinstance(v, list):
                     for x in v:
-                        if isinstance(x, str):
-                            _extract_generic_text_entities(x, bucket, f'character_profiles.json.{key}', _add)
+                        if isinstance(x, str) and x:
+                            mini = {k: (bucket if cat == k else characters if k == 'characters' else factions if k == 'factions' else locations if k == 'locations' else items if k == 'items' else skills)
+                                    for k, bucket in
+                                    [('characters', characters), ('factions', factions), ('locations', locations), ('items', items), ('skills', skills)]}
+                            _extract_generic_text_entities(x, mini, f'character_profiles.json.{key}', _add)
     # 1b) Markdown 旧版兜底：## 角色：<姓名>
     for m in re.finditer(r'##\s*角色[：:]\s*(.+?)(?:\n|$)', cp_text):
         _add(characters, m.group(1).strip(), 'character_profiles')
@@ -289,76 +296,94 @@ def _extract_generic_text_entities(text: str, buckets, ref: str, add_fn):
     - 「核心人物：林墨、苏清鸢、老骨」
     - 出现于引号、【】、《》里的 2-6 字中文实体
     这里统一抽取，用户反馈的"各维度已有实体识别不到"就由这里兜底。
-    buckets: {'characters': {...set}, 'factions': ..., 'locations': ..., 'items': ..., 'skills': ...}
-             或单个 dict bucket(按 ref 直接加)
+
+    buckets 约定：**始终传多桶字典格式**：
+        {'characters': {name: set()}, 'factions': {...}, 'locations': {...}, 'items': {...}, 'skills': {...}}
+    add_fn(bucket, name, ref)
+
+    为了绝对不 500，整个函数外层 try/except；任何异常都静默吞掉，最多漏掉几个实体，不影响整条 API。
     """
-    if not text:
-        return
-    # 兼容两种传法：单桶(dict) / 多桶(dict of dict)
-    # add_fn(bucket, name, ref)
-    is_multi = isinstance(buckets, dict) and buckets and next(iter(buckets.values())) and isinstance(next(iter(buckets.values())), dict)
+    try:
+        if not text:
+            return
+        # 只接受"多桶字典格式"，只要有一个 key 是固定类别名，就按多桶处理；
+        # 否则打印一条日志（这里 pass）然后直接返回，避免把单桶当多桶扫 → KeyError
+        if not isinstance(buckets, dict):
+            return
+        expected_keys = {'characters', 'factions', 'locations', 'items', 'skills'}
+        if not (set(buckets.keys()) & expected_keys):
+            return  # 传进来的 dict 不是多桶格式，直接跳过，不抛异常
 
-    def add(cat_or_bucket, name):
-        if is_multi:
-            if cat_or_bucket in buckets:
-                add_fn(buckets[cat_or_bucket], name, ref)
-        else:
-            add_fn(cat_or_bucket, name, ref)
+        def add(cat, name):
+            if cat in buckets:
+                add_fn(buckets[cat], name, ref)
 
-    # A. 行级扫："XX 标签(类别提示)：实体名1、实体名2、实体名3"
-    for line in re.split(r'[\r\n]+', text):
-        if not line or len(line) > 400:
-            continue
-        # 冒号：前半是标签，后半是"顿号/逗号/分号"枚举实体
-        m = re.match(r'^\s*[-*•·]*\s*([^：:\n]{1,20})\s*[：:]\s*(.+?)\s*$', line)
-        if m:
-            label = m.group(1).strip()
-            content = m.group(2).strip()
-            cat = _category_from_label(label)
-            # 后半按顿号/逗号/分号切
-            candidates = [x.strip(' 、') for x in re.split(r'[、,，;；]+', content) if x.strip()]
-            for cand in candidates:
-                # 有时会写成"林墨（男·19岁）" → 先保留括号前主名
-                main = re.split(r'[（(（【《]', cand, 1)[0].strip()
-                if not main:
+        # A. 行级扫："XX 标签(类别提示)：实体名1、实体名2、实体名3"
+        for line in re.split(r'[\r\n]+', text):
+            try:
+                if not line or len(line) > 400:
                     continue
-                # 如果能判定类别就直接加；否则默认先当人物（中文冒号前出现的姓名最常见）
-                if cat:
-                    add(cat, main)
-                else:
-                    # 没有类别提示时，名字长度合理 → 当人物候选加入
-                    if 2 <= len(main) <= 8 and re.search(r'[\u4e00-\u9fa5]', main):
-                        add('characters', main)
-            continue
-        # 竖线分隔："林墨 | 男 | 主角" → 第1段当人名
-        if '|' in line:
-            parts = [p.strip() for p in line.split('|') if p.strip()]
-            if len(parts) >= 2 and 2 <= len(parts[0]) <= 8 and re.search(r'[\u4e00-\u9fa5]', parts[0]):
-                add('characters', parts[0])
-
-    # B. 段级扫：
-    #    1) 「主要人物：林墨、苏清鸢」"人物/势力/地点/物品/功法" 前缀枚举实体
-    m2 = re.findall(r'(?:主要|核心|关键|重要|其他|已登场)?\s*'
-                    r'(人物|角色|势力|门派|宗门|阵营|地点|区域|物品|功法|技能|法宝|丹药)'
-                    r'[：:]\s*([^\n]{2,200})', text)
-    for label, body in m2:
-        cat = _category_from_label(label) or 'characters'
-        for cand in re.split(r'[、,，;；\s]+', body):
-            cand = cand.strip()
-            if not cand:
+                # 冒号：前半是标签，后半是"顿号/逗号/分号"枚举实体
+                m = re.match(r'^\s*[-*•·]*\s*([^：:\n]{1,20})\s*[：:]\s*(.+?)\s*$', line)
+                if m:
+                    label = m.group(1).strip()
+                    content = m.group(2).strip()
+                    cat = _category_from_label(label)
+                    # 后半按顿号/逗号/分号切
+                    candidates = [x.strip(' 、') for x in re.split(r'[、,，;；]+', content) if x.strip()]
+                    for cand in candidates:
+                        # 有时会写成"林墨（男·19岁）" → 先保留括号前主名
+                        main = re.split(r'[（(（【《]', cand, 1)[0].strip()
+                        if not main:
+                            continue
+                        # 如果能判定类别就直接加；否则默认先当人物（中文冒号前出现的姓名最常见）
+                        if cat:
+                            add(cat, main)
+                        else:
+                            # 没有类别提示时，名字长度合理 → 当人物候选加入
+                            if 2 <= len(main) <= 8 and re.search(r'[\u4e00-\u9fa5]', main):
+                                add('characters', main)
+                    continue
+                # 竖线分隔："林墨 | 男 | 主角" → 第1段当人名
+                if '|' in line:
+                    parts = [p.strip() for p in line.split('|') if p.strip()]
+                    if len(parts) >= 2 and 2 <= len(parts[0]) <= 8 and re.search(r'[\u4e00-\u9fa5]', parts[0]):
+                        add('characters', parts[0])
+            except Exception:
                 continue
-            main = re.split(r'[（(【《]', cand, 1)[0].strip()
-            if 2 <= len(main) <= 12 and re.search(r'[\u4e00-\u9fa5]', main):
-                add(cat, main)
 
-    # C. 【姓名】/"姓名"/《功法名》：2-8 字中文实体
-    #    仅在能抓到线索时使用，避免整段正文无差别扫入噪声
-    brackets = re.findall(r'[【“\"《〈]([^\]】”\"》〉]{1,12})[】”\"》〉]', text)
-    for cand in brackets:
-        cand = cand.strip()
-        if 2 <= len(cand) <= 10 and re.search(r'[\u4e00-\u9fa5]', cand):
-            # 默认当人物；后续由用户手动改类型或由 Character 表/技能标题纠正
-            add('characters', cand)
+        # B. 段级扫：
+        #    1) 「主要人物：林墨、苏清鸢」"人物/势力/地点/物品/功法" 前缀枚举实体
+        try:
+            m2 = re.findall(r'(?:主要|核心|关键|重要|其他|已登场)?\s*'
+                            r'(人物|角色|势力|门派|宗门|阵营|地点|区域|物品|功法|技能|法宝|丹药)'
+                            r'[：:]\s*([^\n]{2,200})', text)
+            for label, body in m2:
+                cat = _category_from_label(label) or 'characters'
+                for cand in re.split(r'[、,，;；\s]+', body):
+                    cand = cand.strip()
+                    if not cand:
+                        continue
+                    main = re.split(r'[（(【《]', cand, 1)[0].strip()
+                    if 2 <= len(main) <= 12 and re.search(r'[\u4e00-\u9fa5]', main):
+                        add(cat, main)
+        except Exception:
+            pass
+
+        # C. 【姓名】/"姓名"/《功法名》：2-8 字中文实体
+        #    仅在能抓到线索时使用，避免整段正文无差别扫入噪声
+        try:
+            brackets = re.findall(r'[【“\"《〈]([^\]】”\"》〉]{1,12})[】”\"》〉]', text)
+            for cand in brackets:
+                cand = cand.strip()
+                if 2 <= len(cand) <= 10 and re.search(r'[\u4e00-\u9fa5]', cand):
+                    # 默认当人物；后续由用户手动改类型或由 Character 表/技能标题纠正
+                    add('characters', cand)
+        except Exception:
+            pass
+    except Exception:
+        # 绝对不抛异常到上层 → 防止整个 /api/books/:id/entities 500
+        return
 
 
 
