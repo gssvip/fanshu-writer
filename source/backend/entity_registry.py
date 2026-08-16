@@ -39,6 +39,281 @@ BIBLE_JSON_FIELDS = {
 }
 
 
+# ========= 新增 P0：严格噪声过滤 & 人名/地名/势力/物品/技能 形貌判定 =========
+
+# 常见中文姓氏（百家姓 + 常见网文复姓，用于"像不像人名"判断）
+_CHINESE_SURNAMES = set('''赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜
+戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史唐
+费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄
+和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝董梁
+杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍
+虞万支柯昝管卢莫经房裘缪干解应宗丁宣贲邓郁单杭洪包诸左石崔吉钮龚
+程嵇邢滑裴陆荣翁荀羊於惠甄曲家封芮羿储靳汲邴糜松井段富巫乌焦巴弓
+牧隗山谷车侯宓蓬全郗班仰秋仲伊宫宁仇栾暴甘钭厉戎祖武符刘景詹束龙
+叶幸司韶郜黎蓟薄印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴郁胥能苍双
+闻莘党翟谭贡劳逄姬申扶堵冉宰郦雍却璩桑桂濮牛寿通边扈燕冀郏浦尚农
+温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾终暨居衡步都耿满弘
+匡国文寇广禄阙东欧殳沃利蔚越夔隆师巩厍聂晁勾敖融冷訾辛阚那简饶空
+曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓公''')
+# 复姓
+_CHINESE_COMPOUND_SURNAMES = {
+    '欧阳', '太史', '端木', '上官', '司马', '东方', '独孤', '南宫', '万俟', '闻人',
+    '夏侯', '诸葛', '尉迟', '公羊', '赫连', '澹台', '皇甫', '宗政', '濮阳', '公冶',
+    '太叔', '申屠', '公孙', '慕容', '仲孙', '钟离', '长孙', '宇文', '司徒', '鲜于',
+    '司空', '闾丘', '子车', '亓官', '司寇', '巫马', '公西', '颛孙', '壤驷', '公良',
+    '漆雕', '乐正', '宰父', '谷梁', '拓跋', '夹谷', '轩辕', '令狐', '段干', '百里',
+    '呼延', '东郭', '南门', '羊舌', '微生', '公户', '公玉', '公仪', '梁丘', '公仲',
+    '公上', '公门', '公山', '公坚', '左丘', '公伯', '西门', '公祖', '第五', '公乘',
+    '贯丘', '公皙', '南荣', '东里', '东宫', '仲长', '子书', '子桑', '即墨', '达奚',
+    '褚师', '吴铭',
+}
+
+# 势力/门派尾缀（命中就像 faction，绝不可能是 character）
+_FACTION_SUFFIXES = (
+    '宗','门','派','教','寺','观','宫','殿','阁','楼','堂','院','会','盟','团','营','军',
+    '司','府','署','局','帮','会','社','族','氏','家','堡','寨','岛','城','国','州','道',
+    '联盟','商会','军团','阵营','家族','宗门','门派','道统','世家','镖局','赌坊','青楼',
+    '皇室','王府','侯府','公府','伯府','朝堂','内阁','军机处','六部','行省','世家大族',
+)
+# 地点尾缀（命中 → location）
+_LOCATION_SUFFIXES = (
+    '城','市','镇','村','庄','乡','县','郡','府','州','省','国','岛','湾','港','山','峰','岭',
+    '谷','峡','关','隘','原','野','林','森','湖','河','江','海','洋','潭','溪','泉','滩','沙',
+    '漠','草原','沙漠','沼泽','秘境','遗迹','战场','旧址','废墟','深渊','界','域','位面','大6',
+    '大陆','海域','山脉','盆地','高原','平原','丘陵','洞穴','洞窟','塔楼','桥','码头','车站',
+    '学院','学府','书院','宗门驻地','驻地','秘境','禁地','试炼场','角斗场','擂台',
+)
+# 物品尾缀/特征（item）
+_ITEM_SUFFIXES = (
+    '剑','刀','枪','棍','棒','戟','斧','钩','叉','鞭','锏','锤','弓','箭','弩','矢','甲','铠',
+    '盔','靴','袍','衣','裙','带','佩','环','镯','链','戒','玉','珠','石','丹','药','草','花',
+    '果','茶','酒','符','印','令','牌','旗','伞','扇','琴','棋','书','画','钟','鼎','炉','塔',
+    '舟','船','辇','车','马','袋','囊','盒','匣','盘','杯','盏','瓶','壶','杖','鞭','索','绳',
+    '图','卷','册','碑','镜','冠','巾','簪','钗','宝','材料','矿石','金属','木材','兽材',
+)
+# 技能/功法尾缀（skill）
+_SKILL_SUFFIXES = (
+    '诀','法','术','招','式','阵','咒','印','功','心法','秘法','神通','武学','招式','斗技',
+    '魔法','法术','咒文','奥义','禁术','玄功','灵诀','剑诀','刀诀','枪法','棍法','掌法','指法',
+    '步法','身法','吐纳','冥想','锻体','炼体','拳','掌','腿','爪','指',
+)
+
+# 时间/年龄/阶段/数字噪声关键词 —— 一旦在 label 或候选名字里出现，且带数字→直接视为噪声
+_TIME_AGE_WORDS = (
+    '岁','年','月','日','时','点','分','秒','季','旬','周','星期','礼拜','农历','正月','腊月',
+    '春','夏','秋','冬','早上','上午','中午','下午','晚上','凌晨','黄昏','傍晚','午夜','深夜',
+    '纪元','朝代','时期','阶段','跨度','时长','龄','届','次','代','世','纪',
+)
+# 章/卷/节/回/幕 序号噪声关键词
+_SECTION_WORDS = ('章','卷','节','回','幕','集','场','话','篇','部','册')
+# 明确的"不是名字"的停用词/说明词/虚词
+_STOP_WORDS = set('''我们 你们 他们 她们 它们 自己 咱们 大家 人家 别人 旁人
+一个 两个 三个 四个 五个 一些 有些 所有 全部 整个 部分 其中 之一 而已
+然后 后来 之后 之前 以前 以后 现在 于是 因此 所以 但是 然而 而且 并且
+其实 当然 显然 果然 居然 竟然 突然 忽然 渐渐 终于 始终 一直 从来 永远
+或许 也许 大概 大约 几乎 差不多 左右 上下 以内 以外 至少 最多 最少 不超过
+主要 核心 重要 关键 普通 一般 常见 非常 特别 十分 极其 相当 比较 稍微
+什么 怎么 为什么 哪里 哪个 哪些 怎样 如何 如果 即使 虽然 因为 所以
+第一 第二 第三 第四 第五 第六 第七 第八 第九 第十 首先 其次 然后 最后
+开始 结束 过程 结果 情况 状态 方式 方法 方面 问题 原因 影响 关系 意义
+以上 以下 以内 以外 之内 之外 之前 之后 之间 目前 如今 至今 从此 以后
+主角 配角 反派 龙套 客串 简介 说明 介绍 概述 总结 备注 注释 提示 注意 警告
+所述 所说 所言 所写 所谓 所在 所思 所感 所为 所述的 总的来说 总而言之 综上所述'''.split())
+
+# 维度噪声收紧策略：timeline / outline / style_guide / foreshadowing_graph 只允许"明确类别前缀冒号行"识别，不开兜底
+_STRICT_DIM_FIELDS = {
+    'timeline', 'foreshadowing_graph', 'outline_hierarchy', 'style_guide',
+    'foreshadowing', 'plot_design',  # 大纲/文风/伏笔也紧一点，避免把"第三章：XXX"当人物
+}
+
+
+def _is_valid_entity_name(name: str, allow_digit_ratio: float = 0.4) -> bool:
+    """统一"名字像不像实体"的判定入口：
+    - 结构：2-18 字，不能过短/过长
+    - 不是纯数字/纯短英文
+    - **强噪声过滤：**
+      ①含句号/问号/感叹号/分号/省略号 → 整句，丢
+      ②含"岁+数字"（年龄）、"年月/日/时+数字"（时间） → 丢；**含中文数字（第X/卷X/X品/X阶）+ 章节/品级字也丢**
+      ③含"章/卷/节/回/幕/集 + 数字或中文序数" → 序号，丢
+      ④数字占比 > allow_digit_ratio → 丢（"16岁3个月"里数字+单位占比高）
+      ⑤属于通用停用词 / 纯虚词串 → 丢
+      ⑥度量衡长度/重量/境界数短语（"5丈/300里/七品/八阶"）→ 丢
+    """
+    if not name:
+        return False
+    name = name.strip()
+    n = len(name)
+    if n < 2 or n > 18:
+        return False
+    # ① 整句标点噪声
+    if any(ch in name for ch in '。？！；!?;…—-~') and n > 10:
+        return False
+    # 纯数字/纯短英文
+    if re.fullmatch(r'\d+', name):
+        return False
+    if re.fullmatch(r'[A-Za-z]{1,3}', name):
+        return False
+    # 数字占比
+    digit_cnt = sum(1 for ch in name if ch.isdigit())
+    if digit_cnt / max(n, 1) > allow_digit_ratio:
+        return False
+    # ② 年龄/时间噪声（阿拉伯数字版）
+    if re.search(r'\d+\s*岁', name) or ('至' in name and '岁' in name):
+        return False
+    # ②+ 时间/章节/品级 + 中文数字（"第三章/卷二/第五回/七品/八阶/三坛"）
+    CN_NUM = '零〇一二三四五六七八九十百千万两'
+    # 章节/卷/回/幕字 + 含中文数字/阿拉伯数字 → 噪声
+    if any(w in name for w in _SECTION_WORDS):
+        # 必须带数字（含中文数字）才是"第X章"类序号，比如"章台柳"这种真实人名/诗名不能误伤
+        has_num = bool(re.search(r'\d', name)) or any(c in name for c in CN_NUM)
+        if has_num or name.startswith('第'):
+            return False
+    # 时间词 + 数字/中文数字 → 噪声
+    if any(w in name for w in _TIME_AGE_WORDS):
+        has_num = bool(re.search(r'\d', name)) or any(c in name for c in CN_NUM)
+        if has_num:
+            return False
+    # ④ 度量衡/品级长度重量等（含中文数字也命中）
+    if re.search(rf'[\d{CN_NUM}]+\s*(丈|尺|寸|米|公里|里|斤|两|钱|克|吨|阶|品|级|层|重|段|等)', name):
+        return False
+    # ⑤ 通用停用词 / 纯虚词串：
+    if name in _STOP_WORDS:
+        return False
+    # ⑤+ 长度 ≤ 8 且所有字符都能被 _STOP_WORDS 中任意一个词覆盖（纯虚词拼凑如"所以但是""以上所述""然后之后"）
+    if n <= 8:
+        # 贪心分词覆盖
+        remain = name
+        changed = True
+        while changed and remain:
+            changed = False
+            for w in sorted(_STOP_WORDS, key=len, reverse=True):
+                if remain.startswith(w):
+                    remain = remain[len(w):]
+                    changed = True
+                    break
+        if not remain:
+            return False
+    # 中文虚词纯串（字级）：所有字符都属于这组虚词字 → 丢
+    EMPTY_CHARS = '所与或者然虽则因且故此之其于及并如果那这虽但而已还是又也都却只就再还'
+    if all(ch in EMPTY_CHARS for ch in name):
+        return False
+    return True
+
+
+def _looks_like_faction(name: str) -> bool:
+    # 只看尾缀命中（"玄骨宗/镇魔司/大胤皇室/姜家/天星商会/青云联盟"）
+    return isinstance(name, str) and any(name.endswith(s) for s in _FACTION_SUFFIXES)
+
+
+def _looks_like_location(name: str) -> bool:
+    return isinstance(name, str) and any(name.endswith(s) for s in _LOCATION_SUFFIXES)
+
+
+def _looks_like_item(name: str) -> bool:
+    return isinstance(name, str) and any(name.endswith(s) for s in _ITEM_SUFFIXES)
+
+
+def _looks_like_skill(name: str) -> bool:
+    return isinstance(name, str) and (
+        any(name.endswith(s) for s in _SKILL_SUFFIXES)
+        or ('之' in name and name.endswith(('功', '法', '诀', '术', '招', '式', '典', '录', '经')))
+    )
+
+
+def _looks_like_person_name(name: str) -> bool:
+    """判定像不像中文人名：2-4 字纯中文(不含数字)，首字落在常见姓氏或前 2 字复姓。"""
+    if not _is_valid_entity_name(name):
+        return False
+    if re.search(r'\d', name):  # 名字里不含数字（有数字就可能是时间/品级/度量）
+        return False
+    if not re.fullmatch(r'[\u4e00-\u9fa5]{2,4}', name):
+        return False
+    # 复姓
+    if len(name) >= 2 and name[:2] in _CHINESE_COMPOUND_SURNAMES:
+        return True
+    # 单字姓
+    return name[0] in _CHINESE_SURNAMES
+
+
+def _is_noise_label(label: str) -> bool:
+    """判断行冒号前的 label 是否是"时间/年龄/阶段/序号/说明词"。
+    如果是噪声 label → 这一行不要做任何默认塞桶，否则会出现 timeline 里 "16岁3个月：主角觉醒灵根"
+    被识别成"16岁3个月"是个人物这种 bug（用户截图中的 874 条时间乱入的根因）。"""
+    if not label:
+        return True
+    label = label.strip()
+    # 过短/过长 → 噪声
+    if len(label) < 1 or len(label) > 20:
+        return True
+    # 整句 label（说明/解释行）
+    if any(ch in label for ch in '。？！；!?;'):
+        return True
+    # 时间/年龄+数字 → 噪声（16岁3个月、第3纪、3月15日、卷X章Y-Z 等）
+    if re.search(r'\d', label):
+        for w in list(_TIME_AGE_WORDS) + list(_SECTION_WORDS):
+            if w in label:
+                return True
+    # 纯说明性词语 label（不含"人名/势力/地点/物品/功法"类关键词，又是纯概念）
+    # 含"说明/介绍/概述/简介/备注/总结/提示/注意/正文/标题/章节/梗概/剧情/概要/阶段/背景/过程/结果"且不带人物/势力/地点/物品/功法前缀 → 噪声
+    EXPLAIN_WORDS = (
+        '说明','介绍','概述','简介','备注','总结','提示','注意','警告','正文','标题',
+        '章节','梗概','剧情','概要','背景','过程','结果','原因','目标','任务','奖励',
+        '惩罚','影响','意义','状态','情况','方式','方法','方面','问题','关系',
+    )
+    cat_hint_hit = _category_from_label(label) is not None
+    if any(w in label for w in EXPLAIN_WORDS) and not cat_hint_hit:
+        return True
+    # label 数字占比过高（纯阶段号）
+    digit_cnt = sum(1 for ch in label if ch.isdigit())
+    if digit_cnt / max(len(label), 1) > 0.35:
+        return True
+    # label 含度量衡+数字（"三品/五阶/300里/5丈"这种品阶/尺寸/长度短语 → 不是实体）
+    if re.search(r'\d+\s*(丈|尺|寸|米|公里|里|斤|两|钱|阶|品|级|层|重|段|等)', label):
+        return True
+    return False
+
+
+def _categorize_candidate(name: str):
+    """基于尾缀/形态猜测候选属于哪一 bucket，返回 categories 列表（可能性从高到低）。
+    若完全猜不出来且不像人名 → 返回空列表，调用方就不塞任何桶（核心：**不再默认塞角色**）。"""
+    cats = []
+    if _looks_like_person_name(name):
+        cats.append('characters')
+    if _looks_like_faction(name):
+        cats.append('factions')
+    if _looks_like_location(name):
+        cats.append('locations')
+    if _looks_like_skill(name):
+        cats.append('skills')
+    if _looks_like_item(name):
+        cats.append('items')
+    return cats
+
+
+# 常见"实体关键词前缀"（出现在冒号/竖线前，用来判定这行冒号前的东西是什么类型）
+_CATEGORY_HINTS = {
+    'characters': {'姓名', '名字', '人物', '角色', '主角', '反派', '配角', '龙套', '师父', '师傅',
+                   '师兄', '师弟', '师姐', '师妹', '父亲', '母亲', '儿子', '女儿', '兄弟', '姐妹',
+                   '族长', '长老', '掌门', '城主', '皇帝', '殿下', '公子', '小姐', '演员', '登场人物'},
+    'factions': {'势力', '门派', '宗门', '宗派', '阵营', '家族', '商会', '军团', '联盟', '道统', '教', '寺', '楼', '帮会'},
+    'locations': {'地点', '区域', '地图', '城池', '秘境', '遗迹', '大陆', '山脉', '海域', '宗门',
+                  '驻地', '学院', '村庄', '小镇', '城市', '府', '阁', '殿', '楼', '塔', '山', '谷'},
+    'items': {'物品', '宝物', '法宝', '法器', '丹药', '灵药', '材料', '装备', '储物袋',
+              '令牌', '剑', '刀', '枪', '弓', '甲', '船', '车', '印', '符', '阵', '丹'},
+    'skills': {'功法', '技能', '术法', '神通', '秘法', '心法', '招式', '武学', '法术', '咒语'},
+}
+
+
+def _category_from_label(label: str):
+    if not label:
+        return None
+    for cat, hints in _CATEGORY_HINTS.items():
+        for h in hints:
+            if h in label:
+                return cat
+    return None
+
+
 def _safe_json_loads(s: str, default):
     if not s:
         return default
@@ -83,12 +358,8 @@ def extract_entities(bb, chapters_query=None) -> Dict:
         # 常见标点清理（中文人名前后带引号/顿号/书名号）
         if name:
             name = re.sub(r'^[\s“"《〈【\(（,，、；:：]+|[\s”"》〉】\)）,，、；:：]+$', '', name)
-        if not name or len(name) > 50 or len(name) < 2:
-            return
-        # 纯数字/英文短词等直接丢（与 registry._is_valid_name 一致）
-        if re.match(r'^\d+$', name):
-            return
-        if re.match(r'^[a-zA-Z]{1,3}$', name):
+        # ===== 【P0 修复：统一强噪声过滤，不再两句话/时间/长句乱入】=====
+        if not _is_valid_entity_name(name):
             return
         if name not in bucket:
             bucket[name] = set()
@@ -318,37 +589,62 @@ def _extract_generic_text_entities(text: str, buckets, ref: str, add_fn):
             if cat in buckets:
                 add_fn(buckets[cat], name, ref)
 
+        # 判断当前维度是不是"严格模式"：timeline/大纲/文风/伏笔 等，只开明确类别前缀匹配，不开无差别括号/竖线兜底
+        # ref 示例：'timeline'、'dynamic_volumes.timeline'、'chapter.content'
+        strict_mode = False
+        for sd in _STRICT_DIM_FIELDS:
+            if ref == sd or ref.endswith('.' + sd):
+                strict_mode = True
+                break
+
+        def safe_add_unknown(name):
+            """未知类别候选：按形貌猜测 1-N 个桶；都猜不到就丢，**绝不默认塞角色**。"""
+            if not _is_valid_entity_name(name):
+                return
+            cats = _categorize_candidate(name)
+            # 去重保序：同一名字如果既像人物又像地点（极少），两个桶都加
+            seen = set()
+            for c in cats:
+                if c not in seen:
+                    seen.add(c)
+                    add(c, name)
+
         # A. 行级扫："XX 标签(类别提示)：实体名1、实体名2、实体名3"
         for line in re.split(r'[\r\n]+', text):
             try:
                 if not line or len(line) > 400:
                     continue
                 # 冒号：前半是标签，后半是"顿号/逗号/分号"枚举实体
-                m = re.match(r'^\s*[-*•·]*\s*([^：:\n]{1,20})\s*[：:]\s*(.+?)\s*$', line)
+                m = re.match(r'^\s*[-*•·]*\s*([^：:\n]{1,30})\s*[：:]\s*(.+?)\s*$', line)
                 if m:
                     label = m.group(1).strip()
                     content = m.group(2).strip()
+                    # =====【P0：label 是噪声 → 整行跳】=====
+                    if _is_noise_label(label):
+                        continue
                     cat = _category_from_label(label)
                     # 后半按顿号/逗号/分号切
                     candidates = [x.strip(' 、') for x in re.split(r'[、,，;；]+', content) if x.strip()]
                     for cand in candidates:
                         # 有时会写成"林墨（男·19岁）" → 先保留括号前主名
                         main = re.split(r'[（(（【《]', cand, 1)[0].strip()
-                        if not main:
+                        if not _is_valid_entity_name(main):
                             continue
-                        # 如果能判定类别就直接加；否则默认先当人物（中文冒号前出现的姓名最常见）
                         if cat:
+                            # 有明确类别前缀（"人物："、"势力："等）→ 直接进对应桶
                             add(cat, main)
                         else:
-                            # 没有类别提示时，名字长度合理 → 当人物候选加入
-                            if 2 <= len(main) <= 8 and re.search(r'[\u4e00-\u9fa5]', main):
-                                add('characters', main)
+                            # 前缀没命中但前缀不是噪声（如"玄骨宗：""姜无涯："）→ 形貌猜桶，绝不默认塞角色
+                            safe_add_unknown(main)
                     continue
-                # 竖线分隔："林墨 | 男 | 主角" → 第1段当人名
-                if '|' in line:
+
+                # 竖线分隔："林墨 | 男 | 19 岁 | 主角" → 第1段必须像人名才加（严格模式关闭）
+                if (not strict_mode) and '|' in line:
                     parts = [p.strip() for p in line.split('|') if p.strip()]
-                    if len(parts) >= 2 and 2 <= len(parts[0]) <= 8 and re.search(r'[\u4e00-\u9fa5]', parts[0]):
-                        add('characters', parts[0])
+                    if len(parts) >= 2:
+                        cand0 = parts[0]
+                        if _looks_like_person_name(cand0):
+                            add('characters', cand0)
             except Exception:
                 continue
 
@@ -359,28 +655,47 @@ def _extract_generic_text_entities(text: str, buckets, ref: str, add_fn):
                             r'(人物|角色|势力|门派|宗门|阵营|地点|区域|物品|功法|技能|法宝|丹药)'
                             r'[：:]\s*([^\n]{2,200})', text)
             for label, body in m2:
-                cat = _category_from_label(label) or 'characters'
+                cat = _category_from_label(label)
+                if not cat:
+                    # 极端情况没命中 → 丢，不默认塞角色
+                    continue
                 for cand in re.split(r'[、,，;；\s]+', body):
                     cand = cand.strip()
                     if not cand:
                         continue
                     main = re.split(r'[（(【《]', cand, 1)[0].strip()
-                    if 2 <= len(main) <= 12 and re.search(r'[\u4e00-\u9fa5]', main):
+                    if _is_valid_entity_name(main):
                         add(cat, main)
         except Exception:
             pass
 
-        # C. 【姓名】/"姓名"/《功法名》：2-8 字中文实体
-        #    仅在能抓到线索时使用，避免整段正文无差别扫入噪声
-        try:
-            brackets = re.findall(r'[【“\"《〈]([^\]】”\"》〉]{1,12})[】”\"》〉]', text)
-            for cand in brackets:
-                cand = cand.strip()
-                if 2 <= len(cand) <= 10 and re.search(r'[\u4e00-\u9fa5]', cand):
-                    # 默认当人物；后续由用户手动改类型或由 Character 表/技能标题纠正
-                    add('characters', cand)
-        except Exception:
-            pass
+        # C. 【姓名】/"姓名"/《功法名》：严格模式关闭；不同括号类型对应不同 bucket
+        if not strict_mode:
+            try:
+                brackets_sq = re.findall(r'【([^\]】]{1,12})】', text)
+                brackets_dq = re.findall(r'[\"“”]([^\"“”\n]{1,14})[\"“”]', text)
+                brackets_book = re.findall(r'《([^》\n]{1,16})》', text)
+                brackets_la = re.findall(r'〈([^〉\n]{1,12})〉', text)
+                # 【】/引号 → 形貌猜桶，猜不到丢
+                for cand in brackets_sq:
+                    safe_add_unknown(cand.strip())
+                for cand in brackets_dq:
+                    safe_add_unknown(cand.strip())
+                # 《》→ 优先技能/功法，其次物品（典籍类），绝不再默认塞角色
+                for cand in brackets_book:
+                    cand = cand.strip()
+                    if not _is_valid_entity_name(cand):
+                        continue
+                    if _looks_like_skill(cand):
+                        add('skills', cand)
+                    elif _looks_like_item(cand):
+                        add('items', cand)
+                    else:
+                        add('items', cand)
+                for cand in brackets_la:
+                    safe_add_unknown(cand.strip())
+            except Exception:
+                pass
     except Exception:
         # 绝对不抛异常到上层 → 防止整个 /api/books/:id/entities 500
         return
@@ -528,16 +843,9 @@ def _normalize_name(name: str) -> str:
 
 
 def _is_valid_name(name: str) -> bool:
-    if not name:
-        return False
-    if len(name) < 2 or len(name) > 30:
-        return False
-    # 排除纯数字、纯英文短词
-    if re.match(r'^\d+$', name):
-        return False
-    if re.match(r'^[a-zA-Z]{1,3}$', name):
-        return False
-    return True
+    """增量入口（事件/章节）的名字有效性统一走强噪声过滤，和抽取入口一致。
+    以前只过滤长度/纯数字/短英文，会漏大量"16岁3个月/第三章/三品丹方"这种非实体短语。"""
+    return _is_valid_entity_name(name, allow_digit_ratio=0.35)
 
 
 def register_event_entities(bb, events: List[Dict], source_chapter: int = 0):
@@ -618,14 +926,53 @@ def extract_and_save_registry(bb, chapters_query=None) -> Dict:
     """统一入口：运行全量抽取（extract_entities）后，把结果合并写回 bb.entity_registry_json。
     - 返回的格式与 extract_entities 一致（{characters, factions, ...} 列表），前端 list_entities 直接用。
     - 同步写入 entity_registry_json（后续 register_event_entities 增量更新能识别到）。
-    - chapters_query 可选：传入 Chapter list 后会额外从章节标题/正文抽实体。"""
+    - chapters_query 可选：传入 Chapter list 后会额外从章节标题/正文抽实体。
+
+    【P0 修复】：
+    1. **历史脏数据清理**：以本次扫描 entities 作为真值，若旧 registry 里存在"完全由 bible_scan 产生且本次不再命中"的条目
+       （典型就是用户截图里的 874 条"16岁3个月/16岁4个月…"时间短语由旧版 timeline 扫入）→ 从 registry 中删除，
+       用户一点"🔄 刷新"就自动干净，不再需要手动逐条删。
+    2. **所有写回前先过 _is_valid_name**（已升级为强噪声过滤），避免 events 增量写回残留的非实体短语。
+    """
     if not bb:
         return {'characters': [], 'factions': [], 'locations': [], 'items': [], 'skills': []}
     entities = extract_entities(bb, chapters_query=chapters_query)
-    # 合并写入 registry：不覆盖 first_seen_ch/last_seen_ch/weight 已有值，缺失字段用默认值补
     registry = _load_registry(bb)
     ref_type = 'bible_scan'
+
+    # 先收集本次扫描命中的所有 name（按 bucket）
+    current_names: Dict[str, set] = {}
     for bucket_name in ENTITY_TYPES:
+        bucket = entities.get(bucket_name) or []
+        current_names[bucket_name] = set()
+        for item in bucket:
+            n = (item.get('name') or '').strip()
+            if _is_valid_name(n):
+                current_names[bucket_name].add(n)
+
+    # 外部增量来源：只要 refs 里包含这些来源之一，说明不是"纯 Bible 扫描历史残留"，就不能因为
+    # 本次 Bible 重抽没抽到就删掉（可能是事件日志/Character 表/章节正文增量识别的）。
+    EXTERNAL_REF_SOURCES = {'event', 'chapter', 'character_table'}
+
+    for bucket_name in ENTITY_TYPES:
+        # === A. 清理历史脏数据（本次未命中 & 无外部来源）===
+        old_entries = list(registry[bucket_name].keys())
+        for old_name in old_entries:
+            if old_name in current_names[bucket_name]:
+                continue
+            entry = registry[bucket_name][old_name]
+            refs = entry.get('refs') or []
+            has_external = any(r in EXTERNAL_REF_SOURCES for r in refs)
+            if has_external:
+                # 有外部来源 → 保留（即使 Bible 没抽到，事件/正文/Character 表里确实存在）
+                # 但强过滤一下：如果名字现在已经被判定成噪声，强制删除（避免事件日志本身有脏）
+                if not _is_valid_name(old_name):
+                    del registry[bucket_name][old_name]
+                continue
+            # 纯 bible_scan 历史残留 & 本次未命中 → 一定是旧逻辑误识别的噪声，直接删除
+            del registry[bucket_name][old_name]
+
+        # === B. 把本次 Bible 扫描结果合并写回（保留 first_seen_ch/last_seen_ch/weight）===
         bucket = entities.get(bucket_name) or []
         for item in bucket:
             name = (item.get('name') or '').strip()
@@ -648,6 +995,10 @@ def extract_and_save_registry(bb, chapters_query=None) -> Dict:
                     for r in dim_refs:
                         if r not in refs:
                             refs.append(r)
+                # 若 weight 缺失 → 补齐（防止老用户数据 upgrade）
+                if 'weight' not in entry or not entry['weight']:
+                    entry['weight'] = ENTITY_TYPES[bucket_name]['default_weight']
+
     _save_registry(bb, registry)
     return entities
 
