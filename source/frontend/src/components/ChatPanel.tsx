@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
 import { useStore } from '../store';
 import { api } from '../api';
 import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible } from '../types';
@@ -193,7 +193,7 @@ function _parseTimelineVols(content: string): any[] {
 
 // 剧情维度卡片 body：按卷可折叠、每卷显示概要/主要事件/节点，并提供「节点设计」按钮
 const TimelineCardBody = memo(function TimelineCardBody({
-  content, bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume,
+  content, bookId, bible: _bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume,
   onContentMutated,
 }: {
   content: string;
