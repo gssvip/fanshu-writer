@@ -3987,7 +3987,7 @@ def smart_generate():
             max_tok = 6000 if dim_key == 'timeline' else 2000
 
             # 【P0改进】LLM 调用 + 生成后自检重试
-            from post_gen_validator import PostGenValidator
+            from .post_gen_validator import PostGenValidator
             try:
                 from app import _get_total_volumes, _get_chapters_per_volume
                 _tv = _get_total_volumes(bb, book)
@@ -4303,7 +4303,7 @@ def smart_batch():
         generated = {}
         try:
             # 【P0改进】初始化自检器（批量生成共用）
-            from post_gen_validator import PostGenValidator
+            from .post_gen_validator import PostGenValidator
             try:
                 from app import _get_total_volumes, _get_chapters_per_volume
                 _tv = _get_total_volumes(bb, book)
