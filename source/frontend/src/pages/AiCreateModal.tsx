@@ -14,14 +14,13 @@ const FIELD_AI_PROMPTS: Record<string, string> = {
   foreshadowing: '根据已确定的人物、剧情与世界，埋设伏笔线索。\n【输出格式】编号列表，每条格式"## 伏笔N：<伏笔标题>\\n- 埋设内容：xxx\\n- 埋设时机：第X卷Y章附近\\n- 预期回收：第X卷Y章附近\\n- 回收方式：xxx\\n- 对剧情的影响：xxx"。设计 3-5 条。',
   locations: '根据已确定的世界观，设计地点体系。\n【输出格式】严格 JSON 数组，三级结构：[一级大区域 {name, description, secondaries:[二级城市/门派 {name, description, scenes:[三级具体场景 {name, description, key_events}]}]}]. 设计 2-3 个一级大区域。',
   inventory: '根据已确定的人物与世界，生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[物品 {name, type, source, effect, owner, first_appearance}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。',
-  dynamic_volumes: '根据已确定的设定、人物、剧情和章节内容，生成分卷动态文件摘要。\n【输出格式】严格 JSON 数组：[卷 {volume_id, volume, volume_index, summary, characters, events, timeline, locations, factions, foreshadowing, realms, relationships}]。summary 为本卷概述（100-200字），characters/events 等为该卷的关键变化（各50-100字）。每卷一条记录，全书所有卷都要覆盖。',
 };
 
 // 维度协同顺序：上游先做，下游基于上游产出
 // 选定维度会按这个顺序串行执行；下游维度的 prompt 注入上游已生成内容作为上下文
 const DIM_COLLAB_ORDER = [
   'concept', 'key_rules', 'worldbuilding', 'character_profiles',
-  'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory', 'dynamic_volumes',
+  'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory',
 ];
 
 // 维度 field → 协同标签（用于上游上下文展示）
@@ -35,7 +34,6 @@ const DIM_COLLAB_LABELS: Record<string, string> = {
   foreshadowing: '伏笔',
   locations: '地点',
   inventory: '物资',
-  dynamic_volumes: '动态文件',
 };
 
 // 维度 field → 技能包 prompt_key 映射
@@ -49,7 +47,6 @@ const DIMENSION_SKILL_KEYS: Record<string, string[]> = {
   foreshadowing: ['foreshadow_register', 'narrative_debt', 'truth_card', 'info_gap', 'red_herring'],
   locations: ['lock_facts', 'tomato_setting', 'geography'],
   inventory: ['lock_facts', 'level_system', 'power_system', 'ability_tree'],
-  dynamic_volumes: ['narrative_debt', 'foreshadow_register', 'lock_facts'],
 };
 
 // 全部可创作的维度清单（全局模式选择用）

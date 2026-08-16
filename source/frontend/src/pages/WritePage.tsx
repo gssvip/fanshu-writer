@@ -2012,7 +2012,6 @@ ${chapterEditContent}`;
             selectedSkillPackIds={selectedSkillPackIds}
             onToggleSkillPack={toggleSkillPack}
             selectedSkillPacks={selectedSkillPacks}
-            onOpenAiCreate={() => setAiCreateModalState({ mode: 'single', dimension: 'dynamic_volumes' })}
           />
         ) : isSettingsTab ? (
           <SettingsCombinedPanel
@@ -6677,7 +6676,6 @@ function DynamicMemoryPanel(props: {
   selectedSkillPackIds: string[];
   onToggleSkillPack: (id: string) => void;
   selectedSkillPacks: SkillPack[];
-  onOpenAiCreate: () => void;
 }) {
   const { bookId, chapters, showConfirm, selectedSkillPackIds } = props;
   const [reports, setReports] = useState<DynamicReport[]>(_dmReportsCache[bookId] || []);
@@ -7132,9 +7130,6 @@ function DynamicMemoryPanel(props: {
     <div className="dm-panel">
       <div className="dm-header">
         <div className="dm-header-actions">
-          <button className="btn-primary-sm" onClick={() => props.onOpenAiCreate()} title="AI创作动态文件内容">
-            ✨ AI创作
-          </button>
           <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating || batchMode} title="检查并自动生成缺失的报告">
             {generating ? '⏳ 处理中...' : '🔄 自动检查'}
           </button>

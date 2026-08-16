@@ -5668,7 +5668,7 @@ def _collect_historical_volume_digest(book_id, current_chapter_num, max_volumes=
 
 # ===== Ai总创作公共常量（被 ai_master_create 和 ai_master_create_stream 共用，避免重复定义）=====
 # 维度协同顺序：上游维度产物会注入到下游维度的 prompt（严格按 DAG 依赖，不再无差别全注入）
-MASTER_DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory', 'dynamic_volumes']
+MASTER_DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory']
 
 # 每个维度的上游依赖（只注入这些维度作为"已确认上游产物"，而非所有维度）
 MASTER_DIM_UPSTREAM = {
@@ -5681,7 +5681,6 @@ MASTER_DIM_UPSTREAM = {
     'foreshadowing': ['plot_design', 'timeline', 'character_profiles'],
     'locations': ['worldbuilding', 'character_profiles'],
     'inventory': ['worldbuilding', 'character_profiles', 'locations'],
-    'dynamic_volumes': ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory'],
 }
 
 MASTER_DIM_MAP = {
@@ -5703,8 +5702,6 @@ MASTER_DIM_MAP = {
                   'prompt': '设计地点体系。\n【输出格式】严格 JSON 数组三级结构：[一级大区域{"name","description","secondaries":[{"name","description","scenes":[{"name","description","key_events"}]}]}]. 设计 2-3 个一级大区域。'},
     'inventory': {'field': 'inventory', 'label': '物资库', 'keys': ['lock_facts', 'level_system', 'power_system', 'ability_tree'],
                   'prompt': '生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[{"name","type","source","effect","owner","first_appearance"}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。'},
-    'dynamic_volumes': {'field': 'dynamic_volumes', 'label': '动态文件', 'keys': ['narrative_debt', 'foreshadow_register', 'lock_facts'],
-                        'prompt': '生成分卷动态文件摘要。\n【输出格式】严格 JSON 数组：[{"volume_id":"1","volume":"第1卷 副标题","volume_index":1,"summary":"本卷概述100-200字","characters":"本卷人物变化50-100字","events":"本卷关键事件50-100字","timeline":"本卷时间线","locations":"本卷地点变化","factions":"本卷势力变化","foreshadowing":"本卷伏笔动态","realms":"本卷境界变化","relationships":"本卷关系变化"}]. 每卷一条记录，全书所有卷都要覆盖。'},
 }
 
 
@@ -5729,7 +5726,6 @@ def _build_master_ctx(bb, session_outputs=None):
         'foreshadowing': _pick('foreshadowing', bb.foreshadowing),
         'locations': _pick('locations', bb.locations),
         'inventory': _pick('inventory', bb.inventory),
-        'dynamic_volumes': _pick('dynamic_volumes', bb.dynamic_volumes),
     }
 
 
