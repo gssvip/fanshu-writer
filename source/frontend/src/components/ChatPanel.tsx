@@ -129,6 +129,18 @@ function formatChapterTitle(c: { order_index: number; title?: string | null }): 
       : 1;
   return `第${fallbackNum}章${title ? ' ' + title : ''}`;
 }
+
+// 统一口径：章节“显示章号”永远是 1-based
+// - 若 title 能解析到合法章号（parseChapterNumber）→ 直接采用（如 title=第3章 → 3）
+// - 否则 fallback：order_index + 1（内部 order_index 是 0-based）
+// 任何 UI 章号显示、location 数字比对、消息栏 label 计算、下拉顺序都必须用这个函数。
+function displayChapterNum(c: { order_index: number; title?: string | null }): number {
+  const n = parseChapterNumber(c.title ?? '');
+  if (typeof n === 'number' && Number.isFinite(n) && n > 0) return Math.floor(n);
+  const oi = Number(c.order_index);
+  return Number.isFinite(oi) ? Math.max(1, oi + 1) : 1;
+}
+
 function formatChapterOption(c: {
   order_index: number;
   title?: string | null;
@@ -1230,8 +1242,11 @@ export default function ChatPanel() {
       const numMatch = t.location.match(/第?\s*(\d+)\s*章/);
       let ch = null;
       if (numMatch) {
-        const num = parseInt(numMatch[1]);
-        ch = chapters.find(c => (parseChapterNumber(c.title) ?? c.order_index) === num) || null;
+        const num = parseInt(numMatch[1], 10);
+        if (Number.isFinite(num) && num > 0) {
+          // 统一口径：用 displayChapterNum（1-based）比对，防止 order_index 0-based 与章号混用
+          ch = chapters.find(c => displayChapterNum(c) === num) || null;
+        }
       }
       if (!ch) {
         // 回退：用 location 文本模糊匹配标题
@@ -1584,8 +1599,10 @@ export default function ChatPanel() {
       targetNum = nextChapterNum;
     } else {
       const targetCh = targetChapterId ? chapters.find(c => c.id === targetChapterId) : null;
-      const fallback = latestChapter ? (parseChapterNumber(latestChapter.title) ?? latestChapter.order_index) : (nextChapterNum - 1);
-      targetNum = targetCh ? (parseChapterNumber(targetCh.title) ?? targetCh.order_index) : fallback;
+      // 统一口径：章号一律 1-based（title 能解析则用 title 章号，否则 order_index+1）
+      // 修正：之前 parse(title) ?? order_index 会把 order_index(0-based) 直接作为章号显示，导致“选第3章→消息写第4章”的偏差
+      const fallback = latestChapter ? displayChapterNum(latestChapter) : Math.max(1, nextChapterNum - 1);
+      targetNum = targetCh ? displayChapterNum(targetCh) : fallback;
     }
     const label = action === 'continue' ? `写作第 ${nextChapterNum} 章` : `修改第 ${targetNum} 章`;
     const userNote = (instruction || input.trim());
@@ -1640,9 +1657,9 @@ export default function ChatPanel() {
     const hasModifyKeyword = /修改|润色|改一?下|调整|增加|删掉|删除|替换|优化|扩充|精简/.test(text);
     if ((hasChapterNum || hasModifyKeyword) && chapters.length > 0) {
       const numMatch = text.match(/第?\s*(\d+)\s*章/);
-      // 统一口径：用章节号从标题解析匹配章节（与后端 parse_chapter_number 一致）
-      const targetNum = numMatch ? parseInt(numMatch[1]) : (latestChapter ? (parseChapterNumber(latestChapter.title) ?? latestChapter.order_index) : 1);
-      const ch = chapters.find(c => (parseChapterNumber(c.title) ?? c.order_index) === targetNum);
+      // 统一口径：用户输入的章号视为 1-based，按 displayChapterNum 匹配章节
+      const targetNum = numMatch ? parseInt(numMatch[1], 10) : (latestChapter ? displayChapterNum(latestChapter) : 1);
+      const ch = chapters.find(c => displayChapterNum(c) === targetNum);
       if (ch) {
         doChapterActionWithNote('polish', ch.id, text);
       } else {
@@ -1675,8 +1692,9 @@ export default function ChatPanel() {
       if (text) {
         const numMatch = text.match(/第?\s*(\d+)\s*章/);
         if (numMatch) {
-          const targetNum = parseInt(numMatch[1]);
-          const ch = chapters.find(c => c.order_index === targetNum);
+          const targetNum = parseInt(numMatch[1], 10);
+          // 统一口径：用户输入的章号视为 1-based，按 displayChapterNum 匹配章节
+          const ch = chapters.find(c => displayChapterNum(c) === targetNum);
           if (ch) {
             targetId = ch.id;
             note = text;
@@ -1824,7 +1842,8 @@ export default function ChatPanel() {
       if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
         const ch = r as any;
         const actionLabel = ch.action === 'updated' ? '已覆盖同章号章节' : '已新建章节';
-        const chNum = Math.max(1, parseChapterNumber(ch.chapter_title) ?? (typeof ch.order_index === 'number' ? ch.order_index + 1 : 1));
+        // 统一口径：用 displayChapterNum（后端返回字段是 chapter_title/order_index，做适配）
+        const chNum = displayChapterNum({ order_index: ch.order_index, title: ch.chapter_title });
         setStreamError('');
         setMessages(prev => [...prev, {
           role: 'assistant',
@@ -1858,7 +1877,8 @@ export default function ChatPanel() {
       if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
         const ch = r as any;
         const actionLabel = ch.action === 'updated' ? '已覆盖同章号章节' : '已新建章节';
-        const chNum2 = Math.max(1, parseChapterNumber(ch.chapter_title) ?? (typeof ch.order_index === 'number' ? ch.order_index + 1 : 1));
+        // 统一口径：用 displayChapterNum（后端返回字段是 chapter_title/order_index，做适配）
+        const chNum2 = displayChapterNum({ order_index: ch.order_index, title: ch.chapter_title });
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: `✅ ${actionLabel}：${ch.chapter_title}（${ch.word_count}字，第${chNum2}章）。`,
@@ -2288,7 +2308,7 @@ export default function ChatPanel() {
                   <div className="smart-chapter-info smart-chapter-info-row">
                     <span className="smart-chapter-info-text">
                       {latestChapter ? (
-                        <>📖 最新：<strong>{formatChapterTitle(latestChapter)}</strong>（{latestChapter.word_count}字，第{Math.max(1, (parseChapterNumber(latestChapter.title) ?? latestChapter.order_index + 1))}章）</>
+                        <>📖 最新：<strong>{formatChapterTitle(latestChapter)}</strong>（{latestChapter.word_count}字，第{displayChapterNum(latestChapter)}章）</>
                       ) : (
                         <>📖 还没有章节，将创建第 1 章</>
                       )}

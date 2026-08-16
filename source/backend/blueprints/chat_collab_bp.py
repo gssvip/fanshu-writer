@@ -2194,7 +2194,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     - 伏笔：注入但加强约束（严禁揭示未到回收时机的谜底）
     - 世界观/规则/文风/地点/构思：全量注入（写作基础，不剧透）
     """
-    from app import db, BookBible, Chapter, _get_total_volumes, _get_chapters_per_volume
+    from app import db, BookBible, Chapter, _get_total_volumes, _get_chapters_per_volume, parse_chapter_number
     book_id = book.id
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
@@ -2219,10 +2219,24 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         return
 
     if not prev_chapter_content:
+        # 统一口径：target_chapter_num 是 1-based 章号；
+        # 找"上一章" = 找 display 章号为 target_chapter_num - 1 的章节，
+        # order_index 最大不超过 (target_chapter_num - 1) - 1 = target_chapter_num - 2
+        # （因为纯 order_index 兜底时 displayNum = order_index + 1）
         prev = Chapter.query.filter_by(book_id=book_id, is_volume=False) \
-            .filter(Chapter.order_index < target_chapter_num) \
+            .filter(Chapter.order_index < target_chapter_num - 1) \
             .order_by(Chapter.order_index.desc()).first()
-        # 回退：若按 order_index 取不到，用统一口径的最新章节
+        # 但若上面没找到（比如中间有删章/标题章号与顺序错位），回退到最接近 target_chapter_num 之前的那一章
+        if not prev:
+            # 按标题解析 displayNum < target_chapter_num 的最大那章，兜底用 order_index
+            all_prev_candidates = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+            best_prev, best_display = None, 0
+            for cp in all_prev_candidates:
+                p_num = parse_chapter_number(cp.title or '') or (cp.order_index + 1 if cp.order_index is not None else 0)
+                if p_num < target_chapter_num and p_num > best_display:
+                    best_prev, best_display = cp, p_num
+            prev = best_prev
+        # 再回退：若按上面取不到，用统一口径的最新章节
         if not prev and ch_info['latest_chapter'] and mode == 'continue':
             prev = ch_info['latest_chapter']
         prev_chapter_content = (prev.content or '')[:2000] if prev else ''
@@ -2366,18 +2380,24 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     yield sse({'type': 'delta', 'content': f'正在{mode_label}第 {target_chapter_num} 章…\n\n'})
 
     if mode == 'polish':
-        # 润色：按章节号定位原文（与 apply_card 覆盖口径一致）
-        from app import parse_chapter_number
+        # 润色：按章节号定位原文（与前端 displayChapterNum 口径一致：优先标题解析，回退 order_index+1）
         cur = None
         candidates = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+        # ① 优先：标题能解析出 target_chapter_num（比如"第3章 觉醒"→3）
         for c in candidates:
             if parse_chapter_number(c.title or '') == target_chapter_num:
                 cur = c
                 break
-        # 回退：按 order_index
+        # ② 回退：按 displayChapterNum 兜底（order_index + 1 = target_chapter_num），即 order_index = target_chapter_num - 1
+        if not cur:
+            cur = next((c for c in candidates if (
+                (parse_chapter_number(c.title or '') is None or parse_chapter_number(c.title or '') == 0)
+                and c.order_index is not None and c.order_index + 1 == target_chapter_num
+            )), None)
+        # ③ 最终兜底：直接查 order_index = target_chapter_num - 1
         if not cur:
             cur = Chapter.query.filter_by(book_id=book_id, is_volume=False,
-                                           order_index=target_chapter_num).first()
+                                           order_index=target_chapter_num - 1).first()
         if not cur or not (cur.content or '').strip():
             yield sse({'type': 'error', 'error': f'第 {target_chapter_num} 章无正文，无法润色'})
             return

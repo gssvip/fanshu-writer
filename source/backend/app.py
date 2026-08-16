@@ -3535,6 +3535,80 @@ def ai_anti_forget_check(book_id):
         else:
             report = {'summary': content[:500], 'raw': True}
 
+    # ===== violation.location 规范化：与前端 displayChapterNum/parseChapterNumber 口径对齐 =====
+    # LLM 可能输出「第三章」「Chapter 3」「3. 觉醒灵根」等非标准格式，导致前端 /第(\d+)章/ 匹配错、
+    # 任务清单 chapterId 匹配错位，最终表现为"选第3章→消息栏写修改第4章"。这里统一后处理：
+    #   ① 从 location 中解析章号（中文/阿拉伯数字、Chapter N、行首 N. 都认）
+    #   ② 查全量章节表中 displayNum = 解析值 的章节；displayNum 规则：标题解析优先 → order_index+1 兜底
+    #   ③ 若定位到章节，重写 location 为「第{num}章 {纯标题文本}」；匹配不到则保留原 location（可能是维度类）
+    try:
+        _all_chs_for_loc = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+
+        def _display_ch_num(ch):
+            n = parse_chapter_number(ch.title or '')
+            if isinstance(n, int) and n > 0:
+                return n
+            oi = ch.order_index if isinstance(ch.order_index, int) else -1
+            return max(1, oi + 1)
+
+        _ch_by_display = {}
+        for _c in _all_chs_for_loc:
+            _dn = _display_ch_num(_c)
+            _ch_by_display.setdefault(_dn, _c)  # 重号时保留最早的，一般不重
+
+        def _pure_title_text(title):
+            """去掉章节标题里的「第N章 」前缀，只留纯正文标题部分。"""
+            if not title:
+                return ''
+            t = title.strip()
+            import re as _re_loc
+            # 去掉 第N章/第N回/第N卷... 前缀
+            t = _re_loc.sub(r'^第\s*[0-9零一二三四五六七八九十百千万亿两〇]+\s*[章节回卷部篇话集幕折更段讲课夜日年季场]\s*[·\-\s：:]*', '', t)
+            # 去掉 Chapter N / N. / N、 前缀
+            t = _re_loc.sub(r'^(?:chapter|ch|episode|ep)\.?\s*\d+\s*[\-·\s：:]*', '', t, flags=_re_loc.IGNORECASE)
+            t = _re_loc.sub(r'^\d+\s*[\.、:：\-\)\]】，;；]\s*', '', t)
+            return t.strip()
+
+        def _normalize_location(loc):
+            if not loc or not isinstance(loc, str):
+                return loc
+            loc = loc.strip()
+            if not loc:
+                return loc
+            # --- Step 1：解析章号 ---
+            num = parse_chapter_number(loc)
+            # parse_chapter_number 对"第3章 xxx"会返回 3；对"第三章"也返回 3；
+            # 但对纯维度如「人物档案」「世界观设定」返回 None，这时直接保留原 location。
+            if num is None:
+                # 尝试用整段 location 模糊匹配章节标题（比如 LLM 只写了章节名）
+                matched = None
+                for _c in _all_chs_for_loc:
+                    _pt = _pure_title_text(_c.title or '')
+                    if _pt and _pt in loc:
+                        matched = _c
+                        break
+                if not matched:
+                    return loc
+                _dn = _display_ch_num(matched)
+                return f'第{_dn}章 {_pure_title_text(matched.title) or matched.title}'
+            # --- Step 2：用章号找章节 ---
+            target_ch = _ch_by_display.get(num)
+            if target_ch is None:
+                # 没找到具体章节，但章号是合法数字，保持"第N章"格式至少让前端正则能命中
+                return f'第{num}章'
+            pure_title = _pure_title_text(target_ch.title or '')
+            title_suffix = f' {pure_title}' if pure_title else ''
+            return f'第{num}章{title_suffix}'
+
+        _violations = report.get('violations') or []
+        if isinstance(_violations, list) and _violations:
+            for _v in _violations:
+                if isinstance(_v, dict) and 'location' in _v:
+                    _v['location'] = _normalize_location(_v.get('location'))
+            report['violations'] = _violations
+    except Exception:
+        pass  # 规范化失败不阻断报告返回
+
     # 持久化到 DynamicMemory.health_dashboard（防遗忘仪表盘，保留原逻辑）
     if not dm:
         dm = DynamicMemory(book_id=book_id)
