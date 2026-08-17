@@ -1296,7 +1296,15 @@ export default function ChatPanel() {
   }, [fixTasks.length]);
 
   // 正文写作默认要求（切到正文Tab且输入框为空/为旧默认值时自动填入）
-  const CHAPTER_DEFAULT_INPUT = '接上一章剧情，读取剧情维度本章剧情，保证剧情连贯、逻辑清晰。极致模仿人的写作习惯，自然没ai味儿。写事为主，景一笔带过，非必要不用比喻/拟人等修辞，句子阅读感强及顺畅。';
+  // 从口号式 4 条 → 6 条可直接落地操作清单（对应用户要求：对话自然/剧情不散/不琐碎/语气不硬）
+  const CHAPTER_DEFAULT_INPUT = [
+    '接上一章剧情，读取剧情维度里的「本章剧情节点」，保证 ONE 主钩子贯穿本章。',
+    '【1·对话】每 4 段问答至少插 1 段打断/半句话/答非所问；提示语放话中或话尾，不要全放句首。',
+    '【2·场景】严禁新增节点列表外的独立支线（如"隔壁矿友讨水"这种删了不影响后续的一律不许加）。',
+    '【3·动作】动作链=小目标链（每 200-300 字一个"小目标→决策→决策被验证"闭环），禁止无目标流水账；感官细节拆成温度/气味/触感/声音三叠，不要干巴巴一句"他藏好"。',
+    '【4·长短句】冲突场景密集短段（动作/对话各一段）是对的；人物群像/对比场景可用 3-4 层递进比较链长句，最后用 1-4 字动作短句收尾。',
+    '【5·结尾】结尾只能留 1 个与本章冲突链最后一环关联的钩子，严禁结尾连铺 3 个未暗示新坑。',
+  ].join('\n');
 
   // 切换 Tab 时清空选中章节（各Tab独立）；切到正文Tab时填入默认写作要求
   const switchTab = useCallback((tab: SmartTab) => {
@@ -1746,6 +1754,72 @@ export default function ChatPanel() {
       abortRef.current = null;
     }
   }, [bookId, deaiTargetId, streaming, chapters, sessionId, input, appendUserAi, removeEmptyAi, consumeSSE, refreshHistory, deaiPacks_selected]);
+
+  // ========== B3：去AI Tab·风格对齐诊断（12维评分+改点建议+范本并排） ==========
+  const handleStyleAlign = useCallback(async () => {
+    if (!bookId || streaming) return;
+    let targetId = deaiTargetId;
+    if (!targetId) {
+      const text = input.trim();
+      if (text) {
+        const numMatch = text.match(/第?\s*(\d+)\s*章/);
+        if (numMatch) {
+          const targetNum = parseInt(numMatch[1], 10);
+          const ch = chapters.find(c => displayChapterNum(c) === targetNum);
+          if (ch) targetId = ch.id;
+          else {
+            setStreamError(`未找到第 ${targetNum} 章，请检查章节号`);
+            return;
+          }
+        }
+      }
+    }
+    if (!targetId) {
+      setStreamError('请先选择章节，或在输入框输入「第N章」指定');
+      return;
+    }
+    setStreamError('');
+    const ch = chapters.find(c => c.id === targetId);
+    appendUserAi(`风格对齐诊断：${ch?.title || '选中章节'}`);
+    setStreaming(true);
+    try {
+      const r = await api.smartStyleAlign(bookId, targetId);
+      // 格式化 12 维评分表 + 改点建议 + 风格包范本，以 Markdown 文本形式展示
+      const gradeEmoji = r.avg_score >= 85 ? '🟢' : r.avg_score >= 70 ? '🟡' : r.avg_score >= 55 ? '🟠' : '🔴';
+      const dimTable = r.dimensions.map(d => {
+        const s = d.score;
+        const mark = s >= 85 ? '🟢' : s >= 70 ? '🟡' : s >= 60 ? '🟠' : '🔴';
+        return `${mark} **${d.name}**：${s}/100　— ${d.note}`;
+      }).join('\n');
+      const badBlock = r.bad_items?.length ?
+        '### 🚨 不及格维度改法（<60 分）\n\n' + r.bad_items.map((b, i) =>
+          `**${i + 1}. ${b.name}（${b.score}/100）**\n${b.note}\n\n💡 **${b.fix_suggestion}**`
+        ).join('\n\n---\n\n') :
+        '✅ 所有 12 个维度均 ≥60 分，无不及格项。';
+      const spBlock = r.style_pack ?
+        `\n---\n\n### 📚 配套范本·${r.style_pack.name}\n（题材识别：${r.book_genre}，本章节已自动注入此写作铁则）\n\n` +
+        '```\n' + r.style_pack.content.slice(0, 3000) + (r.style_pack.content.length > 3000 ? '\n…（范本完整内容已后台自动注入写作 prompt，此处截断展示前 3000 字）' : '') + '\n```\n' :
+        `\n（题材：${r.book_genre}，未匹配到专属风格包，使用通用规则）`;
+      const md =
+        `## ${gradeEmoji} 风格对齐度总评：${r.avg_score}/100\n\n` +
+        `**《${r.chapter_title}》**\n\n` +
+        `**总评**：${r.summary}\n\n` +
+        `---\n\n### 📊 12 维风格评分表（低分在前）\n\n${dimTable}\n\n---\n\n${badBlock}${spBlock}`;
+      setMessages(prev => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'assistant') {
+          next[next.length - 1] = { ...last, content: md };
+        }
+        return next;
+      });
+    } catch (e: any) {
+      setStreamError(e.message || '风格对齐诊断失败');
+      removeEmptyAi();
+    } finally {
+      setStreaming(false);
+    }
+  }, [bookId, deaiTargetId, streaming, chapters, input, appendUserAi, removeEmptyAi]);
 
   // ========== 校审Tab：防遗忘 / 一致性检查（按卷，拉取动态文件+伏笔）==========
   // B：两步确认机制
@@ -2893,12 +2967,24 @@ export default function ChatPanel() {
 
             {/* 去AITab的主操作按钮（在输入框上方） */}
             {activeTab === 'deai' && (
-              <div className="smart-main-action-bar">
+              <div className="smart-main-action-bar" style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 <button
                   className="smart-main-action"
                   onClick={handleDeai}
                   disabled={streaming}
+                  style={{ flex: '0 0 auto' }}
                 >{streaming ? '处理中…' : '🧹 开始去AI味'}</button>
+                <button
+                  className="smart-main-action"
+                  onClick={handleStyleAlign}
+                  disabled={streaming}
+                  style={{
+                    flex: '0 0 auto',
+                    background: streaming ? '#eee' : 'linear-gradient(135deg,#667eea 0%,#764ba2 100%)',
+                    color: '#fff',
+                    border: 'none',
+                  }}
+                >🎯 风格对齐诊断</button>
                 {!deaiTargetId && <span className="smart-main-hint">未选章节时可在输入框输入「第N章」</span>}
               </div>
             )}

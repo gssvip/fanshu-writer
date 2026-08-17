@@ -1,0 +1,24 @@
+{
+  "packs": [
+    {
+      "id": "fantasy_xuanhuan_v1",
+      "name": "玄幻·仙侠 文风对齐 V1（贺平生+黎渊）",
+      "category": "fantasy",
+      "genre_match": ["玄幻", "仙侠", "奇幻", "修真", "xuanhuan", "xianxia", "fantasy", "东方玄幻"],
+      "weight": 10,
+      "file": "fantasy_xuanhuan_v1.txt",
+      "enabled_by_default": true
+    },
+    {
+      "id": "urban_power_v1",
+      "name": "都市·异能 文风对齐 V1（林星·无极电源）",
+      "category": "urban",
+      "genre_match": ["都市", "异能", "职场", "都市异能", "doushi", "urban", "现代都市", "都市生活"],
+      "weight": 10,
+      "file": "urban_power_v1.txt",
+      "enabled_by_default": true
+    }
+  ],
+  "disable_keywords": ["none", "disable", "off", "禁用", "关闭", "无风格包"],
+  "inject_position": "between_core_iron_and_bible"
+}

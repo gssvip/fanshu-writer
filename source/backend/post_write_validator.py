@@ -131,6 +131,11 @@ def validate_chapter(content: str) -> ValidationResult:
     # 14. 上帝视角/剧透式叙述/伏笔明写检测（critical，对接视角与信息控制铁律）
     _check_god_view_and_foreshadow_leak(text, result)
 
+    # 15. 风格对齐度 12 维评分（B1·文风对齐包配套）
+    #     输出 stats.style_alignment = {维度key: {name, score 0-100, note}} 字典；
+    #     若有维度 <60 分则追加 warning，给具体改法，不扣现有总分（独立维度）。
+    _check_style_alignment_score(text, cfg, result)
+
     return result
 
 
@@ -1140,3 +1145,288 @@ def validate_chapter_with_drift(content: str, baseline_fp: Optional[Dict[str, fl
     except Exception:
         pass
     return result
+
+
+# ====================================================================
+# B1：风格对齐度 12 维评分器（配套文风对齐 SkillPack，纯 regex/统计，零 LLM 成本）
+# ====================================================================
+
+# 8 大 AI 套话比喻词（与 NARRATIVE_CRAFT_RULES §0 总则口径一致）
+_8_AI_CLICHE_METAPHORS = ['宛如', '犹如', '恍若', '宛若', '大海', '巨龙', '深渊', '星河']
+
+# 提示语引导词（XXX说/道/问/答/喊/叫……），用于判断提示语在对白的句首/句中/句尾
+_DIALOGUE_TAGS = [
+    '说', '道', '问', '答', '喊', '叫', '喝道', '冷道', '笑道', '叹道', '低声道', '高声道',
+    '怒道', '急道', '悠悠道', '淡淡道', '缓缓道', '轻声道', '应道', '回道', '咬牙道',
+    '吩咐道', '解释道', '叮嘱道', '安抚道', '嗤笑道', '讥笑道', '调侃道', '涩声道',
+]
+
+# 感官细节关键词（温度/气味/触感/声音），用于判断动作段是否有细节三叠
+_SENSE_WORDS = [
+    '冷', '凉', '冰', '烫', '热', '暖', '温',  # 温度
+    '臭', '腥', '香', '骚', '膻', '味', '馊', '霉',  # 气味
+    '疼', '痛', '刺', '麻', '胀', '酸', '痒', '扎', '滑', '黏', '软', '硬', '糙', '硌',  # 触感
+    '嗡', '咚', '铛', '砰', '啪', '嚓', '嘶', '哑', '颤', '响', '鸣', '啸',  # 声音
+    '血', '泥', '灰', '尘', '沙', '汗',  # 材质
+]
+
+# 目标/决策/验证词（用于判断动作目标闭环）
+_GOAL_WORDS = ['得', '要', '得把', '必须', '先', '先把', '找', '放', '藏', '挪', '搬']
+_DECISION_WORDS = ['于是', '就', '干脆', '索性', '只好', '只得', '当即', '立刻', '决定', '打定主意']
+_VERIFY_WORDS = ['还好', '幸好', '果然', '果真', '不枉', '没白', '幸亏', '多亏', '早知道', '好在']
+
+# 递进比较链连接词（3-4 层"鸡→牛→小牛→小巫见大巫"式结构）
+_COMPARISON_CHAIN_WORDS = ['比起', '可比', '相比', '可见', '小巫见大巫', '大巫见小巫', '差得远', '肉眼可见的差距']
+
+# 修正感句式触发词
+_CORRECTION_WORDS = ['不是', '准确说', '准确的说是', '不对', '……不对', '不，', '不…', '不是…']
+
+
+def _clamp_score(v):
+    return max(0, min(100, int(round(v))))
+
+
+def _check_style_alignment_score(text: str, cfg: Dict, result: ValidationResult):
+    """B1：12 维风格对齐度评分，写入 stats.style_alignment；低分维度追加 warning。
+    口径对齐文风黄金对白 6 式 + 文风黄金长短句 4 型 + ONE 主钩子数字硬约束。
+    """
+    import math
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
+    sentences = [s.strip() for s in re.split(r'[。！？!?；;]', text) if s.strip()]
+    total_chars = len(text) or 1
+    per_k = total_chars / 1000
+
+    # 准备对白段集合（段首/段尾出现「"」或「」」的段视为对白段）
+    dialogue_paras = [p for p in paragraphs if ('"' in p and ('“' in p or '”' in p) or ('\u201c' in p or '\u201d' in p))]
+    # 简化：包含中文引号的段
+    dialogue_paras = [p for p in paragraphs if ('“' in p or '”' in p or '"' in p)]
+    # 从对白段抽取对白句（按引号截取）
+    dialogue_sents = []
+    for p in dialogue_paras:
+        for m in re.finditer(r'[“"]([^”"]{1,80})[”"]', p):
+            dialogue_sents.append(m.group(1).strip())
+
+    # ================ 12 个维度 ================
+    dims = {}  # key -> dict(score, note)
+
+    # 1) 提示语中位率（理想值：≥60% 的提示语不在对白句首，即嵌在中间或尾部）
+    total_tagged = 0
+    mid_or_tail = 0
+    for tag in _DIALOGUE_TAGS:
+        # 匹配模式：对白 + 提示语位置
+        # 句首模式（扣）："XXX" + 提示语对白：“...” XXX说/道
+        # 更简单的统计：段落里包含 tag，且 tag 所在位置不是段落开头
+        for p in paragraphs:
+            if tag not in p:
+                continue
+            idx = p.find(tag)
+            # 必须是一个独立对白提示单元（tag前后是动作/标点/人名，不是在词组中间）
+            before = p[max(0, idx - 5):idx]
+            after = p[idx + len(tag):min(len(p), idx + len(tag) + 5)]
+            # 合法提示语：前面通常是"…"或动作，后面是"："或换行或句号
+            if ('：' in after[:3] or ':' in after[:3] or '。' in after[:3] or '”' in before or '"' in before or '“' in after or '"' in after):
+                total_tagged += 1
+                # 若提示语前面有对白引号（说明对白在提示语前=提示语在对白后/中）→ mid_or_tail
+                pre_win = p[max(0, idx - 40):idx]
+                if '”' in pre_win or '"' in pre_win:
+                    mid_or_tail += 1
+    mid_ratio = mid_or_tail / total_tagged if total_tagged else 0.5
+    score_mid = _clamp_score(60 + 80 * (mid_ratio - 0.5))  # 0.5→60，1.0→100
+    note_mid = f'对白提示语 {mid_or_tail}/{total_tagged} 处放在对白中或尾（中位率 {mid_ratio:.0%}），理想≥60%'
+    if total_tagged == 0:
+        score_mid, note_mid = 80, '未检测到明显提示语（全文短对白或无"说/道"标记，默认偏良）'
+    dims['prompt_tag_mid'] = dict(name='对话·提示语中位率', score=score_mid, note=note_mid)
+
+    # 2) 问答错位率（理想值：连续 1:1 工整问答占比 ≤30%）
+    q_then_a = 0
+    dial_total = max(1, len(dialogue_sents))
+    for i in range(len(dialogue_sents) - 1):
+        q = dialogue_sents[i]
+        a = dialogue_sents[i + 1]
+        if q.endswith('?') or q.endswith('？') or '吗' in q or '呢' in q or '不' in q and 1 <= len(q) <= 15:
+            # 直接完整答（非反问、非半句话、无……、不是答别的）=工整问答
+            if 1 <= len(a) <= 20 and '……' not in a and '...' not in a and (not any(k in a for k in ['？', '?', '不，', '不对', '你管', '关你'])):
+                q_then_a += 1
+    q_ratio = q_then_a / dial_total if dial_total else 0
+    score_q = _clamp_score(100 - 140 * max(0, q_ratio - 0.3))  # 0.3→100，1.0→0
+    note_q = f'1:1工整问答 {q_then_a}/{dial_total} 对白句（占比 {q_ratio:.0%}），理想≤30%'
+    dims['qa_disalign'] = dict(name='对话·问答错位率', score=score_q, note=note_q)
+
+    # 3) 对话动作插入率（理想值：每 3 句对白≥1 句动作段插，达标率≥60%）
+    dial_block_count = 0
+    action_insert_count = 0
+    # 以对白段为核心，前后一段看是否动作段
+    for pi, p in enumerate(paragraphs):
+        if p not in dialogue_paras:
+            continue
+        dial_block_count += 1
+        # 前一段/后一段不是对白段，且含动作词（看是否存在含主谓结构的动作段，即不含引号但长度≥4字符）
+        for nb_idx in (pi - 1, pi + 1):
+            if 0 <= nb_idx < len(paragraphs):
+                nb = paragraphs[nb_idx]
+                if nb not in dialogue_paras and 4 <= len(nb) <= 60:
+                    action_insert_count += 1
+                    break
+    insert_ratio = action_insert_count / dial_block_count if dial_block_count else 1.0
+    score_insert = _clamp_score(40 + 100 * min(1.0, insert_ratio - 0.2))  # 0.2→40，1.0→100
+    note_insert = f'动作段插入 {action_insert_count}/{dial_block_count} 对白块（插率 {insert_ratio:.0%}），理想≥每3句对白插1次'
+    dims['dial_action_insert'] = dict(name='对话·动作插入率', score=score_insert, note=note_insert)
+
+    # 4) 独立支线数（剧情不散乱：估计独立场景块 - 核心块的差；0-1 最佳）
+    # 启发式：按连续 2 个以上空行？不，paragraphs 已经按空行切。
+    # 独立"路人支线"的特征：一段里出现的姓名+称呼，在其他段中都没再次出现。
+    para_chars = []
+    name_re = re.compile(r'[\u4e00-\u9fa5]{2,4}(?=(?:爷|哥|姐|叔|婶|师傅|师兄|师姐|公子|姑娘|夫人|老师|老板|同学|保安|队长))|[\u4e00-\u9fa5]{2,3}(?=[说道问喊喝道])')
+    names_by_para = []
+    for p in paragraphs:
+        names = set(name_re.findall(p)) | set(re.findall(r'[\u4e00-\u9fa5]{2,3}(?=(?:说|道|问|喊|喝|叫|笑|骂))', p))
+        names_by_para.append({n for n in names if n not in {'不是', '没有', '他们', '我们', '你们', '自己', '大家', '怎么', '什么', '这个'}})
+    all_names = set()
+    for s in names_by_para:
+        all_names |= s
+    name_global_freq = {n: sum(1 for s in names_by_para if n in s) for n in all_names}
+    # 只出现 1 段的"一次性名字"→独立支线候选
+    one_shot_names = [n for n, f in name_global_freq.items() if f == 1]
+    one_shot_paras = sum(1 for s in names_by_para if any(n in one_shot_names for n in s))
+    # 独立支线估计数 = 一次性名字段落数（最多 4 段一支线）
+    estimated_side = (one_shot_paras + 3) // 4 if one_shot_paras else 0
+    score_side = _clamp_score(100 - 20 * estimated_side)  # 0→100，多1支扣20
+    note_side = f'估计独立支线 {estimated_side} 条（一次性角色段 {one_shot_paras} 段），理想=0（严禁路人支线）'
+    dims['side_story'] = dict(name='剧情·独立支线数', score=score_side, note=note_side)
+
+    # 5) 结尾钩子关联度（结尾 10% 的字符中再次命中本章前 90% 中出现过的关键词）
+    cutoff = int(total_chars * 0.9)
+    head_text = text[:cutoff]
+    tail_text = text[cutoff:]
+    head_keywords = set(re.findall(r'[\u4e00-\u9fa5]{2,4}', head_text))
+    # 过滤单段频率不高的词（只留头 50 个最常见 2-4 字实体）
+    from collections import Counter
+    head_counts = Counter(re.findall(r'[\u4e00-\u9fa5]{2,4}', head_text))
+    head_top = {w for w, _ in head_counts.most_common(50) if w not in {'我们', '你们', '他们', '自己', '这个', '那个', '什么', '怎么', '不是', '没有'}}
+    tail_hits = sum(1 for w in re.findall(r'[\u4e00-\u9fa5]{2,4}', tail_text) if w in head_top)
+    # 结尾 10% 段中至少 3 个命中头高频词=关联良好
+    tail_hits_expected = max(1, int(len(tail_text) / 100))
+    hook_ratio = tail_hits / tail_hits_expected if tail_hits_expected else 1.0
+    score_hook = _clamp_score(min(100, 50 + 50 * min(1.0, hook_ratio)))
+    note_hook = f'结尾与前文高频词命中 {tail_hits}/{tail_hits_expected}（关联比 {hook_ratio:.2f}），理想≥1.0，且只留 1 个主钩子'
+    dims['end_hook_link'] = dict(name='剧情·结尾钩子关联', score=score_hook, note=note_hook)
+
+    # 6) 长段臃肿率（长段≥400 字占比 ≤25% 为良）
+    long_threshold = cfg.get('long_paragraph_threshold', 400)
+    long_count = sum(1 for p in paragraphs if len(p) > long_threshold)
+    long_ratio = long_count / len(paragraphs) if paragraphs else 0
+    score_long = _clamp_score(100 - 300 * max(0, long_ratio - 0.25))  # 0.25→100，0.58→0
+    note_long = f'长段（>{long_threshold}字）{long_count}/{len(paragraphs)} 段，占比 {long_ratio:.0%}，理想≤25%'
+    dims['long_paragraph'] = dict(name='长短句·长段臃肿率', score=score_long, note=note_long)
+
+    # 7) 短段均匀率（段长变异系数太低=网格机械）
+    lens = [len(p) for p in paragraphs if paragraphs]
+    if len(lens) >= 4:
+        mean = sum(lens) / len(lens)
+        var = sum((x - mean) ** 2 for x in lens) / len(lens)
+        std = math.sqrt(var)
+        cv = std / mean if mean > 0 else 0
+        # CV 太低（<0.3）=均匀网格机械；CV 0.5-1.0=健康长短交替；CV>1.4=太极端（偶发）
+        if cv < 0.3:
+            score_uniform = _clamp_score(cv / 0.3 * 80)
+        elif cv < 0.5:
+            score_uniform = _clamp_score(80 + (cv - 0.3) / 0.2 * 20)
+        elif cv <= 1.0:
+            score_uniform = 100
+        else:
+            score_uniform = _clamp_score(max(0, 100 - (cv - 1.0) / 0.4 * 100))
+        note_uniform = f'段长变异系数 CV={cv:.2f}（均值段长 {mean:.0f}字），健康区间 0.5-1.0；CV<0.3=机械网格（矿道病）'
+    else:
+        score_uniform, note_uniform = 90, '段落太少，均匀性不统计（默认良）'
+    dims['para_uniformity'] = dict(name='长短句·段长均匀率', score=score_uniform, note=note_uniform)
+
+    # 8) 递进比较链数（每 10000 字≥2 条递进比较链为良）
+    chain_hits = sum(1 for w in _COMPARISON_CHAIN_WORDS if w in text)
+    chain_den = total_chars / 10000
+    chain_expected = max(1, 2 * chain_den) if chain_den > 0.2 else 0
+    chain_ratio = chain_hits / chain_expected if chain_expected else 1.0
+    score_chain = _clamp_score(60 + 40 * min(1.0, chain_ratio))
+    note_chain = f'递进比较链 {chain_hits} 条（比起/可见/小巫见大巫等连接词命中），理想≥{chain_expected:.0f}/章'
+    if chain_den <= 0.2:
+        score_chain, note_chain = 95, '短章（<2000字）递进链不考核（默认优）'
+    dims['comparison_chain'] = dict(name='长短句·递进比较链数', score=score_chain, note=note_chain)
+
+    # 9) 比喻套话命中率（命中 8 大 AI 套话词 = 直接拉低）
+    cliche_hits = sum(text.count(w) for w in _8_AI_CLICHE_METAPHORS)
+    cliche_allowed = max(0, 3 * per_k)
+    if cliche_hits <= cliche_allowed:
+        score_cliche = 100
+    else:
+        over = (cliche_hits - cliche_allowed) / max(1, cliche_allowed)
+        score_cliche = _clamp_score(max(0, 100 - 50 * over))
+    note_cliche = f'8大AI套话比喻词命中 {cliche_hits} 处（允许≤{cliche_allowed:.0f}），严禁宛如/犹如/恍若/宛若+大海/巨龙/深渊/星河'
+    dims['cliche_metaphor'] = dict(name='语气·比喻套话率', score=score_cliche, note=note_cliche)
+
+    # 10) 修正感句式率（每 1500 字≥1 条"不是X，准确说Y"/"不对"为良）
+    corr_hits = sum(text.count(w) for w in _CORRECTION_WORDS)
+    corr_allowed = max(0, total_chars / 1500)
+    corr_ratio = corr_hits / corr_allowed if corr_allowed else 1.0
+    score_corr = _clamp_score(60 + 40 * min(1.0, corr_ratio))
+    note_corr = f'修正感句式 {corr_hits} 条（不是…/不对…/准确说…），理想≥{corr_allowed:.1f}/章'
+    if total_chars < 1500:
+        score_corr, note_corr = 90, '短章（<1500字）修正感句式不考核（默认良）'
+    dims['correction_style'] = dict(name='语气·修正感句式率', score=score_corr, note=note_corr)
+
+    # 11) 动作感官细节密度（动作段中 6 大类感官词的密度，每 500 字≥2 个为良）
+    # 动作段=不含对白引号的段
+    action_paras = [p for p in paragraphs if '“' not in p and '”' not in p and '"' not in p]
+    action_chars = sum(len(p) for p in action_paras) or 1
+    sense_hits = sum(1 for w in _SENSE_WORDS for c in action_paras if w in c)
+    sense_density = sense_hits / (action_chars / 500)  # 每500字动作段的感官词数
+    if sense_density < 0.5:
+        score_sense = _clamp_score(sense_density / 0.5 * 60)
+    elif sense_density < 2:
+        score_sense = _clamp_score(60 + (sense_density - 0.5) / 1.5 * 40)
+    else:
+        score_sense = 100
+    note_sense = f'动作段感官词 {sense_hits} 个（动作段共 {action_chars} 字，密度 {sense_density:.2f}/500字），理想≥2/500字；避免干巴巴"他藏好"'
+    dims['sense_detail'] = dict(name='文字·动作感官细节密度', score=score_sense, note=note_sense)
+
+    # 12) 动作目标闭环率（每 1500 字至少 1 个"目标→决策→验证"小三段闭环）
+    # 简化：目标词 + 决策词 + 验证词三者在 300 字窗口内共同出现视为 1 个闭环
+    goal_idx = [m.start() for w in _GOAL_WORDS for m in re.finditer(re.escape(w), text)]
+    dec_idx = [m.start() for w in _DECISION_WORDS for m in re.finditer(re.escape(w), text)]
+    ver_idx = [m.start() for w in _VERIFY_WORDS for m in re.finditer(re.escape(w), text)]
+    closed = 0
+    WINDOW = 300
+    # 对每个目标词，看 window 内是否有决策词、附近 1000 字内是否有验证词
+    for g in goal_idx:
+        has_dec = any(abs(g - d) <= WINDOW for d in dec_idx)
+        has_ver = any(abs(v - g) <= 3 * WINDOW for v in ver_idx)  # 验证词可以在更后
+        if has_dec and has_ver:
+            closed += 1
+    closed_expected = max(0, total_chars / 1500)
+    closed_ratio = closed / closed_expected if closed_expected else 1.0
+    if closed_expected == 0:
+        score_closed, note_closed = 95, '极短章，动作闭环不考核（默认优）'
+    else:
+        score_closed = _clamp_score(50 + 50 * min(1.0, closed_ratio))
+        note_closed = f'动作闭环 {closed} 个（目标词→决策→验证窗口内命中），理想≥{closed_expected:.1f} 个/章；避免无目标流水账'
+    dims['goal_closed_chain'] = dict(name='文字·动作目标闭环率', score=score_closed, note=note_closed)
+
+    # ================ 写入 stats + warning ================
+    result.stats['style_alignment'] = dims
+    scores = [d['score'] for d in dims.values()]
+    avg = sum(scores) / len(scores) if scores else 0
+    result.stats['style_alignment_avg'] = round(avg, 1)
+    # 60 以下的维度集中写 1 条 warning（不重复写 N 条爆 issue）
+    bad = [(k, d) for k, d in dims.items() if d['score'] < 60]
+    if bad:
+        summary = '；'.join(
+            f'{d["name"]} {d["score"]}分（{d["note"]}）' for _, d in bad[:4])
+        if len(bad) > 4:
+            summary += f'…（共{len(bad)}项不及格）'
+        result.add(ValidationIssue(
+            severity='warning',
+            category='风格对齐',
+            pattern='12维风格评分',
+            count=len(bad),
+            position=f'风格对齐平均分 {avg:.0f}/100，共 {len(bad)} 项<60分',
+            suggestion=summary + '。具体改法对照：文风黄金对白6式 + 文风黄金长短句4型 + ONE主钩子数字硬约束。',
+        ))
+

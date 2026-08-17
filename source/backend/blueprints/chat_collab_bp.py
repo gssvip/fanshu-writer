@@ -75,7 +75,7 @@ DEAI_RULES = """【去AI味执行规则】
 8. 自检读一遍 → 确认未新增内容、未换风格、只做减法
 
 【五、网文创作硬约束（与人味注入一并执行）】
-1. 极致模仿人的写作习惯，写得自然，没有AI味。以写事为主，景物一笔带过；比喻/拟人每1000字不超过2处，必须贴合具体场景（不能用"宛如巨龙/犹如大海"这类 AI 套话比喻）。
+1. 极致模仿人的写作习惯，写得自然，没有AI味。以写事为主，景物一笔带过；比喻/拟人每千字≤3处，必须贴合具体场景，严禁 8 大 AI 套话比喻词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河，以及这 8 词的任意组合如"宛如巨龙""犹如大海"）。
 2. 句子阅读感强、读起来顺畅，长短句自然交替，不刻意整齐。密集短段（动作/对话各一段）是允许的手机端阅读节奏。
 3. 章节间剧情连贯、逻辑清晰，前后呼应不跳戏。
 4. 环境描写不超过15%，重点刻画人物动作、微表情、矛盾心理；人物全员有瑕疵、会纠结、口是心非，不许完美人设，禁止OOC。
@@ -2184,6 +2184,89 @@ def _filter_dynamic_reports_for_chapter(book_id, target_chapter_num, limit=5):
 
 
 
+# ========================================================================
+# B2：风格对齐 SkillPack（style_packs/ 目录下的 txt 范本自动注入）
+# 开关逻辑（优先级从高到低）：
+# 1. book.style_skill_ids 若含禁用关键词（none/disable/off/禁用/关闭/无风格包）→ 彻底关
+# 2. book.style_skill_ids 若含具体 pack id（如"fantasy_xuanhuan_v1"）→ 强制启用该 pack
+# 3. 否则按 book.genre 自动匹配：genre_match 命中 → 自动启用对应 pack
+# ========================================================================
+
+_STYLE_PACK_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'style_packs')
+_style_manifest_cache: Optional[Dict] = None
+
+
+def _load_style_manifest() -> Dict:
+    global _style_manifest_cache
+    if _style_manifest_cache is not None:
+        return _style_manifest_cache
+    try:
+        with open(os.path.join(_STYLE_PACK_ROOT, '_manifest.json'), 'r', encoding='utf-8') as f:
+            _style_manifest_cache = json.load(f)
+    except Exception:
+        _style_manifest_cache = {'packs': [], 'disable_keywords': []}
+    return _style_manifest_cache
+
+
+def _parse_style_ids(book) -> List[str]:
+    """从 Book.style_skill_ids（JSON 数组字符串）解析用户显式指定/禁用的文风包 id 列表。"""
+    raw = getattr(book, 'style_skill_ids', None) or '[]'
+    try:
+        arr = json.loads(raw) if isinstance(raw, str) else (raw or [])
+        return [str(x).strip() for x in arr if str(x).strip()]
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return []
+
+
+def _get_enabled_style_pack(book) -> str:
+    """返回当前书应该启用的风格 pack 注入正文（空字符串表示不启用任何 pack）。"""
+    manifest = _load_style_manifest()
+    packs = manifest.get('packs') or []
+    if not packs:
+        return ''
+    # 1) 显式禁用
+    explicit = _parse_style_ids(book)
+    disabled = {k.lower() for k in (manifest.get('disable_keywords') or [])}
+    if any(e.lower() in disabled for e in explicit):
+        return ''
+    # 2) 显式指定 pack id（只取第一个命中的）
+    if explicit:
+        for p in packs:
+            if p.get('id') in explicit:
+                try:
+                    with open(os.path.join(_STYLE_PACK_ROOT, p['file']), 'r', encoding='utf-8') as f:
+                        return f.read()
+                except Exception:
+                    return ''
+    # 3) 按 genre 自动匹配
+    genre = (getattr(book, 'genre', None) or 'other').strip()
+    if not genre:
+        return ''
+    genre_low = genre.lower()
+    matched = None
+    for p in packs:
+        if not p.get('enabled_by_default', True):
+            continue
+        for g in (p.get('genre_match') or []):
+            if not g:
+                continue
+            gl = str(g).lower()
+            if gl in genre_low or genre_low in gl:
+                matched = p
+                break
+        if matched:
+            break
+    if not matched:
+        return ''
+    try:
+        with open(os.path.join(_STYLE_PACK_ROOT, matched['file']), 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception:
+        return ''
+
+
+
+
 def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, prev_chapter_content, mode,
                     base_url=None, api_key=None, model=None):
     """续写/润色本章正文：产 SAVE_CHAPTER 卡。
@@ -2291,15 +2374,34 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             static_dims.append(f'【{d["label"]}】\n{v}')
     static_ctx = '\n\n'.join(static_dims)
 
-    # 组装上下文块
+    # === ONE 主钩子 + 本章剧情数字硬约束（与core_iron并列，优先级高于所有设定/规则/字数）===
+    # 从 chapter_plot_ctx 里推断 ONE 主钩子（取第一个节点里的核心对象/核心任务）
+    one_hook_hint = ''
+    if chapter_plot_ctx:
+        # 从 plot node 里摘第一个"核心对象/核心任务"关键词作为 ONE 主钩子提示
+        first_node = chapter_plot_ctx.split('\n', 1)[0][:80]
+        one_hook_hint = f'本章 ONE 主钩子线索（本章所有场景都要绕回它，不得出现脱离主钩子的独立支线）：{first_node}'
+    chapter_plot_iron = ''
+    if chapter_plot_ctx:
+        chapter_plot_iron = (
+            '【本章剧情·数字硬约束·优先级最高】'
+            f'\n1. 【ONE 主钩子】{one_hook_hint if one_hook_hint else "从第一个节点取本章的核心对象/核心任务"}：本章任何场景/支线/动作都要绕回此主钩子，严禁新增节点列表外的独立支线（例："隔壁矿友讨水"这种删了不影响后续任何剧情的独立路人支线一律不许加）。'
+            f'\n2. 本章必须写完且只写以下 {len([x for x in chapter_plot_ctx.splitlines() if x.strip()])} 个节点（顺序不得调换、不得跳过、不得新增）：'
+            f'\n{chapter_plot_ctx}'
+            '\n3. 每个节点的文字量不得少于 400 字；节点与节点之间的转场铺垫不得少于 150 字（禁止"一句话就跳场"式硬切）。'
+            '\n4. 字数不够时优先扩：POV 感官细节（温度/气味/触感/视线压力）/对话停顿打断或答非所问/动作的心理修正（"不是X，准确说是Y"），严禁加独立支线凑、严禁结尾连铺3个未暗示新坑。'
+        )
+
+    # === B2 风格对齐 SkillPack：自动匹配玄幻/都市范本，注入在 chapter_plot_iron 之后（第 3 高位）===
+    style_pack_prompt = _get_enabled_style_pack(book)
+
+    # 组装上下文块（本章剧情已提上去写在core_iron之后，这里bible_ctx里就不再重复chapter_plot_ctx）
     ctx_blocks = []
     if static_ctx:
         ctx_blocks.append(static_ctx)
     if char_ctx:
         pov_note = f'（本章视点人物：{pov_name}，第三人称有限视角，只写{pov_name}能感知到的事物）' if pov_name else '（第三人称有限视角）'
         ctx_blocks.append(f'【人物档案·视点感知】{pov_note}\n{char_ctx}')
-    if chapter_plot_ctx:
-        ctx_blocks.append(f'【本章剧情·精确命中】\n{chapter_plot_ctx}\n（请严格按此情节节点推进本章剧情，不得跳过或偏移）')
     if timeline_ctx:
         trunc_note = '\n（注：后续卷剧情已省略，防剧透）' if timeline_truncated else ''
         ctx_blocks.append(f'【本卷及过往剧情脉络】{trunc_note}\n{timeline_ctx}')
@@ -2352,7 +2454,8 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
                         pov_note = f'（本章视点人物：{pov_name}，第三人称有限视角，只写{pov_name}能感知到的事物）' if pov_name else '（第三人称有限视角）'
                         ranked_parts.append(f'【人物档案·视点感知】{pov_note}\n{c.content}')
                     elif c.dim_key == 'timeline' and c.label == '本章剧情':
-                        ranked_parts.append(f'【本章剧情·精确命中】\n{c.content}\n（请严格按此情节节点推进本章剧情，不得跳过或偏移）')
+                        # 本章剧情已写在core_iron之后 chapter_plot_iron 段（位置最高），此处避免重复
+                        continue
                     elif c.dim_key == 'timeline':
                         ranked_parts.append(f'【本卷及过往剧情脉络】\n{c.content}')
                     elif c.dim_key == 'foreshadowing':
@@ -2405,6 +2508,9 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         sys_prompt = (
             f'你是资深网文润色编辑。请润色《{book.title}》第 {target_chapter_num} 章正文。'
             f'\n\n{core_iron}'
+            f'\n\n{chapter_plot_iron if chapter_plot_iron else ""}'
+            f'\n\n{style_pack_prompt if style_pack_prompt else ""}'
+            f'\n\n{NARRATIVE_CRAFT_RULES}'
             f'\n要求：保持剧情和人物不变，优化文笔节奏，提升画面感。'
             f'\n用户要求：{instruction or "无"}'
             f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
@@ -2424,15 +2530,17 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         sys_prompt = (
             f'你是资深网文创作副驾。请为《{book.title}》续写第 {target_chapter_num} 章正文。'
             f'\n\n{core_iron}'
+            f'\n\n{chapter_plot_iron if chapter_plot_iron else ""}'
+            f'\n\n{style_pack_prompt if style_pack_prompt else ""}'
+            f'\n\n{NARRATIVE_CRAFT_RULES}'
             f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
             f'\n用户要求：{instruction or "自然推进剧情"}'
-            + ('\n\n【写作铁律】上方【本章剧情·精确命中】已给出本章应写的情节节点，必须严格按该节点推进剧情，不得跳过节点、不得偏移到其他节点的剧情。' if chapter_plot_ctx else '')
-            + f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
+            f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
             f'\n【字数绝对铁律】纯正文（不含标题行）必须严格控制在 2400字±100（即 2300-2500 字区间）。'
             f'字数统计口径：中文字符+中文标点（全角标点如，。！？：；""均计入，半角标点如,.!?:;不计入，英文按单词、数字按串）。'
-            f'请务必用全角中文标点写作。低于 2300 字=内容不足，须扩展场景细节、对话和心理描写补足；'
-            f'超过 2500 字=冗余，须精简枝节删减。这是不可违反的硬约束，优先级高于所有其他要求。'
+            f'请务必用全角中文标点写作。低于 2300 字=内容不足，须扩展场景细节、对话和心理描写补足（优先扩：POV 感官细节/对话停顿打断/动作修正）；'
+            f'超过 2500 字=冗余，须精简枝节删减。这是不可违反的硬约束。'
             f'{anti_spoiler_rule}'
             f'\n\n{DEAI_RULES}'
             f'\n\n{PLAIN_TEXT_LAYOUT_RULES}'
@@ -2556,7 +2664,7 @@ NARRATIVE_CRAFT_RULES = """
 0. 总则
 
 · 所有输出（正文、大纲、设定、人物、世界观、伏笔）必须遵守本规则。
-· 每章2300-2500字（中文汉字，含标点）。写事为主，景一笔带过；比喻/拟人每1000字不超过2处，必须贴合具体场景，不用"宛如巨龙/犹如大海"这类 AI 套话比喻。
+· 每章2300-2500字（中文汉字，含标点）。写事为主，景一笔带过；比喻/拟人每千字≤3处，必须贴合具体场景，严禁 8 大 AI 套话比喻词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河，以及这 8 词的任意组合如"宛如巨龙""犹如大海"）。
 · 段落句式：短句为主，手机端阅读不超过两行；多用对话推动剧情，对话独立成段，动作与神态紧跟对话。密集短段（动作/对话/拟声词各一段）是手机端阅读的最佳节奏，不是缺点。
 · 去AI味≠润色：不改原意、不增剧情、不换风格；优先删，其次换，最后改写。
 · 章节衔接：人物状态、时间线、事件、地理、人物出场、物品/信息须前后连贯。
@@ -2608,6 +2716,18 @@ NARRATIVE_CRAFT_RULES = """
   3）调语气——句子符合角色身份和当前情绪，不强行口语化。
   4）造缺口——用半句话、停顿、反问、打断替代完整解释。
   5）拆长对白——拆成两三次回应，中间插动作、停顿或对方插话。
+· 【文风黄金对白 6 式·就按下面的样子写（每条都给"禁这样写 / 要这样写"正反例，必须执行）】
+  ① 禁 1:1 工整问答（"怕不怕？/怕。/听见没有？/听见了。"）→ 要：答非所问 / 半句话 / 沉默 / 打断 / 错位回。
+     例（禁）"怕不怕？" / "怕。"   →   例（要）"怕不怕？" / "……" / "问你话呢！" / 姜离舌尖顶了顶上颚。/ "我怕你不敢来。"
+  ② 禁 提示语全放句首（"姜雪攥紧衣角说：'你在名单上。'"）→ 要：提示语嵌在话中段或放话尾，后可加一个小动作收。
+     例（要）"你在名单上。"姜雪攥紧衣角。布料在指缝间发出细碎声响。
+  ③ 禁 反派/上位者明说勒索/威胁（"把丹药给我，不然我打死你。"）→ 要：歪逻辑翻话 + 动作盯物 + 提容器不提物品。
+     参考张老大勒索丹药（正例）："小贺啊…我打你其实是救你啊！" → "救命之恩，你不能不报吧？" → 目光往怀里盯 → "我要那个带瓶子的。"
+  ④ 禁 身份尊贵角色主动认错/道歉/说真话（"对不起，我错怪你了。"）→ 要：甩锅转题 + 让旁人圆场（或压下不提）。
+     参考粉衣女甩锅（正例）：心里"我怪错人了" → 嘴里却道："你是挑水的，水质变了你应该第一时间告诉我，此事你难辞其咎。"
+  ⑤ 禁 问句完整答（"有任务吗？/有。/什么任务？/劫富济贫。"）→ 要：每 4 段问答里至少插 1 段半句话 / 答别的（答非所问）。
+     参考（正例）："我们要发达啦！" / 林星愣了下，"发达？" / "你是富婆吗？" / "……唐虎今晚堵你，我们一闷棍撂倒他就跑路。"
+  ⑥ 禁 对话 2 人各 1 句机械轮换（A→B→A→B）→ 要：每 3 句对白里至少插 1 句 POV 的小动作（眼皮一跳 / 攥紧衣角 / 指节发白）或小吐槽。
 · 额外约束：角色越紧张/越隐瞒/越愤怒，越不该把话说完整漂亮；重要信息像角色当下说的，不像作者塞的。
 
 3.3 工整句式
@@ -2622,6 +2742,19 @@ NARRATIVE_CRAFT_RULES = """
 3.4 段落与句式
 · 段落手机端不超过3行；对话/动作独立成段；心理描写一句话。
 · 禁连续3句以上主谓结构；五种句式交替：动作/神态前置、名词/称号前置、环境/拟声词前置、连动词串联。
+· 【文风黄金长短句 4 型·就按这个节奏写（每条正反例）】
+  ①（递进比较链长句 → 动作短句收尾）长句=连续 3-4 层"X 比起 Y 像 Z → 比起 W 又差一大截 → 比起 Q 差得远 → 最后比 T 小巫见大巫"递进比较；最后用 1-4 字动作短句（眼皮一跳 / 喉结滚了滚 / 脚步一顿）收尾。
+     例（要）比起中院小鸡崽子似的学徒们，前院的学徒一个个壮实的好似小牛犊子。这一个多月里，他的身体也养起来不少，可比起这些牛犊子似的前院学徒，肉眼可见的差距颇大。可见，同为学徒，前院和中院的学徒，除了铺子内的待遇、根骨的差距之外，家境也有差距。不过，这些'小牛犊子'比起他们身后那人，可就又是小巫见大巫了。'这人好壮！'/黎渊眼皮一跳。
+     例（禁）4 段均匀等长的描述（一段写中院/一段写前院/一段写家境/一段写壮汉），每段结尾都总结。
+  ②（修正感句式）"不是 X，准确说是 Y"/"不……"/"不对……"：写动作或判断时加一层自我修正，避免一句话机械直给。
+     例（要）不是痛。是一种凉，顺着脊梁往上爬，像谁把冰碴子一根根塞进骨缝里。
+     例（禁）他脊梁骨发凉，很痛，心里发颤。（3 句并列，机械平铺）
+  ③（感官细节三叠：温度/气味/触感/声音 选 2-3 叠，不用比喻词）写动作只写"他把东西藏好"=假大空；要拆出具体感官。
+     例（要：动作链=藏→咬进→按泥→渗）残片棱角咬进掌心，他没松手，把湿泥按上去，冷意混着血味从指缝里渗出来。
+     例（禁：机械流水账）他发现了残片，把残片藏进腰腹，然后继续装作若无其事的样子。
+  ④（动作链=小目标链，每 200-300 字一个"小目标 → 决策 → 决策被验证"闭环）禁止漫无目的动作流水账。
+     例（要：连续 3 个闭环）目标 A：丹药放哪？→ 装陶盆塞床底深处（决策）；目标 B：搬家带不走金米？→ 全倒粪口（决策，怕搜身）；目标 C：郝师兄搜陶盆？→ "还好早前倒了金米"（验证 B 决策正确）。
+     例（禁：无目标流水账）挖→藏→黑狗来→鞭打→拖姜雪→夜里包扎→震片→铛铛+黑煞风，每一步不知道下一步要做什么，读起来就散。
 
 3.5 禁词与口语化
 
@@ -2663,7 +2796,7 @@ NARRATIVE_CRAFT_RULES = """
 
 · 设定一致：人物行为/性格/语言与大纲一致；势力数量/分布/关系一致；事件按细纲时间线；战力不超设定；物品/技能不超前；关系转变有铺垫。禁越级、战力崩坏、信息泄露、时间穿越、数量膨胀、关系跳级。
 · 章节连贯：人物状态延续；时间线衔接；事件承接；地理连续；新人物有铺垫；物品/信息延续。
-· AI味特征：出现总结升华、排比抒情、精确比喻每千字超过2处、过度心理描写、场景过渡不硬切、评价旁白、对称结构、三连排、系统太干净、旁白太统一、解释性叙述、标注式情绪、不是A是B结构，即砍。
+· AI味特征：出现总结升华、排比抒情、精确比喻每千字超过3处或命中 8 大 AI 套话词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河）、过度心理描写、场景过渡不硬切、评价旁白、对称结构、三连排、系统太干净、旁白太统一、解释性叙述、标注式情绪、不是A是B结构，即砍。
 · 开头结尾：第一句为时间/动作/对话/状态/事件之一；结尾有钩子，无总结/评价/升华。
 """.strip()
 
@@ -2733,7 +2866,7 @@ TIMELINE_NARRATIVE_RULES = ("""
 【6. 自检清单】
 · 设定一致：人物行为/性格/语言与大纲一致；势力数量/分布/关系一致；战力不超设定；物品/技能不超前；关系转变有铺垫。
 · 卷间连贯：第N卷 ending_hook 与第N+1卷开头严格衔接；各卷 main_events 连续编号不重叠；卷间伏笔埋收跨卷对应。
-· AI 味特征：总结升华/排比抒情/精确比喻超1个/评价旁白/对称结构/三连排/解释性叙述/不是A是B结构 → 即砍。
+· AI 味特征：总结升华/排比抒情/精确比喻超3个或命中 8 大 AI 套话词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河）/评价旁白/对称结构/三连排/解释性叙述/不是A是B结构 → 即砍。
 · 主要剧情事件：每个 main_event 的 title+summary 必须是一个明确的、可用约5章展开的事件推进（10个≈支撑50章12万字），不是空话。
 """).strip()
 
@@ -5753,6 +5886,129 @@ def smart_deai():
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+# ----------------------------------------------------------------------------
+# B3：去AI Tab·风格对齐诊断（12维评分 + 范本并排 + 改点建议）
+# ----------------------------------------------------------------------------
+
+@chat_collab_bp.route('/api/ai/smart/style-align', methods=['POST'])
+def smart_style_align():
+    """AI智驾·风格对齐：对选中章节做 12 维风格对齐评分，返回评分、范本、改点建议。
+
+    body: { book_id, chapter_id }
+    返回: {
+      chapter_title, chapter_num,
+      dimensions: [{key, name, score, note}]（12 维，按分数升序，低分在前）,
+      avg_score,
+      bad_items: [{key, name, score, note, fix_suggestion}]（<60分的维度+具体改法）,
+      style_pack: { id, name, content } 或 null（自动匹配 genre 对应的风格包）,
+      book_genre,
+      summary: '优/良/中/差' 四档文字总评
+    }
+    """
+    from app import db, Book, BookBible, Chapter, parse_chapter_number
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    chapter_id = data.get('chapter_id')
+
+    if not book_id or not chapter_id:
+        return jsonify({'error': '缺少 book_id 或 chapter_id'}), 400
+
+    book = Book.query.get(book_id)
+    if not book:
+        return jsonify({'error': '书籍不存在'}), 404
+    chapter = Chapter.query.get(chapter_id)
+    if not chapter or chapter.book_id != book_id:
+        return jsonify({'error': '章节不存在'}), 404
+
+    raw_content = (chapter.content or '').strip()
+    if not raw_content:
+        return jsonify({'error': '该章节无正文，无法风格对齐诊断'}), 400
+
+    # 1) 12 维风格对齐评分
+    try:
+        from post_write_validator import validate_chapter
+        vr = validate_chapter(raw_content)
+        dims_dict = vr.stats.get('style_alignment', {}) or {}
+        avg = vr.stats.get('style_alignment_avg', 0) or 0
+    except Exception as e:
+        return jsonify({'error': f'风格评分失败：{e}'}), 500
+
+    # 2) 按分数升序，低分在前（用户先看问题项）
+    dims_list = []
+    for k, d in dims_dict.items():
+        dims_list.append(dict(key=k, name=d.get('name', k), score=int(d.get('score', 0)), note=d.get('note', '')))
+    dims_list.sort(key=lambda x: x['score'])
+
+    # 3) 低分维度 (<60) + 具体改法建议（从 12 维定义的正反例中直接摘改法）
+    FIX_MAP = {
+        'prompt_tag_mid': '改法：把对白提示语从句首挪到对白中或尾，后面再加一个小动作/小触感收尾。例：把"姜雪攥紧衣角说："你在名单上。""改成""你在名单上。"姜雪攥紧衣角。布料在指缝间发出细碎声响。"',
+        'qa_disalign': '改法：避免 1:1 工整问答。用答非所问/半句话/沉默/打断/错位回。例："怕不怕？"→"……"→"问你话呢！"→"我怕你不敢来。"而不是"怕不怕？/怕。"',
+        'dial_action_insert': '改法：每 3 句对白里至少插 1 句 POV 的小动作（眼皮一跳/攥紧衣角/指节发白）或小吐槽。A→B→A→B 机械轮换必须打断。',
+        'side_story': '改法：删掉"隔壁矿友讨水"这种删了不影响主钩子后续的独立路人支线——哪怕只有 200 字也不行。本章所有场景绕回 ONE 主钩子。',
+        'end_hook_link': '改法：结尾只留 1 个钩子，而且必须和本章冲突链的最后一环关联，严禁一次连铺 3 个未暗示新坑。',
+        'long_paragraph': '改法：长段（>400 字）臃肿段拆成 2-4 段，按动作/对白/环境变化切开。冲突场景更要密集短段（80%-90% 段落一句话/一个动作各成一段）。',
+        'para_uniformity': '改法：段长不要网格机械均匀。递进比较链写长句（3-4 层），动作收尾写 1-4 字短句。长短段交替，CV=0.5-1.0 为健康。',
+        'comparison_chain': '改法：人物群像场景写"递进比较链长句→动作短句收尾"。X 比起 Y 像 Z → 比起 W 又差一截 → 比起 Q 差得远 → 最后比 T 小巫见大巫 → 1-4 字动作短句收。',
+        'cliche_metaphor': '改法：删/换 8 大 AI 套话比喻词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河）。每千字比喻≤3 个，而且必须贴合具体场景。',
+        'correction_style': '改法：动作判断时加一层自我修正，避免机械直给。把"他脊梁骨发凉，很痛，心里发颤。"改成"不是痛。是一种凉，顺着脊梁往上爬，像谁把冰碴子一根根塞进骨缝里。"',
+        'sense_detail': '改法：动作段做感官细节三叠（温度/气味/触感/声音选 2-3 叠）。把"他把残片藏好"改成"残片棱角咬进掌心，他没松手，把湿泥按上去，冷意混着血味从指缝里渗出来。"',
+        'goal_closed_chain': '改法：动作链=小目标链，每 200-300 字必须有一个"目标→决策→决策被验证"的小三段闭环。绝对不允许漫无目的的动作流水账。',
+    }
+    bad_items = []
+    for d in dims_list:
+        if d['score'] < 60:
+            bad_items.append({
+                **d,
+                'fix_suggestion': FIX_MAP.get(d['key'], '对照：文风黄金对白6式 + 文风黄金长短句4型 + ONE主钩子数字硬约束。'),
+            })
+
+    # 4) 匹配风格包内容（范本并排）
+    sp_content = _get_enabled_style_pack(book)
+    manifest = _load_style_manifest()
+    sp_meta = None
+    if sp_content:
+        for p in (manifest.get('packs') or []):
+            try:
+                with open(os.path.join(_STYLE_PACK_ROOT, p['file']), 'r', encoding='utf-8') as f:
+                    if f.read()[:100] == sp_content[:100]:
+                        sp_meta = {'id': p['id'], 'name': p['name']}
+                        break
+            except Exception:
+                pass
+    style_pack = None
+    if sp_content:
+        style_pack = {
+            'id': (sp_meta or {}).get('id') or 'auto_matched',
+            'name': (sp_meta or {}).get('name') or '自动匹配风格包',
+            'content': sp_content,
+        }
+
+    # 5) 总评四档
+    if avg >= 85:
+        grade = '优·风格对齐度良好，建议直接写作或做一次去AI味。'
+    elif avg >= 70:
+        grade = '良·部分维度待改进，建议对照下方低分项的改法，或点「开始去AI味」自动修复。'
+    elif avg >= 55:
+        grade = '中·风格偏差较大，建议先按改法手动调整一次，再走「去AI味」辅助。'
+    else:
+        grade = '差·风格矿道病严重（机械对白/独立支线/流水账动作），建议对照风格包范本，把本章拆解后按 ONE 主钩子 + 对白6式 + 短句4型 重写。'
+
+    genre = (getattr(book, 'genre', None) or '').strip() or '（未设定题材）'
+    ch_num = parse_chapter_number(chapter.title or '') or 0
+
+    return jsonify({
+        'chapter_title': chapter.title or f'第{ch_num}章',
+        'chapter_num': ch_num,
+        'dimensions': dims_list,
+        'avg_score': round(float(avg), 1),
+        'bad_items': bad_items,
+        'style_pack': style_pack,
+        'book_genre': genre,
+        'summary': grade,
+    })
 
 
 # ----------------------------------------------------------------------------

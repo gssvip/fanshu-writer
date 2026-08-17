@@ -874,6 +874,21 @@ export const api = {
     if (signal) cfg.signal = signal;
     return fetch(`${getApiBaseUrl()}/ai/smart/deai`, cfg);
   },
+  // B3：去AI Tab·风格对齐诊断（12维评分 + 范本并排 + 改点建议）
+  smartStyleAlign: (bookId: string, chapterId: string) =>
+    request<{
+      chapter_title: string;
+      chapter_num: number;
+      dimensions: Array<{ key: string; name: string; score: number; note: string }>;
+      avg_score: number;
+      bad_items: Array<{ key: string; name: string; score: number; note: string; fix_suggestion: string }>;
+      style_pack: { id: string; name: string; content: string } | null;
+      book_genre: string;
+      summary: string;
+    }>(
+      '/ai/smart/style-align',
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, chapter_id: chapterId }) }
+    ),
   // 设定Tab·通用聊天：自由讨论，关键词触发填入维度（SSE 流式）
   smartGeneralStream: (bookId: string, message: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
