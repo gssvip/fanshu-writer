@@ -980,8 +980,10 @@ export default function ChatPanel() {
   const [chapters, setChapters] = useState<Array<{ id: string; title: string; order_index: number; word_count: number; status: string }>>([]);
   const [volumes, setVolumes] = useState<Array<{ id: string; title: string; order_index: number; chapter_count: number }>>([]);
   // 正文/去AI/校审 各自的章节选择（独立）
-  const [deaiTargetId, setDeaiTargetId] = useState<string | null>(null);         // 去AITab：去味目标章节
-  const [chapterTargetId, setChapterTargetId] = useState<string | null>(null);   // 正文Tab：修改目标章节
+  const [deaiTargetId, setDeaiTargetId] = useState<string | null>(null);         // 正文Tab：修改目标章节
+  const [chapterTargetId, setChapterTargetId] = useState<string | null>(null);
+  // 正文章节修改：两步确认态（首次点"修改"仅进入待执行，再点才真正工作）
+  const [chapterEditArmed, setChapterEditArmed] = useState(false);
   const [reviewChapterId, setReviewChapterId] = useState<string | null>(null);   // 校审Tab：一致性检查章节
   const [reviewVolumeIds, setReviewVolumeIds] = useState<string[]>([]);          // 校审Tab：按卷检查
   // B：两步确认机制——防止用户点了按钮就直接跑全书，避免误操作浪费 token
@@ -1299,6 +1301,8 @@ export default function ChatPanel() {
   // 切换 Tab 时清空选中章节（各Tab独立）；切到正文Tab时填入默认写作要求
   const switchTab = useCallback((tab: SmartTab) => {
     setActiveTab(tab);
+    // 离开正文Tab 时清掉"待修改"状态，避免 armed 泄漏到其他 Tab
+    if (tab !== 'chapter') setChapterEditArmed(false);
     setInput(prev => {
       // 进入正文Tab：若输入为空或是正文默认值，填入默认要求；已有自定义内容则保留
       if (tab === 'chapter' && (!prev.trim() || prev.trim() === CHAPTER_DEFAULT_INPUT)) {
@@ -1588,6 +1592,8 @@ export default function ChatPanel() {
   // 真正执行章节写作/修改（结合用户在消息栏输入的要求）
   const doChapterAction = useCallback(async (action: 'continue' | 'polish', targetChapterId: string | null, instruction?: string) => {
     if (!bookId || streaming) return;
+    // 真正开始执行时清掉 armed 态（任何入口都清，包括从输入框发送/任务单点击/章节下拉）
+    setChapterEditArmed(false);
     setStreamError('');
     streamBufferRef.current = '';
     // 记录正在修改的章节（修改完成后自动标记任务清单 done）
@@ -1647,6 +1653,9 @@ export default function ChatPanel() {
   const handleChapterSend = useCallback(() => {
     if (!bookId || streaming) return;
     const text = input.trim();
+    // 若之前点过"修改"按钮进入 armed 态，从输入框发送时清掉 armed（视为二次确认）
+    const wasArmed = chapterEditArmed;
+    setChapterEditArmed(false);
     if (!text) {
       // 无输入时直接续写下一章
       doChapterAction('continue', null);
@@ -1664,12 +1673,13 @@ export default function ChatPanel() {
         doChapterActionWithNote('polish', ch.id, text);
       } else {
         setStreamError(`未找到第 ${targetNum} 章，请检查章节号或直接输入写作要求`);
+        void wasArmed; // 暂未使用，保留以备后续埋点
       }
     } else {
       // 续写：输入内容作为本章写作要求
       doChapterAction('continue', null, text);
     }
-  }, [bookId, streaming, input, chapters, latestChapter, doChapterAction, doChapterActionWithNote]);
+  }, [bookId, streaming, input, chapters, latestChapter, doChapterAction, doChapterActionWithNote, chapterEditArmed]);
 
   // 章节点位刷新🔄：手动重新拉取最新章节和章节列表
   const refreshChapterAnchor = useCallback(() => {
@@ -2410,23 +2420,48 @@ export default function ChatPanel() {
                       title="续写下一章（输入框内容作为写作要求）"
                     >✍️ 写作第 {nextChapterNum} 章</button>
                     <button
-                      className="smart-action-btn"
+                      className={`smart-action-btn ${chapterEditArmed ? 'primary' : ''}`}
                       onClick={() => {
                         const text = input.trim();
-                        // 有选中章节时，直接修改该章节（输入框作为修改意见，可为空）
+                        // 第一次点击：进入"待执行"模式，让用户先在章节下拉里选目标章节（输入框可填修改意见）
+                        if (!chapterEditArmed) {
+                          if (!text && !chapterTargetId && chapters.length === 0) {
+                            setStreamError('请先在下方"修改目标章节"下拉选章，或在输入框写明「第3章 …」');
+                            return;
+                          }
+                          setChapterEditArmed(true);
+                          return;
+                        }
+                        // 第二次点击：真正执行
                         if (chapterTargetId) {
                           doChapterActionWithNote('polish', chapterTargetId, text || '按检查报告修正违规项');
+                          setChapterEditArmed(false);
                           return;
                         }
                         if (!text) {
                           setStreamError('请在输入框说明要修改哪一章及修改意见（如「第3章，增加主角心理描写」），或在上方下拉选择章节');
+                          setChapterEditArmed(false);
                           return;
                         }
                         handleChapterSend();
+                        setChapterEditArmed(false);
                       }}
                       disabled={streaming || chapters.length === 0}
-                      title="修改已写章节（下拉选章或输入框写明章节号和修改意见）"
-                    >✨ 修改</button>
+                      title={chapterEditArmed
+                        ? '再点一次开始修改（修改目标章节：' +
+                          (chapterTargetId
+                            ? (chapters.find(c => c.id === chapterTargetId) ? formatChapterOption(chapters.find(c => c.id === chapterTargetId)!) : '已选')
+                            : '从输入框解析') + '）'
+                        : '修改已写章节（先点此按钮进入"待修改"模式，再点一次才执行）'}
+                    >{chapterEditArmed ? '🚀 开始修改' : '✨ 修改'}</button>
+                    {chapterEditArmed && (
+                      <button
+                        className="smart-action-btn"
+                        onClick={() => setChapterEditArmed(false)}
+                        disabled={streaming}
+                        title="退出待修改模式"
+                      >取消</button>
+                    )}
                   </div>
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} compact />
                 </>
