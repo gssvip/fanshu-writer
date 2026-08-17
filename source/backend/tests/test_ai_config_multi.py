@@ -55,18 +55,18 @@ def test_create_config_auto_activates(client):
 
 def test_max_ten_configs_limit(client):
     """最多 10 个配置，第 11 个返回 400。"""
-    client.post("/api/ai/configs", json={"name": "c2"})
-    client.post("/api/ai/configs", json={"name": "c3"})
-    client.post("/api/ai/configs", json={"name": "c4"})
-    client.post("/api/ai/configs", json={"name": "c5"})
-    client.post("/api/ai/configs", json={"name": "c6"})
-    client.post("/api/ai/configs", json={"name": "c7"})
-    client.post("/api/ai/configs", json={"name": "c8"})
-    client.post("/api/ai/configs", json={"name": "c9"})
-    client.post("/api/ai/configs", json={"name": "c10"})
-    resp = client.post("/api/ai/configs", json={"name": "c11"})  # 11 应拒绝
+    # 先创建 10 个独立配置（不走 /api/ai/config 默认创建逻辑，直接数到 10）
+    for i in range(1, 11):
+        resp = client.post("/api/ai/configs", json={"name": f"c{i}"})
+        assert resp.status_code == 201, f"c{i} 应创建成功"
+    # 第 11 个应拒绝
+    resp = client.post("/api/ai/configs", json={"name": "c11"})
     assert resp.status_code == 400
     assert "最多" in resp.get_json()["error"]
+    # 确认 /api/ai/configs 返回的 max = 10
+    body = client.get("/api/ai/configs").get_json()
+    assert body["max"] == 10
+    assert len(body["configs"]) == 10
 
 
 def test_activate_switches_active(client):
