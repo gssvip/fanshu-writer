@@ -1298,20 +1298,12 @@ _DECISION_WORDS = ['于是', '就', '干脆', '索性', '只好', '只得', '当
 _VERIFY_WORDS = ['还好', '幸好', '果然', '果真', '不枉', '没白', '幸亏', '多亏', '早知道', '好在']
 
 # Q2-2 新增：跨章钩子常见时间节点 + 悬念名词词（结尾末段命中=关联合格，不再强求在前文出现）
+# ⚠️ 只做"微加成"（防误判扣光），不再直接给满分
 _CROSS_CHAPTER_HOOK_TIME_WORDS = ['天后', '天后，', '日后', '下月', '来年', '明晚', '明早', '明天', '后天', '冬至', '除夕', '初一', '十五', '年底', '月末', '三天后', '三日后', '七日后', '半月后', '一月后', '三月后', '半年后', '一年后', '十年后', '百年后']
 _CROSS_CHAPTER_HOOK_SUSPENSE_WORDS = ['名单', '天灯', '约', '赌', '局', '宴', '帖', '令', '符', '契', '阵', '劫', '寿', '榜文', '密信', '暗令', '遗诏', '名册', '玉碟', '丹方', '剑谱', '密约', '婚约', '血书', '阵图']
 
-# Q2-1 新增：通用背景板群像豁免名字词（这些人只出现 1-2 段不算"路人支线"）
-_BACKGROUND_EXEMPT_WORDS = {
-    '监工', '矿奴', '狗腿', '狗腿子', '矿监', '巡卫', '守卫', '士兵', '卫士', '护卫',
-    '长老', '弟子', '学徒', '杂役', '仆役', '侍女', '丫鬟', '掌柜', '伙计', '小二',
-    '衙役', '差役', '捕快', '狱卒', '门房', '管家', '家丁', '亲兵', '校尉', '军士',
-    '王猛', '黑狗', '赵屠子',  # 矿场常见常驻角色（可被后续数据库角色表覆盖，这里先给通用兜底豁免）
-}
-
-# Q2-3 新增：情节级"吸收/炼化→突破/成了"动词对（窗口内成对=闭环）
-_PLOT_ABSORB_WORDS = ['吸收', '炼化', '炼', '烧', '熬', '喂', '吞', '吞噬', '淬', '淬练', '洗', '洗髓', '伐毛', '吸', '纳', '摄', '熔炼', '熔']
-_PLOT_RESULT_WORDS = ['突破', '成了', '炼成', '炼就', '晋级', '晋升', '入阶', '破境', '筑基', '金丹', '结丹', '凝气', '炼气成', '骨成', '脉成', '窍开', '穴开', '脏成', '腑成', '大椎骨成', '小成', '大成', '圆满', '稳固', '通脉', '开窍']
+# （注意：以下 _BACKGROUND_EXEMPT_WORDS / _PLOT_ABSORB_WORDS / _PLOT_RESULT_WORDS 已在对应函数内废弃，不再引用，
+#  反例（如矿道文第7章）里出现的背景群像/吸收→突破不应该被"豁免"或"奖励"，严格抓问题。）
 
 # 递进比较链连接词（3-4 层"鸡→牛→小牛→小巫见大巫"式结构）
 _COMPARISON_CHAIN_WORDS = ['比起', '可比', '相比', '可见', '小巫见大巫', '大巫见小巫', '差得远', '肉眼可见的差距']
@@ -1410,7 +1402,7 @@ def _check_style_alignment_score(text: str, cfg: Dict, result: ValidationResult)
     note_insert = f'动作段插入 {action_insert_count}/{dial_block_count} 对白块（插率 {insert_ratio:.0%}），理想≥每3句对白插1次'
     dims['dial_action_insert'] = dict(name='对话·动作插入率', score=score_insert, note=note_insert)
 
-    # 4) 独立支线数（剧情不散乱：估计独立场景块 - 核心块的差；0-2 最佳）
+    # 4) 独立支线数（剧情不散乱：估计独立场景块 - 核心块的差；0-1 最佳）
     # 启发式：按连续 2 个以上空行？不，paragraphs 已经按空行切。
     # 独立"路人支线"的特征：一段里出现的姓名+称呼，在其他段中都没再次出现。
     para_chars = []
@@ -1418,14 +1410,7 @@ def _check_style_alignment_score(text: str, cfg: Dict, result: ValidationResult)
     names_by_para = []
     for p in paragraphs:
         names = set(name_re.findall(p)) | set(re.findall(r'[\u4e00-\u9fa5]{2,3}(?=(?:说|道|问|喊|喝|叫|笑|骂))', p))
-        names = {n for n in names if n not in {'不是', '没有', '他们', '我们', '你们', '自己', '大家', '怎么', '什么', '这个'}}
-        # Q2-1 新增：背景板群像豁免（监工/矿奴/狗腿/长老/弟子… + 常驻角色名）
-        # 匹配逻辑：整段内出现这些词 → 这段里识别到的"一次性名字"全部豁免（它们可能就是这个背景位词的人名形式）
-        p_has_bg_exempt = any(w in p for w in _BACKGROUND_EXEMPT_WORDS)
-        if p_has_bg_exempt:
-            # 如果段里出现了背景板角色词，直接清空本段的 names（=不算独立支线候选段）
-            names = set()
-        names_by_para.append(names)
+        names_by_para.append({n for n in names if n not in {'不是', '没有', '他们', '我们', '你们', '自己', '大家', '怎么', '什么', '这个'}})
     all_names = set()
     for s in names_by_para:
         all_names |= s
@@ -1433,47 +1418,33 @@ def _check_style_alignment_score(text: str, cfg: Dict, result: ValidationResult)
     # 只出现 1 段的"一次性名字"→独立支线候选
     one_shot_names = [n for n, f in name_global_freq.items() if f == 1]
     one_shot_paras = sum(1 for s in names_by_para if any(n in one_shot_names for n in s))
-    # Q2-1 再放宽：一次性名字段 < 8 段 → 直接估 0（背景群像/小围观群众正常出现人数）
-    #   ≥8 段才按最多 4 段一支线来估算，阈值≥3条才开始扣大分
-    if one_shot_paras < 8:
-        estimated_side = 0
-    else:
-        estimated_side = (one_shot_paras + 3) // 4
-    # 评分曲线：0→100，2→100（允许1-2条合理小支线/伏笔），3→80，5→40，≥7→0
-    if estimated_side <= 2:
-        score_side = 100
-    else:
-        score_side = _clamp_score(max(0, 100 - (estimated_side - 2) * 20))
-    note_side = f'估计独立支线 {estimated_side} 条（一次性角色段 {one_shot_paras} 段，<8段=背景群像直接豁免），理想≤2条（严禁路人支线）'
+    # 独立支线估计数 = 一次性名字段落数（最多 4 段一支线）
+    estimated_side = (one_shot_paras + 3) // 4 if one_shot_paras else 0
+    score_side = _clamp_score(100 - 20 * estimated_side)  # 0→100，多1支扣20
+    note_side = f'估计独立支线 {estimated_side} 条（一次性角色段 {one_shot_paras} 段），理想=0（严禁路人支线）'
     dims['side_story'] = dict(name='剧情·独立支线数', score=score_side, note=note_side)
 
     # 5) 结尾钩子关联度（结尾 10% 的字符中再次命中本章前 90% 中出现过的关键词）
-    # Q2-2 新增：跨章锚点直通规则——末段/末200字出现"时间节点+悬念词"直接判关联良好
     cutoff = int(total_chars * 0.9)
     head_text = text[:cutoff]
     tail_text = text[cutoff:]
     tail_last200 = tail_text[-200:] if len(tail_text) > 200 else tail_text
     cross_time_hit = any(w in tail_last200 for w in _CROSS_CHAPTER_HOOK_TIME_WORDS)
     cross_susp_hit = any(w in tail_last200 for w in _CROSS_CHAPTER_HOOK_SUSPENSE_WORDS)
-    if cross_time_hit and cross_susp_hit:
-        # Q2-2：时间节点+悬念词双命中=健康跨章钩子，直通满分（不求本章正文高频词重合）
-        score_hook = 100
-        note_hook = f'结尾末200字命中跨章锚点（时间节点+悬念名词双命中），属于健康契诃夫之枪式钩子（不再要求前文高频词重合）'
-    else:
-        head_keywords = set(re.findall(r'[\u4e00-\u9fa5]{2,4}', head_text))
-        # 过滤单段频率不高的词（只留头 50 个最常见 2-4 字实体）
-        from collections import Counter
-        head_counts = Counter(re.findall(r'[\u4e00-\u9fa5]{2,4}', head_text))
-        head_top = {w for w, _ in head_counts.most_common(50) if w not in {'我们', '你们', '他们', '自己', '这个', '那个', '什么', '怎么', '不是', '没有'}}
-        tail_hits = sum(1 for w in re.findall(r'[\u4e00-\u9fa5]{2,4}', tail_text) if w in head_top)
-        # 结尾 10% 段中至少 3 个命中头高频词=关联良好
-        tail_hits_expected = max(1, int(len(tail_text) / 100))
-        hook_ratio = tail_hits / tail_hits_expected if tail_hits_expected else 1.0
-        # 额外：单命中跨章词（只有时间或只有悬念，还没配对）→ 半加成，避免单一时间词误判
-        if cross_time_hit or cross_susp_hit:
-            hook_ratio = max(hook_ratio, 0.8)
-        score_hook = _clamp_score(min(100, 50 + 50 * min(1.0, hook_ratio)))
-        note_hook = f'结尾与前文高频词命中 {tail_hits}/{tail_hits_expected}（关联比 {hook_ratio:.2f}），理想≥1.0，且只留 1 个主钩子；跨章锚点{"已识别" if cross_time_hit or cross_susp_hit else "未识别"}'
+    head_keywords = set(re.findall(r'[\u4e00-\u9fa5]{2,4}', head_text))
+    # 过滤单段频率不高的词（只留头 50 个最常见 2-4 字实体）
+    from collections import Counter
+    head_counts = Counter(re.findall(r'[\u4e00-\u9fa5]{2,4}', head_text))
+    head_top = {w for w, _ in head_counts.most_common(50) if w not in {'我们', '你们', '他们', '自己', '这个', '那个', '什么', '怎么', '不是', '没有'}}
+    tail_hits = sum(1 for w in re.findall(r'[\u4e00-\u9fa5]{2,4}', tail_text) if w in head_top)
+    # 结尾 10% 段中至少 3 个命中头高频词=关联良好
+    tail_hits_expected = max(1, int(len(tail_text) / 100))
+    hook_ratio = tail_hits / tail_hits_expected if tail_hits_expected else 1.0
+    # 回滚：跨章锚点只给**最多 0.6 的比例保底微加成**（防全扣光），不再直接给100分——反例（矿道文）末尾冬至+名单这种敷衍式伏笔钩子不该奖励
+    if cross_time_hit or cross_susp_hit:
+        hook_ratio = max(hook_ratio, 0.6)
+    score_hook = _clamp_score(min(100, 50 + 50 * min(1.0, hook_ratio)))
+    note_hook = f'结尾与前文高频词命中 {tail_hits}/{tail_hits_expected}（关联比 {hook_ratio:.2f}，跨章锚点{"识别，给0.6保底" if cross_time_hit or cross_susp_hit else "未识别"}），理想≥1.0 且只留 1 个主钩子；跨章伏笔钩子需要在前文有线索铺垫，否则是生硬空降伏笔'
     dims['end_hook_link'] = dict(name='剧情·结尾钩子关联', score=score_hook, note=note_hook)
 
     # 6) 长段臃肿率（真人金标准：>100字 仅 0.1%；阈值>3%=告警，>5%=低分）
@@ -1565,43 +1536,26 @@ def _check_style_alignment_score(text: str, cfg: Dict, result: ValidationResult)
     note_sense = f'动作段感官词 {sense_hits} 个（动作段共 {action_chars} 字，密度 {sense_density:.2f}/500字），理想≥2/500字；避免干巴巴"他藏好"'
     dims['sense_detail'] = dict(name='文字·动作感官细节密度', score=score_sense, note=note_sense)
 
-    # 12) 动作目标闭环率（每 1500 字至少 1 个闭环）
-    # 闭环 A：目标词 + 决策词 + 验证词三者在窗口内共同出现（传统小三段闭环）
+    # 12) 动作目标闭环率（每 1500 字至少 1 个"目标→决策→验证"小三段闭环）
+    # 简化：目标词 + 决策词 + 验证词三者在 300 字窗口内共同出现视为 1 个闭环
     goal_idx = [m.start() for w in _GOAL_WORDS for m in re.finditer(re.escape(w), text)]
     dec_idx = [m.start() for w in _DECISION_WORDS for m in re.finditer(re.escape(w), text)]
     ver_idx = [m.start() for w in _VERIFY_WORDS for m in re.finditer(re.escape(w), text)]
-    closed_A = 0
+    closed = 0
     WINDOW = 300
     # 对每个目标词，看 window 内是否有决策词、附近 1000 字内是否有验证词
     for g in goal_idx:
         has_dec = any(abs(g - d) <= WINDOW for d in dec_idx)
         has_ver = any(abs(v - g) <= 3 * WINDOW for v in ver_idx)  # 验证词可以在更后
         if has_dec and has_ver:
-            closed_A += 1
-
-    # Q2-3 新增：闭环 B：情节级"吸收/炼化→突破/成了"动词对（窗口内成对=闭环）
-    abs_idx = [m.start() for w in _PLOT_ABSORB_WORDS for m in re.finditer(re.escape(w), text)]
-    res_idx = [m.start() for w in _PLOT_RESULT_WORDS for m in re.finditer(re.escape(w), text)]
-    PLOT_WINDOW = 800  # 情节链可以拉得更长（熬十鞭→大椎骨成，横跨大半个中段）
-    used_result = set()
-    closed_B = 0
-    for a in abs_idx:
-        for ri, r in enumerate(res_idx):
-            if ri in used_result:
-                continue
-            if 0 <= r - a <= PLOT_WINDOW:  # 必须：先吸收→后结果（顺序不能反）
-                closed_B += 1
-                used_result.add(ri)
-                break
-    closed = closed_A + closed_B
-
+            closed += 1
     closed_expected = max(0, total_chars / 1500)
     closed_ratio = closed / closed_expected if closed_expected else 1.0
     if closed_expected == 0:
         score_closed, note_closed = 95, '极短章，动作闭环不考核（默认优）'
     else:
         score_closed = _clamp_score(50 + 50 * min(1.0, closed_ratio))
-        note_closed = f'动作闭环 {closed} 个（目标→决策→验证 {closed_A} 个 + 情节级吸收→结果 {closed_B} 个），理想≥{closed_expected:.1f} 个/章；避免无目标流水账'
+        note_closed = f'动作闭环 {closed} 个（目标词→决策→验证窗口内命中），理想≥{closed_expected:.1f} 个/章；避免无目标流水账；"熬十鞭→突破"类空闭环不奖励（节奏/铺垫不到位就是问题）'
     dims['goal_closed_chain'] = dict(name='文字·动作目标闭环率', score=score_closed, note=note_closed)
 
     # ================ 写入 stats + warning ================
