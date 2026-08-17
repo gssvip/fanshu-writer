@@ -53,12 +53,18 @@ def test_create_config_auto_activates(client):
     assert active[0]["id"] == new_cfg["id"]
 
 
-def test_max_three_configs_limit(client):
-    """最多 3 个配置，第 4 个返回 400。"""
-    client.get("/api/ai/config")  # 1
-    client.post("/api/ai/configs", json={"name": "c2"})  # 2
-    client.post("/api/ai/configs", json={"name": "c3"})  # 3
-    resp = client.post("/api/ai/configs", json={"name": "c4"})  # 4 应拒绝
+def test_max_ten_configs_limit(client):
+    """最多 10 个配置，第 11 个返回 400。"""
+    client.post("/api/ai/configs", json={"name": "c2"})
+    client.post("/api/ai/configs", json={"name": "c3"})
+    client.post("/api/ai/configs", json={"name": "c4"})
+    client.post("/api/ai/configs", json={"name": "c5"})
+    client.post("/api/ai/configs", json={"name": "c6"})
+    client.post("/api/ai/configs", json={"name": "c7"})
+    client.post("/api/ai/configs", json={"name": "c8"})
+    client.post("/api/ai/configs", json={"name": "c9"})
+    client.post("/api/ai/configs", json={"name": "c10"})
+    resp = client.post("/api/ai/configs", json={"name": "c11"})  # 11 应拒绝
     assert resp.status_code == 400
     assert "最多" in resp.get_json()["error"]
 

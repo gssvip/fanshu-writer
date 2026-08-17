@@ -9,9 +9,9 @@ export default function MinePage() {
   const { currentUser, theme, customColors, setTheme, setCustomColors, setCurrentUser, logout } = useStore() as any;
   const { requireAuth } = useContext(AuthContext);
   const [aiConfig, setAIConfig] = useState<AIConfig>({ id: '', name: '默认配置', is_active: true, provider: 'deepseek', model: 'deepseek-chat', recognition_model: '', api_key: '', base_url: 'https://api.deepseek.com/v1', temperature: 0.7, max_tokens: 4000, has_key: false });
-  // 多配置支持：最多 3 个，可切换
+  // 多配置支持：最多 10 个，可切换（实际权威值以 listAIConfigs 返回的 max 字段为准，后端 MAX_CONFIGS=10）
   const [configList, setConfigList] = useState<AIConfig[]>([]);
-  const [maxConfigs] = useState(3);
+  const [maxConfigs, setMaxConfigs] = useState(10);
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeSection, setActiveSection] = useState('');
@@ -126,6 +126,7 @@ export default function MinePage() {
   function refreshConfigs() {
     api.listAIConfigs().then((res) => {
       setConfigList(res.configs);
+      if (typeof (res as any).max === 'number') setMaxConfigs((res as any).max);
       const active = res.configs.find(c => c.is_active) || res.configs[0];
       if (active) setAIConfig(active);
     }).catch(() => {
