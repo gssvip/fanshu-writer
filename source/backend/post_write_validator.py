@@ -40,9 +40,19 @@ def _load_patterns() -> Dict[str, Any]:
             'fatigue_words': ['突然', '忽然', '猛地', '仿佛', '不禁', '竟然'],
             'fatigue_word_max_per_chapter': 2,
             'transition_word_max_per_3000': 1,
-            'paragraph_max_chars': 400,
-            'long_paragraph_max_ratio': 0.25,
-            'long_paragraph_threshold': 400,
+            'paragraph_max_chars': 100,
+            # 段落结构：真人金标准校准阈值
+            'long_paragraph_threshold': 100,
+            'long_paragraph_max_ratio': 0.03,      # >100字 占比>3% → red
+            'light_long_threshold': 70,
+            'light_long_max_ratio': 0.05,          # >70字 占比>5% → yellow
+            'ultra_short_threshold': 10,
+            'ultra_short_max_ratio': 0.60,         # ≤10字 占比>60% → red
+            'main_zone_low': 11,
+            'main_zone_high': 35,
+            'main_zone_min_ratio': 0.30,           # 11-35字 占比<30% → red
+            'cv_min_healthy': 0.30,
+            'cv_max_healthy': 1.60,                # CV<0.30 或 CV>1.60 → red
             'continuous_le_max': 5,
         }
     return _patterns_cache
@@ -178,23 +188,68 @@ def _check_fatigue_words(text: str, cfg: Dict, result: ValidationResult):
 
 
 def _check_paragraph_structure(text: str, cfg: Dict, result: ValidationResult):
-    """段落结构检查
-    已从「短段占比上限」反向改为「长段臃肿占比上限」：矿道式密集短句（动作/对话各一段）
-    是手机端网文的最佳实践，真正要防的是连续大段臃肿描写，而非短段密集。
+    """段落结构检查（基于三份真人样本·3601段金标准校准的5项限制）
+    真人金标准参考：均长23.7字，CV=0.67，极短句≤10字占23.5%，
+      主力11-35字占54.8%，>70字占0.9%，>100字占0.1%。
+    告警线=真人值的3~5倍放宽，且分级：critical=明显矿道病AI味，warning=轻度偏差。
     """
-    max_chars = cfg.get('paragraph_max_chars', 400)
-    # 长段：超过 max_chars 的段落；占比不能超过 long_paragraph_max_ratio（默认 25%）
-    long_threshold = cfg.get('long_paragraph_threshold', max_chars)
-    long_max_ratio = cfg.get('long_paragraph_max_ratio', 0.25)
+    import math
+
+    max_chars = cfg.get('paragraph_max_chars', 100)
+
+    # 5 项阈值（读配置，缺省=用户确认值）
+    heavy_thr     = cfg.get('long_paragraph_threshold', 100)
+    heavy_max_r   = cfg.get('long_paragraph_max_ratio', 0.03)   # >100字 >3% → critical
+    light_thr     = cfg.get('light_long_threshold', 70)
+    light_max_r   = cfg.get('light_long_max_ratio', 0.08)       # >70字  >8% → warning
+    ushort_thr    = cfg.get('ultra_short_threshold', 10)
+    ushort_max_r  = cfg.get('ultra_short_max_ratio', 0.60)      # ≤10字 >60% → critical
+    main_lo       = cfg.get('main_zone_low', 11)
+    main_hi       = cfg.get('main_zone_high', 35)
+    main_min_r    = cfg.get('main_zone_min_ratio', 0.30)        # 11-35 <30% → critical
+    cv_min        = cfg.get('cv_min_healthy', 0.30)
+    cv_max        = cfg.get('cv_max_healthy', 1.60)             # CV 越界 → critical
 
     # 按空行分段
     paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
     if not paragraphs:
         return
+    total = len(paragraphs)
+    lens = [len(p) for p in paragraphs]
 
-    result.stats['paragraph_count'] = len(paragraphs)
+    result.stats['paragraph_count'] = total
 
-    # 过长段落（逐个点名）
+    # --- 统计各维度 ---
+    heavy_cnt  = sum(1 for l in lens if l > heavy_thr)      # >100
+    light_cnt  = sum(1 for l in lens if light_thr < l <= heavy_thr)  # 71-100
+    light_total = heavy_cnt + light_cnt                    # >70 总体
+    ushort_cnt = sum(1 for l in lens if l <= ushort_thr)   # ≤10
+    main_cnt   = sum(1 for l in lens if main_lo <= l <= main_hi)  # 11-35
+
+    heavy_r  = heavy_cnt / total
+    light_r  = light_total / total
+    ushort_r = ushort_cnt / total
+    main_r   = main_cnt / total
+
+    # 变异系数 CV
+    if total >= 4:
+        mean = sum(lens) / total
+        var = sum((x - mean) ** 2 for x in lens) / total
+        std = math.sqrt(var)
+        cv = (std / mean) if mean > 0 else 0
+    else:
+        cv = 0.67  # 段太少不评，取健康中值占位
+
+    result.stats['para_stats'] = {
+        'heavy_ratio':   round(heavy_r, 3),    # >100
+        'light_ratio':   round(light_r, 3),    # >70
+        'ushort_ratio':  round(ushort_r, 3),   # ≤10
+        'main_ratio':    round(main_r, 3),     # 11-35
+        'cv':            round(cv, 2),
+        'avg_chars':     round(sum(lens)/total, 1) if total else 0,
+    }
+
+    # (0) 单段硬上限：>max_chars 即点名（warning）——如果 max_chars=100，和 heavy_thr 一致
     for i, p in enumerate(paragraphs):
         if len(p) > max_chars:
             result.add(ValidationIssue(
@@ -203,22 +258,73 @@ def _check_paragraph_structure(text: str, cfg: Dict, result: ValidationResult):
                 pattern=f'第{i+1}段',
                 count=1,
                 position=f'第{i+1}段（{len(p)}字）',
-                suggestion=f'该段 {len(p)} 字超过 {max_chars} 字上限，建议拆分',
+                suggestion=f'该段 {len(p)} 字超过 {max_chars} 字硬上限（真人样本最长=110字），按对白/动作/环境切分',
             ))
 
-    # 长段臃肿占比（总体统计）
-    long_count = sum(1 for p in paragraphs if len(p) > long_threshold)
-    long_ratio = long_count / len(paragraphs) if paragraphs else 0
-    result.stats['long_paragraph_ratio'] = round(long_ratio, 2)
-    if long_ratio > long_max_ratio and len(paragraphs) >= 4:
+    # (1) 臃肿段>100字 占比 >3% → critical
+    if heavy_r > heavy_max_r and total >= 10:
+        result.add(ValidationIssue(
+            severity='critical',
+            category='段落臃肿',
+            pattern=f'>{heavy_thr}字臃肿段',
+            count=heavy_cnt,
+            position=f'{heavy_cnt}/{total} 段（占比 {heavy_r:.0%}）',
+            suggestion=f'臃肿段占比 {heavy_r:.0%} 超限（≤{heavy_max_r:.0%}）。参考：真人写作中>{heavy_thr}字的段仅 0.1%。超过70字的说明段必须按对白/动作/环境拆成独立小段，冲突场景段长应<50字。',
+        ))
+
+    # (2) 轻臃肿段>70字 占比 >5% → warning（yellow级）
+    if light_r > light_max_r and total >= 10:
         result.add(ValidationIssue(
             severity='warning',
-            category='长段臃肿',
-            pattern='长段占比',
-            count=long_count,
-            position=f'{long_count}/{len(paragraphs)} 段为长段（>{long_threshold}字）',
-            suggestion=f'长段占比 {long_ratio:.0%} 过高（>{long_max_ratio:.0%}），建议拆分或加入对话/动作打断',
+            category='轻臃肿段过多',
+            pattern=f'>{light_thr}字段',
+            count=light_total,
+            position=f'{light_total}/{total} 段（占比 {light_r:.0%}）',
+            suggestion=f'>{light_thr}字段占比 {light_r:.0%} 偏高（≤{light_max_r:.0%}）。真人写作中>{light_thr}字仅占 0.9%。把"递进比较链长段+1-4字短句收尾"作为复合长段的唯一豁免，其余都切开。',
         ))
+
+    # (3) 极短句≤10字 占比 >60% → critical
+    if ushort_r > ushort_max_r and total >= 10:
+        result.add(ValidationIssue(
+            severity='critical',
+            category='段落太碎',
+            pattern=f'≤{ushort_thr}字极短句',
+            count=ushort_cnt,
+            position=f'{ushort_cnt}/{total} 段（占比 {ushort_r:.0%}）',
+            suggestion=f'极短句占比 {ushort_r:.0%} 超限（≤{ushort_max_r:.0%}）。"他怒。她笑。风急。"这种1个字1段的节奏要穿插11-35字的叙述支撑段，不能整章全堆1字句——真人仅 23.5%，AI别写太碎。',
+        ))
+
+    # (4) 主力区间 11-35字 占比 <30% → critical（要么全长要么全碎，都异常）
+    if main_r < main_min_r and total >= 10:
+        result.add(ValidationIssue(
+            severity='critical',
+            category='主力段长偏离',
+            pattern=f'{main_lo}-{main_hi}字主力段',
+            count=main_cnt,
+            position=f'{main_cnt}/{total} 段（占比 {main_r:.0%}）',
+            suggestion=f'真人写作中 {main_lo}-{main_hi} 字的段落占 54.8%（核心主力区），本章仅 {main_r:.0%}（<{main_min_r:.0%}）。要么全臃肿长段，要么全碎短段，分布严重偏离。',
+        ))
+
+    # (5) 段长变异系数 CV 越界 → critical
+    if total >= 10:
+        if cv < cv_min:
+            result.add(ValidationIssue(
+                severity='critical',
+                category='AI机械网格',
+                pattern=f'段长变异系数 CV={cv:.2f}',
+                count=0,
+                position=f'CV={cv:.2f}（健康区间0.50-1.00，真人金标准=0.67）',
+                suggestion=f'段长过于均匀（CV<{cv_min}）=典型AI网格病——段段 20±2 字机械排列，没有长短交替。解决：递进比较链写 70-100 字长段 + 1-4 字短句收尾穿插，把 CV 拉回 0.5-1.0。',
+            ))
+        elif cv > cv_max:
+            result.add(ValidationIssue(
+                severity='critical',
+                category='段落节奏异常零碎',
+                pattern=f'段长变异系数 CV={cv:.2f}',
+                count=0,
+                position=f'CV={cv:.2f}（健康区间0.50-1.00，真人金标准=0.67）',
+                suggestion=f'段长忽短忽长过于零碎（CV>{cv_max}）。参考："对白→小动作→环境"稳定三拍交替，避免 2 字和 100 字的极端段连续出现。',
+            ))
 
 
 def _check_continuous_le(text: str, cfg: Dict, result: ValidationResult):
@@ -1311,31 +1417,44 @@ def _check_style_alignment_score(text: str, cfg: Dict, result: ValidationResult)
     note_hook = f'结尾与前文高频词命中 {tail_hits}/{tail_hits_expected}（关联比 {hook_ratio:.2f}），理想≥1.0，且只留 1 个主钩子'
     dims['end_hook_link'] = dict(name='剧情·结尾钩子关联', score=score_hook, note=note_hook)
 
-    # 6) 长段臃肿率（长段≥400 字占比 ≤25% 为良）
-    long_threshold = cfg.get('long_paragraph_threshold', 400)
+    # 6) 长段臃肿率（真人金标准：>100字 仅 0.1%；阈值>3%=告警，>5%=低分）
+    long_threshold = cfg.get('long_paragraph_threshold', 100)
+    long_max_r    = cfg.get('long_paragraph_max_ratio', 0.03)
     long_count = sum(1 for p in paragraphs if len(p) > long_threshold)
     long_ratio = long_count / len(paragraphs) if paragraphs else 0
-    score_long = _clamp_score(100 - 300 * max(0, long_ratio - 0.25))  # 0.25→100，0.58→0
-    note_long = f'长段（>{long_threshold}字）{long_count}/{len(paragraphs)} 段，占比 {long_ratio:.0%}，理想≤25%'
+    # 评分曲线：ratio=0→100，ratio=long_max_r(3%)→80，ratio=10%→40，ratio≥18%→0
+    score_long = _clamp_score(max(0, 100 - (long_ratio / max(1e-6, long_max_r)) * 20 - max(0, long_ratio - long_max_r) / 0.07 * 80))
+    note_long = f'臃肿段（>{long_threshold}字）{long_count}/{len(paragraphs)}段，占比 {long_ratio:.0%}，理想≤{long_max_r:.0%}（真人0.1%）'
     dims['long_paragraph'] = dict(name='长短句·长段臃肿率', score=score_long, note=note_long)
 
-    # 7) 短段均匀率（段长变异系数太低=网格机械）
+    # 7) 段长节奏变异系数（CV 健康=0.50-1.00；CV<0.30=机械网格，CV>1.60=过于零碎）
     lens = [len(p) for p in paragraphs if paragraphs]
+    cv_min_cfg = cfg.get('cv_min_healthy', 0.30)
+    cv_max_cfg = cfg.get('cv_max_healthy', 1.60)
     if len(lens) >= 4:
         mean = sum(lens) / len(lens)
         var = sum((x - mean) ** 2 for x in lens) / len(lens)
         std = math.sqrt(var)
         cv = std / mean if mean > 0 else 0
-        # CV 太低（<0.3）=均匀网格机械；CV 0.5-1.0=健康长短交替；CV>1.4=太极端（偶发）
-        if cv < 0.3:
-            score_uniform = _clamp_score(cv / 0.3 * 80)
-        elif cv < 0.5:
-            score_uniform = _clamp_score(80 + (cv - 0.3) / 0.2 * 20)
-        elif cv <= 1.0:
+        # 评分曲线：
+        #   CV 0.50-1.00 → 100 分（健康区）
+        #   CV 0.30-0.50 → 线性 70→100（偏均匀，可接受）
+        #   CV < 0.30     → 0→70（明显机械网格）
+        #   CV 1.00-1.60 → 100→60（偏零碎，可接受）
+        #   CV > 1.60     → 60 往下掉 每超0.1扣10分
+        if cv < cv_min_cfg:
+            score_uniform = _clamp_score(cv / cv_min_cfg * 70)
+        elif cv < 0.50:
+            score_uniform = _clamp_score(70 + (cv - cv_min_cfg) / (0.50 - cv_min_cfg) * 30)
+        elif cv <= 1.00:
             score_uniform = 100
+        elif cv <= cv_max_cfg:
+            score_uniform = _clamp_score(100 - (cv - 1.00) / (cv_max_cfg - 1.00) * 40)
         else:
-            score_uniform = _clamp_score(max(0, 100 - (cv - 1.0) / 0.4 * 100))
-        note_uniform = f'段长变异系数 CV={cv:.2f}（均值段长 {mean:.0f}字），健康区间 0.5-1.0；CV<0.3=机械网格（矿道病）'
+            score_uniform = _clamp_score(max(0, 60 - (cv - cv_max_cfg) / 0.1 * 10))
+        note_uniform = (f'段长变异系数 CV={cv:.2f}（均值段长 {mean:.0f}字），'
+                        f'健康区间 0.50-1.00（真人金标准=0.67）；'
+                        f'CV<{cv_min_cfg:.2f}=机械网格，CV>{cv_max_cfg:.2f}=过于零碎')
     else:
         score_uniform, note_uniform = 90, '段落太少，均匀性不统计（默认良）'
     dims['para_uniformity'] = dict(name='长短句·段长均匀率', score=score_uniform, note=note_uniform)
