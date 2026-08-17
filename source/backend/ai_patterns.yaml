@@ -85,10 +85,11 @@ fatigue_word_max_per_chapter: 2
 transition_word_max_per_3000: 1
 
 # ===== 段落结构检查 =====
-# 段落过长字数阈值
-paragraph_max_chars: 300
-# 短段占比上限（AI 常用短段堆砌）
-short_paragraph_max_ratio: 0.6
-short_paragraph_threshold: 30  # 30 字以下算短段
+# 段落过长字数阈值（提升到 400，避免合法长段被误判；之前 300 太紧）
+paragraph_max_chars: 400
+# 短段堆砌已移除：矿道式密集短句（一句话/动作/对话各一段）是手机端阅读的最佳实践，
+# 真正要防的是「大段臃肿」，而非「短段密集」。改用长段占比上限作为反向约束。
+long_paragraph_max_ratio: 0.25   # 超过 paragraph_max_chars 的长段不能超过全段数的 25%
+long_paragraph_threshold: 400
 # 连续“了”字上限
 continuous_le_max: 5

@@ -40,9 +40,9 @@ def _load_patterns() -> Dict[str, Any]:
             'fatigue_words': ['突然', '忽然', '猛地', '仿佛', '不禁', '竟然'],
             'fatigue_word_max_per_chapter': 2,
             'transition_word_max_per_3000': 1,
-            'paragraph_max_chars': 300,
-            'short_paragraph_max_ratio': 0.6,
-            'short_paragraph_threshold': 30,
+            'paragraph_max_chars': 400,
+            'long_paragraph_max_ratio': 0.25,
+            'long_paragraph_threshold': 400,
             'continuous_le_max': 5,
         }
     return _patterns_cache
@@ -173,10 +173,14 @@ def _check_fatigue_words(text: str, cfg: Dict, result: ValidationResult):
 
 
 def _check_paragraph_structure(text: str, cfg: Dict, result: ValidationResult):
-    """段落结构检查"""
-    max_chars = cfg.get('paragraph_max_chars', 300)
-    short_threshold = cfg.get('short_paragraph_threshold', 30)
-    short_max_ratio = cfg.get('short_paragraph_max_ratio', 0.6)
+    """段落结构检查
+    已从「短段占比上限」反向改为「长段臃肿占比上限」：矿道式密集短句（动作/对话各一段）
+    是手机端网文的最佳实践，真正要防的是连续大段臃肿描写，而非短段密集。
+    """
+    max_chars = cfg.get('paragraph_max_chars', 400)
+    # 长段：超过 max_chars 的段落；占比不能超过 long_paragraph_max_ratio（默认 25%）
+    long_threshold = cfg.get('long_paragraph_threshold', max_chars)
+    long_max_ratio = cfg.get('long_paragraph_max_ratio', 0.25)
 
     # 按空行分段
     paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
@@ -185,7 +189,7 @@ def _check_paragraph_structure(text: str, cfg: Dict, result: ValidationResult):
 
     result.stats['paragraph_count'] = len(paragraphs)
 
-    # 过长段落
+    # 过长段落（逐个点名）
     for i, p in enumerate(paragraphs):
         if len(p) > max_chars:
             result.add(ValidationIssue(
@@ -197,18 +201,18 @@ def _check_paragraph_structure(text: str, cfg: Dict, result: ValidationResult):
                 suggestion=f'该段 {len(p)} 字超过 {max_chars} 字上限，建议拆分',
             ))
 
-    # 短段占比
-    short_count = sum(1 for p in paragraphs if len(p) < short_threshold)
-    short_ratio = short_count / len(paragraphs) if paragraphs else 0
-    result.stats['short_paragraph_ratio'] = round(short_ratio, 2)
-    if short_ratio > short_max_ratio:
+    # 长段臃肿占比（总体统计）
+    long_count = sum(1 for p in paragraphs if len(p) > long_threshold)
+    long_ratio = long_count / len(paragraphs) if paragraphs else 0
+    result.stats['long_paragraph_ratio'] = round(long_ratio, 2)
+    if long_ratio > long_max_ratio and len(paragraphs) >= 4:
         result.add(ValidationIssue(
             severity='warning',
-            category='短段堆砌',
-            pattern='短段占比',
-            count=short_count,
-            position=f'{short_count}/{len(paragraphs)} 段为短段',
-            suggestion=f'短段占比 {short_ratio:.0%} 过高（>{short_max_ratio:.0%}），AI 常用短段堆砌，建议合并部分段落',
+            category='长段臃肿',
+            pattern='长段占比',
+            count=long_count,
+            position=f'{long_count}/{len(paragraphs)} 段为长段（>{long_threshold}字）',
+            suggestion=f'长段占比 {long_ratio:.0%} 过高（>{long_max_ratio:.0%}），建议拆分或加入对话/动作打断',
         ))
 
 
