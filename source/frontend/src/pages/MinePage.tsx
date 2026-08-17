@@ -468,7 +468,7 @@ export default function MinePage() {
             <h3>AI 配置</h3>
             <p className="text-muted">配置国产大模型 API，让AI帮你写作和审稿。所有提供商均兼容 OpenAI 接口格式。</p>
 
-            {/* 多配置切换：最多 3 个，旧配置保留不丢 */}
+            {/* 多配置切换：最多 10 个，旧配置保留不丢 */}
             <div className="config-switcher" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 10px', background: 'var(--bg-soft, #f7f7f8)', borderRadius: 8, flexWrap: 'wrap' }}>
               <label style={{ fontSize: 13, color: 'var(--text-muted, #888)', marginRight: 4 }}>当前配置：</label>
               <select

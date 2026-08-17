@@ -3,7 +3,7 @@
 验证：
   - 旧数据自动迁移为激活配置（兼容性）
   - 新增/切换/删除配置
-  - 最多 3 个限制
+  - 最多 10 个限制
   - get_active() 始终返回当前激活配置
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ def test_list_configs_returns_at_least_one(client):
     resp = client.get("/api/ai/configs")
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body["max"] == 3
+    assert body["max"] == 10
     assert len(body["configs"]) >= 1
     # 第一条应是激活的
     assert body["configs"][0]["is_active"] is True
