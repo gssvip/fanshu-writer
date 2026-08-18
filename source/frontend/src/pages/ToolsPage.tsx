@@ -331,53 +331,13 @@ export default function ToolsPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      let rawText = await file.text();
-      let data: any = null;
-
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      if (ext === 'md') {
-        // 优先尝试从 Markdown 代码块中提取 YAML
-        const yamlBlockMatch = rawText.match(/```(?:yaml|yml)\s*\r?\n([\s\S]*?)\r?\n?```/);
-        if (yamlBlockMatch) {
-          try {
-            data = yaml.load(yamlBlockMatch[1].trim());
-          } catch {
-            // YAML 解析失败，继续尝试其他格式
-          }
-        }
-        // 其次尝试 JSON 代码块
-        if (!data) {
-          const jsonMatch = rawText.match(/```(?:json)?\s*\r?\n([\s\S]*?)\r?\n?```/);
-          if (jsonMatch) {
-            rawText = jsonMatch[1].trim();
-          } else {
-            // 回退：尝试从文本中提取第一个 { ... } 块
-            const braceMatch = rawText.match(/\{[\s\S]*\}/);
-            if (braceMatch) {
-              rawText = braceMatch[0];
-            }
-          }
-        }
-      }
-
-      // 如果还没解析出数据，尝试 YAML 整体解析（适用于 .yaml/.yml 文件或无代码块的 md）
+      const rawText = await file.text();
+      const data = smartParseSkillPack(rawText, file.name);
       if (!data) {
-        const trimmed = rawText.trim();
-        // 尝试 JSON
-        try {
-          data = JSON.parse(trimmed);
-        } catch {
-          // JSON 失败，尝试 YAML
-          try {
-            data = yaml.load(trimmed);
-          } catch {
-            alert('无法解析文件内容，请确保文件包含有效的 JSON 或 YAML 数据（md 文件可将 YAML 放在 ```yaml 代码块中）');
-            return;
-          }
-        }
+        alert('无法解析文件内容：请粘贴或导入 ① skill.md(带---分隔的front-matter) ② JSON ③ YAML ④ 任意纯文本（会作为提示词自动转技能包）');
+        return;
       }
 
-      if (!data || !data.name) { alert('无效的技能包文件：缺少 name 字段'); return; }
       const ok = await requireAuth();
       if (!ok) return;
       const payload = {
@@ -386,16 +346,144 @@ export default function ToolsPage() {
         genre: data.genre || 'other',
         book_type: data.book_type || 'novel',
         description: data.description || '',
+        category: data.category || 'master',
         workflow: Array.isArray(data.workflow) ? data.workflow : [],
         prompts: data.prompts || {},
       };
       await api.createSkillPack(payload);
-      alert(`技能包 "${data.name}" 导入成功`);
+      alert(`技能包 "${payload.name}" 导入成功`);
       reloadSkillPacks();
     } catch (err: any) {
       alert('导入失败: ' + (err.message || '请检查文件格式'));
     }
     if (skillImportRef.current) skillImportRef.current.value = '';
+  }
+
+  /**
+   * 多格式智能解析器：
+   *  优先级 1) 代码块内的 JSON/YAML（```json / ```yaml）
+   *  优先级 2) Markdown front-matter（---分隔块，兼容中文冒号"："）
+   *  优先级 3) 整段 JSON
+   *  优先级 4) 整段 YAML
+   *  优先级 5) 纯文本兜底：自动转 {name, description, category, prompts:{default}}
+   */
+  function smartParseSkillPack(rawText: string, fileName: string = ''): any {
+    if (!rawText || !rawText.trim()) return null;
+    const trimmed = rawText.trim();
+    let data: any = null;
+
+    // ① md代码块先扫
+    const yamlBlockMatch = trimmed.match(/```(?:yaml|yml)\s*\r?\n([\s\S]*?)\r?\n?```/i);
+    if (yamlBlockMatch) {
+      try { data = yaml.load(yamlBlockMatch[1].trim()) as any; } catch { /* ignore */ }
+    }
+    const jsonBlockMatch = !data ? trimmed.match(/```(?:json)?\s*\r?\n([\s\S]*?)\r?\n?```/i) : null;
+    if (!data && jsonBlockMatch) {
+      try { data = JSON.parse(jsonBlockMatch[1].trim()); } catch {
+        try { data = yaml.load(jsonBlockMatch[1].trim()) as any; } catch { /* ignore */ }
+      }
+    }
+
+    // ② front-matter（兼容用户的中文冒号 "name：xxx" 全角写法，必须在文本最开头）
+    if (!data) {
+      const fmMatch = trimmed.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n([\s\S]*))?$/);
+      if (fmMatch) {
+        const header = fmMatch[1];
+        const body = fmMatch[2] || '';
+        const normalized = header
+          // 兼容：key：value (中文全角冒号/两边空格) 统一为 key: value
+          .replace(/^([^\s：:][^：:\n]*?)[ \t]*[：:][ \t]*/gm, (_, k) => `${k}: `);
+        try {
+          data = yaml.load(normalized) as any;
+          if (data && typeof data === 'object' && body && body.trim()) {
+            // 把front-matter之后的markdown正文作为默认提示词注入
+            if (!data.prompts || typeof data.prompts !== 'object') data.prompts = {};
+            const defaultKey = data.category === 'style' ? 'style_default'
+              : data.category === 'review' ? 'review_default' : 'master_default';
+            if (!data.prompts[defaultKey]) data.prompts[defaultKey] = body.trim();
+            if (!data.description) {
+              // 正文前120字提炼描述
+              data.description = body.trim().slice(0, 120).replace(/\s+/g, ' ');
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    }
+
+    // ③ 整段JSON
+    if (!data && (trimmed.startsWith('{') || trimmed.startsWith('['))) {
+      try { data = JSON.parse(trimmed); } catch { /* ignore */ }
+    }
+    // ④ 整段YAML
+    if (!data) {
+      try { data = yaml.load(trimmed) as any; } catch { /* ignore */ }
+    }
+
+    // ⑤ 纯文本兜底：自动推断 name/description/prompts
+    if (!data || typeof data !== 'object') {
+      const body = (data && typeof data === 'string') ? data : rawText;
+      if (!body || !String(body).trim()) return null;
+      const firstLine = String(body).split(/\r?\n/).map(l => l.trim()).find(l => l.length) || '我的技能';
+      const cleanName = firstLine.replace(/^[#\s\-*>`"']+|[#\s\-*>`"']+$/g, '').slice(0, 40) || '自定义技能包';
+      const plainDesc = String(body).trim().replace(/\s+/g, ' ').slice(0, 160);
+      data = {
+        name: cleanName,
+        description: plainDesc,
+        category: inferCategoryFromText(body),
+        prompts: {
+          master_default: String(body).trim(),
+        },
+      };
+    }
+
+    // 格式规范：无name → 用fileName首行兜底
+    if (!data.name) {
+      data.name = fileName ? fileName.replace(/\.[^.]+$/, '') : '自定义技能包';
+    }
+    // 规范化：如果只有纯prompts没有workflow，就不强制创建workflow（空数组也可）
+    if (!Array.isArray(data.workflow)) data.workflow = [];
+    if (!data.prompts || typeof data.prompts !== 'object') {
+      // 如果用户给的是string文本但走到这里，兜底塞进 prompts.default
+      const fallback = typeof data.content === 'string' ? data.content
+        : typeof data.prompt === 'string' ? data.prompt
+        : typeof data.body === 'string' ? data.body : '';
+      data.prompts = { default: fallback || String(rawText).trim().slice(0, 4000) };
+    }
+    return data;
+  }
+
+  /** 关键词轻量推断：正文/文风/审查 */
+  function inferCategoryFromText(text: string): 'master' | 'style' | 'review' {
+    const t = String(text);
+    const styleHits = (t.match(/句式|文风|用词|口语|节奏|排比|短句|长句|方言|对白|叙述密度|标点|修辞|比喻|形容词|动词/g) || []).length;
+    const reviewHits = (t.match(/一致性|去AI|审核|AI味|校验|冲突|矛盾|伏笔|设定检查|设定一致|错别字|病句|逻辑/g) || []).length;
+    if (reviewHits >= styleHits && reviewHits >= 2) return 'review';
+    if (styleHits >= 2) return 'style';
+    return 'master';
+  }
+
+  /** 创建/编辑表单里：把用户粘贴的文本识别成字段（保留用户已手动填好的name/category/description不覆盖） */
+  function applySmartParseToEditor(rawText: string) {
+    const parsed = smartParseSkillPack(rawText, skillEditor.name + '.txt');
+    if (!parsed) return;
+    setSkillEditor(prev => {
+      const next: typeof prev = { ...prev };
+      // 不覆盖用户已经手动填的字段（只有空值才从解析结果里补）
+      if (!next.name && parsed.name) next.name = parsed.name;
+      if (!next.description && parsed.description) next.description = parsed.description;
+      if (parsed.category && !next.category) next.category = parsed.category;
+      if (parsed.icon && !next.icon) next.icon = parsed.icon;
+      if (parsed.genre && !next.genre) next.genre = parsed.genre;
+      if (parsed.workflow?.length) {
+        // 用户已有步骤为空时覆盖，否则保留
+        const userStepsEmpty = !next.workflow?.length || next.workflow.every(w => !w.name && !w.prompt_key);
+        if (userStepsEmpty) next.workflow = parsed.workflow;
+      }
+      if (parsed.prompts && typeof parsed.prompts === 'object' && Object.keys(parsed.prompts).length) {
+        next.prompts = { ...(parsed.prompts as Record<string, string>), ...next.prompts };
+      }
+      return next;
+    });
   }
 
   function handleExportAnalysis() {
@@ -708,6 +796,41 @@ export default function ToolsPage() {
                 <div className="form-field">
                   <label>描述</label>
                   <textarea className="input" rows={2} value={skillEditor.description} onChange={e => setSkillEditor(prev => ({ ...prev, description: e.target.value }))} placeholder="简要描述这个技能包的用途和适用场景" />
+                </div>
+
+                {/* 【用户诉求-易用性】直接粘贴任意文本 / skill.md / JSON/YAML，自动识别成技能包 */}
+                <div className="form-field">
+                  <label>💡 粘贴提示词或 skill.md 自动生成 <span className="text-muted" style={{fontSize:11}}>（支持 front-matter / JSON / YAML / 普通纯文本，不会覆盖已填好的名称/分类）</span></label>
+                  <textarea
+                    className="input"
+                    rows={5}
+                    placeholder={`示例1（skill.md front-matter）：
+---
+name：我的悬疑构思法
+description：适合悬疑推理题材的大纲创作指南
+category：master
+---
+1. 开篇三秒内抛出一个不可能的谜题...
+
+示例2（纯文本）：
+  短句占比 ≥60%，冲突场景每段≤15字。对白提示语放句中/句后比例 ≥70%。比喻拟人每千字≤3处。`}
+                    onPasteCapture={(e) => {
+                      // 粘贴时做一次识别填充（非破坏性：已填的 name/category/description 保留）
+                      const text = e.clipboardData?.getData('text');
+                      if (!text) return;
+                      setTimeout(() => applySmartParseToEditor(text), 0);
+                    }}
+                    onBlur={(e) => {
+                      // 失焦也做一次识别，覆盖粘贴时漏掉的
+                      if (e.target.value && e.target.value.trim().length > 20) {
+                        applySmartParseToEditor(e.target.value);
+                        e.target.value = '';  // 识别清空，避免下次再跑
+                      }
+                    }}
+                  />
+                  <p className="text-muted" style={{fontSize:11, marginTop:4}}>
+                    小技巧：格式越规范识别越准。普通纯文本也会自动转为默认提示词，分类按关键词自动猜测。
+                  </p>
                 </div>
 
                 <div className="form-field">
