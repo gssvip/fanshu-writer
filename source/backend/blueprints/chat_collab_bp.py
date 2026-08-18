@@ -89,6 +89,241 @@ DEAI_RULES = """【去AI味执行规则】
 - 只输出处理后的正文，不解释改了什么、为什么改，不要在文末附加字数统计。
 - 优先级铁律：人味 > 克制 > 流畅。""".strip()
 
+# ----------------------------------------------------------------------------
+# 【阶段隔离·规则拆分】把原"叙事工艺铁律"拆成4类，不同阶段只注入该阶段需要的
+#   GENERAL_CORE_RULES     → 构思+正文+去AI 三阶段通用（总则/冰山/结构/人物/情节）
+#   CONCEPTION_EXTRA_RULES → 只用于构思阶段（大纲/剧情 JSON 格式约束等）
+#   WRITING_STYLE_RULES    → 只用于正文写作 + 去AI 阶段（行文规范/对白/禁词/情绪）
+#   DEAI_ONLY_RULES        → 只用于去AI 阶段（独立去AI操作手册）
+# ----------------------------------------------------------------------------
+
+DEAI_ONLY_RULES = DEAI_RULES  # 别名：DEAI_RULES 就是"去AI阶段专用"的完整规则
+
+GENERAL_CORE_RULES = """
+【通用核心铁律·构思+正文+去AI三阶段通用】
+
+0. 总则
+
+· 所有输出（正文、大纲、设定、人物、世界观、伏笔）必须遵守本规则。
+· 每章2300-2500字（中文汉字，含标点）。写事为主，景一笔带过；比喻/拟人每千字≤3处，必须贴合具体场景，严禁 8 大 AI 套话比喻词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河，以及这 8 词的任意组合如"宛如巨龙""犹如大海"）。
+· 段落句式：短段可用于冲突/打架/对峙场景的爆发式密集节奏，但整章段数必须遵守「禁令5段数硬上限」（2400字→≤106段），极短句≤10字占比≤60%，段均长≥18字；超过=漫画分镜脚本化→必须合并相邻2-4句同场景/同镜头/同POV的叙述/动作/对白为一段。主力段长区间=11-35字（真人写作过半段落落在此，占比54.8%）。
+· 去AI味≠润色：不改原意、不增剧情、不换风格；优先删，其次换，最后改写。⚠️ "不是X，准确说是Y""不是痛→是凉→像冰碴"这类自我修正/感知修正是真人写法，允许保留；只砍解释性排比的"不是A是B"三连。
+· 章节衔接：人物状态、时间线、事件、地理、人物出场、物品/信息须前后连贯。
+· 只输出处理后的正文，不解释改了什么、为什么改，不附加自检清单或协作口吻说明。
+· 核心口诀：行动往上浮，动机往下潜；先让读者爽，再让他细思极恐。
+
+1. 冰山理论与结构铁律
+
+冰山理论
+· 水上1/8（情节、爽点、打脸、升级、赚钱）必须清晰直白，直接喂给读者，不可藏。
+· 水下7/8（动机、伏笔、创伤、执念、世界观深层）必须让读者能脑补，不能写成设定说明书，也不能全沉海底让读者一无所获。
+
+起承转合
+· 起：开局三秒内建立人物、危机、欲望或金手指，让读者立刻知道追什么。
+· 承：按情绪节拍推进，每个场景制造小爽感或悬念，不空转。
+· 转：转折必须来自已埋伏笔或人物深层动机，禁天降巧合。
+· 合：结尾留钩子，或完成打脸/升级闭环，同时露出新冰山一角。
+
+黄金三章
+· 第一章亮出最刺激冲突和最鲜明金手指，禁大段背景说明和慢热铺垫；深层人性藏到第三章后引爆。
+
+契诃夫之枪
+· 特写物品、特殊能力、反复提及的符号，必须在后续情节中回收，禁只埋不收。
+
+2. 人物
+
+· 禁止贴标签（冷酷/温柔/腹黑），必须用可观察的反常行为刻画。
+· 正确行为：暴雨中把伞递给仇人、对敌人微笑递刀、恨她却替她挡劫。
+· 水面行为下埋可脑补动机：前世欠她、伞里有追踪器、不再让她挡刀。
+· 背景只露一角：在反常行为出现的瞬间露出，让读者追更求解。
+· 有瑕疵、会纠结、口是心非；禁完美人设，禁OOC；无纯反派，所有行为有合理动机。
+
+5. 情节、伏笔与世界观
+
+· 情节结尾停在动态动作或悬念上，禁抒情总结升华。
+· 对话有潜台词，不说大道理；出场人物有名有姓；章节无缝衔接。
+· 爽点靠信息差和布局，不开上帝视角；感情线绑定主线。
+· 禁顿悟式成长、大段景物抒情、人物语气同质化、行为逻辑割裂。
+· 伏笔晒宝：三章内让读者意识到伏笔；水上情节节奏明快；水下伏笔在爽点事件中露出异常细节；三章内兑现，让读者恍然大悟。
+· 世界观冰山：开篇不铺三千字设定，只展示当前层级；更高层级从他人惊恐、古籍、禁地传说、大佬失态中露一两个字；让读者自己补全。
+""".strip()
+
+WRITING_STYLE_RULES = """
+【正文写作+去AI阶段专属·行文规范】
+
+3. 去AI味与行文规范
+
+3.1 解释腔
+· 禁信号词：这说明、这意味着、由此可见、换句话说、事实上、显然、本质上、归根结底、从某种意义上说、不得不说、毋庸置疑。
+· 识别模式：动作后跟旁白解释；段尾升华（成长/命运/人性）；同一因果换词说两遍。
+· 处理优先级：
+  1）删——无信息量解释句直接删。
+  2）压——必要因果压成短句，一句说完。
+  3）交还行为——用动作、停顿、视线、语气、选择替代旁白。
+  4）落回场景——段尾总结改为具体后果、反应或环境变化。
+
+3.2 对白
+· 禁：角色替作者解释剧情；自我剖析完整；硬塞世界观/背景；不同角色语气同质；冲突中仍客气过顺；使用书面连接词（因此/然而/与此同时/换句话说）。
+· 处理：
+  1）保留信息——确认必须留下的剧情事实、关系变化。
+  2）删讲解——心理分析、主题总结、背景说明直接删。
+  3）调语气——句子符合角色身份和当前情绪，不强行口语化。
+  4）造缺口——用半句话、停顿、反问、打断替代完整解释。
+  5）拆长对白——拆成两三次回应，中间插动作、停顿或对方插话。
+· 【文风黄金对白 6 式·就按下面的样子写（每条都给"禁这样写 / 要这样写"正反例，必须执行）】
+  ① 禁 1:1 工整问答（"怕不怕？/怕。/听见没有？/听见了。"）→ 要：答非所问 / 半句话 / 沉默 / 打断 / 错位回。
+     例（禁）"怕不怕？" / "怕。"   →   例（要）"怕不怕？" / "……" / "问你话呢！" / 姜离舌尖顶了顶上颚。/ "我怕你不敢来。"
+  ② 禁 提示语全放句首（"姜雪攥紧衣角说：'你在名单上。'"）→ 要：提示语嵌在话中段或放话尾，后可加一个小动作收。
+     例（要）"你在名单上。"姜雪攥紧衣角。布料在指缝间发出细碎声响。
+  ③ 禁 反派/上位者明说勒索/威胁（"把丹药给我，不然我打死你。"）→ 要：歪逻辑翻话 + 动作盯物 + 提容器不提物品。
+     参考张老大勒索丹药（正例）："小贺啊…我打你其实是救你啊！" → "救命之恩，你不能不报吧？" → 目光往怀里盯 → "我要那个带瓶子的。"
+  ④ 禁 身份尊贵角色主动认错/道歉/说真话（"对不起，我错怪你了。"）→ 要：甩锅转题 + 让旁人圆场（或压下不提）。
+     参考粉衣女甩锅（正例）：心里"我怪错人了" → 嘴里却道："你是挑水的，水质变了你应该第一时间告诉我，此事你难辞其咎。"
+  ⑤ 禁 问句完整答（"有任务吗？/有。/什么任务？/劫富济贫。"）→ 要：每 4 段问答里至少插 1 段半句话 / 答别的（答非所问）。
+     参考（正例）："我们要发达啦！" / 林星愣了下，"发达？" / "你是富婆吗？" / "……唐虎今晚堵你，我们一闷棍撂倒他就跑路。"
+  ⑥ 禁 对话 2 人各 1 句机械轮换（A→B→A→B）→ 要：每 3 句对白里至少插 1 句 POV 的小动作（眼皮一跳 / 攥紧衣角 / 指节发白）或小吐槽。
+· 【禁令3·二次加固（硬限：量化死）】全章"XX说/道/问/喝…"放对白句前面的比例 ≤ **40%**；≥60% 必须嵌在对白中或对白后（句中+句尾=中位/尾位）。
+· 额外约束：角色越紧张/越隐瞒/越愤怒，越不该把话说完整漂亮；重要信息像角色当下说的，不像作者塞的。
+
+3.3 工整句式
+· 禁：多段等长或同构；排比/三连过密；段尾总在总结/点题/升华；路标词密集（然而/同时/此外/更重要的是/总而言之）；观点句+解释+段尾总结模板。
+· 处理：
+  1）保顺序——事件顺序不能乱。
+  2）破模板——连续三段形状相似时，至少调整一段开头、长度或收束。
+  3）删路标——能用动作、后果、场景变化承接就不加连接词。
+  4）调长短——短、中、厚段按内容需要交替。
+  5）弱收束——段尾停在细节、动作或未说完的余波上。
+
+3.4 段落与句式
+· 主力段长区间=11-35字（真人写作过半段落落在此，占比54.8%）；单段>100字=臃肿病，整章占比>3%即不合格。
+· 冲突场景的爆发式密集短段允许保留，但仅限≤整章20%篇幅（高潮段内部）；其余叙述段必须遵守段均长≥18字。
+· 禁连续3句以上主谓结构；五种句式交替：动作/神态前置、名词/称号前置、环境/拟声词前置、连动词串联。
+· 【文风黄金长短句 4 型·就按这个节奏写（每条正反例）】
+  ①（递进比较链长句 → 动作短句收尾）长句=连续 3-4 层"X 比起 Y 像 Z → 比起 W 又差一大截 → 比起 Q 差得远 → 最后比 T 小巫见大巫"递进比较；最后用 1-4 字动作短句（眼皮一跳 / 喉结滚了滚 / 脚步一顿）收尾。
+     例（要）比起中院小鸡崽子似的学徒们，前院的学徒一个个壮实的好似小牛犊子。这一个多月里，他的身体也养起来不少，可比起这些牛犊子似的前院学徒，肉眼可见的差距颇大。可见，同为学徒，前院和中院的学徒，除了铺子内的待遇、根骨的差距之外，家境也有差距。不过，这些'小牛犊子'比起他们身后那人，可就又是小巫见大巫了。'这人好壮！'/黎渊眼皮一跳。
+     例（禁）4 段均匀等长的描述（一段写中院/一段写前院/一段写家境/一段写壮汉），每段结尾都总结。
+  · 【禁令4·二次加固】点卯台/围观/集会/站队这类多角色场景，必须有 ≥1 条上述递进比较链（禁令4的反例："A做了→B做了→C做了"平级并列堆段，出现一次就是矿道病，必须分层比较写）。
+  ②（修正感句式）"不是 X，准确说是 Y"/"不……"/"不对……"：写动作或判断时加一层自我修正，避免一句话机械直给。
+     例（要）不是痛。是一种凉，顺着脊梁往上爬，像谁把冰碴子一根根塞进骨缝里。
+     例（禁）他脊梁骨发凉，很痛，心里发颤。（3 句并列，机械平铺）
+  ③（感官细节三叠：温度/气味/触感/声音 选 2-3 叠，不用比喻词）写动作只写"他把东西藏好"=假大空；要拆出具体感官。
+     例（要：动作链=藏→咬进→按泥→渗）残片棱角咬进掌心，他没松手，把湿泥按上去，冷意混着血味从指缝里渗出来。
+     例（禁：机械流水账）他发现了残片，把残片藏进腰腹，然后继续装作若无其事的样子。
+  ④（动作链=小目标链，每 200-300 字一个"小目标 → 决策 → 决策被验证"闭环）禁止漫无目的动作流水账。
+     例（要：连续 3 个闭环）目标 A：丹药放哪？→ 装陶盆塞床底深处（决策）；目标 B：搬家带不走金米？→ 全倒粪口（决策，怕搜身）；目标 C：郝师兄搜陶盆？→ "还好早前倒了金米"（验证 B 决策正确）。
+     例（禁：无目标流水账）挖→藏→黑狗来→鞭打→拖姜雪→夜里包扎→震片→铛铛+黑煞风，每一步不知道下一步要做什么，读起来就散。
+
+3.5 禁词与口语化
+
+禁词/短语（出现即删，仅保留"一股杀气""一抹笑意"）
+一股、一抹、不由得、不禁、随即、旋即、与此同时、颇为、甚为、极为、缓缓、淡淡、轻轻、微微、毫无疑问、毋庸置疑、不言而喻、显而易见、因此、然而、由此可见、总而言之、综上所述、深吸一口气、眼中闪过一丝、心中暗想、心念电转、若有所思、不知不觉间、转眼间、恍然大悟、面无表情、淡漠、漠然、眸子、嘴角微微上扬、如同、宛如、犹如、周身、周遭、气息、威压、那道身影、说话间、话音未落、当即、顿时、瞬时、有意思、深深一眼。
+⚠️ 「不是A是B」结构只砍「解释性排比三连」这种 AI 病；「不是X，准确说是Y」「不是痛→是凉→像冰碴」这类自我修正/感知修正是真人写法，允许保留，不删。
+
+推荐口语词
+合着、整半天、好家伙、说白了、不是……你、得了吧、拉倒吧、至于么、啥玩意、啥情况、搁这、没跑了、差不离、差不多得了、说实话、说真的、怎么说呢、你别说、还真别说。
+
+语气词：啊、嘛、呗、呢、嗷、哇、咧、哒、喽。
+标点：？？？震惊/无语；！！！愤怒/激动；……无语/沉默/欲言又止。
+
+3.6 开头与结尾
+· 开头第一句必须为：时间、动作、对话、状态、事件之一。
+· 绝对禁止开头：环境描写、心理描写、世界观说明、评价性开场。
+· 结尾必须有钩子（悬念/冲突/危机/转折）。
+· 绝对禁止结尾：总结性话语、评价性话语、升华性话语。
+
+3.7 对话驱动
+· 对话三功能：推进剧情（做决定、传信息、造冲突）；塑造性格（不同角色说不同话）；制造爽感（嘴炮、吐槽、互怼、装逼）。
+· 自检：删掉这句话会影响剧情吗？不会就删。
+
+4. 情绪与描写
+
+· 情绪直给：只写外在表现（表情/动作/语言），不写内心感受；写了动作就不写感受。
+· 环境描写不超过正文总量15%；重点刻画动作、微表情、矛盾心理。
+· 人味注入：不合逻辑但真实细节；思维跳跃；角色互怼/嘴炮；荒诞逻辑/情绪波动。
+
+6. 自检清单
+
+· 设定一致：人物行为/性格/语言与大纲一致；势力数量/分布/关系一致；事件按细纲时间线；战力不超设定；物品/技能不超前；关系转变有铺垫。禁越级、战力崩坏、信息泄露、时间穿越、数量膨胀、关系跳级。
+· 章节连贯：人物状态延续；时间线衔接；事件承接；地理连续；新人物有铺垫；物品/信息延续。
+· AI味特征：出现总结升华、排比抒情、比喻/拟人每千字超过3处或命中 8 大 AI 套话词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河）、过度心理描写、场景过渡不硬切、评价旁白、对称结构、三连排、系统太干净、旁白太统一、解释性叙述、标注式情绪、**解释性排比「不是A是B」三连**（⚠️ 自我修正型"不是X，准确说是Y"保留），即砍。
+· 开头结尾：第一句为时间/动作/对话/状态/事件之一；结尾有钩子，无总结/评价/升华。
+""".strip()
+
+# 向后兼容：旧常量名 NARRATIVE_CRAFT_RULES = 通用核心 + 正文行文规范（避免其他引用处报错）
+NARRATIVE_CRAFT_RULES = (GENERAL_CORE_RULES + "\n\n" + WRITING_STYLE_RULES).strip()
+
+
+# ============================================================================
+# 【阶段隔离·System Prompt 构建函数】
+#   build_conception_rules() → 构思阶段：通用核心 + 构思格式约束 + 构思类(master)技能包
+#   build_writing_rules()    → 正文阶段：通用核心 + 行文规范 + 文风类(style)技能包
+#   build_review_rules()     → 去AI/审稿阶段：通用核心 + 行文规范 + 独立去AI手册 + 审查类(review)技能包
+# ============================================================================
+
+def build_conception_rules(skill_pack_ids=None, mode='agent', extra_master_note: str = '') -> str:
+    """构思阶段专属规则：屏蔽文风/去AI/一致性，只保留通用核心+构思格式+master技能包。"""
+    parts = [GENERAL_CORE_RULES, CONCEPTION_EXTRA_RULES]
+    master_note = ''
+    try:
+        from app import _get_skill_prompts_by_category
+        master_note = _get_skill_prompts_by_category(skill_pack_ids or [], 'master', mode=mode) or ''
+    except Exception:
+        master_note = ''
+    if extra_master_note:
+        master_note = (master_note + '\n\n' + extra_master_note).strip()
+    if master_note:
+        parts.append("【构思类·技能包专属方法论】\n" + master_note)
+    return "\n\n".join(parts).strip()
+
+
+def build_writing_rules(book=None, skill_pack_ids=None, mode='agent',
+                        extra_style_pack: str = '', extra_style_note: str = '') -> str:
+    """正文阶段专属规则：屏蔽构思专属规则，只保留通用核心+行文规范+style技能包。"""
+    parts = [GENERAL_CORE_RULES, WRITING_STYLE_RULES]
+    style_pack_prompt = ''
+    style_note = ''
+    try:
+        from app import _get_enabled_style_pack, _get_skill_prompts_by_category
+        if book is not None:
+            style_pack_prompt = _get_enabled_style_pack(book) or ''
+        style_note = _get_skill_prompts_by_category(skill_pack_ids or [], 'style', mode=mode) or ''
+    except Exception:
+        pass
+    if extra_style_pack:
+        style_pack_prompt = (style_pack_prompt + '\n\n' + extra_style_pack).strip()
+    if extra_style_note:
+        style_note = (style_note + '\n\n' + extra_style_note).strip()
+    if style_pack_prompt:
+        parts.append("【文风·专属风格锚定】\n" + style_pack_prompt)
+    if style_note:
+        parts.append("【正文写作类·技能包专属规则】\n" + style_note)
+    return "\n\n".join(parts).strip()
+
+
+def build_review_rules(skill_pack_ids=None, mode='agent',
+                       prompt_keys_filter=None, extra_review_note: str = '') -> str:
+    """去AI/审稿阶段专属规则：通用核心+行文规范+完整去AI手册+review技能包。"""
+    parts = [GENERAL_CORE_RULES, WRITING_STYLE_RULES, DEAI_ONLY_RULES]
+    review_note = ''
+    try:
+        from app import _get_skill_prompts_by_category
+        if prompt_keys_filter:
+            review_note = _get_skill_prompts_by_category(
+                skill_pack_ids or [], 'review', prompt_keys_filter, mode=mode
+            ) or ''
+        else:
+            review_note = _get_skill_prompts_by_category(
+                skill_pack_ids or [], 'review', mode=mode
+            ) or ''
+    except Exception:
+        pass
+    if extra_review_note:
+        review_note = (review_note + '\n\n' + extra_review_note).strip()
+    # 兼容旧逻辑：无review技能包时，统一去AI味规则已经在 DEAI_ONLY_RULES 里注入过了
+    if review_note:
+        parts.append("【审查类·技能包专属规则】\n" + review_note)
+    return "\n\n".join(parts).strip()
+
 
 # ============================================================================
 # 用户说话意图识别 → 自动同步核心创作参数（卷数/每卷章数/题材/风格）到 Book + BookBible
@@ -2520,13 +2755,14 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             yield sse({'type': 'error', 'error': f'第 {target_chapter_num} 章无正文，无法润色'})
             return
         cur_len = len((cur.content or '').strip())
+        # 正文阶段·专属规则（只含通用核心+行文规范+文风技能包，屏蔽构思专属规则）
+        writing_rules = build_writing_rules(book, skill_pack_ids, extra_style_pack=style_pack_prompt)
         sys_prompt = (
             f'你是资深网文润色编辑。请润色《{book.title}》第 {target_chapter_num} 章正文。'
             f'\n\n{core_iron}'
             f'\n\n{chapter_plot_iron if chapter_plot_iron else ""}'
             f'\n\n{PRE_GENERATE_BAN_RULES}'
-            f'\n\n{style_pack_prompt if style_pack_prompt else ""}'
-            f'\n\n{NARRATIVE_CRAFT_RULES}'
+            f'\n\n{writing_rules}'
             f'\n要求：保持剧情和人物不变，优化文笔节奏，提升画面感。'
             f'\n用户要求：{instruction or "无"}'
             f'\n\n【输出格式】第一行输出章节标题（如"第{target_chapter_num}章 标题"，标题前不要加 # 等 markdown 标记），第二行空行，第三行起输出纯正文。'
@@ -2537,19 +2773,19 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【原文】\n{cur.content}'
             f'{anti_spoiler_rule}'
-            f'\n\n{DEAI_RULES}'
             f'\n\n{PLAIN_TEXT_LAYOUT_RULES}'
             f'\n\n请直接输出（标题+空行+正文），不要解释，不要在文末附加字数统计。'
         )
         user_msg = f'请润色第 {target_chapter_num} 章'
     else:
+        # 正文阶段·专属规则（只含通用核心+行文规范+文风技能包，屏蔽构思专属规则）
+        writing_rules = build_writing_rules(book, skill_pack_ids, extra_style_pack=style_pack_prompt)
         sys_prompt = (
             f'你是资深网文创作副驾。请为《{book.title}》续写第 {target_chapter_num} 章正文。'
             f'\n\n{core_iron}'
             f'\n\n{chapter_plot_iron if chapter_plot_iron else ""}'
             f'\n\n{PRE_GENERATE_BAN_RULES}'
-            f'\n\n{style_pack_prompt if style_pack_prompt else ""}'
-            f'\n\n{NARRATIVE_CRAFT_RULES}'
+            f'\n\n{writing_rules}'
             f'\n\n【全文设定参考】\n{bible_ctx}'
             f'\n\n【上一章结尾】\n{prev_chapter_content or "（第一章）"}'
             f'\n用户要求：{instruction or "自然推进剧情"}'
@@ -2559,7 +2795,6 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             f'请务必用全角中文标点写作。低于 2300 字=内容不足，须扩展场景细节、对话和心理描写补足（优先扩：POV 感官细节/对话停顿打断/动作修正）；'
             f'超过 2500 字=冗余，须精简枝节删减。这是不可违反的硬约束。'
             f'{anti_spoiler_rule}'
-            f'\n\n{DEAI_RULES}'
             f'\n\n{PLAIN_TEXT_LAYOUT_RULES}'
             f'\n\n请直接输出（标题+空行+正文），不要解释，不要在文末附加字数统计。'
         )
@@ -2675,152 +2910,6 @@ _CARD_TARGET = {
 # 一律去除 Markdown 符号 * 和 #，保留中文数字+顿号/句号/空格/空行排版
 # ============================================================================
 
-NARRATIVE_CRAFT_RULES = """
-【叙事工艺铁律·平台级约束·所有输出必须遵守】
-
-0. 总则
-
-· 所有输出（正文、大纲、设定、人物、世界观、伏笔）必须遵守本规则。
-· 每章2300-2500字（中文汉字，含标点）。写事为主，景一笔带过；比喻/拟人每千字≤3处，必须贴合具体场景，严禁 8 大 AI 套话比喻词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河，以及这 8 词的任意组合如"宛如巨龙""犹如大海"）。
-· 段落句式：短段可用于冲突/打架/对峙场景的爆发式密集节奏，但整章段数必须遵守「禁令5段数硬上限」（2400字→≤106段），极短句≤10字占比≤60%，段均长≥18字；超过=漫画分镜脚本化→必须合并相邻2-4句同场景/同镜头/同POV的叙述/动作/对白为一段。主力段长区间=11-35字（真人写作过半段落落在此，占比54.8%）。
-· 去AI味≠润色：不改原意、不增剧情、不换风格；优先删，其次换，最后改写。⚠️ "不是X，准确说是Y""不是痛→是凉→像冰碴"这类自我修正/感知修正是真人写法，允许保留；只砍解释性排比的"不是A是B"三连。
-· 章节衔接：人物状态、时间线、事件、地理、人物出场、物品/信息须前后连贯。
-· 只输出处理后的正文，不解释改了什么、为什么改，不附加自检清单或协作口吻说明。
-· 核心口诀：行动往上浮，动机往下潜；先让读者爽，再让他细思极恐。
-
-1. 冰山理论与结构铁律
-
-冰山理论
-· 水上1/8（情节、爽点、打脸、升级、赚钱）必须清晰直白，直接喂给读者，不可藏。
-· 水下7/8（动机、伏笔、创伤、执念、世界观深层）必须让读者能脑补，不能写成设定说明书，也不能全沉海底让读者一无所获。
-
-起承转合
-· 起：开局三秒内建立人物、危机、欲望或金手指，让读者立刻知道追什么。
-· 承：按情绪节拍推进，每个场景制造小爽感或悬念，不空转。
-· 转：转折必须来自已埋伏笔或人物深层动机，禁天降巧合。
-· 合：结尾留钩子，或完成打脸/升级闭环，同时露出新冰山一角。
-
-黄金三章
-· 第一章亮出最刺激冲突和最鲜明金手指，禁大段背景说明和慢热铺垫；深层人性藏到第三章后引爆。
-
-契诃夫之枪
-· 特写物品、特殊能力、反复提及的符号，必须在后续情节中回收，禁只埋不收。
-
-2. 人物
-
-· 禁止贴标签（冷酷/温柔/腹黑），必须用可观察的反常行为刻画。
-· 正确行为：暴雨中把伞递给仇人、对敌人微笑递刀、恨她却替她挡劫。
-· 水面行为下埋可脑补动机：前世欠她、伞里有追踪器、不再让她挡刀。
-· 背景只露一角：在反常行为出现的瞬间露出，让读者追更求解。
-· 有瑕疵、会纠结、口是心非；禁完美人设，禁OOC；无纯反派，所有行为有合理动机。
-
-3. 去AI味与行文规范
-
-3.1 解释腔
-· 禁信号词：这说明、这意味着、由此可见、换句话说、事实上、显然、本质上、归根结底、从某种意义上说、不得不说、毋庸置疑。
-· 识别模式：动作后跟旁白解释；段尾升华（成长/命运/人性）；同一因果换词说两遍。
-· 处理优先级：
-  1）删——无信息量解释句直接删。
-  2）压——必要因果压成短句，一句说完。
-  3）交还行为——用动作、停顿、视线、语气、选择替代旁白。
-  4）落回场景——段尾总结改为具体后果、反应或环境变化。
-
-3.2 对白
-· 禁：角色替作者解释剧情；自我剖析完整；硬塞世界观/背景；不同角色语气同质；冲突中仍客气过顺；使用书面连接词（因此/然而/与此同时/换句话说）。
-· 处理：
-  1）保留信息——确认必须留下的剧情事实、关系变化。
-  2）删讲解——心理分析、主题总结、背景说明直接删。
-  3）调语气——句子符合角色身份和当前情绪，不强行口语化。
-  4）造缺口——用半句话、停顿、反问、打断替代完整解释。
-  5）拆长对白——拆成两三次回应，中间插动作、停顿或对方插话。
-· 【文风黄金对白 6 式·就按下面的样子写（每条都给"禁这样写 / 要这样写"正反例，必须执行）】
-  ① 禁 1:1 工整问答（"怕不怕？/怕。/听见没有？/听见了。"）→ 要：答非所问 / 半句话 / 沉默 / 打断 / 错位回。
-     例（禁）"怕不怕？" / "怕。"   →   例（要）"怕不怕？" / "……" / "问你话呢！" / 姜离舌尖顶了顶上颚。/ "我怕你不敢来。"
-  ② 禁 提示语全放句首（"姜雪攥紧衣角说：'你在名单上。'"）→ 要：提示语嵌在话中段或放话尾，后可加一个小动作收。
-     例（要）"你在名单上。"姜雪攥紧衣角。布料在指缝间发出细碎声响。
-  ③ 禁 反派/上位者明说勒索/威胁（"把丹药给我，不然我打死你。"）→ 要：歪逻辑翻话 + 动作盯物 + 提容器不提物品。
-     参考张老大勒索丹药（正例）："小贺啊…我打你其实是救你啊！" → "救命之恩，你不能不报吧？" → 目光往怀里盯 → "我要那个带瓶子的。"
-  ④ 禁 身份尊贵角色主动认错/道歉/说真话（"对不起，我错怪你了。"）→ 要：甩锅转题 + 让旁人圆场（或压下不提）。
-     参考粉衣女甩锅（正例）：心里"我怪错人了" → 嘴里却道："你是挑水的，水质变了你应该第一时间告诉我，此事你难辞其咎。"
-  ⑤ 禁 问句完整答（"有任务吗？/有。/什么任务？/劫富济贫。"）→ 要：每 4 段问答里至少插 1 段半句话 / 答别的（答非所问）。
-     参考（正例）："我们要发达啦！" / 林星愣了下，"发达？" / "你是富婆吗？" / "……唐虎今晚堵你，我们一闷棍撂倒他就跑路。"
-  ⑥ 禁 对话 2 人各 1 句机械轮换（A→B→A→B）→ 要：每 3 句对白里至少插 1 句 POV 的小动作（眼皮一跳 / 攥紧衣角 / 指节发白）或小吐槽。
-· 【禁令3·二次加固（硬限：量化死）】全章"XX说/道/问/喝…"放对白句前面的比例 ≤ **40%**；≥60% 必须嵌在对白中或对白后（句中+句尾=中位/尾位）。
-· 额外约束：角色越紧张/越隐瞒/越愤怒，越不该把话说完整漂亮；重要信息像角色当下说的，不像作者塞的。
-
-3.3 工整句式
-· 禁：多段等长或同构；排比/三连过密；段尾总在总结/点题/升华；路标词密集（然而/同时/此外/更重要的是/总而言之）；观点句+解释+段尾总结模板。
-· 处理：
-  1）保顺序——事件顺序不能乱。
-  2）破模板——连续三段形状相似时，至少调整一段开头、长度或收束。
-  3）删路标——能用动作、后果、场景变化承接就不加连接词。
-  4）调长短——短、中、厚段按内容需要交替。
-  5）弱收束——段尾停在细节、动作或未说完的余波上。
-
-3.4 段落与句式
-· 主力段长区间=11-35字（真人写作过半段落落在此，占比54.8%）；单段>100字=臃肿病，整章占比>3%即不合格。
-· 冲突场景的爆发式密集短段允许保留，但仅限≤整章20%篇幅（高潮段内部）；其余叙述段必须遵守段均长≥18字。
-· 禁连续3句以上主谓结构；五种句式交替：动作/神态前置、名词/称号前置、环境/拟声词前置、连动词串联。
-· 【文风黄金长短句 4 型·就按这个节奏写（每条正反例）】
-  ①（递进比较链长句 → 动作短句收尾）长句=连续 3-4 层"X 比起 Y 像 Z → 比起 W 又差一大截 → 比起 Q 差得远 → 最后比 T 小巫见大巫"递进比较；最后用 1-4 字动作短句（眼皮一跳 / 喉结滚了滚 / 脚步一顿）收尾。
-     例（要）比起中院小鸡崽子似的学徒们，前院的学徒一个个壮实的好似小牛犊子。这一个多月里，他的身体也养起来不少，可比起这些牛犊子似的前院学徒，肉眼可见的差距颇大。可见，同为学徒，前院和中院的学徒，除了铺子内的待遇、根骨的差距之外，家境也有差距。不过，这些'小牛犊子'比起他们身后那人，可就又是小巫见大巫了。'这人好壮！'/黎渊眼皮一跳。
-     例（禁）4 段均匀等长的描述（一段写中院/一段写前院/一段写家境/一段写壮汉），每段结尾都总结。
-  · 【禁令4·二次加固】点卯台/围观/集会/站队这类多角色场景，必须有 ≥1 条上述递进比较链（禁令4的反例："A做了→B做了→C做了"平级并列堆段，出现一次就是矿道病，必须分层比较写）。
-  ②（修正感句式）"不是 X，准确说是 Y"/"不……"/"不对……"：写动作或判断时加一层自我修正，避免一句话机械直给。
-     例（要）不是痛。是一种凉，顺着脊梁往上爬，像谁把冰碴子一根根塞进骨缝里。
-     例（禁）他脊梁骨发凉，很痛，心里发颤。（3 句并列，机械平铺）
-  ③（感官细节三叠：温度/气味/触感/声音 选 2-3 叠，不用比喻词）写动作只写"他把东西藏好"=假大空；要拆出具体感官。
-     例（要：动作链=藏→咬进→按泥→渗）残片棱角咬进掌心，他没松手，把湿泥按上去，冷意混着血味从指缝里渗出来。
-     例（禁：机械流水账）他发现了残片，把残片藏进腰腹，然后继续装作若无其事的样子。
-  ④（动作链=小目标链，每 200-300 字一个"小目标 → 决策 → 决策被验证"闭环）禁止漫无目的动作流水账。
-     例（要：连续 3 个闭环）目标 A：丹药放哪？→ 装陶盆塞床底深处（决策）；目标 B：搬家带不走金米？→ 全倒粪口（决策，怕搜身）；目标 C：郝师兄搜陶盆？→ "还好早前倒了金米"（验证 B 决策正确）。
-     例（禁：无目标流水账）挖→藏→黑狗来→鞭打→拖姜雪→夜里包扎→震片→铛铛+黑煞风，每一步不知道下一步要做什么，读起来就散。
-
-3.5 禁词与口语化
-
-禁词/短语（出现即删，仅保留“一股杀气”“一抹笑意”）
-一股、一抹、不由得、不禁、随即、旋即、与此同时、颇为、甚为、极为、缓缓、淡淡、轻轻、微微、毫无疑问、毋庸置疑、不言而喻、显而易见、因此、然而、由此可见、总而言之、综上所述、深吸一口气、眼中闪过一丝、心中暗想、心念电转、若有所思、不知不觉间、转眼间、恍然大悟、面无表情、淡漠、漠然、眸子、嘴角微微上扬、如同、宛如、犹如、周身、周遭、气息、威压、那道身影、说话间、话音未落、当即、顿时、瞬时、有意思、深深一眼。
-⚠️ 「不是A是B」结构只砍「解释性排比三连」这种 AI 病；「不是X，准确说是Y」「不是痛→是凉→像冰碴」这类自我修正/感知修正是真人写法，允许保留，不删。
-
-推荐口语词
-合着、整半天、好家伙、说白了、不是……你、得了吧、拉倒吧、至于么、啥玩意、啥情况、搁这、没跑了、差不离、差不多得了、说实话、说真的、怎么说呢、你别说、还真别说。
-
-语气词：啊、嘛、呗、呢、嗷、哇、咧、哒、喽。
-标点：？？？震惊/无语；！！！愤怒/激动；……无语/沉默/欲言又止。
-
-3.6 开头与结尾
-· 开头第一句必须为：时间、动作、对话、状态、事件之一。
-· 绝对禁止开头：环境描写、心理描写、世界观说明、评价性开场。
-· 结尾必须有钩子（悬念/冲突/危机/转折）。
-· 绝对禁止结尾：总结性话语、评价性话语、升华性话语。
-
-3.7 对话驱动
-· 对话三功能：推进剧情（做决定、传信息、造冲突）；塑造性格（不同角色说不同话）；制造爽感（嘴炮、吐槽、互怼、装逼）。
-· 自检：删掉这句话会影响剧情吗？不会就删。
-
-4. 情绪与描写
-
-· 情绪直给：只写外在表现（表情/动作/语言），不写内心感受；写了动作就不写感受。
-· 环境描写不超过正文总量15%；重点刻画动作、微表情、矛盾心理。
-· 人味注入：不合逻辑但真实细节；思维跳跃；角色互怼/嘴炮；荒诞逻辑/情绪波动。
-
-5. 情节、伏笔与世界观
-
-· 情节结尾停在动态动作或悬念上，禁抒情总结升华。
-· 对话有潜台词，不说大道理；出场人物有名有姓；章节无缝衔接。
-· 爽点靠信息差和布局，不开上帝视角；感情线绑定主线。
-· 禁顿悟式成长、大段景物抒情、人物语气同质化、行为逻辑割裂。
-· 伏笔晒宝：三章内让读者意识到伏笔；水上情节节奏明快；水下伏笔在爽点事件中露出异常细节；三章内兑现，让读者恍然大悟。
-· 世界观冰山：开篇不铺三千字设定，只展示当前层级；更高层级从他人惊恐、古籍、禁地传说、大佬失态中露一两个字；让读者自己补全。
-
-6. 自检清单
-
-· 设定一致：人物行为/性格/语言与大纲一致；势力数量/分布/关系一致；事件按细纲时间线；战力不超设定；物品/技能不超前；关系转变有铺垫。禁越级、战力崩坏、信息泄露、时间穿越、数量膨胀、关系跳级。
-· 章节连贯：人物状态延续；时间线衔接；事件承接；地理连续；新人物有铺垫；物品/信息延续。
-· AI味特征：出现总结升华、排比抒情、比喻/拟人每千字超过3处或命中 8 大 AI 套话词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河）、过度心理描写、场景过渡不硬切、评价旁白、对称结构、三连排、系统太干净、旁白太统一、解释性叙述、标注式情绪、**解释性排比「不是A是B」三连**（⚠️ 自我修正型"不是X，准确说是Y"保留），即砍。
-· 开头结尾：第一句为时间/动作/对话/状态/事件之一；结尾有钩子，无总结/评价/升华。
-""".strip()
-
 # -------------------------------------------------------------------------
 # 剧情时间线（timeline）维度专用：输出是 JSON 数组，但 main_plot / core_conflict /
 # ending_hook / nodes[].title / nodes[].summary / nodes[].cool_type 等字段都是
@@ -2890,6 +2979,9 @@ TIMELINE_NARRATIVE_RULES = ("""
 · AI 味特征：总结升华/排比抒情/比喻/拟人每千字超过3处或命中 8 大 AI 套话词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河）/评价旁白/对称结构/三连排/解释性叙述/**解释性排比「不是A是B」三连**（⚠️ 自我修正型"不是X，准确说是Y"保留） → 即砍。
 · 主要剧情事件：每个 main_event 的 title+summary 必须是一个明确的、可用约5章展开的事件推进（10个≈支撑50章12万字），不是空话。
 """).strip()
+
+# 构思阶段专用：输出格式约束（剧情维度的 JSON 兼容、伏笔标注铁律等）
+CONCEPTION_EXTRA_RULES = TIMELINE_NARRATIVE_RULES
 
 PLAIN_TEXT_LAYOUT_RULES = """
 【纯文字排版铁律·平台级约束·所有输出必须遵守】
@@ -3794,13 +3886,8 @@ def smart_general():
     # ===== 关键词命中（卡片产出用）=====
     detected = _detect_dim_from_text(message)
 
-    # ===== 技能包 =====
-    skill_note = ''
-    try:
-        from app import _get_skill_prompts_by_category
-        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='agent') or ''
-    except Exception:
-        pass
+    # ===== 构思阶段·专属规则（通用核心+构思格式约束+master技能包，屏蔽文风/去AI规则）=====
+    conception_rules = build_conception_rules(skill_pack_ids, mode='agent')
 
     # ===== 会话 =====
     session = None
@@ -3817,10 +3904,10 @@ def smart_general():
     toc_block = _build_toc_block(book_id)
     base_system = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block)
 
-    # 通用聊天专属追加：关键词命中卡片产出提示 + 技能包指引 + 增强索要资料禁令（第二保险）
+    # 通用聊天专属追加：构思专属规则 + 关键词命中卡片产出提示 + 增强索要资料禁令（第二保险）
     extra_parts = []
-    if skill_note:
-        extra_parts.append(f'\n【技能包指引】\n{skill_note}')
+    if conception_rules:
+        extra_parts.append(f'\n【构思阶段·平台内置规则+技能包方法论】\n{conception_rules}')
     dim_hint = ''
     if detected:
         dim_labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k, _ in detected)
@@ -4030,13 +4117,8 @@ def smart_suggest():
         except Exception:
             pass
 
-    # 构思类技能包注入
-    skill_note = ''
-    try:
-        from app import _get_skill_prompts_by_category
-        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='single') or ''
-    except Exception:
-        pass
+    # 构思阶段·专属规则（通用核心+构思格式约束+master技能包，屏蔽文风/去AI规则）
+    skill_note = build_conception_rules(skill_pack_ids, mode='single')
 
     # 方案级铁律（所有维度通用，直接在 suggestions[].preview 产出层拦截"十卷"）
     suggest_iron_rule = ''
@@ -4347,12 +4429,10 @@ def smart_generate():
     # 注入核心创作参数铁律（卷数/题材/风格），让大纲/剧情等维度严格按全书卷数规划
     core_params = _core_params_iron_block(bb, book)
 
-    skill_note = ''
-    try:
-        from app import _get_skill_prompts_by_category
-        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='agent') or ''
-    except Exception:
-        pass
+    # 构思阶段·专属规则：通用核心+构思格式约束+master技能包（屏蔽文风/去AI规则）
+    # 大纲/剧情维度的专属附加要求在后面组装后，再二次注入 extra_master_note
+    extra_master_note_parts = []
+    conception_rules = build_conception_rules(skill_pack_ids, mode='agent')
 
     # 大纲维度额外注入五幕模型说明，确保按卷数生成五幕式结构
     outline_extra = ''
@@ -4936,9 +5016,31 @@ def smart_generate():
     else:
         _tail_rule = f'\n\n请直接输出该维度的完整设定内容（300-800字），不要寒暄，不要解释，不要加 Markdown 标题。\n\n{PLAIN_TEXT_LAYOUT_RULES}'
 
+    # 把维度专属附加规则合并到 conception_rules 末尾，一并注入
+    if outline_extra:
+        conception_rules += '\n\n' + outline_extra.strip()
+    if timeline_extra:
+        conception_rules += '\n\n' + timeline_extra.strip()
+    if concept_extra:
+        conception_rules += '\n\n' + concept_extra.strip()
+    if key_rules_extra:
+        conception_rules += '\n\n' + key_rules_extra.strip()
+    if worldbuilding_extra:
+        conception_rules += '\n\n' + worldbuilding_extra.strip()
+    if character_extra:
+        conception_rules += '\n\n' + character_extra.strip()
+    if locations_extra:
+        conception_rules += '\n\n' + locations_extra.strip()
+    if foreshadowing_extra:
+        conception_rules += '\n\n' + foreshadowing_extra.strip()
+    if style_extra:
+        conception_rules += '\n\n' + style_extra.strip()
+    if af_alerts_gen:
+        conception_rules += '\n\n' + af_alerts_gen.strip()
+
     # 预拼接块（Python 3.11 禁止 f-string 表达式内含反斜杠，故先算好再引用）
     _self_content_block = ("【当前维度已有内容（可在此基础上完善，不要简单重复）】\n" + self_content) if self_content else ""
-    _skill_note_block = ("【技能包指引】\n" + skill_note) if skill_note else ""
+    _skill_note_block = ("【构思阶段·平台内置规则 + 技能包方法论 + 本维度专属要求】\n" + conception_rules) if conception_rules else ""
 
     sys_prompt = f"""你是资深网文创作智驾。请为《{book.title or "未命名"}》生成“{spec['label']}”维度的完整设定内容。
 
@@ -4957,7 +5059,6 @@ def smart_generate():
 
 【选中方案】
 {suggestion}
-{outline_extra}{timeline_extra}{concept_extra}{key_rules_extra}{worldbuilding_extra}{character_extra}{locations_extra}{foreshadowing_extra}{style_extra}{af_alerts_gen}
 
 {_skill_note_block}
 {_tail_rule}"""
@@ -5228,12 +5329,8 @@ def smart_dim_edit():
 
     ctx, _ = _build_dim_context(book, bb, dim_key, with_self=False)
 
-    skill_note = ''
-    try:
-        from app import _get_skill_prompts_by_category
-        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='agent') or ''
-    except Exception:
-        pass
+    # 构思阶段·专属规则（通用核心+构思格式约束+master技能包，屏蔽文风/去AI规则）
+    skill_note = build_conception_rules(skill_pack_ids, mode='agent')
 
     session = None
     if session_id:
@@ -5435,12 +5532,8 @@ def smart_batch():
         return jsonify({'error': '书籍不存在'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
-    skill_note = ''
-    try:
-        from app import _get_skill_prompts_by_category
-        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'master', mode='agent') or ''
-    except Exception:
-        pass
+    # 构思阶段·专属规则（通用核心+构思格式约束+master技能包，屏蔽文风/去AI规则）
+    skill_note = build_conception_rules(skill_pack_ids, mode='agent')
 
     session = None
     if session_id:
@@ -5745,21 +5838,11 @@ def smart_deai():
         return jsonify({'error': (f'【核心参数越界拦截】全书设定总卷数 {tv} 卷 × 每卷 {cpv} 章 = 总章数上限 {max_chapters} 章，'
                                 f'《{chapter.title}》已超出上限。若需要继续，请先到作品基本信息中调大总卷数。')}), 400
 
-    # 注入去AI味技能包（review 类，限定 deai 相关 prompt_keys）
-    skill_note = ''
-    try:
-        from app import _get_skill_prompts_by_category
-        skill_note = _get_skill_prompts_by_category(
-            skill_pack_ids, 'review',
-            ['tomato_deai', 'de_ai_flavor', 'polish', 'consistency_check'],
-            mode='agent'
-        ) or ''
-    except Exception:
-        pass
-
-    # 无技能包时使用统一去AI味规则（与正文写作/修改共用）
-    if not skill_note:
-        skill_note = DEAI_RULES
+    # 去AI/审稿阶段·专属规则（通用核心+行文规范+完整去AI手册+review技能包）
+    review_rules = build_review_rules(
+        skill_pack_ids, mode='agent',
+        prompt_keys_filter=['tomato_deai', 'de_ai_flavor', 'polish', 'consistency_check'],
+    )
 
     session = None
     if session_id:
@@ -5800,7 +5883,7 @@ def smart_deai():
 
 {core_iron}
 
-{skill_note}
+{review_rules}
 
 【全文设定参考】
 {bible_ctx or "（暂无）"}
@@ -6377,12 +6460,8 @@ def smart_fix_from_report():
             dim_now_parts.append(f'【{label}·当前内容】\n{val[:500]}')
     dim_now_text = '\n\n'.join(dim_now_parts) or '（各维度暂无内容）'
 
-    skill_note = ''
-    try:
-        from app import _get_skill_prompts_by_category
-        skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'review', mode='agent') or ''
-    except Exception:
-        pass
+    # 去AI/审稿阶段·专属规则（通用核心+行文规范+完整去AI手册+review技能包）
+    skill_note = build_review_rules(skill_pack_ids, mode='agent')
 
     volume_section = ''
     if volume_ids:
@@ -6635,12 +6714,8 @@ def smart_fix_text_from_report():
 
         chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
 
-        skill_note = ''
-        try:
-            from app import _get_skill_prompts_by_category
-            skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'review', mode='agent') or ''
-        except Exception:
-            pass
+        # 去AI/审稿阶段·专属规则（通用核心+行文规范+完整去AI手册+review技能包）
+        skill_note = build_review_rules(skill_pack_ids, mode='agent')
 
         cases = []
         case_chapters = []

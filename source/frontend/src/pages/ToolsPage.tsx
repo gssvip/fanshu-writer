@@ -34,6 +34,8 @@ export default function ToolsPage() {
   const [skillGenreFilter, setSkillGenreFilter] = useState('');
   const [skillTypeFilter, setSkillTypeFilter] = useState('');
   const [selectedPack, setSelectedPack] = useState<SkillPack | null>(null);
+  // 【需求1-1：双击预览】技能包预览Modal状态
+  const [previewPack, setPreviewPack] = useState<SkillPack | null>(null);
   // 【三类无污染】技能包市场分组折叠状态（默认全展开）
   const [skillGroupCollapsed, setSkillGroupCollapsed] = useState<Record<string, boolean>>({});
 
@@ -186,14 +188,24 @@ export default function ToolsPage() {
   async function handleEditBuiltinSkill(pack: SkillPack) {
     const ok = await requireAuth();
     if (!ok) return;
-    try {
-      // 先克隆，再打开编辑器
-      const cloned = await api.cloneSkillPack(pack.id, `${pack.name}（我的副本）`);
-      openEditSkill(cloned);
-      reloadSkillPacks();
-    } catch (e: any) {
-      alert('创建副本失败: ' + e.message);
-    }
+    // 【需求2：编辑副本=保存才创建副本】
+    // 不立即克隆到数据库，直接打开编辑器编辑副本内容（id=null表示新建）
+    // 只有用户点击"保存"时，handleSaveSkill才会通过createSkillPack创建用户副本
+    // 这样如果用户打开后放弃编辑（关闭不保存），不会产生多余的空副本
+    setSkillEditor({
+      id: null,
+      name: `${pack.name}（我的副本）`,
+      icon: pack.icon || '📦',
+      genre: pack.genre || 'other',
+      book_type: pack.book_type || 'novel',
+      description: pack.description || '',
+      workflow: pack.workflow?.length ? JSON.parse(JSON.stringify(pack.workflow)) : [{ step: 1, name: '', desc: '', prompt_key: '' }],
+      prompts: pack.prompts ? JSON.parse(JSON.stringify(pack.prompts)) : {},
+      category: (pack.category || 'master') as 'master' | 'style' | 'review',
+      genre_target: pack.genre_target || '',
+    });
+    setSkillError('');
+    setShowSkillEditor(true);
   }
 
   async function handlePublishSkill(pack: SkillPack) {
@@ -547,7 +559,7 @@ export default function ToolsPage() {
           {/* 【三类无污染】技能包市场按三类分组展示 */}
           {(() => {
             const renderSkillCard = (pack: SkillPack) => (
-              <div key={pack.id} className={`skill-card ${selectedPack?.id === pack.id ? 'selected' : ''}`} onClick={() => setSelectedPack(pack)}>
+              <div key={pack.id} className={`skill-card ${selectedPack?.id === pack.id ? 'selected' : ''}`} onClick={() => setSelectedPack(pack)} onDoubleClick={() => setPreviewPack(pack)} title="单击选中 · 双击预览">
                 <div className="skill-card-header">
                   <span className="skill-card-icon">{pack.icon}</span>
                   <div>
@@ -733,6 +745,108 @@ export default function ToolsPage() {
                   <button className="btn-primary" onClick={handleSaveSkill} disabled={skillSaving}>
                     {skillSaving ? '保存中...' : '保存技能包'}
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 【需求1-1：双击预览】技能包预览 Modal */}
+          {previewPack && (
+            <div className="skill-editor-overlay" onClick={() => setPreviewPack(null)}>
+              <div className="skill-editor-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 760 }}>
+                <div className="skill-editor-header">
+                  <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 22 }}>{previewPack.icon}</span>
+                    <span>{previewPack.name}</span>
+                    {previewPack.is_builtin ? <span className="builtin-badge">系统</span> : <span className="custom-badge">自定义</span>}
+                    <span style={{
+                      fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 999,
+                      background: (previewPack.category || 'master') === 'master' ? 'rgba(74,144,217,0.12)'
+                        : previewPack.category === 'style' ? 'rgba(217,119,6,0.12)' : 'rgba(5,150,105,0.12)',
+                      color: (previewPack.category || 'master') === 'master' ? '#4a90d9'
+                        : previewPack.category === 'style' ? '#d97706' : '#059669'
+                    }}>
+                      {(previewPack.category || 'master') === 'master' ? '构思类' : previewPack.category === 'style' ? '文风类' : '审查类'}
+                    </span>
+                  </h3>
+                  <button className="btn-icon" onClick={() => setPreviewPack(null)}>✕</button>
+                </div>
+
+                <div style={{ padding: '0 4px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>
+                  {GENRES[previewPack.genre] || previewPack.genre} · {previewPack.book_type === 'novel' ? '长篇' : '短篇'}
+                  {previewPack.github_source && <> · 🔗 <a href={previewPack.github_source} target="_blank" rel="noreferrer" style={{ color: 'var(--link)' }}>GitHub 源</a></>}
+                </div>
+
+                <div style={{ background: 'var(--bg-tertiary)', padding: 12, borderRadius: 8, marginBottom: 16 }}>
+                  <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-primary)' }}>{previewPack.description || '暂无描述'}</div>
+                </div>
+
+                <div className="form-field">
+                  <label>工作流步骤（{previewPack.workflow?.length || 0}步）</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {!previewPack.workflow?.length && <div className="text-muted" style={{fontSize:12}}>暂无工作流步骤</div>}
+                    {previewPack.workflow?.map((step, i) => (
+                      <div key={i} style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 10,
+                        padding: '8px 10px', background: 'var(--bg-tertiary)', borderRadius: 6
+                      }}>
+                        <span style={{
+                          flexShrink:0, width: 22, height:22, borderRadius:'50%',
+                          background:'var(--accent)', color:'#fff', fontSize:11,
+                          display:'flex',alignItems:'center',justifyContent:'center', fontWeight:600
+                        }}>{step.step || i+1}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{step.name || '未命名'}</div>
+                          {step.desc && <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{step.desc}</div>}
+                          {step.prompt_key && (
+                            <div style={{
+                              fontSize: 11, color: 'var(--accent)', marginTop: 4,
+                              fontFamily: 'var(--mono)', background: 'var(--bg-secondary)',
+                              padding: '2px 6px', borderRadius: 4, display: 'inline-block'
+                            }}>
+                              🔑 {step.prompt_key}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="form-field">
+                  <label>提示词模板（{Object.keys(previewPack.prompts || {}).length}个）</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 260, overflow: 'auto' }}>
+                    {!Object.keys(previewPack.prompts || {}).length && <div className="text-muted" style={{fontSize:12}}>暂无提示词模板</div>}
+                    {Object.entries(previewPack.prompts || {}).map(([key, val]) => (
+                      <div key={key} style={{
+                        background: 'var(--bg-tertiary)', borderRadius: 6, overflow: 'hidden',
+                        border: '1px solid var(--border)'
+                      }}>
+                        <div style={{
+                          padding: '6px 10px', background: 'var(--bg-secondary)',
+                          fontSize: 12, fontWeight: 600, fontFamily: 'var(--mono)',
+                          borderBottom: '1px solid var(--border)', color: 'var(--accent)'
+                        }}>
+                          📝 {key}
+                        </div>
+                        <pre style={{
+                          margin: 0, padding: 10, fontSize: 12, lineHeight: 1.7,
+                          color: 'var(--text-primary)', whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word', fontFamily: 'var(--mono)',
+                          maxHeight: 160, overflow: 'auto'
+                        }}>{val || '（空）'}</pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="form-row" style={{ justifyContent: 'flex-end', marginTop: 8, gap: 8 }}>
+                  {previewPack.is_builtin ? (
+                    <button className="btn-secondary" onClick={() => { setPreviewPack(null); handleEditBuiltinSkill(previewPack); }}>✏️ 编辑副本</button>
+                  ) : (
+                    <button className="btn-secondary" onClick={() => { setPreviewPack(null); openEditSkill(previewPack); }}>✏️ 编辑</button>
+                  )}
+                  <button className="btn-primary" onClick={() => setPreviewPack(null)}>关闭</button>
                 </div>
               </div>
             </div>

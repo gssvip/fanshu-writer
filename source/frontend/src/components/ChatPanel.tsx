@@ -911,11 +911,12 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
 // ============================================================================
 // 技能包选择器（精简版，按 category 分组）
 // ============================================================================
-function SkillPackSelector({ packs, selected, onToggle, compact }: {
+function SkillPackSelector({ packs, selected, onToggle, compact, onPreview }: {
   packs: SkillPack[];
   selected: string[];
   onToggle: (id: string) => void;
   compact?: boolean;
+  onPreview?: (pack: SkillPack) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   if (packs.length === 0) return null;
@@ -929,7 +930,12 @@ function SkillPackSelector({ packs, selected, onToggle, compact }: {
       {expanded && (
         <div className="smart-skill-list">
           {packs.map(p => (
-            <label key={p.id} className={`smart-skill-item ${selected.includes(p.id) ? 'checked' : ''}`}>
+            <label
+              key={p.id}
+              className={`smart-skill-item ${selected.includes(p.id) ? 'checked' : ''}`}
+              onDoubleClick={(e) => { e.preventDefault(); onPreview?.(p); }}
+              title={onPreview ? '单击勾选 · 双击预览' : '单击勾选'}
+            >
               <input
                 type="checkbox"
                 checked={selected.includes(p.id)}
@@ -971,6 +977,8 @@ export default function ChatPanel() {
   const [loadingSuggest, setLoadingSuggest] = useState(false);
   const [bible, setBible] = useState<BookBible | null>(null);
   const [skillPacks, setSkillPacks] = useState<SkillPack[]>([]);
+  // 【需求1-2：ChatPanel双击预览】技能包预览Modal
+  const [previewPack, setPreviewPack] = useState<SkillPack | null>(null);
   // 各 Tab 独立的技能包选择（切换 Tab 互不干扰）
   const [settingPacks, setSettingPacks] = useState<string[]>([]);
   const [chapterPacks, setChapterPacks] = useState<string[]>([]);
@@ -2306,7 +2314,7 @@ export default function ChatPanel() {
                       })}
                     </div>
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} compact />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} onPreview={(pack) => setPreviewPack(pack)} compact />
                   {/* 修正任务清单（从防遗忘报告违规项带入，支持多维度连续修正并追踪进度） */}
                   {fixTasks.length > 0 && (
                     <div className="fix-tasks-panel">
@@ -2537,7 +2545,7 @@ export default function ChatPanel() {
                       >取消</button>
                     )}
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} compact />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'style')} selected={chapterPacks} onToggle={(id) => toggleSkillPack('chapter', id)} onPreview={(pack) => setPreviewPack(pack)} compact />
                 </>
               )}
 
@@ -2563,7 +2571,7 @@ export default function ChatPanel() {
                   {chapters.length > 10 && (
                     <div className="smart-deai-hint">💡 仅显示最新10章，其他章节可在下方消息框输入「第N章」指定</div>
                   )}
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={deaiPacks_selected} onToggle={(id) => toggleSkillPack('deai', id)} compact />
+                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={deaiPacks_selected} onToggle={(id) => toggleSkillPack('deai', id)} onPreview={(pack) => setPreviewPack(pack)} compact />
                 </>
               )}
 
@@ -3101,6 +3109,94 @@ export default function ChatPanel() {
                   <span className="smart-tab-label">{t.label}</span>
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 【需求1-2：双击预览】技能包预览 Modal */}
+      {previewPack && (
+        <div className="skill-editor-overlay" onClick={() => setPreviewPack(null)}>
+          <div className="skill-editor-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 720 }}>
+            <div className="skill-editor-header">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 22 }}>{previewPack.icon}</span>
+                <span>{previewPack.name}</span>
+                {previewPack.is_builtin ? <span className="builtin-badge">系统</span> : <span className="custom-badge">自定义</span>}
+                <span style={{
+                  fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 999,
+                  background: (previewPack.category || 'master') === 'master' ? 'rgba(74,144,217,0.12)'
+                    : previewPack.category === 'style' ? 'rgba(217,119,6,0.12)' : 'rgba(5,150,105,0.12)',
+                  color: (previewPack.category || 'master') === 'master' ? '#4a90d9'
+                    : previewPack.category === 'style' ? '#d97706' : '#059669'
+                }}>
+                  {(previewPack.category || 'master') === 'master' ? '构思类' : previewPack.category === 'style' ? '文风类' : '审查类'}
+                </span>
+              </h3>
+              <button className="btn-icon" onClick={() => setPreviewPack(null)}>✕</button>
+            </div>
+
+            <div style={{ background: 'var(--bg-tertiary)', padding: 12, borderRadius: 8, marginBottom: 12 }}>
+              <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-primary)' }}>{previewPack.description || '暂无描述'}</div>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>工作流（{previewPack.workflow?.length || 0}步）</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {!previewPack.workflow?.length && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>暂无</div>}
+                {previewPack.workflow?.map((step, i) => (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 8,
+                    padding: '6px 10px', background: 'var(--bg-tertiary)', borderRadius: 6
+                  }}>
+                    <span style={{
+                      flexShrink: 0, width: 20, height: 20, borderRadius: '50%',
+                      background: 'var(--accent)', color: '#fff', fontSize: 10,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600
+                    }}>{step.step || i + 1}</span>
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{step.name || '未命名'}</div>
+                      {step.desc && <div style={{ color: 'var(--text-secondary)', fontSize: 11, marginTop: 1 }}>{step.desc}</div>}
+                      {step.prompt_key && (
+                        <div style={{
+                          marginTop: 3, fontFamily: 'var(--mono)', fontSize: 10,
+                          color: 'var(--accent)', background: 'var(--bg-secondary)',
+                          padding: '1px 5px', borderRadius: 3, display: 'inline-block'
+                        }}>🔑 {step.prompt_key}</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>提示词模板（{Object.keys(previewPack.prompts || {}).length}个）</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflow: 'auto' }}>
+                {!Object.keys(previewPack.prompts || {}).length && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>暂无</div>}
+                {Object.entries(previewPack.prompts || {}).map(([key, val]) => (
+                  <details key={key} style={{
+                    background: 'var(--bg-tertiary)', borderRadius: 6,
+                    border: '1px solid var(--border)', overflow: 'hidden'
+                  }}>
+                    <summary style={{
+                      padding: '5px 10px', fontSize: 12, fontWeight: 600,
+                      fontFamily: 'var(--mono)', cursor: 'pointer', color: 'var(--accent)',
+                      listStyle: 'none'
+                    }}>📝 {key} <span style={{ float: 'right', color: 'var(--text-muted)', fontWeight: 400 }}>点击展开</span></summary>
+                    <pre style={{
+                      margin: 0, padding: 10, fontSize: 11, lineHeight: 1.7,
+                      color: 'var(--text-primary)', whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word', fontFamily: 'var(--mono)',
+                      borderTop: '1px solid var(--border)', maxHeight: 140, overflow: 'auto'
+                    }}>{val || '（空）'}</pre>
+                  </details>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14, gap: 8 }}>
+              <button className="btn-primary" onClick={() => setPreviewPack(null)}>关闭</button>
             </div>
           </div>
         </div>
