@@ -12,6 +12,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from pathlib import Path
+from typing import Any, Dict, Optional  # 必须在顶层导入，CI高版本解释器检查类型注解
 from flask import Flask, request, jsonify, send_file, send_from_directory, stream_with_context
 from flask_cors import CORS; from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash

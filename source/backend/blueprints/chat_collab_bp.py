@@ -21,6 +21,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional  # 顶层显式导入，兼容CI高版本Python解释器
 
 from flask import Blueprint, jsonify, request, Response, stream_with_context
 
