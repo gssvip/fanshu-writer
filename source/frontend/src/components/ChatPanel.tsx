@@ -2118,7 +2118,7 @@ export default function ChatPanel() {
       }
       return `输入要求直接生成或修改「${dimLabel}」（无需方案选择）…`;
     }
-    if (activeTab === 'chapter') return '输入写作要求直接续写，或输入「第3章 增加心理描写」修改已写章节…';
+    if (activeTab === 'chapter') return '接上一章剧情，读取剧情维度里的「本章剧情节点」，保证ONE主钩子贯穿本章。禁止无目标流水账。（可直接点「续写」，或追加要求，如：第3章 增加打斗细节）';
     if (activeTab === 'deai') return '点击上方「开始去AI味」按钮即可…';
     if (activeTab === 'review') return '点击上方检查按钮即可…';
     return '和 AI 智驾聊聊…';
