@@ -24,10 +24,8 @@ MAX_LINES_PER_FILE = 2000
 MAX_ROUTES_PER_FILE = 30
 
 # app.py 基线行数：只能减不能增（防止巨石继续膨胀）
-# 2026-08-18 重校准（M5 5项需求交付）：
-#   需求0：内置规则拆分4常量、3阶段构建函数、3注入点替换
-#   需求3：25+技能包分类清理+阶段标记+stage_keys规范化（SEED_SKILL_PACKS大幅）
-APP_PY_BASELINE = 13975
+# 2026-08-18 重校准2（CI Python版本兼容修复）：增加 from typing import Any,Dict,Optional 一行
+APP_PY_BASELINE = 13976
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -43,9 +41,8 @@ WRITEPAGE_BASELINE = 8899
 CHATPANEL_BASELINE = 3206
 
 # chat_collab_bp.py 基线行数：只能减不能增（智驾协作 Blueprint 巨石）
-# 2026-08-18 重校准（需求0：拆分4常量+3构建函数+3注入点替换，
-#   修复DEAI注入顺序、常量引用顺序NameError等）
-CHAT_COLLAB_BP_BASELINE = 6912
+# 2026-08-18 重校准2（CI Python版本兼容修复）：增加from typing导入一行
+CHAT_COLLAB_BP_BASELINE = 6913
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
