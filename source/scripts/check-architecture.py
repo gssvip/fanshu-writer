@@ -41,8 +41,8 @@ WRITEPAGE_BASELINE = 8899
 CHATPANEL_BASELINE = 3206
 
 # chat_collab_bp.py 基线行数：只能减不能增（智驾协作 Blueprint 巨石）
-# 2026-08-18 重校准2（CI Python版本兼容修复）：增加from typing导入一行
-CHAT_COLLAB_BP_BASELINE = 6913
+# 2026-08-18 重校准3（M6 NameError修复）：chat_smart_action新增取参行 + 2处调用加skill_pack_ids + 函数签名+1参数 → 基线再+3行
+CHAT_COLLAB_BP_BASELINE = 6916
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
