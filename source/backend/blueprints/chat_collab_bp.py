@@ -76,26 +76,25 @@ DEAI_RULES = """【去AI味执行规则】
 7. 扫路标 → 删不必要"然而/同时/此外/更重要的是/总而言之"
 8. 自检读一遍 → 确认未新增内容、未换风格、只做减法
 
-【五、网文创作硬约束（与人味注入一并执行）】
-1. 极致模仿人的写作习惯，写得自然，没有AI味。以写事为主，景物一笔带过；比喻/拟人每千字≤3处，必须贴合具体场景，严禁 8 大 AI 套话比喻词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河，以及这 8 词的任意组合如"宛如巨龙""犹如大海"）。
-2. 句子阅读感强、读起来顺畅，长短句自然交替，不刻意整齐。冲突场景的爆发式密集短段是手机端友好节奏，但整章段数必须遵守「禁令5段数硬上限」，极短句≤10字占比≤60%、段均长≥18字，超过=漫画分镜脚本化→合并同场景段。
-3. 章节间剧情连贯、逻辑清晰，前后呼应不跳戏。
-4. 环境描写不超过15%，重点刻画人物动作、微表情、矛盾心理；人物全员有瑕疵、会纠结、口是心非，不许完美人设，禁止OOC。
-5. 结尾停在动态动作或悬念上，禁止抒情总结升华；对话有潜台词，不说大道理；所有出场人物有名有姓；章节无缝衔接不跳时间。
-6. 没有纯反派，所有角色行为都有合理动机；爽点靠信息差和布局，不开上帝视角；感情线绑定主线、无工业糖精。
-7. 绝对不能出现：顿悟式成长、大段景物抒情、人物语气同质化、行为逻辑割裂。
-8. 人味注入：加入不完美细节（结巴/重复/打断）、感官碎片、口语化表达，删除冗余形容词。⚠️ "不是X，准确说是Y""不是痛→是凉→像冰碴"这类自我修正/感知修正是真人写法，允许保留；只砍解释性排比的"不是A是B"三连。
+【五、去AI阶段补充约束（通用铁律/冰山/人物/情节铁律见上方，此处不再复述）】
+1. 极致模仿人的写作习惯，写得自然不做作。写事为主，景物一笔带过；比喻/拟人每千字≤3处且贴合具体场景，严禁 8 大 AI 套话比喻词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河，及其任意组合）。
+2. 整章段数必须遵守「禁令5段数硬上限」；极短句≤10字占比≤60%，段均长≥18字；超过=漫画分镜脚本化→合并同场景/同镜头/同POV的相邻叙述/动作/对白段。
+3. 去AI阶段**不新增不改动**：不改原意、不增剧情、不换风格、不加金句；只做减法/替换。
+4. 人味注入：加入不完美细节（结巴/重复/打断/口误）、感官碎片（温度/气味/触感三选二叠，不用比喻词）、口语化表达（合着/整半天/好家伙/说白了…），删除冗余形容词和路标词。
+5. ⚠️ 【自我修正写法例外】「不是 X，准确说是 Y」「不是痛→是凉→像冰碴」这类**真人修正感句式=正确写法，允许保留**；只砍"解释性排比的不是A是B三连"（不是…是…/不是…而是…连续三条以上无信息量解释）。
 
 【六、输出契约】
-- 只输出处理后的正文，不解释改了什么、为什么改，不要在文末附加字数统计。
+- 只输出处理后的正文，不解释改了什么、为什么改，不要在文末附加字数统计或自检清单。
 - 优先级铁律：人味 > 克制 > 流畅。""".strip()
 
 # ----------------------------------------------------------------------------
 # 【阶段隔离·规则拆分】把原"叙事工艺铁律"拆成4类，不同阶段只注入该阶段需要的
 #   GENERAL_CORE_RULES     → 构思+正文+去AI 三阶段通用（总则/冰山/结构/人物/情节）
 #   CONCEPTION_EXTRA_RULES → 只用于构思阶段（大纲/剧情 JSON 格式约束等）
-#   WRITING_STYLE_RULES    → 只用于正文写作 + 去AI 阶段（行文规范/对白/禁词/情绪）
-#   DEAI_ONLY_RULES        → 只用于去AI 阶段（独立去AI操作手册）
+#   WRITING_STYLE_RULES    → 只用于正文写作阶段（行文规范/对白/禁词/情绪+自检清单）
+#   DEAI_ONLY_RULES        → 只用于去AI 阶段（独立去AI操作手册+行文识别与处理速查+去AI补充约束）
+# 注意：DEAI阶段不再注入 WRITING_STYLE_RULES，避免 DEAI_RULES 与 WRITING_STYLE_RULES 的
+#      解释腔/对白/工整句式/禁词表/执行流程等大块内容重复出现 2 遍。
 # ----------------------------------------------------------------------------
 
 DEAI_ONLY_RULES = DEAI_RULES  # 别名：DEAI_RULES 就是"去AI阶段专用"的完整规则
@@ -108,7 +107,6 @@ GENERAL_CORE_RULES = """
 · 所有输出（正文、大纲、设定、人物、世界观、伏笔）必须遵守本规则。
 · 每章2300-2500字（中文汉字，含标点）。写事为主，景一笔带过；比喻/拟人每千字≤3处，必须贴合具体场景，严禁 8 大 AI 套话比喻词（宛如/犹如/恍若/宛若 + 大海/巨龙/深渊/星河，以及这 8 词的任意组合如"宛如巨龙""犹如大海"）。
 · 段落句式：短段可用于冲突/打架/对峙场景的爆发式密集节奏，但整章段数必须遵守「禁令5段数硬上限」（2400字→≤106段），极短句≤10字占比≤60%，段均长≥18字；超过=漫画分镜脚本化→必须合并相邻2-4句同场景/同镜头/同POV的叙述/动作/对白为一段。主力段长区间=11-35字（真人写作过半段落落在此，占比54.8%）。
-· 去AI味≠润色：不改原意、不增剧情、不换风格；优先删，其次换，最后改写。⚠️ "不是X，准确说是Y""不是痛→是凉→像冰碴"这类自我修正/感知修正是真人写法，允许保留；只砍解释性排比的"不是A是B"三连。
 · 章节衔接：人物状态、时间线、事件、地理、人物出场、物品/信息须前后连贯。
 · 只输出处理后的正文，不解释改了什么、为什么改，不附加自检清单或协作口吻说明。
 · 核心口诀：行动往上浮，动机往下潜；先让读者爽，再让他细思极恐。
@@ -139,7 +137,7 @@ GENERAL_CORE_RULES = """
 · 背景只露一角：在反常行为出现的瞬间露出，让读者追更求解。
 · 有瑕疵、会纠结、口是心非；禁完美人设，禁OOC；无纯反派，所有行为有合理动机。
 
-5. 情节、伏笔与世界观
+3. 情节、伏笔与世界观
 
 · 情节结尾停在动态动作或悬念上，禁抒情总结升华。
 · 对话有潜台词，不说大道理；出场人物有名有姓；章节无缝衔接。
@@ -282,17 +280,16 @@ def build_conception_rules(skill_pack_ids=None, mode='agent', extra_master_note:
 
 def build_writing_rules(book=None, skill_pack_ids=None, mode='agent',
                         extra_style_pack: str = '', extra_style_note: str = '') -> str:
-    """正文阶段专属规则：屏蔽构思专属规则，只保留通用核心+行文规范+style技能包。
-    - book 必传：用于从 book.style_skill_ids 取已持久化文风包，以及按 genre_target 匹配题材。"""
+    """正文阶段专属规则：通用核心 + 行文规范 + 文风类(style)技能包。
+    - book 必传：用于取已持久化文风包，并按 genre_target 匹配题材。
+    - 文风技能包【只注入一次】：merged_ids = 请求传参 ids ∪ book.style_skill_ids（有序并集去重），
+      不再重复走 _get_enabled_style_pack 那条路径，避免同一包出现 2 遍。"""
     parts = [GENERAL_CORE_RULES, WRITING_STYLE_RULES]
-    style_pack_prompt = ''
     style_note = ''
     book_genre = getattr(book, 'genre', None) if book is not None else None
     try:
-        from app import _get_enabled_style_pack, _get_skill_prompts_by_category, _resolve_skill_ids_by_category
-        if book is not None:
-            style_pack_prompt = _get_enabled_style_pack(book) or ''
-        # 合并 ids：请求 skill_pack_ids ∪ book.style_skill_ids（持久化的）
+        from app import _get_skill_prompts_by_category, _resolve_skill_ids_by_category
+        # 合并 ids：请求 skill_pack_ids ∪ book.style_skill_ids（持久化的），有序并集去重
         if book is not None:
             book_style_ids = _resolve_skill_ids_by_category(book, 'style')
         else:
@@ -300,23 +297,22 @@ def build_writing_rules(book=None, skill_pack_ids=None, mode='agent',
         merged_ids = list(dict.fromkeys(list(skill_pack_ids or []) + list(book_style_ids)))
         style_note = _get_skill_prompts_by_category(merged_ids, 'style', mode=mode, book_genre=book_genre) or ''
     except Exception:
-        pass
-    if extra_style_pack:
-        style_pack_prompt = (style_pack_prompt + '\n\n' + extra_style_pack).strip()
-    if extra_style_note:
-        style_note = (style_note + '\n\n' + extra_style_note).strip()
-    if style_pack_prompt:
-        parts.append("【文风·专属风格锚定】\n" + style_pack_prompt)
+        style_note = ''
+    if extra_style_pack or extra_style_note:
+        extra = '\n\n'.join(s for s in [extra_style_pack, extra_style_note] if s).strip()
+        style_note = (style_note + ('\n\n' + extra if style_note else extra)).strip()
     if style_note:
-        parts.append("【正文写作类·技能包专属规则】\n" + style_note)
+        parts.append("【文风类·技能包专属规则】\n" + style_note)
     return "\n\n".join(parts).strip()
 
 
 def build_review_rules(skill_pack_ids=None, mode='agent',
                        prompt_keys_filter=None, extra_review_note: str = '', book=None) -> str:
-    """去AI/审稿阶段专属规则：通用核心+行文规范+完整去AI手册+review技能包。
-    - book 可选：传入时自动从 book.review_skill_ids 取已持久化ID，与请求 skill_pack_ids 取并集。"""
-    parts = [GENERAL_CORE_RULES, WRITING_STYLE_RULES, DEAI_ONLY_RULES]
+    """去AI/审稿阶段专属规则：通用核心 + 独立去AI手册 + 审查类(review)技能包。
+    ⚠️ 去AI阶段【不再注入 WRITING_STYLE_RULES】：
+       DEAI_ONLY_RULES 内部已经完整覆盖解释腔/对白/工整句式/禁词表/执行流程等行文规范，
+       再注入 WRITING_STYLE_RULES 会让同内容出现 2 遍（用户感知"啰里啰嗦重复好几遍"）。"""
+    parts = [GENERAL_CORE_RULES, DEAI_ONLY_RULES]
     review_note = ''
     try:
         from app import _get_skill_prompts_by_category, _resolve_skill_ids_by_category
@@ -331,10 +327,9 @@ def build_review_rules(skill_pack_ids=None, mode='agent',
                 merged_ids, 'review', mode=mode
             ) or ''
     except Exception:
-        pass
+        review_note = ''
     if extra_review_note:
         review_note = (review_note + '\n\n' + extra_review_note).strip()
-    # 兼容旧逻辑：无review技能包时，统一去AI味规则已经在 DEAI_ONLY_RULES 里注入过了
     if review_note:
         parts.append("【审查类·技能包专属规则】\n" + review_note)
     return "\n\n".join(parts).strip()
