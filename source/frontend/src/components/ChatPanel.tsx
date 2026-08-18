@@ -52,7 +52,16 @@ async function* parseSSE(response: Response): AsyncGenerator<SseEvent> {
           if (!jsonStr) continue;
           try {
             yield JSON.parse(jsonStr) as SseEvent;
-          } catch { /* ignore malformed */ }
+          } catch (parseErr: any) {
+            // malformed JSON：如果第一次遇到非 JSON 内容（例如 Werkzeug 返回的 HTML 错误页 / 裸 Python traceback），
+            // 打一次日志，避免默默吞掉后读者最终只能看到"network error"无法定位
+            if (!(parseSSE as any)._malformedWarned) {
+              // eslint-disable-next-line no-console
+              console.warn('[parseSSE] 收到非JSON data帧（可能是服务器返回HTML错误页/traceback），前200字样本：',
+                jsonStr.slice(0, 200));
+              (parseSSE as any)._malformedWarned = true;
+            }
+          }
         }
       }
     }
@@ -1672,7 +1681,13 @@ export default function ChatPanel() {
       api.smartChapters(bookId).then(r => setChapters(r.chapters || [])).catch(() => {});
     } catch (e: any) {
       if (e.name !== 'AbortError') {
-        setStreamError(e.message || `${label}失败`);
+        // 真实错误先打 console（方便排查：例如 Werkzeug 双迭代导致 DetachedInstanceError / 响应畸形）
+        // eslint-disable-next-line no-console
+        console.error('[ChatPanel] 正文生成失败', e?.name, e?.message, e?.stack, { status: (e as any)?.status });
+        const msg = e?.message
+          ? (e?.name ? `${e.name}: ${e.message}` : e.message)
+          : (e?.name || `${label}失败`);
+        setStreamError(msg);
         removeEmptyAi();
       }
     } finally {

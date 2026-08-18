@@ -47,7 +47,11 @@ WRITEPAGE_BASELINE = 8899
 # 2026-08-19 重校准3（NETWORK ERROR SSE冒号注释帧协议对齐）：
 #   - parseSSE 显式新增 trimmed.startsWith(':') continue 跳过SSE心跳注释帧（1行+注释）
 #   → 净减 6 行（3233→3227，属精简）
-CHATPANEL_BASELINE = 3227
+# 2026-08-19 重校准4（NETWORK ERROR错误诊断+Werkzeug双迭代修复）：
+#   - doChapterAction catch：console.error打真实错误（e.name/e.message/stack）+ 错误展示e.name:msg（10行）
+#   - parseSSE JSON.parse catch：首次malformed打warn日志（含前200字样本+去重标记）（8行）
+#   → 净增 15 行（3227→3242），属NETWORK ERROR排查必需（双迭代=两遍delta根因），不属业务膨胀
+CHATPANEL_BASELINE = 3242
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
