@@ -46,6 +46,7 @@ async function* parseSSE(response: Response): AsyncGenerator<SseEvent> {
         buffer = buffer.slice(idx + 2);
         for (const line of block.split('\n')) {
           const trimmed = line.trim();
+          if (trimmed.startsWith(':')) continue; // SSE 协议：冒号开头=注释心跳帧（后端防Render 30s idle timeout），直接跳过
           if (!trimmed.startsWith('data:')) continue;
           const jsonStr = trimmed.slice(5).trim();
           if (!jsonStr) continue;

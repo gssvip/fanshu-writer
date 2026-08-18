@@ -44,7 +44,10 @@ WRITEPAGE_BASELINE = 8899
 #   - toggleSkillPack 持久化：api.updateBook保存到三字段(18行)
 #   - doChapterAction 请求加 skill_pack_ids 字段(2行)
 #   → 净增 3233 - 3206 = 27 行
-CHATPANEL_BASELINE = 3233
+# 2026-08-19 重校准3（NETWORK ERROR SSE冒号注释帧协议对齐）：
+#   - parseSSE 显式新增 trimmed.startsWith(':') continue 跳过SSE心跳注释帧（1行+注释）
+#   → 净减 6 行（3233→3227，属精简）
+CHATPANEL_BASELINE = 3227
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
@@ -65,7 +68,12 @@ TOOLSPAGE_BASELINE = 1192
 #   - chat_smart_action加start受理帧meta，_action_chapter加「正在续写/润色」delta
 #   - 全7处Response headers加 Connection:keep-alive + Cache-Control:no-cache, no-transform
 #   → 净加 27 行（6905→6932），属NETWORK ERROR单点修复必需，非业务膨胀
-CHAT_COLLAB_BP_BASELINE = 6932
+# 2026-08-19 重校准8（NETWORK ERROR重试/阻塞空窗期心跳：从截图暴露断在[字数校验]之后的_ensure_word_count阻塞阶段）：
+#   - 顶部+threading/time/queue import（6行），新增SSE_HEARTBEAT_COMMENT常量+_run_blocking_with_heartbeat generator（33行）
+#   - _action_chapter字数校验段：_ensure_word_count从直接同步调用→包_run_blocking_with_heartbeat每10s心跳（21行）
+#   - 4处for _attempt in range(max_attempts)循环体首行：加心跳+第N次尝试delta（4处×6行=24行）
+#   → 净加 72 行（6932→7004），属NETWORK ERROR单点修复必需（堵住[字数校验]后断连这一用户实锤场景）
+CHAT_COLLAB_BP_BASELINE = 7004
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

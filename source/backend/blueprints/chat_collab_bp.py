@@ -19,13 +19,59 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
+from queue import Queue, Empty
 from typing import Any, Dict, List, Optional  # 顶层显式导入，兼容CI高版本Python解释器
 
 from flask import Blueprint, jsonify, request, Response, stream_with_context
 
 chat_collab_bp = Blueprint('chat_collab', __name__)
+
+
+# ----------------------------------------------------------------------------
+# SSE 保活工具：Render idle timeout=30s，任何同步阻塞(非流式LLM/校验)期间必须间隔<30s发1帧
+# ----------------------------------------------------------------------------
+SSE_HEARTBEAT_COMMENT = ': ping-heartbeat-keepalive\n\n'
+SSE_HB_INTERVAL_SEC = 10  # 每10秒发1帧心跳，远小于30s阈值，留20s余量
+
+
+def _run_blocking_with_heartbeat(blocking_fn, sse_fn, extra_frames=None):
+    """在线程里跑 blocking_fn()，主 generator 按 SSE_HB_INTERVAL_SEC 周期 yield 心跳，直到返回。
+    - 先 yield 1 帧心跳立即占坑，再按间隔发后续心跳。
+    - sse_fn(payload) -> str：用于发 data 帧；心跳是纯冒号注释帧，直接拼字符串。
+    - extra_frames: 可选 list[str] 原始帧（含\\n\\n），在 blocking_fn 跑的过程中穿插发（用于进度通知）。
+    - 返回：blocking_fn 的返回值。
+    """
+    result_box = []
+    exc_box = []
+
+    def _worker():
+        try:
+            result_box.append(blocking_fn())
+        except Exception as e:
+            exc_box.append(e)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    extra_iter = iter(extra_frames or [])
+    while True:
+        t.join(timeout=SSE_HB_INTERVAL_SEC)
+        if not t.is_alive():
+            break
+        # 插 1 条原始帧再插心跳
+        try:
+            raw = next(extra_iter)
+            yield raw
+        except StopIteration:
+            pass
+        yield SSE_HEARTBEAT_COMMENT
+    if exc_box:
+        raise exc_box[0]
+    return result_box[0] if result_box else None
+
 
 # 滑窗上下文：保留最近 N 轮 + 系统提示，超出则保留首尾、中间摘要
 MAX_HISTORY_ROUNDS = 8
@@ -2823,10 +2869,20 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     draft_wc = count_words(body_content)
     if (draft_wc < 2300 or draft_wc > 2500) and api_key and base_url and model:
         yield sse({'type': 'delta', 'content': f'\n\n[字数校验] 初稿 {draft_wc} 字，正在修正至 2400±100…'})
-        corrected, wc_note = _ensure_word_count(
-            body_content, api_key=api_key, base_url=base_url,
-            model=model, max_tokens=4096, chapter_num=target_chapter_num,
-            count_fn=count_words)
+        # _ensure_word_count 内部是 requests.post 同步阻塞（非流式），可能 TTFT>30s 触发 Render idle timeout
+        # → 用 _run_blocking_with_heartbeat 包一下，后台线程跑阻塞函数，主 generator 每 10s yield 1 帧心跳
+        yield SSE_HEARTBEAT_COMMENT  # 先打 1 帧，占住连接
+
+        def _wc_blocking_call():
+            return _ensure_word_count(
+                body_content, api_key=api_key, base_url=base_url,
+                model=model, max_tokens=4096, chapter_num=target_chapter_num,
+                count_fn=count_words)
+
+        _wc_result = yield from _run_blocking_with_heartbeat(
+            _wc_blocking_call, sse,
+            extra_frames=[sse({'type': 'delta', 'content': '…'})])
+        corrected, wc_note = _wc_result if _wc_result is not None else (None, None)
         if corrected and corrected.strip() and count_words(corrected) != draft_wc:
             # 修正后字数更接近目标，采用修正版（再剥一次标题防御 + 纯文本清理）
             corrected = _clean_text_to_plain(corrected)
@@ -5188,6 +5244,10 @@ def smart_generate():
             max_attempts = 4  # 首次 + 最多 3 次重试（用户反馈经常空，再提高一次保障率）
             _EMPTY_FALLBACK_LEN = 30  # 兜底阈值从 80 降到 30，人物/文风/伏笔这类短内容维度也能触发
             for _attempt in range(max_attempts):
+                # === SSE 保活：每次 LLM 调用前（含重试）先发 1 帧心跳，占住连接防 Render 30s idle timeout ===
+                yield SSE_HEARTBEAT_COMMENT
+                if _attempt >= 1:
+                    yield sse({'type': 'delta', 'content': f'\n（第{_attempt + 1}次尝试…）\n'})
                 full = []
                 # 重试策略：初始温度从 0.7 起步（原 0.85 太高，容易天马行空或拒答），重试再微增
                 _temp = 0.7 + min(_attempt * 0.08, 0.2)
@@ -5422,6 +5482,10 @@ def smart_dim_edit():
             max_attempts = 4
             _EMPTY_FALLBACK_LEN = 30
             for _attempt in range(max_attempts):
+                # === SSE 保活：每次 LLM 调用前（含重试）先发 1 帧心跳，占住连接防 Render 30s idle timeout ===
+                yield SSE_HEARTBEAT_COMMENT
+                if _attempt >= 1:
+                    yield sse({'type': 'delta', 'content': f'\n（第{_attempt + 1}次尝试…）\n'})
                 full = []
                 _temp = 0.7 + min(_attempt * 0.08, 0.2)
                 _max_tok = max_tok
@@ -5654,6 +5718,10 @@ def smart_batch():
                     max_attempts = 4
                     _EMPTY_FALLBACK_LEN = 30
                     for _attempt in range(max_attempts):
+                        # === SSE 保活：每次 LLM 调用前（含重试）先发 1 帧心跳，占住连接防 Render 30s idle timeout ===
+                        yield SSE_HEARTBEAT_COMMENT
+                        if _attempt >= 1:
+                            yield sse({'type': 'delta', 'content': f'\n（第{_attempt + 1}次尝试…）\n'})
                         raw_chunks = []
                         # 初始温度 0.7（原 0.8 偏高），重试时微增
                         _temp = 0.7 + min(_attempt * 0.08, 0.2)
@@ -5934,6 +6002,10 @@ def smart_deai():
             max_attempts = 4
             yield sse({'type': 'delta', 'content': f'正在为《{chapter.title}》去AI味…\n\n'})
             for _attempt in range(max_attempts):
+                # === SSE 保活：每次 LLM 调用前（含重试）先发 1 帧心跳，占住连接防 Render 30s idle timeout ===
+                yield SSE_HEARTBEAT_COMMENT
+                if _attempt >= 1:
+                    yield sse({'type': 'delta', 'content': f'\n（第{_attempt + 1}次尝试…）\n'})
                 full = []
                 # 去AI味温度保持偏低：0.5 起步（忠实原文），重试微增到 0.58/0.66，避免高温乱改
                 _temp = 0.5 + min(_attempt * 0.08, 0.2)
