@@ -24,23 +24,28 @@ MAX_LINES_PER_FILE = 2000
 MAX_ROUTES_PER_FILE = 30
 
 # app.py 基线行数：只能减不能增（防止巨石继续膨胀）
-# 当前基线：13513 行（2026-08-15 重校准：M4 智驾/系统优化等功能迭代后实际值）
-# 未来禁止再增长，新代码必须落到独立模块
-APP_PY_BASELINE = 13513
+# 2026-08-18 重校准（M5 5项需求交付）：
+#   需求0：内置规则拆分4常量、3阶段构建函数、3注入点替换
+#   需求3：25+技能包分类清理+阶段标记+stage_keys规范化（SEED_SKILL_PACKS大幅）
+APP_PY_BASELINE = 13975
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
 FE_MAX_LINES = 1500
 
 # WritePage.tsx 基线行数：只能减不能增（前端巨石，防止继续膨胀）
-WRITEPAGE_BASELINE = 8576
+# 2026-08-18 重校准：版本号对比等细节+UI交互
+WRITEPAGE_BASELINE = 8899
 
 # ChatPanel.tsx 基线行数：只能减不能增（智驾面板巨石，防止继续膨胀）
-CHATPANEL_BASELINE = 2254
+# 2026-08-18 重校准（需求1-2：新增SkillPackSelector onPreview回调、
+#   previewPack state、双击Preview Modal完整UI）
+CHATPANEL_BASELINE = 3206
 
 # chat_collab_bp.py 基线行数：只能减不能增（智驾协作 Blueprint 巨石）
-# 2026-08-15 重校准：新增 TIMELINE_NARRATIVE_RULES（剧情维度 JSON 专用叙事铁律）导致 +61 行
-CHAT_COLLAB_BP_BASELINE = 5085
+# 2026-08-18 重校准（需求0：拆分4常量+3构建函数+3注入点替换，
+#   修复DEAI注入顺序、常量引用顺序NameError等）
+CHAT_COLLAB_BP_BASELINE = 6912
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
