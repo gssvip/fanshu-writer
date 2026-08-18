@@ -4,7 +4,7 @@ import type { Template } from '../types';
 import { useStore } from '../store';
 import { api } from '../api';
 import CarLogo from '../components/CarLogo';
-import { GENRES, getStylesForGenre, filterStylesByGenre, getVolumeRange } from '../constants';
+import { GENRES, GENRE_GROUPS, getStylesForGenre, filterStylesByGenre, getVolumeRange } from '../constants';
 
 const S: Record<string,{label:string;color:string}> = { draft:{label:'草稿',color:'#9e8f6e'}, writing:{label:'连载',color:'#27ae60'}, completed:{label:'完结',color:'#2980b9'} };
 
@@ -139,17 +139,11 @@ export default function Home() {
             <div style={{display:'flex',gap:8}}>
               <div className="form-group" style={{flex:1}}><label>类型</label><select value={nf.book_type} onChange={e=>handleBookTypeChange(e.target.value)}><option value="novel">长篇</option><option value="short_story">短篇</option></select></div>
               <div className="form-group" style={{flex:1}}><label>题材</label><select value={nf.genre} onChange={e=>handleGenreChange(e.target.value)}>
-                <optgroup label="通用"><option value="other">其他</option></optgroup>
-                <optgroup label="男频">
-                  <option value="urban">都市</option><option value="urban_business">都市职场</option><option value="urban_fantasy">都市异能</option>
-                  <option value="fantasy">玄幻</option><option value="xianxia">仙侠</option><option value="qihuan">奇幻</option><option value="wuxia">武侠</option>
-                  <option value="history">历史</option><option value="military">军事</option><option value="game">游戏</option><option value="sports">体育</option>
-                  <option value="scifi">科幻</option><option value="mystery">悬疑</option><option value="infinite">诸天无限</option><option value="light_novel">轻小说</option>
-                </optgroup>
-                <optgroup label="女频">
-                  <option value="romance">现代言情</option><option value="ancient_romance">古代言情</option><option value="fantasy_romance">幻想言情</option>
-                  <option value="danmei">纯爱</option><option value="acg">二次元</option>
-                </optgroup>
+                {GENRE_GROUPS.map(g => (
+                  <optgroup key={g.label} label={g.label}>
+                    {g.keys.map(k => <option key={k} value={k}>{GENRES[k] || k}</option>)}
+                  </optgroup>
+                ))}
               </select></div>
             </div>
             {(() => {

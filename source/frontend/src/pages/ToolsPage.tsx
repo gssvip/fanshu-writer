@@ -3,6 +3,7 @@ import * as yaml from 'js-yaml';
 import { api } from '../api';
 import { AuthContext } from '../App';
 import type { Book, SkillPack, ReviewResult, AnalysisResult, WorkflowStep } from '../types';
+import { GENRES, GENRE_GROUPS, normalizeGenreKey } from '../constants';
 
 type ToolTab = 'review' | 'skills' | 'analyze' | 'export';
 
@@ -340,10 +341,14 @@ export default function ToolsPage() {
 
       const ok = await requireAuth();
       if (!ok) return;
+      // 【题材对齐】导入时一定按GENRES真相源归一化genre/genre_target，避免"穿越/修真/甜宠"等别名落库成unknown key
+      const genre = normalizeGenreKey(data.genre);
+      const genre_target = normalizeGenreKey(data.genre_target);
       const payload = {
         name: data.name,
         icon: data.icon || '📦',
-        genre: data.genre || 'other',
+        genre,
+        genre_target: genre_target || undefined,
         book_type: data.book_type || 'novel',
         description: data.description || '',
         category: data.category || 'master',
@@ -439,6 +444,12 @@ export default function ToolsPage() {
     // 格式规范：无name → 用fileName首行兜底
     if (!data.name) {
       data.name = fileName ? fileName.replace(/\.[^.]+$/, '') : '自定义技能包';
+    }
+    // 【题材对齐】最终把genre/genre_target归一化成GENRES真相源的合法key（兜底other），
+    // 同时支持用户写中文标签/别名（如"修真"/"甜宠"/"末世"/"规则怪谈"）自动映射
+    data.genre = normalizeGenreKey(data.genre);
+    if (data.genre_target !== undefined && data.genre_target !== null) {
+      data.genre_target = normalizeGenreKey(data.genre_target);
     }
     // 规范化：如果只有纯prompts没有workflow，就不强制创建workflow（空数组也可）
     if (!Array.isArray(data.workflow)) data.workflow = [];
@@ -546,12 +557,8 @@ export default function ToolsPage() {
     setDownloading(false);
   }
 
-  const GENRES: Record<string, string> = {
-    'all': '全部', 'other': '通用', 'romance': '言情', 'fantasy': '玄幻',
-    'mystery': '悬疑', 'scifi': '科幻', 'history': '历史',
-    'urban_business': '都市职场', 'urban_fantasy': '都市异能',
-    'military': '军事', 'light_novel': '轻小说',
-  };
+  // 删除原来硬编码的迷你 GENRES 字典：引用 ../constants 的真相源 GENRES / GENRE_GROUPS
+  // 原有的 'all': '全部' 只在筛选下拉里用"所有题材"空值代替，不再污染题材真相源。
 
   const TOOL_TABS = [
     { key: 'review' as ToolTab, label: 'AI 责编', icon: '🔍', desc: 'AI平台视角审稿打分' },
@@ -636,7 +643,11 @@ export default function ToolsPage() {
           <div className="form-row">
             <select className="input" value={skillGenreFilter} onChange={e => setSkillGenreFilter(e.target.value)}>
               <option value="">所有题材</option>
-              {Object.entries(GENRES).filter(([k]) => k !== 'all').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              {GENRE_GROUPS.map(g => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.keys.map(k => <option key={k} value={k}>{GENRES[k] || k}</option>)}
+                </optgroup>
+              ))}
             </select>
             <select className="input" value={skillTypeFilter} onChange={e => setSkillTypeFilter(e.target.value)}>
               <option value="">所有类型</option>
@@ -766,9 +777,32 @@ export default function ToolsPage() {
                   <div className="form-field">
                     <label>题材</label>
                     <select className="input" value={skillEditor.genre} onChange={e => setSkillEditor(prev => ({ ...prev, genre: e.target.value }))}>
-                      {Object.entries(GENRES).filter(([k]) => k !== 'all').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      {GENRE_GROUPS.map(g => (
+                        <optgroup key={g.label} label={g.label}>
+                          {g.keys.map(k => <option key={k} value={k}>{GENRES[k] || k}</option>)}
+                        </optgroup>
+                      ))}
                     </select>
                   </div>
+                  {/* 文风类：额外显示「适用题材 (genre_target)」下拉，和创建小说表单题材条目完全对齐 */}
+                  {skillEditor.category === 'style' && (
+                    <div className="form-field">
+                      <label>文风适用题材（正文阶段按题材优先匹配）</label>
+                      <select className="input"
+                        value={skillEditor.genre_target || ''}
+                        onChange={e => setSkillEditor(prev => ({ ...prev, genre_target: e.target.value }))}>
+                        <option value="">不指定（任意题材生效）</option>
+                        {GENRE_GROUPS.map(g => (
+                          <optgroup key={g.label} label={g.label}>
+                            {g.keys.map(k => <option key={k} value={k}>{GENRES[k] || k}</option>)}
+                          </optgroup>
+                        ))}
+                      </select>
+                      <p className="text-muted" style={{fontSize:11, marginTop:4}}>
+                        如果指定题材，仅当当前创作小说的题材与该值一致时才会在正文阶段注入，避免文风跨题材污染。
+                      </p>
+                    </div>
+                  )}
                   <div className="form-field">
                     <label>类型</label>
                     <select className="input" value={skillEditor.book_type} onChange={e => setSkillEditor(prev => ({ ...prev, book_type: e.target.value }))}>

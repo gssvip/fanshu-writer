@@ -3,12 +3,56 @@
 // 2026-07 维护
 
 // ============================================================
-// 第一部分：题材分类（key 与后端 Book.genre 对齐）
+// 第一部分：题材分类（key 与后端 Book.genre / SkillPack.genre / genre_target 对齐）
 // ============================================================
-// 说明：男频/女频题材在 WorkbenchPage 表单里按 optgroup 分组呈现，
-// 这里合并为一张表方便统一查询。key 命名沿用项目既有约定。
+// 说明：这里是全平台"题材下拉"的唯一真相源。
+// - Home.tsx 新建小说表单 / WorkbenchPage.tsx 新建&导入表单 / ToolsPage.tsx 技能包创建表单、
+//   技能包市场筛选、文风类 genre_target 题材下拉，都必须引用 GENRE_GROUPS / GENRES，
+//   严禁手写 <option> 逐个硬编码（会导致缺条目/顺序不一致/后续维护漏改）。
+// - 修改题材请只改 GENRE_GROUPS 这一处，其它位置自动同步。
 
-export const GENRES: Record<string, string> = {
+export interface GenreGroup { label: string; keys: string[]; }
+
+/** 题材分组（下拉按 optgroup 渲染时使用）—— 唯一真相源 */
+export const GENRE_GROUPS: GenreGroup[] = [
+  {
+    label: '通用',
+    keys: ['other'],
+  },
+  {
+    label: '男频',
+    keys: [
+      'urban',            // 都市
+      'urban_business',   // 都市职场
+      'urban_fantasy',    // 都市异能
+      'fantasy',          // 玄幻
+      'xianxia',          // 仙侠
+      'qihuan',           // 奇幻
+      'wuxia',            // 武侠
+      'history',          // 历史
+      'military',         // 军事
+      'game',             // 游戏
+      'sports',           // 体育
+      'scifi',            // 科幻
+      'mystery',          // 悬疑
+      'infinite',         // 诸天无限
+      'light_novel',      // 轻小说
+    ],
+  },
+  {
+    label: '女频',
+    keys: [
+      'romance',          // 现代言情
+      'ancient_romance',  // 古代言情
+      'fantasy_romance',  // 幻想言情
+      'danmei',           // 纯爱
+      'acg',              // 二次元
+    ],
+  },
+];
+
+/** GENRES 由 GENRE_GROUPS + 中文标签唯一映射，保证顺序与分组一致（key 插入顺序 = GENRE_GROUPS 顺序）*/
+const GENRE_LABELS: Record<string, string> = {
   // 通用
   other: '其他',
   // 男频
@@ -34,6 +78,57 @@ export const GENRES: Record<string, string> = {
   danmei: '纯爱',
   acg: '二次元',
 };
+
+export const GENRES: Record<string, string> = (() => {
+  const out: Record<string, string> = {};
+  for (const g of GENRE_GROUPS) for (const k of g.keys) {
+    if (GENRE_LABELS[k]) out[k] = GENRE_LABELS[k];
+  }
+  return out;
+})();
+
+/** 所有有效题材 key 集合（用于校验） */
+export const VALID_GENRE_KEYS = new Set(Object.keys(GENRES));
+
+/** 把任意字符串（前端粘贴识别、用户手输中文/拼音别名、别名）归一化为合法 genre key；找不到回退 other */
+export function normalizeGenreKey(raw: string | null | undefined): string {
+  if (!raw) return 'other';
+  const s = String(raw).trim().toLowerCase();
+  if (!s) return 'other';
+  if (VALID_GENRE_KEYS.has(s)) return s;
+  // 中文标签直接匹配
+  for (const [k, v] of Object.entries(GENRES)) {
+    if (v === raw.trim()) return k;
+  }
+  // 常见别名 / 拼音 / 英文变体
+  const aliasMap: Record<string, string> = {
+    '都市': 'urban', '都市生活': 'urban', 'city': 'urban',
+    '玄幻': 'fantasy', '东方玄幻': 'fantasy', 'xuanhuan': 'fantasy',
+    '仙侠': 'xianxia', '修真': 'xianxia', 'xiuxian': 'xianxia',
+    '奇幻': 'qihuan', '西方奇幻': 'qihuan', 'qihuan': 'qihuan', 'fantasy_west': 'qihuan',
+    '武侠': 'wuxia', 'wuxia': 'wuxia',
+    '历史': 'history', '架空': 'history', '穿越历史': 'history', 'lishi': 'history',
+    '军事': 'military', '军旅': 'military', '抗战': 'military', 'junshi': 'military',
+    '游戏': 'game', '电竞': 'game', '网游': 'game', 'youxi': 'game',
+    '体育': 'sports', '竞技': 'sports', 'tiyu': 'sports',
+    '科幻': 'scifi', 'sci-fi': 'scifi', 'science_fiction': 'scifi', 'kehuan': 'scifi', '末世': 'scifi',
+    '悬疑': 'mystery', '推理': 'mystery', '恐怖': 'mystery', '灵异': 'mystery', 'xuanyi': 'mystery',
+    '无限': 'infinite', '诸天': 'infinite', '诸天无限': 'infinite', '综漫': 'infinite', 'wuxianliu': 'infinite',
+    '轻小说': 'light_novel', '轻改': 'light_novel', '二次元轻小说': 'light_novel', 'lightnovel': 'light_novel',
+    '都市职场': 'urban_business', '职场': 'urban_business', '商战': 'urban_business',
+    '都市异能': 'urban_fantasy', '异能': 'urban_fantasy', '规则怪谈': 'urban_fantasy', '灵异民俗': 'urban_fantasy',
+    '现代言情': 'romance', '言情': 'romance', '甜宠': 'romance', '霸总': 'romance', '总裁': 'romance', '现言': 'romance',
+    '古代言情': 'ancient_romance', '古言': 'ancient_romance', '宫斗': 'ancient_romance', '宅斗': 'ancient_romance',
+    '幻想言情': 'fantasy_romance', '幻言': 'fantasy_romance', '玄幻言情': 'fantasy_romance', '仙侠言情': 'fantasy_romance',
+    '纯爱': 'danmei', '耽美': 'danmei', 'dm': 'danmei',
+    '二次元': 'acg', '同人': 'acg', '衍生': 'acg', '综漫短篇': 'acg',
+    '其他': 'other', '其它': 'other', '未知': 'other',
+  };
+  const cleaned = String(raw).trim();
+  if (aliasMap[cleaned]) return aliasMap[cleaned];
+  if (aliasMap[s]) return aliasMap[s];
+  return 'other';
+}
 
 // ============================================================
 // 第二部分：题材 → 风格流派映射（长篇）

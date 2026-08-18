@@ -41,9 +41,12 @@ WRITEPAGE_BASELINE = 8899
 CHATPANEL_BASELINE = 3206
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
-# 2026-08-18 重校准（M7 粘贴识别：smartParseSkillPack + applySmartParseToEditor
-#   + 表单粘贴识别textarea + 传category补齐导入payload → 新增123行）
-TOOLSPAGE_BASELINE = 1158
+# 2026-08-18 重校准2（M8 题材对齐）：
+#   - 删除旧本地迷你GENRES（-6行）
+#   - 新增genre_target文风类适用题材下拉UI (+20行)
+#   - 新增normalizeGenreKey调用在两处(导入payload / smartParse末尾) + GENRE_GROUPS分组optgroup(×3处)改写
+#   → 净增 1192 - 1158 = 34行
+TOOLSPAGE_BASELINE = 1192
 
 # chat_collab_bp.py 基线行数：只能减不能增（智驾协作 Blueprint 巨石）
 # 2026-08-18 重校准3（M6 NameError修复）：chat_smart_action新增取参行 + 2处调用加skill_pack_ids + 函数签名+1参数 → 基线再+3行
