@@ -73,6 +73,28 @@ def _run_blocking_with_heartbeat(blocking_fn, sse_fn, extra_frames=None):
     return result_box[0] if result_box else None
 
 
+# ----------------------------------------------------------------------------
+# 会话隔离工具：严格按 book_id 校验 session 归属，防【串书记忆混乱】
+# - 前端若把 A 书的 session_id 传给 B 书请求（URL/localStorage/state 残留常见）
+#   会直接 load 其他书的历史对话（人设+剧情+正文）进 prompt → 污染新书
+# - 策略：不匹配就丢弃旧 session，静默创建新 session 并清空历史（历史对话绝不跨书迁移）
+# ----------------------------------------------------------------------------
+def _get_or_create_session_for_book(session_id, book_id, scope='general', title='新会话'):
+    """session 安全获取器：book_id 不匹配时创建新 session。永不跨书迁移历史。"""
+    from app import db, AISession
+    session = None
+    if session_id:
+        session = AISession.query.get(session_id)
+        # ===== 隔离铁律：session.book_id != 当前请求 book_id → 坚决丢弃（防串书）=====
+        if session is not None and str(getattr(session, 'book_id', None)) != str(book_id):
+            session = None
+    if not session:
+        session = AISession(book_id=book_id, scope=scope, title=title[:30], messages_json='[]')
+        db.session.add(session)
+        db.session.commit()
+    return session
+
+
 # 滑窗上下文：保留最近 N 轮 + 系统提示，超出则保留首尾、中间摘要
 MAX_HISTORY_ROUNDS = 8
 # 单条消息最大字符（超长截断，防 token 爆炸）
@@ -1204,14 +1226,8 @@ def chat_smart():
     except Exception:
         pass
 
-    # 获取或创建会话
-    session = None
-    if session_id:
-        session = AISession.query.get(session_id)
-    if not session:
-        session = AISession(book_id=book_id, scope=scope, title=message[:30], messages_json='[]')
-        db.session.add(session)
-        db.session.commit()
+    # 获取或创建会话（【会话隔离铁律】：session.book_id != book_id 就丢弃，不让旧书历史污染新书）
+    session = _get_or_create_session_for_book(session_id, book_id, scope=scope, title=message[:30])
     session_id = session.id
 
     # 构建 system_prompt + 上下文（注入章节目录）
@@ -1939,16 +1955,10 @@ def chat_smart_action():
     if not book:
         return jsonify({'error': '书籍不存在'}), 404
 
-    # 复用或创建会话（动作也走会话，便于历史回看）
-    session = None
-    if session_id:
-        session = AISession.query.get(session_id)
-    if not session:
-        title_map = {'master_create': '批量生成设定', 'continue': '续写本章', 'polish': '润色本章'}
-        session = AISession(book_id=book_id, scope='general', title=title_map.get(action, 'AI动作'),
-                            messages_json='[]')
-        db.session.add(session)
-        db.session.commit()
+    # 复用或创建会话（【会话隔离铁律】：session.book_id != book_id 就丢弃，不让旧书历史污染新书）
+    title_map = {'master_create': '批量生成设定', 'continue': '续写本章', 'polish': '润色本章'}
+    session = _get_or_create_session_for_book(session_id, book_id, scope='general',
+                                              title=title_map.get(action, 'AI动作'))
     session_id = session.id
 
     # ===== 【卷数/章数意图·落地前置】副驾快捷按钮的 instruction 也可能含卷数/章数要求 =====
@@ -3945,15 +3955,8 @@ def smart_general():
     # ===== 构思阶段·专属规则（通用核心+构思格式约束+master技能包，屏蔽文风/去AI规则）=====
     conception_rules = build_conception_rules(skill_pack_ids, mode='agent')
 
-    # ===== 会话 =====
-    session = None
-    if session_id:
-        session = AISession.query.get(session_id)
-    if not session:
-        session = AISession(book_id=book_id, scope='smart_setting',
-                            title='通用聊天', messages_json='[]')
-        db.session.add(session)
-        db.session.commit()
+    # ===== 会话（【会话隔离铁律】：session.book_id != book_id 就丢弃，不让旧书历史污染新书）=====
+    session = _get_or_create_session_for_book(session_id, book_id, scope='smart_setting', title='通用聊天')
     session_id = session.id
 
     # ===== 复用 chat_smart 的 system prompt + TOC + 定位铁律（核心）=====
@@ -5133,14 +5136,9 @@ def smart_generate():
         except Exception:
             pass
 
-    session = None
-    if session_id:
-        session = AISession.query.get(session_id)
-    if not session:
-        session = AISession(book_id=book_id, scope='smart_setting',
-                            title=f'{spec["label"]}生成', messages_json='[]')
-        db.session.add(session)
-        db.session.commit()
+    # ===== 会话（【会话隔离铁律】：session.book_id != book_id 就丢弃，不让旧书历史污染新书）=====
+    session = _get_or_create_session_for_book(session_id, book_id, scope='smart_setting',
+                                              title=f'{spec["label"]}生成')
     session_id = session.id
 
     try:
@@ -5400,14 +5398,9 @@ def smart_dim_edit():
     # 构思阶段·专属规则（通用核心+构思格式约束+master技能包，屏蔽文风/去AI规则）
     skill_note = build_conception_rules(skill_pack_ids, mode='agent')
 
-    session = None
-    if session_id:
-        session = AISession.query.get(session_id)
-    if not session:
-        session = AISession(book_id=book_id, scope='smart_setting',
-                            title=f'{spec["label"]}修改', messages_json='[]')
-        db.session.add(session)
-        db.session.commit()
+    # ===== 会话（【会话隔离铁律】：session.book_id != book_id 就丢弃，不让旧书历史污染新书）=====
+    session = _get_or_create_session_for_book(session_id, book_id, scope='smart_setting',
+                                              title=f'{spec["label"]}修改')
     session_id = session.id
 
     try:
@@ -5611,14 +5604,9 @@ def smart_batch():
     # 构思阶段·专属规则（通用核心+构思格式约束+master技能包，屏蔽文风/去AI规则）
     skill_note = build_conception_rules(skill_pack_ids, mode='agent')
 
-    session = None
-    if session_id:
-        session = AISession.query.get(session_id)
-    if not session:
-        session = AISession(book_id=book_id, scope='smart_setting',
-                            title=f'批量生成{len(dims)}维度', messages_json='[]')
-        db.session.add(session)
-        db.session.commit()
+    # ===== 会话（【会话隔离铁律】：session.book_id != book_id 就丢弃，不让旧书历史污染新书）=====
+    session = _get_or_create_session_for_book(session_id, book_id, scope='smart_setting',
+                                              title=f'批量生成{len(dims)}维度')
     session_id = session.id
 
     try:
@@ -5928,14 +5916,9 @@ def smart_deai():
         prompt_keys_filter=['tomato_deai', 'de_ai_flavor', 'polish', 'consistency_check'],
     )
 
-    session = None
-    if session_id:
-        session = AISession.query.get(session_id)
-    if not session:
-        session = AISession(book_id=book_id, scope='smart_deai',
-                            title=f'去AI味·{chapter.title}', messages_json='[]')
-        db.session.add(session)
-        db.session.commit()
+    # ===== 会话（【会话隔离铁律】：session.book_id != book_id 就丢弃，不让旧书历史污染新书）=====
+    session = _get_or_create_session_for_book(session_id, book_id, scope='smart_deai',
+                                              title=f'去AI味·{chapter.title}')
     session_id = session.id
 
     try:
