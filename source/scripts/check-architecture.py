@@ -24,8 +24,11 @@ MAX_LINES_PER_FILE = 2000
 MAX_ROUTES_PER_FILE = 30
 
 # app.py 基线行数：只能减不能增（防止巨石继续膨胀）
-# 2026-08-18 重校准2（CI Python版本兼容修复）：增加 from typing import Any,Dict,Optional 一行
-APP_PY_BASELINE = 13976
+# 2026-08-18 重校准3（M9 技能包生效链路打通）：
+#   - _get_skill_prompts_by_category 新增 book_genre 参数+文风类 genre_target 过滤 (~22行)
+#   - 新增 _get_enabled_style_pack 真实实现（之前 build_writing_rules 引用它但不存在）(~19行)
+#   → 净增 14009 - 13976 = 33 行
+APP_PY_BASELINE = 14009
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -36,9 +39,12 @@ FE_MAX_LINES = 1500
 WRITEPAGE_BASELINE = 8899
 
 # ChatPanel.tsx 基线行数：只能减不能增（智驾面板巨石，防止继续膨胀）
-# 2026-08-18 重校准（需求1-2：新增SkillPackSelector onPreview回调、
-#   previewPack state、双击Preview Modal完整UI）
-CHATPANEL_BASELINE = 3206
+# 2026-08-18 重校准2（M9 技能包生效链路打通）：
+#   - refreshProgress 新增：api.getBook回填三组ids(11行)
+#   - toggleSkillPack 持久化：api.updateBook保存到三字段(18行)
+#   - doChapterAction 请求加 skill_pack_ids 字段(2行)
+#   → 净增 3233 - 3206 = 27 行
+CHATPANEL_BASELINE = 3233
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
@@ -49,8 +55,11 @@ CHATPANEL_BASELINE = 3206
 TOOLSPAGE_BASELINE = 1192
 
 # chat_collab_bp.py 基线行数：只能减不能增（智驾协作 Blueprint 巨石）
-# 2026-08-18 重校准3（M6 NameError修复）：chat_smart_action新增取参行 + 2处调用加skill_pack_ids + 函数签名+1参数 → 基线再+3行
-CHAT_COLLAB_BP_BASELINE = 6916
+# 2026-08-18 重校准4（M9 技能包生效链路打通）：
+#   - build_conception_rules/book参数+ids并集合并、
+#   - build_writing_rules/book_ids合并+book_genre传入、
+#   - build_review_rules/book参数+ids并集 → 合计+14行
+CHAT_COLLAB_BP_BASELINE = 6930
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

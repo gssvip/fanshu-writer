@@ -9139,13 +9139,16 @@ def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500, mode='a
     return '\n\n'.join(notes)
 
 
-def _get_skill_prompts_by_category(skill_pack_ids, category, prompt_keys=None, mode='agent'):
+def _get_skill_prompts_by_category(skill_pack_ids, category, prompt_keys=None, mode='agent',
+                                   book_genre=None):
     """按类别过滤技能包后提取提示词（三类无污染隔离的核心调度函数）。
     - category='master': 只查构思类，注入大纲/规划阶段
     - category='style': 只查文风类，注入正文生成阶段（按 priority 排序）
     - category='review': 只查审查类，注入审校阶段（去AI味/一致性）
     prompt_keys: 可选，指定提取哪些 key；不指定则提取该包全部 prompts。
-    老技能包无 category 字段时默认按 'master' 处理（兼容）。"""
+    老技能包无 category 字段时默认按 'master' 处理（兼容）。
+    book_genre: 若传入，则对【文风类】且 pack.genre_target 非空的包进行题材匹配：
+        - 若 pack.genre_target != book.genre，则跳过，不注入（避免跨题材文风污染）。"""
     if not skill_pack_ids:
         return ''
     try:
@@ -9160,6 +9163,17 @@ def _get_skill_prompts_by_category(skill_pack_ids, category, prompt_keys=None, m
     filtered = [p for p in packs if (p.category or 'master') == category]
     if not filtered:
         return ''
+    # 【文风类】题材过滤：若 pack.genre_target 指定了适用题材，且传入了 book_genre，不一致则跳过
+    if category == 'style' and book_genre:
+        def _style_match(p):
+            target = (p.genre_target or '').strip()
+            # 不指定 = 全题材通用
+            if not target:
+                return True
+            return target == book_genre
+        filtered = [p for p in filtered if _style_match(p)]
+        if not filtered:
+            return ''
     # 文风类按 priority 排序（数字小的先注入）
     if category == 'style':
         filtered.sort(key=lambda p: p.priority if p.priority is not None else 100)
@@ -9185,6 +9199,25 @@ def _get_skill_prompts_by_category(skill_pack_ids, category, prompt_keys=None, m
             parts = [f'[{k}]\n{p}' for k, p in matched]
             notes.append(f'【{pack.name}】\n' + '\n'.join(parts))
     return '\n\n'.join(notes)
+
+
+def _get_enabled_style_pack(book):
+    """正文阶段启用的文风技能包。实现 & 优先级如下：
+    1) 先从 book.style_skill_ids 取用户勾选的文风包 ID 列表（_resolve_skill_ids_by_category）
+    2) 查询这些 ID 对应的 SkillPack，文风类按 genre_target 匹配 book.genre（genre_target 为空视为通用）
+    3) 按 priority 升序排序（小的优先），取全部命中包 prompts 拼接后返回
+    返回空串表示没有匹配的文风包。"""
+    if not book:
+        return ''
+    style_ids = _resolve_skill_ids_by_category(book, 'style')
+    if not style_ids:
+        return ''
+    return _get_skill_prompts_by_category(
+        style_ids,
+        'style',
+        mode='agent',
+        book_genre=getattr(book, 'genre', None),
+    )
 
 
 def _resolve_skill_ids_by_category(book, category):

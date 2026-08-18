@@ -778,7 +778,7 @@ export const api = {
   // 副驾快捷动作（方案A：副驾做指挥官，调度总创作/章节创作能力）
   // action: master_create / continue / polish
   // 返回 SSE，统一副驾卡片协议（delta/card/done/error）
-  chatSmartAction: (bookId: string, action: 'master_create' | 'continue' | 'polish', opts?: { instruction?: string; target_chapter_num?: number; prev_chapter_content?: string; session_id?: string }, signal?: AbortSignal) => {
+  chatSmartAction: (bookId: string, action: 'master_create' | 'continue' | 'polish', opts?: { instruction?: string; target_chapter_num?: number; prev_chapter_content?: string; session_id?: string; skill_pack_ids?: string[] }, signal?: AbortSignal) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -792,6 +792,7 @@ export const api = {
         target_chapter_num: opts?.target_chapter_num,
         prev_chapter_content: opts?.prev_chapter_content,
         session_id: opts?.session_id,
+        skill_pack_ids: opts?.skill_pack_ids || [],
       }),
     };
     if (signal) cfg.signal = signal;

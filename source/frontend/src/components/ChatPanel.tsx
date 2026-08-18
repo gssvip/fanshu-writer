@@ -1050,7 +1050,9 @@ export default function ChatPanel() {
     }
   }, [messages, streaming]);
 
-  // 加载进度（同时刷新 bible，避免修改时拿到旧内容）
+  // 加载进度（同时刷新 bible + book对象，避免修改时拿到旧内容）—— 【技能包生效关键】：
+  // 每次打开面板/刷新进度，都拉一次 Book 对象，把三组 skill_ids 回填到 settingPacks/chapterPacks/deaiPacks_selected state
+  //  （因为 ChatPanel 不在 WritePage 内部，没有直接监听 book.master_style_review ids）
   const refreshProgress = useCallback(async () => {
     if (!bookId) return;
     try {
@@ -1064,6 +1066,15 @@ export default function ChatPanel() {
     try {
       const r = await api.getOptimizationReport(bookId);
       setOptimizationReport(r);
+    } catch { /* ignore */ }
+    // 【三组技能包回填】：从Book表读取 master/style/review 三组 ids，保证与 WritePage 勾选状态一致
+    try {
+      const bk = await api.getBook(bookId);
+      if (bk) {
+        setSettingPacks(Array.isArray(bk.master_skill_ids) ? bk.master_skill_ids : []);
+        setChapterPacks(Array.isArray(bk.style_skill_ids) ? bk.style_skill_ids : []);
+        setDeaiPacksSelected(Array.isArray(bk.review_skill_ids) ? bk.review_skill_ids : []);
+      }
     } catch { /* ignore */ }
   }, [bookId]);
 
@@ -1333,12 +1344,26 @@ export default function ChatPanel() {
   }, []);
 
   // 各 Tab 独立的技能包切换
+  // 【技能包生效关键】：点击切换时不仅改本地 state，还要调用 updateBook 持久化到 Book 表对应字段
+  //   （这样下次打开 ChatPanel / 跳到 WritePage 都会看到相同勾选状态；后端 merge 也会自动取到）
   const toggleSkillPack = useCallback((tab: SmartTab, id: string) => {
     const setter = tab === 'setting' ? setSettingPacks
       : tab === 'chapter' ? setChapterPacks
-      : setDeaiPacksSelected;  // 'deai'
-    setter(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  }, []);
+      : setDeaiPacksSelected;  // 'deai' | 'review'
+    setter(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      if (bookId) {
+        const fieldMap: Record<SmartTab, 'master_skill_ids' | 'style_skill_ids' | 'review_skill_ids'> = {
+          setting: 'master_skill_ids',
+          chapter: 'style_skill_ids',
+          deai: 'review_skill_ids',
+          review: 'review_skill_ids',
+        };
+        api.updateBook(bookId, { [fieldMap[tab]]: next } as any).catch(() => {});
+      }
+      return next;
+    });
+  }, [bookId]);
 
   // 关闭时取消流并重置会话加载标记（下次打开重新加载）
   useEffect(() => {
@@ -1639,6 +1664,8 @@ export default function ChatPanel() {
         target_chapter_num: targetNum,
         session_id: sessionId || undefined,
         instruction: userNote || undefined,
+        // doChapterAction 只有 continue/polish 两种，都是正文阶段 → 统一带 style（chapterTab）选中的技能包
+        skill_pack_ids: chapterPacks,
       }, ctrl.signal);
       await consumeSSE(res, ctrl);
       refreshProgress();

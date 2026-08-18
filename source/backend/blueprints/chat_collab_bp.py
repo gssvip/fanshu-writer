@@ -261,13 +261,16 @@ NARRATIVE_CRAFT_RULES = (GENERAL_CORE_RULES + "\n\n" + WRITING_STYLE_RULES).stri
 #   build_review_rules()     → 去AI/审稿阶段：通用核心 + 行文规范 + 独立去AI手册 + 审查类(review)技能包
 # ============================================================================
 
-def build_conception_rules(skill_pack_ids=None, mode='agent', extra_master_note: str = '') -> str:
-    """构思阶段专属规则：屏蔽文风/去AI/一致性，只保留通用核心+构思格式+master技能包。"""
+def build_conception_rules(skill_pack_ids=None, mode='agent', extra_master_note: str = '', book=None) -> str:
+    """构思阶段专属规则：屏蔽文风/去AI/一致性，只保留通用核心+构思格式+master技能包。
+    - book 可选：传入时自动从 book.master_skill_ids 取已持久化ID，与请求 skill_pack_ids 取并集。"""
     parts = [GENERAL_CORE_RULES, CONCEPTION_EXTRA_RULES]
     master_note = ''
     try:
-        from app import _get_skill_prompts_by_category
-        master_note = _get_skill_prompts_by_category(skill_pack_ids or [], 'master', mode=mode) or ''
+        from app import _get_skill_prompts_by_category, _resolve_skill_ids_by_category
+        book_ids = _resolve_skill_ids_by_category(book, 'master') if book else []
+        merged_ids = list(dict.fromkeys(list(skill_pack_ids or []) + list(book_ids)))  # 有序并集
+        master_note = _get_skill_prompts_by_category(merged_ids, 'master', mode=mode) or ''
     except Exception:
         master_note = ''
     if extra_master_note:
@@ -279,15 +282,23 @@ def build_conception_rules(skill_pack_ids=None, mode='agent', extra_master_note:
 
 def build_writing_rules(book=None, skill_pack_ids=None, mode='agent',
                         extra_style_pack: str = '', extra_style_note: str = '') -> str:
-    """正文阶段专属规则：屏蔽构思专属规则，只保留通用核心+行文规范+style技能包。"""
+    """正文阶段专属规则：屏蔽构思专属规则，只保留通用核心+行文规范+style技能包。
+    - book 必传：用于从 book.style_skill_ids 取已持久化文风包，以及按 genre_target 匹配题材。"""
     parts = [GENERAL_CORE_RULES, WRITING_STYLE_RULES]
     style_pack_prompt = ''
     style_note = ''
+    book_genre = getattr(book, 'genre', None) if book is not None else None
     try:
-        from app import _get_enabled_style_pack, _get_skill_prompts_by_category
+        from app import _get_enabled_style_pack, _get_skill_prompts_by_category, _resolve_skill_ids_by_category
         if book is not None:
             style_pack_prompt = _get_enabled_style_pack(book) or ''
-        style_note = _get_skill_prompts_by_category(skill_pack_ids or [], 'style', mode=mode) or ''
+        # 合并 ids：请求 skill_pack_ids ∪ book.style_skill_ids（持久化的）
+        if book is not None:
+            book_style_ids = _resolve_skill_ids_by_category(book, 'style')
+        else:
+            book_style_ids = []
+        merged_ids = list(dict.fromkeys(list(skill_pack_ids or []) + list(book_style_ids)))
+        style_note = _get_skill_prompts_by_category(merged_ids, 'style', mode=mode, book_genre=book_genre) or ''
     except Exception:
         pass
     if extra_style_pack:
@@ -302,19 +313,22 @@ def build_writing_rules(book=None, skill_pack_ids=None, mode='agent',
 
 
 def build_review_rules(skill_pack_ids=None, mode='agent',
-                       prompt_keys_filter=None, extra_review_note: str = '') -> str:
-    """去AI/审稿阶段专属规则：通用核心+行文规范+完整去AI手册+review技能包。"""
+                       prompt_keys_filter=None, extra_review_note: str = '', book=None) -> str:
+    """去AI/审稿阶段专属规则：通用核心+行文规范+完整去AI手册+review技能包。
+    - book 可选：传入时自动从 book.review_skill_ids 取已持久化ID，与请求 skill_pack_ids 取并集。"""
     parts = [GENERAL_CORE_RULES, WRITING_STYLE_RULES, DEAI_ONLY_RULES]
     review_note = ''
     try:
-        from app import _get_skill_prompts_by_category
+        from app import _get_skill_prompts_by_category, _resolve_skill_ids_by_category
+        book_ids = _resolve_skill_ids_by_category(book, 'review') if book else []
+        merged_ids = list(dict.fromkeys(list(skill_pack_ids or []) + list(book_ids)))
         if prompt_keys_filter:
             review_note = _get_skill_prompts_by_category(
-                skill_pack_ids or [], 'review', prompt_keys_filter, mode=mode
+                merged_ids, 'review', prompt_keys_filter, mode=mode
             ) or ''
         else:
             review_note = _get_skill_prompts_by_category(
-                skill_pack_ids or [], 'review', mode=mode
+                merged_ids, 'review', mode=mode
             ) or ''
     except Exception:
         pass
