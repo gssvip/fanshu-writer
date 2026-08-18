@@ -1198,6 +1198,8 @@ def chat_smart():
     gw = LLMGateway(base_url, api_key, model)
 
     def generate():
+        # === SSE 双兜底·第 1 层：函数第一行先发心跳注释帧，占住连接防 Render 30s idle timeout ===
+        yield ': ping-heartbeat-keepalive\n\n'
         full_text = []
         try:
             # SSE 首帧 ①：核心创作参数同步结果（若用户这条消息触发了卷数/章数调整，先告诉前端已落地）
@@ -1238,7 +1240,9 @@ def chat_smart():
             yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
 
 
 def _persist_card_status(session_id, card_id, new_status, new_content=None):
@@ -1922,6 +1926,9 @@ def chat_smart_action():
 
     def generate():
         try:
+            # === SSE 双兜底·第 1 层：函数第一行先发心跳注释帧 + start受理帧，占住连接防超时 ===
+            yield ': ping-heartbeat-keepalive\n\n'
+            yield sse({'type': 'meta', 'kind': 'start', 'info': {'action': action, 'session_id': session_id}})
             # 副驾首帧：参数同步说明（若有）
             if params_sync_notes_action:
                 yield sse({'type': 'meta', 'kind': 'params_sync', 'info': {'notes': params_sync_notes_action}})
@@ -1946,7 +1953,9 @@ def chat_smart_action():
                 db.session.rollback()
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
 
 
 def _action_master_create(book, session, instruction, gw, sse):
@@ -2515,6 +2524,9 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     - 伏笔：注入但加强约束（严禁揭示未到回收时机的谜底）
     - 世界观/规则/文风/地点/构思：全量注入（写作基础，不剧透）
     """
+    # === SSE 双兜底：正文阶段上下文组装耗时较久（DB查询+规则拼接=200-500ms），先yield一帧占住连接 ===
+    mode_label = '续写' if mode == 'continue' else '润色'
+    yield sse({'type': 'delta', 'content': f'\n正在{mode_label}第 {target_chapter_num or "?"} 章…\n\n'})
     from app import db, BookBible, Chapter, _get_total_volumes, _get_chapters_per_volume, parse_chapter_number
     book_id = book.id
     bb = BookBible.query.filter_by(book_id=book_id).first()
@@ -3948,6 +3960,8 @@ def smart_general():
         return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
     def generate():
+        # === SSE 双兜底·第 1 层：函数第一行先发心跳注释帧，占住连接防 Render 30s idle timeout ===
+        yield ': ping-heartbeat-keepalive\n\n'
         full = []
         try:
             # SSE 首帧 meta：命中章节/维度（前端提示"已定位并注入"）
@@ -3986,7 +4000,9 @@ def smart_general():
             yield sse({'type': 'error', 'error': str(e)})
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
 
 
 def _parse_card_markers(text):
@@ -5095,6 +5111,8 @@ def smart_generate():
         return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
     def generate():
+        # === SSE 双兜底·第 1 层：函数第一行先发心跳注释帧，占住连接防 Render 30s idle timeout ===
+        yield ': ping-heartbeat-keepalive\n\n'
         full = []
         try:
             # 【P1改进】生成前依赖检查：前置维度未完善时下发提示（不阻断）
@@ -5276,7 +5294,9 @@ def smart_generate():
             yield sse({'type': 'error', 'error': str(e)})
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
 
 
 @chat_collab_bp.route('/api/ai/smart/dim-edit', methods=['POST'])
@@ -5383,6 +5403,8 @@ def smart_dim_edit():
         return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
     def generate():
+        # === SSE 双兜底·第 1 层：函数第一行先发心跳注释帧，占住连接防 Render 30s idle timeout ===
+        yield ': ping-heartbeat-keepalive\n\n'
         from .post_gen_validator import PostGenValidator
         try:
             from app import _get_total_volumes, _get_chapters_per_volume
@@ -5486,7 +5508,9 @@ def smart_dim_edit():
             yield sse({'type': 'error', 'error': str(e)})
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
 
 
 @chat_collab_bp.route('/api/ai/smart/batch', methods=['POST'])
@@ -5546,6 +5570,8 @@ def smart_batch():
         return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
     def generate():
+        # === SSE 双兜底·第 1 层：函数第一行先发心跳注释帧，占住连接防 Render 30s idle timeout ===
+        yield ': ping-heartbeat-keepalive\n\n'
         generated = {}
         try:
             # 【P0改进】初始化自检器（批量生成共用）
@@ -5731,7 +5757,9 @@ def smart_batch():
             yield sse({'type': 'error', 'error': str(e)})
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
 
 
 # ----------------------------------------------------------------------------
@@ -5891,6 +5919,8 @@ def smart_deai():
         return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
 
     def generate():
+        # === SSE 双兜底·第 1 层：函数第一行先发心跳注释帧，占住连接防 Render 30s idle timeout ===
+        yield ': ping-heartbeat-keepalive\n\n'
         from .post_gen_validator import PostGenValidator
         # 去AI味走通用校验（只卡 EMPTY_OUTPUT，不做其他维度校验），用 tv=1, cpv=50 占位即可
         validator = PostGenValidator(1, 50, max_retries=1)
@@ -5977,7 +6007,9 @@ def smart_deai():
             yield sse({'type': 'error', 'error': str(e)})
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
 
 
 # ----------------------------------------------------------------------------

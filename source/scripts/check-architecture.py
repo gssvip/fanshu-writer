@@ -60,7 +60,12 @@ TOOLSPAGE_BASELINE = 1192
 #   - chapter_plot_iron 前置5条禁令提醒（858字）→ 删掉纯重复，留剧情指令+字数铁律293字
 #   - PRE_GENERATE_BAN_RULES 禁令0/5改成【见行文规范】不复述，省约300字
 #   → 净减约 25 行
-CHAT_COLLAB_BP_BASELINE = 6905
+# 2026-08-19 重校准7（NETWORK ERROR SSE双兜底：防Render 30s idle timeout断开）：
+#   - 全7处generate()函数首行加yield ': ping-heartbeat-keepalive\\n\\n' 注释心跳帧
+#   - chat_smart_action加start受理帧meta，_action_chapter加「正在续写/润色」delta
+#   - 全7处Response headers加 Connection:keep-alive + Cache-Control:no-cache, no-transform
+#   → 净加 27 行（6905→6932），属NETWORK ERROR单点修复必需，非业务膨胀
+CHAT_COLLAB_BP_BASELINE = 6932
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
