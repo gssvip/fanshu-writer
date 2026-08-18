@@ -1870,7 +1870,7 @@ _DIM_TO_CARD = {
 def chat_smart_action():
     """统一动作调度：副驾快捷按钮入口。
 
-    body: { book_id, action, session_id?, instruction?, target_chapter_num?, prev_chapter_content? }
+    body: { book_id, action, session_id?, instruction?, target_chapter_num?, prev_chapter_content?, skill_pack_ids? }
     返回 SSE，统一副驾卡片协议。
     """
     from app import (db, AISession, Book, BookBible, AIConfig, Chapter)
@@ -1882,6 +1882,7 @@ def chat_smart_action():
     instruction = (data.get('instruction') or '').strip()
     target_chapter_num = data.get('target_chapter_num')
     prev_chapter_content = data.get('prev_chapter_content')
+    skill_pack_ids = data.get('skill_pack_ids') or []
 
     if not book_id or action not in ('master_create', 'continue', 'polish'):
         return jsonify({'error': '参数无效，action 必须为 master_create/continue/polish'}), 400
@@ -1931,11 +1932,13 @@ def chat_smart_action():
             elif action == 'continue':
                 yield from _action_chapter(book, session, instruction, gw, sse,
                                            target_chapter_num, prev_chapter_content, mode='continue',
-                                           base_url=base_url, api_key=api_key, model=model)
+                                           base_url=base_url, api_key=api_key, model=model,
+                                           skill_pack_ids=skill_pack_ids)
             elif action == 'polish':
                 yield from _action_chapter(book, session, instruction, gw, sse,
                                            target_chapter_num, prev_chapter_content, mode='polish',
-                                           base_url=base_url, api_key=api_key, model=model)
+                                           base_url=base_url, api_key=api_key, model=model,
+                                           skill_pack_ids=skill_pack_ids)
         except Exception as e:
             yield sse({'type': 'error', 'error': str(e)})
         finally:
@@ -2505,7 +2508,7 @@ def _get_enabled_style_pack(book) -> str:
 
 
 def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, prev_chapter_content, mode,
-                    base_url=None, api_key=None, model=None):
+                    base_url=None, api_key=None, model=None, skill_pack_ids=None):
     """续写/润色本章正文：产 SAVE_CHAPTER 卡。
     视点感知注入（第三人称有限视角）：只给AI看POV角色能知道的信息，减少token + 防剧透。
     - 人物：只注入POV + POV关系网 + 主角
