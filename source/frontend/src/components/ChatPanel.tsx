@@ -1486,6 +1486,17 @@ export default function ChatPanel() {
     });
   }, []);
 
+  // 只追加用户消息（不带空AI占位）：用于"选定方案"这类AI不需要立即回复的场景，
+  // 避免留下永远填不上内容的空AI气泡（空内容+非流式会渲染成空，看起来像"AI截断不回复"）
+  const appendUser = useCallback((userText: string) => {
+    setMessages(prev => [...prev, { role: 'user', content: userText }]);
+  }, []);
+
+  // 追加一条静态AI提示消息：让"选定方案→等用户补充意见"阶段聊天区仍有活的反馈
+  const appendAiNotice = useCallback((text: string) => {
+    setMessages(prev => [...prev, { role: 'assistant', content: text, cards: [] }]);
+  }, []);
+
   // ========== 设定Tab：人机协作流 ==========
 
   // 1. 提需求 → AI给多选意见
@@ -1540,8 +1551,12 @@ export default function ChatPanel() {
     setSelectedSuggestion(suggestion);
     streamBufferRef.current = '';
     fixingDimKeyRef.current = selectedDim;
-    appendUserAi(`已选择方案${['一', '二', '三', '四', '五'][index] || (index + 1)}：${suggestion.title}\n${suggestion.preview}\n\n可在下方输入框填写修改意见，再点「按方案生成」；不填则直接按此方案生成。`);
-  }, [bookId, selectedDim, streaming, appendUserAi]);
+    // ⚠️ 不能用 appendUserAi：它带空AI占位气泡，无内容且非流式时渲染为空，
+    // 聊天区会悬着一个永远不填充的AI头像——这正是"选定方案后像被截断/聊天中断"的观感根源。
+    appendUser(`已选择方案${['一', '二', '三', '四', '五'][index] || (index + 1)}：${suggestion.title}\n${suggestion.preview}`);
+    appendAiNotice('✅ 方案已锁定。如需调整，在下方输入框补充修改意见（例如“主角改为女性”“节奏再快些”），再点「按方案生成」；不需要调整就直接点「按方案生成」按原方案生成。');
+    inputRef.current?.focus();
+  }, [bookId, selectedDim, streaming, appendUser, appendAiNotice]);
 
   // 2b. 基于已选方案 + 用户（可选）修改意见 流式生成最终内容（仅「按方案生成」按钮手动触发）
   const handleGenerateFromSelected = useCallback(async () => {
