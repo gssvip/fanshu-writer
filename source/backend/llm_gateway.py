@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import enum
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -144,6 +145,12 @@ def _extract_content(body: dict) -> tuple[str, str, FailureClass]:
         return "", "", FailureClass.FORMAT_ERROR
 
 
+# SSE 事件分隔符：匹配 \n\n / \r\n\r\n / \r\r 等任意换行组合的空行。
+# 用正则而非 find(b"\n\n")：很多服务（智谱 GLM、部分中转）用 \r\n\r\n 分隔，
+# 若不统一处理会永远切不出事件 → 全部数据堆到流结束一次性解析失败 → 空内容。
+_SSE_BOUNDARY = re.compile(rb"\r?\n\r?\n")
+
+
 def _iter_sse_events(resp):
     """健壮解析 OpenAI 兼容 SSE 流，逐个 yield (kind, value)。
 
@@ -151,20 +158,19 @@ def _iter_sse_events(resp):
       - 'delta'      正文片段（标准流式 delta.content）
       - 'reasoning'  思考片段（delta.reasoning_content，GLM-4.7/R1 等）
       - 'message'    服务端忽略 stream 返回非流式 message.content（一次性完整正文）
-    兼容差异：data: 有无空格、多行 data 拼接、\\r\\n 换行、[DONE] 结束。
+    兼容差异：data: 有无空格、多行 data 拼接、\n 与 \r\n 换行、[DONE] 结束。
     """
     buffer = b""
     for raw in resp.iter_content(chunk_size=1024):
         if not raw:
             continue
         buffer += raw
-        while True:
-            idx = buffer.find(b"\n\n")
-            if idx == -1:
-                break
-            blob = buffer[:idx]
-            buffer = buffer[idx + 2:]
-            yield from _parse_sse_event(blob)
+        # 用正则按空行切事件，最后一段是未完成的（可能留了半个分隔符），保留在 buffer
+        parts = _SSE_BOUNDARY.split(buffer)
+        buffer = parts.pop()
+        for blob in parts:
+            if blob.strip():
+                yield from _parse_sse_event(blob)
     if buffer.strip():
         yield from _parse_sse_event(buffer)
 
