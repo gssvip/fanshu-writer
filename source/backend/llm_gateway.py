@@ -20,6 +20,7 @@ requests.post 直连 LLM 的重复问题：
 from __future__ import annotations
 
 import enum
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -141,6 +142,74 @@ def _extract_content(body: dict) -> tuple[str, str, FailureClass]:
         return content, finish_reason, FailureClass.NONE
     except (KeyError, IndexError, TypeError) as e:
         return "", "", FailureClass.FORMAT_ERROR
+
+
+def _iter_sse_events(resp):
+    """健壮解析 OpenAI 兼容 SSE 流，逐个 yield (kind, value)。
+
+    kind ∈ {'delta', 'reasoning', 'message'}：
+      - 'delta'      正文片段（标准流式 delta.content）
+      - 'reasoning'  思考片段（delta.reasoning_content，GLM-4.7/R1 等）
+      - 'message'    服务端忽略 stream 返回非流式 message.content（一次性完整正文）
+    兼容差异：data: 有无空格、多行 data 拼接、\\r\\n 换行、[DONE] 结束。
+    """
+    buffer = b""
+    for raw in resp.iter_content(chunk_size=1024):
+        if not raw:
+            continue
+        buffer += raw
+        while True:
+            idx = buffer.find(b"\n\n")
+            if idx == -1:
+                break
+            blob = buffer[:idx]
+            buffer = buffer[idx + 2:]
+            yield from _parse_sse_event(blob)
+    if buffer.strip():
+        yield from _parse_sse_event(buffer)
+
+
+def _parse_sse_event(blob: bytes):
+    """解析单个 SSE 事件块，提取 data 行并 JSON 解析内容字段。"""
+    text = blob.decode("utf-8", errors="ignore")
+    data_lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+    if data_lines:
+        payload = "\n".join(data_lines).strip()
+    else:
+        # 无 data: 前缀 → 服务端忽略 stream 返回的裸 JSON 响应体（非 SSE 格式）
+        payload = text.strip()
+    if not payload or payload == "[DONE]":
+        return
+    try:
+        chunk = json.loads(payload)
+    except (json.JSONDecodeError, ValueError):
+        return
+    choices = chunk.get("choices") or []
+    if not choices:
+        # DeepSeek/某些服务把内容放在顶层 content 字段
+        if chunk.get("content"):
+            yield ("delta", chunk["content"])
+        return
+    choice = choices[0] or {}
+    # 非流式格式：服务端忽略 stream 参数，返回 message 而非 delta
+    if "message" in choice and choice["message"]:
+        msg_content = (choice["message"] or {}).get("content")
+        if msg_content:
+            yield ("message", msg_content)
+        return
+    delta = choice.get("delta") or {}
+    content = delta.get("content")
+    reasoning = delta.get("reasoning_content")
+    if content:
+        yield ("delta", content)
+    elif reasoning:
+        yield ("reasoning", reasoning)
 
 
 class LLMGateway:
@@ -305,37 +374,21 @@ class LLMGateway:
                     f"LLM 流式调用失败（HTTP {resp.status_code}）：{body_text or '服务返回错误'}",
                     fc if fc != FailureClass.NONE else FailureClass.UNAVAILABLE,
                 )
-            for line in resp.iter_lines():
-                if not line:
-                    continue
-                line_str = line.decode("utf-8", errors="ignore") if isinstance(line, bytes) else line
-                if line_str.startswith("data: "):
-                    line_str = line_str[6:]
-                if line_str.strip() == "[DONE]":
-                    break
-                try:
-                    import json
-                    chunk = json.loads(line_str)
-                    # 标准 OpenAI 格式
-                    if "choices" in chunk and chunk["choices"]:
-                        delta = chunk["choices"][0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            got_content = True
-                            yield content
-                        # 思考帧不计入输出，但证明模型在工作（思考耗尽 token 时 content 为空）
-                        elif delta.get("reasoning_content"):
-                            got_reasoning = True
-                            if yield_reasoning_heartbeat:
-                                yield REASONING_HB  # 上层据此发 SSE 心跳，防推理期代理 idle 掐断
-                    # 简化格式：直接 content 字段
-                    elif chunk.get("content"):
-                        got_content = True
-                        yield chunk["content"]
-                except (json.JSONDecodeError, KeyError, IndexError):
-                    continue
-            # 【空回复根因修复】流走完但一个内容帧都没有（空回复/被网关吞帧）→ 显式抛错，
-            # 让上层重试/报错，而不是静默结束让前端看到"聊天终止/消息截断"
+            for kind, value in _iter_sse_events(resp):
+                if kind == "message":
+                    # 服务端忽略 stream 参数返回非流式 message → 一次性 yield 完整正文
+                    got_content = True
+                    yield value
+                elif kind == "delta":
+                    got_content = True
+                    yield value
+                elif kind == "reasoning":
+                    got_reasoning = True
+                    if yield_reasoning_heartbeat:
+                        yield REASONING_HB  # 上层据此发 SSE 心跳，防推理期代理 idle 掐断
+            # 【空回复根因修复】流走完但一个内容帧都没有 → 先非流式兜底再报错：
+            # 很多聚合/中转服务测试连接(stream=False)正常，但 stream=True 支持有缺陷，
+            # 此时补一次非流式请求仍能拿到正文，避免"测试成功、智驾空回复"的假故障。
             if not got_content:
                 if got_reasoning:
                     # 思考型模型：思考产出正常但正文为空 → max_tokens 被思考耗尽（属截断，重试加大 max_tokens 有意义）
@@ -344,9 +397,20 @@ class LLMGateway:
                         f"无余量输出正文（model={self.model}）。请增大 max_tokens 或关闭思考模式",
                         FailureClass.FORMAT_ERROR,
                     )
+                try:
+                    fb_payload = dict(payload)
+                    fb_payload["stream"] = False
+                    fb_resp = requests.post(url, headers=headers, json=fb_payload, timeout=self.timeout)
+                    if fb_resp.status_code == 200:
+                        fb_content, fb_reason, fb_fc = _extract_content(fb_resp.json())
+                        if fb_content:
+                            yield fb_content
+                            return
+                except Exception:
+                    pass
                 raise LLMError(
                     f"LLM 流式返回空内容（HTTP 200 但无任何 content 帧，model={self.model}，"
-                    f"可能原因：max_tokens 过小/模型拒答/供应商网关异常）",
+                    f"已尝试非流式兜底仍为空。可能原因：max_tokens 过小/模型拒答/供应商网关异常）",
                     FailureClass.EMPTY_RESPONSE,
                 )
         except requests.exceptions.Timeout:
