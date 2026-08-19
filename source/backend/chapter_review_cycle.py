@@ -95,3 +95,117 @@ def run_review_cycle(
         'passed': best_score >= PASS_SCORE,
         'reason': f'达到最大轮数，取最高分版本（{best_score}分）',
     }
+
+
+def run_review_cycle_with_bible(polished_content, bb, post_validate, book_id, chapter_num,
+                                api_key, base_url, model, extract_chapter_body_fn):
+    """【优化4首步·自 app.py 抽取】P1-5 审计-修订闭环编排（原 ai_continue 内联块）。
+    条件触发：后写校验有问题时；local→spot_fix（省token）/ structural→整章重写；
+    best snapshot 持久化到最近已落库章节（保留最近20条）。
+    返回 (polished_content, review_cycle_result)；依赖缺失/任何异常原样返回，不阻断章节生成。"""
+    import requests
+    from datetime import datetime, timezone
+    from post_write_validator import validate_chapter, validate_chapter_with_bible
+    from revise import route_revision, build_spot_fix_prompt, apply_spot_fix_patches
+    from llm_gateway import build_auth_headers
+
+    review_cycle_result = None
+    if not (post_validate and post_validate.get('issues') and bb):
+        return polished_content, review_cycle_result
+    try:
+        # 1. validate_fn：复用 validate_chapter_with_bible，注入全维度 bible_ctx
+        def _validate_fn(content, _bb=bb):
+            body = extract_chapter_body_fn(content)
+            _ctx = {
+                'character_profiles': _bb.character_profiles or '',
+                'chapter_changes_log': _bb.chapter_changes_log or '',
+                'key_rules': _bb.key_rules or '',
+                'worldbuilding': _bb.worldbuilding or '',
+                'inventory': _bb.inventory or '',
+                'locations': _bb.locations or '',
+                'foreshadowing': _bb.foreshadowing or '',
+            } if _bb else None
+            return validate_chapter_with_bible(body, _ctx) if _ctx else validate_chapter(body)
+
+        # 2. revise_fn：auto 路由，local→spot_fix / structural→整章重写
+        def _revise_fn(content, validation, llm_call_fn):
+            if not route_revision:
+                return content
+            v_dict = validation.to_dict() if validation else {}
+            routing = route_revision(content, v_dict, mode='auto')
+            if routing['strategy'] == 'none' or routing['strategy'] == 'rewrite':
+                rewrite_sys = ("你是小说修订专家。根据校验问题整章重写，保留原剧情走向与人物对话，"
+                               "只修正结构性问题（OOC/剧情偏离/伏笔遗漏/一致性异常）。"
+                               "只输出修订后的完整正文。")
+                issues_text = '; '.join(v_dict.get('issues', [])[:5]) if isinstance(v_dict.get('issues'), list) else str(v_dict.get('issues', ''))[:500]
+                rewrite_user = f'【校验问题】\n{issues_text}\n\n【原文】\n{content}'
+                return llm_call_fn(rewrite_sys, rewrite_user)
+            patches = routing['patches']
+            if not patches:
+                return content
+            sys_prompt, user_prompt = build_spot_fix_prompt(content, patches)
+            llm_output = llm_call_fn(sys_prompt, user_prompt)
+            return apply_spot_fix_patches(content, patches, llm_output)
+
+        # 3. llm_call_fn：封装 requests.post
+        def _llm_call_fn(sys_prompt, user_prompt):
+            resp = requests.post(f'{base_url}/chat/completions',
+                headers=build_auth_headers(api_key),
+                json={'model': model,
+                      'messages': [{'role': 'system', 'content': sys_prompt},
+                                   {'role': 'user', 'content': user_prompt}],
+                      'temperature': 0.3, 'max_tokens': 12000},
+                timeout=180)
+            result = resp.json()
+            return result['choices'][0]['message']['content'].strip()
+
+        # 4. 执行闭环
+        cycle_outcome = run_review_cycle(
+            draft_content=polished_content,
+            validate_fn=_validate_fn,
+            revise_fn=_revise_fn,
+            llm_call_fn=_llm_call_fn,
+        )
+        # 5. best snapshot 落地：最终内容优于初稿时替换
+        if cycle_outcome.get('final_content') and cycle_outcome.get('best_score', 0) > 0:
+            final_content = cycle_outcome['final_content']
+            if final_content != polished_content:
+                polished_content = final_content
+            review_cycle_result = {
+                'best_score': cycle_outcome.get('best_score'),
+                'rounds': cycle_outcome.get('rounds'),
+                'passed': cycle_outcome.get('passed'),
+                'reason': cycle_outcome.get('reason'),
+                'history': cycle_outcome.get('history'),
+            }
+            # best snapshot 持久化到最近已落库章节
+            try:
+                from app import Chapter, db
+                ch_for_snapshot = Chapter.query.filter_by(
+                    book_id=book_id, is_volume=False
+                ).order_by(Chapter.order_index.desc()).first()
+                if ch_for_snapshot:
+                    snapshots = []
+                    if ch_for_snapshot.review_snapshots:
+                        try:
+                            snapshots = json.loads(ch_for_snapshot.review_snapshots)
+                            if not isinstance(snapshots, list):
+                                snapshots = []
+                        except Exception:
+                            snapshots = []
+                    snapshots.append({
+                        'chapter_num': chapter_num,
+                        'best_score': cycle_outcome.get('best_score'),
+                        'rounds': cycle_outcome.get('rounds'),
+                        'passed': cycle_outcome.get('passed'),
+                        'timestamp': datetime.now(timezone.utc).isoformat(),
+                    })
+                    ch_for_snapshot.review_snapshots = json.dumps(snapshots[-20:], ensure_ascii=False)
+                    db.session.commit()
+            except Exception:
+                from app import db
+                db.session.rollback()
+    except Exception:
+        from app import db
+        db.session.rollback()
+    return polished_content, review_cycle_result

@@ -5364,36 +5364,36 @@ def smart_generate():
 
             content = ''
             cur_messages = messages
-            retry_done = False
-            max_attempts = 4  # 首次 + 最多 3 次重试（用户反馈经常空，再提高一次保障率）
-            _EMPTY_FALLBACK_LEN = 30  # 兜底阈值从 80 降到 30，人物/文风/伏笔这类短内容维度也能触发
+            max_attempts = 4  # 首次 + 最多 3 次重试
+            _EMPTY_FALLBACK_LEN = 30  # 兜底阈值（人物/文风/伏笔这类短内容维度也能触发）
+            _last_stream_err = ''
             for _attempt in range(max_attempts):
-                # === SSE 保活：每次 LLM 调用前（含重试）先发 1 帧心跳，占住连接防 Render 30s idle timeout ===
-                yield SSE_HEARTBEAT_COMMENT
+                yield SSE_HEARTBEAT_COMMENT  # SSE 保活：防 Render 30s idle timeout
                 if _attempt >= 1:
-                    yield sse({'type': 'delta', 'content': f'\n（第{_attempt + 1}次尝试…）\n'})
+                    # 【聊天截断修复】重试发 attempt_reset 让前端清空上一轮半截内容（旧实现两轮 delta 拼一条消息→像被截断）
+                    yield sse({'type': 'meta', 'kind': 'attempt_reset',
+                               'info': {'attempt': _attempt + 1, 'max_attempts': max_attempts,
+                                        'reason': _last_stream_err[:160] if _last_stream_err else ''}})
                 full = []
-                # 重试策略：初始温度从 0.7 起步（原 0.85 太高，容易天马行空或拒答），重试再微增
-                _temp = 0.7 + min(_attempt * 0.08, 0.2)
-                _max_tok = max_tok
-                if _attempt == 1:
-                    _max_tok = min(int(max_tok * 1.5), 8000)
-                elif _attempt >= 2:
-                    _max_tok = min(int(max_tok * 2), 8000)
-                # 从第二次开始进入"精简模式"——截断过长 system/铁律，防 prompt 溢出 → 模型直接拒答吐空
-                _msgs_for_this_call = cur_messages
-                if _attempt >= 1:
-                    _msgs_for_this_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
-                for chunk in gw.chat_stream(_msgs_for_this_call, temperature=_temp, max_tokens=_max_tok):
-                    full.append(chunk)
-                    yield sse({'type': 'delta', 'content': chunk})
+                _temp = 0.7 + min(_attempt * 0.08, 0.2)  # 初始 0.7 起步，重试微增
+                _max_tok = max_tok if _attempt == 0 else min(int(max_tok * (1.5 if _attempt == 1 else 2)), 8000)
+                # 第 2 次起进"精简模式"：截断过长 system/铁律，防 prompt 溢出 → 模型拒答吐空
+                _msgs_for_this_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key) if _attempt >= 1 else cur_messages
+                try:
+                    # 【聊天终止修复】单次流失败只记录原因并降级重试，不再炸掉整条 SSE（旧实现直接
+                    # 进外层 except → error 帧 → 前端 removeEmptyAi 消息戛然而止）
+                    for chunk in gw.chat_stream(_msgs_for_this_call, temperature=_temp, max_tokens=_max_tok):
+                        full.append(chunk)
+                        yield sse({'type': 'delta', 'content': chunk})
+                except Exception as se:
+                    _last_stream_err = str(se)[:300]
+                    continue
                 raw_joined = ''.join(full)
-                # ====== 【EMPTY_OUTPUT 兜底增强版】 ======
-                # Step1：先全局剥离 think 标签（R1 系列模型最多的问题）
+                # EMPTY_OUTPUT 兜底1：先全局剥离 think 标签（R1 系列模型最多的问题）
                 raw_no_think = _strip_think_tags(raw_joined)
                 cleaned = raw_no_think.strip()
                 if dim_key == 'timeline':
-                    # timeline：仅 fence 清理 + JSON 规整（原逻辑）
+                    # timeline：仅 fence 清理 + JSON 规整
                     fence = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
                     if fence:
                         cleaned = fence.group(1).strip()
@@ -5409,14 +5409,12 @@ def smart_generate():
                     except (json.JSONDecodeError, ValueError, TypeError):
                         pass
                 else:
-                    # 保守清理
                     cleaned = _clean_text_to_plain(cleaned)
                     # 人物维度：JSON 数组转自然语言
                     if dim_key == 'character_profiles' and cleaned.lstrip().startswith('['):
                         cleaned = _character_profiles_to_text(cleaned)
-                # EMPTY_OUTPUT 二次保护：清理后仍空 但 raw(去think后) 内容有明显字数 → 用原始仅去 fence/html 的版本
+                # EMPTY_OUTPUT 兜底2：清理后仍空但 raw 有字数 → 用原始仅去 fence/html 的版本（宁脏勿空）
                 if (not cleaned or len(cleaned.strip()) < 2) and len(raw_no_think.strip()) >= _EMPTY_FALLBACK_LEN:
-                    # 仅剥离最外层围栏 + HTML 换行标签，保留一切内容，宁可脏也不要空
                     fallback = raw_no_think.strip()
                     m = re.match(r'```(?:\w+)?\s*([\s\S]*?)\s*```\s*$', fallback)
                     if m:
@@ -5425,17 +5423,16 @@ def smart_generate():
                     fallback = re.sub(r'</?p>', '\n', fallback)
                     if len(fallback.strip()) >= _EMPTY_FALLBACK_LEN:
                         cleaned = fallback.strip()
-                # EMPTY_OUTPUT 三次保护：客套/拒答检测（"好的没问题"这种内容也当空）
+                # EMPTY_OUTPUT 兜底3：客套/拒答检测（"好的没问题"这种也当空）
                 if cleaned and _is_refusal_or_fluff(cleaned):
                     cleaned = ''
                 content = cleaned
-                # 自检校验（raw 内容长度用去 think 后版本，更准确反映模型真实吐字量）
                 issues = validator.validate(dim_key, content, raw_length_hint=len((raw_no_think or '').strip()))
                 _log_validation_issues(bb, dim_key, issues)
                 if not validator.should_retry(issues) or _attempt >= max_attempts - 1:
                     validation_meta = validator.to_meta(issues)
                     break
-                # 需要重试：带错误反馈重新生成（附带 attempt info 给前端显示"已自动重试 N"）
+                # 需要重试：带错误反馈重新生成
                 retry_hint = validator.build_retry_hint(issues)
                 yield sse({'type': 'meta', 'kind': 'validation_retry',
                           'info': {'attempt': _attempt + 1,
@@ -5447,8 +5444,12 @@ def smart_generate():
                 ]
             else:
                 validation_meta = []
-            # 解析卡片标记（世界观会额外产出地图卡片）
-            extra_cards = _parse_card_markers(content)
+            # 【空回复兜底】多轮尝试后仍无内容：显式 error 帧（替代静默 done+空卡片）
+            if not content or not content.strip():
+                _err = _last_stream_err or 'LLM 多次尝试后仍返回空内容，请检查模型配置/额度后重试'
+                yield sse({'type': 'error', 'error': f'生成失败：{_err}'})
+                return
+            extra_cards = _parse_card_markers(content)  # 世界观会额外产出地图卡片
             if extra_cards:
                 clean_content = _clean_text_to_plain(_strip_card_markers(content)) if dim_key != 'timeline' else _strip_card_markers(content)
             else:
@@ -5460,8 +5461,7 @@ def smart_generate():
                 'content': clean_content,
                 'target': _CARD_TARGET.get(spec['card'], spec['label']),
             }
-            # 【P0改进】卡片下发时附带自检结果，前端可展示
-            card_meta = {'validation': validation_meta} if validation_meta else None
+            card_meta = {'validation': validation_meta} if validation_meta else None  # 自检结果随卡片下发
             yield sse({'type': 'card', 'card': card, 'session_id': session_id, 'meta': card_meta})
             for ec in extra_cards:
                 ec['content'] = _clean_text_to_plain(ec.get('content', ''))

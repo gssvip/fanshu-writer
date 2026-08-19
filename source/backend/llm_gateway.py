@@ -253,8 +253,28 @@ class LLMGateway:
         }
         payload.update(extra)
 
+        got_content = False
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout, stream=True)
+            # 【空回复根因修复】非 200 状态码必须显式抛错：
+            # 旧实现直接 iter_lines 遍历错误页（无 data: 帧），流静默结束 → 调用方拿到空内容还以为成功
+            if resp.status_code != 200:
+                body_text = ''
+                try:
+                    body_text = resp.text[:300]
+                except Exception:
+                    pass
+                fc = _classify_error(None, resp.status_code, None)
+                try:
+                    err_body = resp.json()
+                    if isinstance(err_body, dict) and isinstance(err_body.get("error"), dict):
+                        body_text = (err_body["error"].get("message") or body_text)[:300]
+                except Exception:
+                    pass
+                raise LLMError(
+                    f"LLM 流式调用失败（HTTP {resp.status_code}）：{body_text or '服务返回错误'}",
+                    fc if fc != FailureClass.NONE else FailureClass.UNAVAILABLE,
+                )
             for line in resp.iter_lines():
                 if not line:
                     continue
@@ -271,12 +291,22 @@ class LLMGateway:
                         delta = chunk["choices"][0].get("delta", {})
                         content = delta.get("content", "")
                         if content:
+                            got_content = True
                             yield content
                     # 简化格式：直接 content 字段
                     elif chunk.get("content"):
+                        got_content = True
                         yield chunk["content"]
                 except (json.JSONDecodeError, KeyError, IndexError):
                     continue
+            # 【空回复根因修复】流走完但一个内容帧都没有（空回复/被网关吞帧）→ 显式抛错，
+            # 让上层重试/报错，而不是静默结束让前端看到"聊天终止/消息截断"
+            if not got_content:
+                raise LLMError(
+                    f"LLM 流式返回空内容（HTTP 200 但无任何 content 帧，model={self.model}，"
+                    f"可能原因：max_tokens 过小/模型拒答/供应商网关异常）",
+                    FailureClass.EMPTY_RESPONSE,
+                )
         except requests.exceptions.Timeout:
             raise LLMError(f"LLM 流式调用超时（{self.timeout}秒）", FailureClass.TIMEOUT)
         except requests.exceptions.ConnectionError as e:

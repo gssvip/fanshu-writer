@@ -59,14 +59,18 @@ def get_entity_impact(action: str) -> List[str]:
 @dataclass
 class Task:
     id: str
-    op: str  # rename_entity / refresh_dim / reindex_events / reindex_hooks / mark_dirty_chapters / regenerate_text / sync_registry
+    op: str  # rename_entity / refresh_dim / compute_chapter_mission / declared_stage / ...
     target: str  # 作用对象（维度名/实体名/章节号）
     args: Dict = field(default_factory=dict)
     depends_on: List[str] = field(default_factory=list)
     auto: bool = True  # True=安全可自动执行；False=需用户确认
     reason: str = ''
-    status: str = 'pending'  # pending / running / done / failed
+    status: str = 'pending'  # pending / running / done / failed / skipped / declared
     result: Dict = field(default_factory=dict)
+    # 优化2：LLM 生成类阶段（正文/审校/校验）无法在 TaskRunner 内流式执行，
+    # 由宿主端点（ai_continue*）实际执行后通过 mark_stage 回写状态——此类任务
+    # 标记 kind='declared'：TaskGraph 负责"编排+观测+持久化"，不负责执行。
+    kind: str = 'exec'  # exec=TaskRunner执行 / declared=宿主端点执行
 
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -204,7 +208,7 @@ class SmartPlanner:
             g.add(Task(
                 id='t_sync_entity', op='sync_entity_registry', target='entity_registry',
                 auto=True,
-                reason=f'从「{spec.get("label", dim_key)}」维度同步实体注册表（人物/势力/地点/物品/技能）'
+                reason=f'从「{_DIM_LABEL_CN.get(dim_key, dim_key)}」维度同步实体注册表（人物/势力/地点/物品/技能）'
             ))
 
         return g
@@ -213,14 +217,56 @@ class SmartPlanner:
         """采纳卡片本质上就是 edit_dim（overwrite=false 时追加）"""
         return self._plan_edit_dim(dim_key, '', is_overwrite=False)
 
-    def _plan_generate_chapter(self, chapter_num: int) -> TaskGraph:
-        """写章节前：算任务清单"""
+    def _plan_generate_chapter(self, chapter_num: int, **opts) -> TaskGraph:
+        """【优化2】写作流水线任务图：把 ai_continue* 硬编码的 11 阶段流水线
+        统一建模为 TaskGraph（编排统一 / 可观测 / 可持久化恢复）。
+
+        - kind='exec'：安全读侧任务，TaskRunner 直接执行（如伏笔任务计算）
+        - kind='declared'：LLM 生成/审校阶段，由宿主端点实际执行后回写状态
+          （流式生成必须留在 SSE generator，无法搬进 TaskRunner）
+        - opts 可选开关：skill_pack_ids（去AI味）/ enable_consistency_check（一致性）
+          / enable_structured_tags，与 ai_continue 入参一致，决定条件阶段的取舍
+        """
         g = TaskGraph()
-        g.add(Task(
-            id='t_hooks', op='compute_chapter_mission', target=f'chapter_{chapter_num}',
-            args={'chapter_num': chapter_num}, auto=True,
-            reason=f'计算第{chapter_num}章的伏笔任务（应埋/应收/禁揭示）'
-        ))
+        has_deai = bool(opts.get('skill_pack_ids'))
+        has_cchk = bool(opts.get('enable_consistency_check'))
+        t = f'chapter_{chapter_num}'
+
+        def _stage(sid: str, op: str, label: str, kind: str = 'declared', **kw):
+            g.add(Task(id=sid, op=op, target=t, kind=kind, reason=label,
+                       args={'chapter_num': chapter_num, **kw.get('args', {})}, **{
+                           'auto': kw.get('auto', kind == 'exec'),
+                           'depends_on': kw.get('depends_on', []),
+                           'status': 'declared' if kind == 'declared' else 'pending'}))
+
+        _stage('t1_mission', 'compute_chapter_mission',
+               f'写前任务：计算第{chapter_num}章伏笔任务（应埋/应收/禁揭示）', kind='exec')
+        _stage('t2_ctx', 'build_context', '构建分层上下文（bible注入+滚动记忆+语义召回）')
+        _stage('t2_plan', 'chapter_plan', '章节计划前置（200字计划先于正文）',
+               depends_on=['t1_mission', 't2_ctx'])
+        _stage('t3_draft', 'generate_draft', '正文生成（动态temperature+智能instruction）',
+               depends_on=['t2_plan'])
+        _stage('t4_wc', 'ensure_word_count', '字数铁律：初稿字数校验+AI重写修正',
+               depends_on=['t3_draft'])
+        _stage('t5_deai', 'deai_polish', '去AI味审校Agent（仅文风，不改剧情）',
+               depends_on=['t4_wc'])
+        if has_cchk:
+            _stage('t6_cchk', 'consistency_check', '一致性检查Agent（key_rules/人设比对）',
+                   depends_on=['t5_deai'])
+        _stage('t7_changes', 'apply_chapter_changes', 'CHANGES解析+delta回写（12类章级变更）',
+               depends_on=['t5_deai'])
+        _stage('t8_pval', 'post_validate', '确定性后写校验（死亡复活/境界回退/文风漂移，零LLM）',
+               depends_on=['t7_changes'])
+        _stage('t9_cycle', 'review_cycle', '审计-修订闭环（校验→修订→再校验，最多2轮）',
+               depends_on=['t8_pval'])
+        _stage('t10_gates', 'landing_gates', '落地门禁（3道，critical拦截落库）',
+               depends_on=['t9_cycle'])
+        _stage('t11_post', 'post_persist_sync', '落库后置同步（事件日志+伏笔反查+实体注册）')
+        if not has_deai:
+            for tid in ('t5_deai',):
+                if tid in g.tasks:
+                    g.tasks[tid].status = 'skipped'
+                    g.tasks[tid].result = {'note': '未启用技能包，去AI味审校跳过'}
         return g
 
 
@@ -254,6 +300,49 @@ class TaskRunner:
         if only_auto:
             summary['skipped_manual'] = len(graph.manual_tasks())
         return summary
+
+    def run_all_auto(self, graph: TaskGraph) -> Dict:
+        """兼容入口（chat_collab_bp.preview_impact 调用）：等价 run(graph, only_auto=True)。"""
+        return self.run(graph, only_auto=True)
+
+    # ---------- 优化2：写作流水线阶段推进（declared 阶段由宿主端点执行后回写） ----------
+
+    def mark_stage(self, graph: TaskGraph, task_id: str, status: str, result: Optional[Dict] = None):
+        """宿主端点（ai_continue*）完成某 LLM 阶段后回写状态，供观测/持久化。"""
+        t = graph.tasks.get(task_id)
+        if not t:
+            return
+        t.status = status
+        if result is not None:
+            t.result = result
+
+    def persist_plan_log(self, graph: TaskGraph, action: str, extra: Optional[Dict] = None) -> bool:
+        """任务图持久化到 book_bible.plan_log_json（最近 20 条），支持中断恢复与事后观测。"""
+        try:
+            from app import BookBible, db
+            bb = BookBible.query.filter_by(book_id=self.book_id).first()
+            if not bb:
+                return False
+            logs = []
+            try:
+                logs = json.loads(bb.plan_log_json or '[]')
+                if not isinstance(logs, list):
+                    logs = []
+            except Exception:
+                logs = []
+            entry = {'ts': __import__('time').strftime('%Y-%m-%dT%H:%M:%S'),
+                     'action': action, **(extra or {}), 'graph': graph.to_dict()}
+            logs.append(entry)
+            bb.plan_log_json = json.dumps(logs[-20:], ensure_ascii=False)
+            db.session.commit()
+            return True
+        except Exception:
+            try:
+                from app import db
+                db.session.rollback()
+            except Exception:
+                pass
+            return False
 
     def _execute(self, task: Task) -> Dict:
         op = task.op
@@ -768,3 +857,40 @@ def _dump_target_dim_list(bb, target_dim: str, book_id: str) -> str:
     except Exception:
         return ''
     return ''
+
+
+# ============================================================================
+# 【优化2】写作流水线统一编排入口（供 app.py 的 ai_continue* 调用）
+#
+# 把"写一章"从端点内硬编码流水线升级为 TaskGraph 统一编排：
+#   graph, runner = build_writing_pipeline(book_id, bb, chapter_num, opts)
+#   → runner 已执行写前安全任务（t1_mission 伏笔任务计算）
+#   → 宿主端点按原有逻辑执行各 LLM 阶段，每阶段完成后 runner.mark_stage(...)
+#   → 结束时 runner.persist_plan_log(graph, 'generate_chapter') 持久化轨迹
+# 任何一步抛错都不阻断写作（降级为无任务图模式），保持既有行为兼容。
+# ============================================================================
+
+def build_writing_pipeline(book_id: str, bb, chapter_num: int, **opts):
+    """构建写作任务图并执行写前安全任务。
+
+    返回 (graph, runner, mission)：
+      - graph: TaskGraph（11 阶段，declared 阶段待宿主推进）
+      - runner: TaskRunner（含 mark_stage / persist_plan_log）
+      - mission: t1_mission 执行结果 {setup, payoff, forbidden}（失败为 None）
+    任何异常返回 (None, None, None)，宿主端点降级为旧直连模式。
+    """
+    try:
+        planner = SmartPlanner(book_id, bb)
+        graph = planner.build_plan('generate_chapter', chapter_num=chapter_num, **opts)
+        runner = TaskRunner(book_id)
+        mission = None
+        t1 = graph.tasks.get('t1_mission')
+        if t1 and t1.status == 'pending':
+            summary = runner.run(graph, only_auto=True)
+            for item in summary.get('executed', []):
+                if item.get('id') == 't1_mission':
+                    mission = item.get('result')
+                    break
+        return graph, runner, mission
+    except Exception:
+        return None, None, None

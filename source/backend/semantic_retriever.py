@@ -1,9 +1,11 @@
 """
-轻量语义检索（借鉴 PlotPilot 向量召回，纯 Python TF-IDF 实现）。
+轻量语义检索（TF-IDF 兜底 + Embedding 真向量检索优先）。
 
 设计目标：
-  - 零外部依赖（不依赖 numpy / sklearn / 向量数据库）
-  - 纯 Python 实现 TF-IDF + 余弦相似度
+  - 优先走 OpenAI 兼容 /embeddings 接口做真向量检索（捕捉同义改写/跨词召回，
+    解决 TF-IDF 词面匹配无法召回"换了说法的同一件事"的长篇一致性瓶颈）
+  - 无 embedding 配置/接口不可用时自动降级纯 Python TF-IDF（零外部依赖，
+    不依赖 numpy / sklearn / 向量数据库）
   - 解决长篇创作"百万字失忆"：精准召回语义相关历史章节
   - 作为现有 _recall_related_chapters（字符匹配）的语义增强补充
 
@@ -13,10 +15,18 @@
   retriever.index_chapters(chapters)  # 索引历史章节
   results = retriever.search(query_text, top_k=5)  # 语义检索
 """
+import os
 import re
 import math
+import hashlib
+import time
 from typing import List, Dict, Tuple, Optional
 from collections import Counter, defaultdict
+
+try:
+    import requests
+except ImportError:  # requests 缺失时 embedding 路径自动不可用，TF-IDF 照常工作
+    requests = None
 
 
 # 中文停用词（高频无意义词）
@@ -127,27 +137,7 @@ class SemanticRetriever:
     # ------------------------------------------------------------------
     def _split_chunks(self, text: str) -> List[str]:
         """把整章正文切分成若干重叠块。短于 chunk_size 的直接返回一块。"""
-        if not text:
-            return []
-        if len(text) <= self.chunk_size:
-            return [text]
-        chunks: List[str] = []
-        start = 0
-        n = len(text)
-        step = self.chunk_size - self.chunk_overlap
-        if step <= 0:
-            step = self.chunk_size
-        while start < n:
-            end = min(start + self.chunk_size, n)
-            chunks.append(text[start:end])
-            if end >= n:
-                break
-            start += step
-        # 保证最后一块至少有 overlap 的一半长度，否则与前一块合并
-        if len(chunks) >= 2 and len(chunks[-1]) < (self.chunk_overlap // 2 + 50):
-            tail = chunks.pop()
-            chunks[-1] = chunks[-1] + tail[-max(0, len(tail)):]
-        return chunks
+        return _split_text_chunks(text, self.chunk_size, self.chunk_overlap)
 
     # ------------------------------------------------------------------
     # 索引构建
@@ -344,8 +334,234 @@ class SemanticRetriever:
         return results
 
 
+def _split_text_chunks(text: str, chunk_size: int, chunk_overlap: int) -> List[str]:
+    """模块级 chunk 切分（EmbeddingRetriever 与 SemanticRetriever 共用）。"""
+    if not text:
+        return []
+    if len(text) <= chunk_size:
+        return [text]
+    chunks: List[str] = []
+    start = 0
+    n = len(text)
+    step = chunk_size - chunk_overlap
+    if step <= 0:
+        step = chunk_size
+    while start < n:
+        end = min(start + chunk_size, n)
+        chunks.append(text[start:end])
+        if end >= n:
+            break
+        start += step
+    # 保证最后一块至少有 overlap 的一半长度，否则与前一块合并
+    if len(chunks) >= 2 and len(chunks[-1]) < (chunk_overlap // 2 + 50):
+        tail = chunks.pop()
+        chunks[-1] = chunks[-1] + tail[-max(0, len(tail)):]
+    return chunks
+
+
+# ============================================================================
+# Embedding 真向量检索（优化1：替换 TF-IDF 词面匹配，带自动降级）
+#
+# 设计：
+#   - 走 OpenAI 兼容 /embeddings 接口（base_url/api_key 复用 AIConfig 激活配置）
+#   - embedding 模型：环境变量 EMBEDDING_MODEL，默认 text-embedding-3-small
+#   - 进程级探测：首次调用 embed('你好') 探活一次，失败即进程内禁用（不反复打爆接口）
+#   - 文本级缓存：md5(model+text) → vector，索引重建时未变化 chunk 不重复计费
+#   - 索引结构复用 TF-IDF 的 chunk 化策略（2000字/块 + 200字 overlap + 标题摘要前缀）
+#   - 检索与 TF-IDF 同款双路聚合：chunk best-hit(0.75) + chapter mean(0.25)
+#   - 任何异常（无配置/404/超时/维度不一致）→ 降级 TF-IDF 原路径
+# ============================================================================
+
+_EMB_PROBE_STATE: Optional[bool] = None   # None=未探测 True=可用 False=不可用
+_EMB_PROBE_AT: float = 0.0                # 探测时间（失败后每 10 分钟可重探一次）
+_EMB_TEXT_CACHE: Dict[str, List[float]] = {}  # md5(model+text) -> vector
+_EMB_TEXT_CACHE_MAX = 20000               # 缓存上限（防内存无限膨胀）
+
+
+def _embedding_config() -> Optional[Tuple[str, str, str]]:
+    """取 embedding 调用配置 (base_url, api_key, model)；不可用返回 None。"""
+    if os.environ.get('FANSHU_EMBEDDING_DISABLED', '').strip() in ('1', 'true', 'yes'):
+        return None
+    if requests is None:
+        return None
+    try:
+        from llm_gateway import get_llm_config
+        base_url, api_key, _chat_model = get_llm_config()
+        if not api_key or not base_url:
+            return None
+        model = os.environ.get('EMBEDDING_MODEL', 'text-embedding-3-small').strip()
+        if not model:
+            return None
+        return base_url.rstrip('/'), api_key, model
+    except Exception:
+        return None
+
+
+def _embed_batch(cfg: Tuple[str, str, str], texts: List[str]) -> List[List[float]]:
+    """批量调用 /embeddings；带文本级 md5 缓存（未变化 chunk 不重复计费）。"""
+    base_url, api_key, model = cfg
+    results: List[Optional[List[float]]] = [None] * len(texts)
+    missing: List[int] = []
+    for i, t in enumerate(texts):
+        key = hashlib.md5(f'{model}|{t}'.encode('utf-8')).hexdigest()
+        vec = _EMB_TEXT_CACHE.get(key)
+        if vec is not None:
+            results[i] = vec
+        else:
+            missing.append(i)
+    # 分批请求未命中的文本（32 条/批，兼容各家接口限制）
+    BATCH = 32
+    for bi in range(0, len(missing), BATCH):
+        idxs = missing[bi:bi + BATCH]
+        payload_texts = [texts[i][:2000] for i in idxs]  # 单条截断，控制成本
+        resp = requests.post(f'{base_url}/embeddings',
+                             headers={'Authorization': f'Bearer {api_key}', 'x-api-key': api_key,
+                                      'Content-Type': 'application/json'},
+                             json={'model': model, 'input': payload_texts}, timeout=60)
+        if resp.status_code != 200:
+            raise RuntimeError(f'embeddings HTTP {resp.status_code}: {resp.text[:200]}')
+        data = resp.json().get('data') or []
+        if len(data) != len(idxs):
+            raise RuntimeError(f'embeddings 返回条数不匹配：{len(data)} != {len(idxs)}')
+        for d in data:
+            pos = int(d.get('index', 0))
+            vec = d.get('embedding') or []
+            if not vec:
+                raise RuntimeError('embeddings 返回空向量')
+            results[idxs[pos]] = vec
+            key = hashlib.md5(f'{model}|{texts[idxs[pos]][:2000]}'.encode('utf-8')).hexdigest()
+            if len(_EMB_TEXT_CACHE) >= _EMB_TEXT_CACHE_MAX:
+                _EMB_TEXT_CACHE.clear()  # 简单粗暴防膨胀：超限全清（缓存是纯优化，可重建）
+            _EMB_TEXT_CACHE[key] = vec
+    return [r for r in results if r is not None]
+
+
+def _embedding_available(cfg: Tuple[str, str, str]) -> bool:
+    """进程级探活：成功一次即记住；失败后 10 分钟内不重试（避免每次写作都打爆接口）。"""
+    global _EMB_PROBE_STATE, _EMB_PROBE_AT
+    now = time.time()
+    if _EMB_PROBE_STATE is True:
+        return True
+    if _EMB_PROBE_STATE is False and now - _EMB_PROBE_AT < 600:
+        return False
+    try:
+        _embed_batch(cfg, ['你好'])
+        _EMB_PROBE_STATE = True
+        return True
+    except Exception:
+        _EMB_PROBE_STATE = False
+        _EMB_PROBE_AT = now
+        return False
+
+
+class EmbeddingRetriever:
+    """真向量语义检索器（chunk best-hit + chapter mean 双路聚合，结果结构与 TF-IDF 版一致）。"""
+
+    def __init__(self, cfg: Tuple[str, str, str], chunk_size: int = 2000, chunk_overlap: int = 200):
+        self.cfg = cfg
+        self.chunk_size = max(200, int(chunk_size))
+        self.chunk_overlap = max(0, min(self.chunk_size // 4, int(chunk_overlap)))
+        self._docs: List[Dict] = []
+        self._chunks: List[Dict] = []           # {chapter_idx, text}
+        self._chunk_vecs: List[List[float]] = []
+        self._chapter_mean: List[List[float]] = []
+        self._indexed = False
+
+    def index_chapters(self, chapters: List[Dict]):
+        """索引历史章节（与 SemanticRetriever 同款 chunk 化 + 标题摘要前缀）。"""
+        self._docs, self._chunks = [], []
+        pending_texts: List[str] = []
+        for ch in chapters:
+            title = (ch.get('title') or '').strip()
+            summary = (ch.get('summary') or '').strip()
+            content = (ch.get('content') or '').strip()
+            chapter_idx = len(self._docs)
+            if content and len(content) >= 50:
+                prefix = f'{title} {summary[:200]} '
+                source_texts = [prefix + c for c in _split_text_chunks(content, self.chunk_size, self.chunk_overlap)]
+            elif summary and len(summary) >= 10:
+                source_texts = [f'{title} {summary}']
+            else:
+                continue
+            self._docs.append({
+                'chapter_num': ch.get('chapter_num', 0),
+                'title': title,
+                'summary': (summary[:500] if summary else content[:500]),
+            })
+            for s in source_texts:
+                self._chunks.append({'chapter_idx': chapter_idx, 'text': s})
+                pending_texts.append(s[:2000])
+        if not self._chunks:
+            self._indexed = False
+            return
+        vecs = _embed_batch(self.cfg, pending_texts)
+        if len(vecs) != len(self._chunks):
+            raise RuntimeError(f'embedding 数量不匹配：{len(vecs)} != {len(self._chunks)}')
+        self._chunk_vecs = vecs
+        # 章节 mean 向量：按位平均后 L2 归一化，保证与 query 归一化向量的点积即余弦相似度
+        by_chapter: Dict[int, List[List[float]]] = defaultdict(list)
+        for c, v in zip(self._chunks, self._chunk_vecs):
+            by_chapter[c['chapter_idx']].append(v)
+        self._chapter_mean = []
+        for i in range(len(self._docs)):
+            vs = by_chapter.get(i) or []
+            if not vs:
+                self._chapter_mean.append([])
+                continue
+            dim = len(vs[0])
+            mean = [sum(v[k] for v in vs) / len(vs) for k in range(dim)]
+            norm = math.sqrt(sum(x * x for x in mean)) or 1.0
+            self._chapter_mean.append([x / norm for x in mean])
+        self._indexed = True
+
+    def search(self, query: str, top_k: int = 5, exclude_nums: Optional[set] = None) -> List[Dict]:
+        """双路聚合检索：chunk best-hit(0.75) + chapter mean(0.25)，返回结构与 TF-IDF 版一致。"""
+        if not self._indexed or not query:
+            return []
+        qvecs = _embed_batch(self.cfg, [query[:2000]])
+        if not qvecs:
+            return []
+        q = qvecs[0]
+        qnorm = math.sqrt(sum(x * x for x in q)) or 1.0
+        q = [x / qnorm for x in q]
+
+        def _cos(a: List[float], b: List[float]) -> float:
+            if len(a) != len(b):
+                return 0.0
+            return sum(x * y for x, y in zip(a, b))
+
+        chapter_best: Dict[int, float] = defaultdict(float)
+        for c, v in zip(self._chunks, self._chunk_vecs):
+            ch_idx = c['chapter_idx']
+            if exclude_nums and self._docs[ch_idx]['chapter_num'] in exclude_nums:
+                continue
+            sim = _cos(q, v)
+            if sim > chapter_best[ch_idx]:
+                chapter_best[ch_idx] = sim
+        ALPHA = 0.75
+        scored = []
+        for i, doc in enumerate(self._docs):
+            if exclude_nums and doc['chapter_num'] in exclude_nums:
+                continue
+            best_hit = chapter_best.get(i, 0.0)
+            mean_sim = _cos(q, self._chapter_mean[i]) if i < len(self._chapter_mean) and self._chapter_mean[i] else 0.0
+            final = ALPHA * best_hit + (1.0 - ALPHA) * mean_sim
+            if final > 0.05:  # 向量余弦基线较高，阈值比 TF-IDF（0.01）略高以过滤无关章
+                scored.append((i, final, best_hit, mean_sim))
+        scored.sort(key=lambda x: -x[1])
+        return [{
+            'chapter_num': self._docs[i]['chapter_num'],
+            'title': self._docs[i]['title'],
+            'summary': self._docs[i]['summary'],
+            'score': round(final, 3),
+            'score_detail': {'best_chunk_hit': round(bh, 3), 'chapter_mean_sim': round(ms, 3)},
+            'engine': 'embedding',
+        } for i, final, bh, ms in scored[:top_k]]
+
+
 # 模块级单例 + 缓存（按 book_id 缓存索引，避免重复构建）
 _retriever_cache: Dict[str, Tuple[SemanticRetriever, int, int]] = {}  # {book_id: (retriever, 章节数, 内容hash或内容总字数)}
+_emb_retriever_cache: Dict[str, Tuple[EmbeddingRetriever, int, int]] = {}  # embedding 版同款缓存
 
 
 def _chapters_fingerprint(chapters: List[Dict]) -> int:
@@ -368,6 +584,8 @@ def recall_semantic_chapters(
     """语义召回历史章节（供 app.py 调用）。
     - chapters_provider: 回调，返回 [{'chapter_num','title','summary','content'}] 列表
     - exclude_recent: 排除最近 N 章（避免与即时层重复）
+    - 检索引擎：embedding 真向量优先（捕捉同义改写/跨词召回），不可用自动降级 TF-IDF
+    - 结果条目带 engine 字段（'embedding' / 'tfidf'），供上层观测当前生效引擎
     返回召回结果列表。"""
     if not query or not chapters_provider:
         return []
@@ -377,6 +595,24 @@ def recall_semantic_chapters(
             return []
         n_ch = len(chapters)
         fp = _chapters_fingerprint(chapters)
+        exclude_nums = set(range(max(1, current_chapter_num - exclude_recent + 1), current_chapter_num + 1))
+        # 【优化1】embedding 真向量检索优先；探活失败/索引异常/无配置 → 静默降级 TF-IDF
+        cfg = _embedding_config()
+        if cfg is not None and _embedding_available(cfg):
+            try:
+                cached = _emb_retriever_cache.get(book_id)
+                if cached and cached[1] == n_ch and cached[2] == fp:
+                    retriever = cached[0]
+                else:
+                    retriever = EmbeddingRetriever(cfg, chunk_size=2000, chunk_overlap=200)
+                    retriever.index_chapters(chapters)
+                    _emb_retriever_cache[book_id] = (retriever, n_ch, fp)
+                results = retriever.search(query, top_k=max_chapters, exclude_nums=exclude_nums)
+                if results:
+                    return results
+            except Exception:
+                pass  # embedding 路径任何异常都不阻断写作，落到 TF-IDF
+        # TF-IDF 兜底路径（原实现）
         cached = _retriever_cache.get(book_id)
         if cached and cached[1] == n_ch and cached[2] == fp:
             retriever = cached[0]
@@ -384,7 +620,9 @@ def recall_semantic_chapters(
             retriever = SemanticRetriever(chunk_size=2000, chunk_overlap=200, use_full_text=True)
             retriever.index_chapters(chapters)
             _retriever_cache[book_id] = (retriever, n_ch, fp)
-        exclude_nums = set(range(max(1, current_chapter_num - exclude_recent + 1), current_chapter_num + 1))
-        return retriever.search(query, top_k=max_chapters, exclude_nums=exclude_nums)
+        results = retriever.search(query, top_k=max_chapters, exclude_nums=exclude_nums)
+        for r in results:
+            r.setdefault('engine', 'tfidf')
+        return results
     except Exception:
         return []

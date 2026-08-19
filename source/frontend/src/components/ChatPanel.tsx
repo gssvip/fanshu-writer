@@ -1384,6 +1384,18 @@ export default function ChatPanel() {
       throw new Error(err.error || `HTTP ${res.status}`);
     }
     let receivedSessionId = sessionId;
+    let gotPayload = false; // 收到过 delta/card（空回复兜底用）
+    // 追加（或整体替换）流式缓冲区文本并刷新 AI 气泡：依赖警告/自检重试/多轮尝试提示共用
+    const pushNote = (text: string, replace = false) => {
+      streamBufferRef.current = replace ? text : streamBufferRef.current + text;
+      const buf = streamBufferRef.current;
+      setMessages(prev => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'assistant') next[next.length - 1] = { ...last, content: buf };
+        return next;
+      });
+    };
     for await (const evt of parseSSE(res)) {
       if (ctrl.signal.aborted) break;
       if (evt.type === 'meta') {
@@ -1393,48 +1405,25 @@ export default function ChatPanel() {
             dims: Array.isArray(evt.info.dims) ? evt.info.dims : [],
           });
         }
-        // 【P1改进】维度依赖检查提示：前置维度未完善
         if (evt.kind === 'dependency_warning' && evt.info?.warning) {
-          streamBufferRef.current += `\n\n> ⚠ ${evt.info.warning}\n\n`;
-          const buf = streamBufferRef.current;
-          setMessages(prev => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.role === 'assistant') {
-              next[next.length - 1] = { ...last, content: buf };
-            }
-            return next;
-          });
+          pushNote(`\n\n> ⚠ ${evt.info.warning}\n\n`); // 前置维度未完善提示
         }
-        // 【P0改进】自检重试提示：首次输出未通过校验，正在重试
         if (evt.kind === 'validation_retry' && evt.info) {
           const errs = (evt.info.issues || []).filter((v: any) => v.severity === 'error');
           if (errs.length) {
-            const errList = errs.map((v: any) => `${v.code}: ${v.message}`).join('；');
-            streamBufferRef.current += `\n\n> 🔄 首版自检未通过（${errList}），正在带反馈重试…\n\n`;
-            const buf = streamBufferRef.current;
-            setMessages(prev => {
-              const next = [...prev];
-              const last = next[next.length - 1];
-              if (last && last.role === 'assistant') {
-                next[next.length - 1] = { ...last, content: buf };
-              }
-              return next;
-            });
+            pushNote(`\n\n> 🔄 首版自检未通过（${errs.map((v: any) => `${v.code}: ${v.message}`).join('；')}），正在带反馈重试…\n\n`);
           }
         }
+        // 【聊天截断修复】服务端重试前清空上一轮半截内容，避免多轮输出拼接成"截断消息"
+        if (evt.kind === 'attempt_reset' && evt.info) {
+          const why = evt.info.reason ? `：${evt.info.reason}` : '';
+          pushNote(`> 🔄 第${evt.info.attempt}/${evt.info.max_attempts || '?'}次尝试${why}\n\n`, true);
+        }
       } else if (evt.type === 'delta') {
-        streamBufferRef.current += evt.content;
-        const buf = streamBufferRef.current;
-        setMessages(prev => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last && last.role === 'assistant') {
-            next[next.length - 1] = { ...last, content: buf };
-          }
-          return next;
-        });
+        gotPayload = true;
+        pushNote(evt.content);
       } else if (evt.type === 'card') {
+        gotPayload = true;
         if (evt.session_id && !receivedSessionId) {
           receivedSessionId = evt.session_id;
           setSessionId(evt.session_id);
@@ -1463,6 +1452,10 @@ export default function ChatPanel() {
       } else if (evt.type === 'error') {
         throw new Error(evt.error);
       }
+    }
+    // 【空回复兜底】流正常结束但一帧正文/卡片都没有 → 显式报错（替代静默空消息/被移除的气泡）
+    if (!gotPayload && !ctrl.signal.aborted) {
+      throw new Error('AI 未返回任何内容（模型空回复或连接中断），请重试或检查模型配置');
     }
   }, [sessionId]);
 

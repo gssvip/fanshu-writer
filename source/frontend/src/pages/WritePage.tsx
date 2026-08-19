@@ -77,9 +77,7 @@ const CHAPTER_SKILL_KEYS: Record<string, string[]> = {
   polish: ['polish', 'de_ai_check', 'minimal_rewrite', 'humanize', 'final_check', 'tomato_deai', 'forbidden_words', 'rhythm_check', 'deslop', 'draft_rewrite', 'fidelity_check', 'final_polish', 'anti_ai_audit', 'reviser', 'style_analyzer', 'protect_rewrite', 'fidelity_read', 'residual_read'],
 };
 
-// 实时清洗 LLM 流式输出中的内部标签，确保用户看到的正文始终纯净
-// 后端要求 LLM 先写正文再输出 <pre_write_check>/<chapter_changes> 标签，
-// 但流式显示时标签仍会实时出现，需要前端实时剥离
+// 实时清洗 LLM 流式输出中的内部标签：后端要求正文后再输出标签，但流式显示时需前端实时剥离
 function stripInternalTags(content: string): string {
   let s = content;
   // 剥离完整的 <pre_write_check>...</pre_write_check> 块
@@ -873,8 +871,7 @@ export default function WritePage() {
           async () => {
             try {
               const result = await api.aiOutlineVolume(bookId, nextVolume, `第${nextVolume}卷`, selectedSkillPackIds, CHAPTERS_PER_VOLUME);
-              // P0-2修复：后端 result.timeline 已是完整合并后的全卷数组（按 volume_index upsert），
-              // 后端 result.bible 也已正确落库。直接用后端返回的 bible，不再前端手动错位合并。
+              // P0-2修复：后端 timeline 已是全卷数组（upsert）、bible 已落库，直接用返回值不手动合并
               if (result.bible) {
                 setBible(result.bible);
               } else {
@@ -1155,9 +1152,7 @@ export default function WritePage() {
     // P0-1: 多Agent协同管线分支（章节计划→正文→去AI味→一致性检查）
     if (useAgentPipeline && (aiCreateMode === 'write' || aiCreateMode === 'continue')) {
       try {
-        // 修复上下文脱节：传入待写章号 + 上一版未保存内容
-        // - targetChapterNum：前端基于 word_count>=100 已写判定，比后端 max+1 更准
-        // - prevChapterContent：若上一版已生成未保存，让后端把它作为"最近一章"注入，避免剧情断档
+        // 修复上下文脱节：传待写章号（前端 word_count>=100 判定，比后端 max+1 准）+ 上一版未保存内容（注入为最近一章避免断档）
         const progress = computeChapterProgress();
         const targetChapterNum = progress.targetNum;
         // 上一版未保存内容：只在重新生成/修改意见场景传（prevGenerated 有值时），
@@ -1201,16 +1196,13 @@ export default function WritePage() {
           }
         }
       } catch (e: any) {
-        // 不因 signal.aborted 跳过错误提示和状态重置：
-        // fetchWithRetry 内部超时 abort 时 signal.aborted=false 但仍抛"请求已取消"，
-        // 如果 return 会跳过 finally 的 setAiCreating(false) → 界面卡死无法再点发送
+        // 不因 signal.aborted 跳过错误提示和状态重置（fetchWithRetry 内部超时 abort 时
+        // signal.aborted=false 但仍抛"请求已取消"，return 会跳过 finally → 界面卡死无法再点发送）
         if (!aiStoppedRef.current) {
           setAiStreamError(e.message || 'Agent管线调用失败，请检查AI配置');
         }
       } finally {
-        // 无条件重置 aiCreating，防止任何异常路径导致界面卡死
-        // （stopAiCreate 也会设 false，重复设无副作用）
-        setAiCreating(false);
+        setAiCreating(false); // 无条件重置，防止异常路径界面卡死（重复设无副作用）
       }
       return;
     }
@@ -1287,6 +1279,11 @@ export default function WritePage() {
                 setAgentMeta((prev: any) => ({ ...prev, changes_applied: parsed.changes_applied }));
                 continue;
               }
+              // 【优化3】gate_result 事件：流式模式落地门禁（与非流式对齐，只告警不阻断）
+              if (parsed.gate_result) {
+                setAgentMeta((prev: any) => ({ ...prev, gate_result: parsed.gate_result }));
+                continue;
+              }
               // 【P1-4】deai_start 事件：去AI味开始（流式模式补充）
               if (parsed.type === 'deai_start') {
                 setAgentMeta((prev: any) => ({ ...prev, deai_status: 'running' }));
@@ -1329,6 +1326,9 @@ export default function WritePage() {
         }
         if (fullContent.trim()) {
           setAiChatHistory(prev => [...prev, { role: 'assistant', content: fullContent, chapterTitle: chapterEditTitle, type: 'content' }]);
+        } else if (!aiStoppedRef.current && !signal.aborted) {
+          // 【空回复修复】流结束但零正文（后端未推送 error 帧的极端场景）→ 显式报错替代静默
+          setAiStreamError('生成结果为空：LLM 未返回正文，请重试或检查 AI 配置/额度');
         }
       } else {
         // ===== polish 模式：走通用 /ai/chat/stream（润色不需要章节上下文构建）=====
@@ -4964,8 +4964,7 @@ ${existingVols || '（暂无）'}
   }
 
   // 合并卷列表和已有数据
-  // 修复「导入分卷大纲后第1卷残留」：增强匹配，按 volume_id / volume 完整名 / 卷号 三级匹配，
-  // 避免 chapters 表的「第1卷」(UUID) 与 timeline 的「第1卷」(volume_id="1") 因不匹配而重复显示。
+  // 修复「导入分卷大纲后第1卷残留」：按 volume_id/卷名/卷号三级匹配，避免 UUID 与 volume_id 不匹配重复显示
   const displayVolumes = useMemo(() => {
     const result: any[] = [];
     const usedVolIds = new Set<string>();

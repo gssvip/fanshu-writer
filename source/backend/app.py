@@ -71,9 +71,10 @@ except ImportError:
 
 # P2-8：审计-修订闭环
 try:
-    from chapter_review_cycle import run_review_cycle, PASS_SCORE
+    from chapter_review_cycle import run_review_cycle, run_review_cycle_with_bible, PASS_SCORE
 except ImportError:
     run_review_cycle = None
+    run_review_cycle_with_bible = None
     PASS_SCORE = 85
 
 # P2-10 + P2-11：落地门禁 + PRE_WRITE_CHECK
@@ -126,10 +127,7 @@ app = Flask(__name__, static_folder=None)
 app.config['SECRET_KEY'] = 'fanshu-writer-secret-key'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
-# 前端构建产物目录选择逻辑：
-# 1. 如果设置了 FANSHU_FRONTEND_DIST 环境变量，优先使用它
-# 2. 否则优先使用 backend/static（git 跟踪的预构建产物，在所有环境都完整可用）
-# 3. 最后 fallback 到 frontend/dist（本地开发用，生产环境可能不完整）
+# 前端构建产物目录：FANSHU_FRONTEND_DIST 环境变量 > backend/static（git 预构建）> frontend/dist（本地开发）
 _static_dist = Path(__file__).parent / 'static'
 _frontend_dist_env = os.environ.get('FANSHU_FRONTEND_DIST')
 if _frontend_dist_env:
@@ -141,10 +139,7 @@ else:
     # 本地开发：使用 frontend/dist（vite dev/build 产物）
     FRONTEND_DIST = Path(__file__).parent.parent / 'frontend' / 'dist'
 
-# 数据持久化目录：
-# - Hugging Face Spaces: /data（持久化，需手动设置 FANSHU_DATA_DIR=/data）
-# - Render: 通过 FANSHU_DATA_DIR 环境变量指定（仅用于临时文件，数据库见下）
-# - 本地开发: ~/.fanshu-writer
+# 数据持久化目录：HF Spaces 用 /data（设 FANSHU_DATA_DIR）、Render 按环境变量、本地 ~/.fanshu-writer
 DATA_DIR = Path(os.environ.get('FANSHU_DATA_DIR', Path.home() / '.fanshu-writer'))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -186,11 +181,8 @@ else:
     print(f'[DB] ⚠️ 本地开发模式使用 SQLite：{DATA_DIR}/fanshu.db（生产环境会拒绝启动）', flush=True)
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-# 连接池配置：防止 Neon/Render PG 空闲断连 + 大包 SSL 断连
-# - pool_pre_ping: 每次取连接前 ping 一下，剔除死连接
-# - pool_recycle: 每 15 分钟回收（原 30 分钟，Render 空闲超时更激进）
-# - pool_size / max_overflow: 控制总连接数，适配免费层限制
-# - connect_args: TCP keepalive + connect_timeout + keepalives_idle 防止 SSL 大包中途被代理掐断
+# 连接池：防 Neon/Render PG 空闲断连与 SSL 大包断连（pre_ping 剔死连接 / 15min 回收 /
+# keepalives 防代理掐断），pool_size 适配免费层
 if DATABASE_URL:
     _engine_opts = {
         'pool_pre_ping': True,
@@ -3536,12 +3528,9 @@ def ai_anti_forget_check(book_id):
         else:
             report = {'summary': content[:500], 'raw': True}
 
-    # ===== violation.location 规范化：与前端 displayChapterNum/parseChapterNumber 口径对齐 =====
-    # LLM 可能输出「第三章」「Chapter 3」「3. 觉醒灵根」等非标准格式，导致前端 /第(\d+)章/ 匹配错、
-    # 任务清单 chapterId 匹配错位，最终表现为"选第3章→消息栏写修改第4章"。这里统一后处理：
-    #   ① 从 location 中解析章号（中文/阿拉伯数字、Chapter N、行首 N. 都认）
-    #   ② 查全量章节表中 displayNum = 解析值 的章节；displayNum 规则：标题解析优先 → order_index+1 兜底
-    #   ③ 若定位到章节，重写 location 为「第{num}章 {纯标题文本}」；匹配不到则保留原 location（可能是维度类）
+    # ===== violation.location 规范化（与前端 displayChapterNum 口径对齐）=====
+    # LLM 可能输出「第三章/Chapter 3/3. 觉醒灵根」等格式致章号错位。处理：
+    # ①解析章号（中文/阿拉伯/Chapter N）②按 displayNum 匹配章节 ③重写为「第{num}章 {标题}」
     try:
         _all_chs_for_loc = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
 
@@ -4212,10 +4201,8 @@ def review_book(book_id):
 
 # ==== Skill Pack API ====
 
-# 【铁律】所有内置技能包的章节字数统一为 2400字±100（即 2300-2500 字区间）。
-# 这条铁律适用于所有 book_type=novel 的章节写作提示词。
-# 短篇(short_story)因是一篇完整作品而非分章，保留其总字数规范(如 8000-15000)不受此铁律约束。
-# 修改任何技能包的章节字数时，必须同步本铁律注释 + 所有内置技能包的 write_chapter 类提示词。
+# 【铁律】内置技能包章节字数统一 2400±100（2300-2500），适用于 novel 类 write_chapter 提示词；
+# 短篇(short_story)保留总字数规范。改字数须同步本注释与所有内置包提示词。
 SEED_SKILL_PACKS = [
     {'name': '番茄爽文三件套', 'description': '构思专用：开篇钩子设计+黄金三章节奏规划，番茄平台爽文前期结构管线', 'genre': 'other', 'book_type': 'novel', 'icon':'🍅',
      'stage_keys': json.dumps(['character_design','plot_design','outline'], ensure_ascii=False),
@@ -4706,14 +4693,10 @@ def seed_skill_packs():
             del existing_packs[name]
             removed = True
     # 【三类无污染】内置包分类映射表：name -> (category, genre_target, priority)
-    # category: master=构思类（大纲/规划/设定） / style=文风类（题材正文风格） / review=审查类（去AI味/一致性）
-    # genre_target: 文风类专属题材标签（fantasy/urban_fantasy/mystery/history/scifi/romance/military/light_novel...）
-    # priority: 同类多包时的注入优先级（数字小的先注入），默认100
+    # category: master=构思/style=文风/review=审查；genre_target: 文风类题材标签；
+    # priority: 同类多包注入优先级（小者先注入），默认100
     _CATEGORY_MAP = {
-        # ============================================================
-        # 文风类（style）：题材正文风格锚定，仅注入正文写作阶段
-        # 构思阶段和去AI阶段不注入本类
-        # ============================================================
+        # ---- 文风类（style）：题材正文风格锚定，仅注入正文写作阶段 ----
         '玄幻小说文风':      ('style', 'fantasy',        10),
         '悬疑文风':          ('style', 'mystery',        15),
         '历史文风':          ('style', 'history',        15),
@@ -4722,19 +4705,13 @@ def seed_skill_packs():
         '正文写作工作流':    ('style', '',               25),  # 上下文备料+起草+润色
         'SoloEnt Vibe Writing': ('style', '',            30),  # 作者文风锚定+人机共创
 
-        # ============================================================
-        # 审查类（review）：去AI味/一致性/审校，仅注入去AI和审稿阶段
-        # 构思阶段和正文写作阶段不注入本类
-        # ============================================================
+        # ---- 审查类（review）：去AI味/一致性/审校，仅注入去AI和审稿阶段 ----
         '去AI味儿改稿心法':  ('review', '',  10),
         'AI责编精审套装':    ('review', '',  20),
         'hum去 AI 味':       ('review', '',  30),
         '说人话':            ('review', '',  40),
 
-        # ============================================================
-        # 构思类（master）：大纲/规划/设定/方法论，仅注入构思阶段
-        # 正文阶段和去AI阶段不注入本类
-        # ============================================================
+        # ---- 构思类（master）：大纲/规划/设定/方法论，仅注入构思阶段 ----
         '番茄爽文三件套':    ('master', '',  10),
         '起点升级流大师':    ('master', 'fantasy', 12),
         '女频甜宠六边形':    ('master', 'romance', 12),
@@ -7008,18 +6985,13 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
 
 
 def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None, chapter_lang_styles=None, enable_structured_tags=True, skip_chapter_plan=False):
-    """构建章节正文写作的完整上下文（被 ai_continue / ai_continue_stream / ai_continue_batch 共用）。
-    返回 dict，包含 system_prompt, user_prompt, temperature, max_tokens, chapter_plan, api 信息等。
-
-    修复上下文脱节：
-    - target_chapter_num：前端传入的待写章号（基于 word_count>=100 已写判定，比后端 max+1 更准）
-    - prev_chapter_content：上一章已生成但未保存的正文（重新生成/连续创作场景），
-      会作为"最近一章"注入上下文，避免 AI 接不上刚写的内容。
-    - chapter_lang_styles：本章语言风格（行文文风，最多3个），拼入 system_prompt 指导行文。
-    - enable_structured_tags：是否注入 <pre_write_check> / <chapter_changes> 标签模板。
-      流式模式传 False（避免内部标签实时显示给用户）；多Agent/连续模式传 True（内部处理后清洗）。
-    - skip_chapter_plan：跳过 chapter_plan Agent（批处理流式模式用，避免同步 LLM 调用阻塞 20-60s
-      期间生成器无法推送心跳，导致 Render 空闲超时 network error）。"""
+    """构建章节写作完整上下文（ai_continue / stream / batch 共用），返回含
+    system_prompt/user_prompt/temperature/max_tokens/chapter_plan/api 信息。
+    - target_chapter_num：前端传的待写章号（word_count>=100 判定，比后端 max+1 准）
+    - prev_chapter_content：上一章已生成未保存正文，注入避免接不上
+    - chapter_lang_styles：本章行文文风（最多3个）
+    - enable_structured_tags：注入 pre_write_check/chapter_changes 标签模板（流式传 False）
+    - skip_chapter_plan：批处理流式用，避免 chapter_plan 同步调用阻塞心跳致超时"""
     book = Book.query.get(book_id)
     config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
@@ -7030,9 +7002,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     if not base_url.endswith('/v1'):
         base_url = base_url.rstrip('/') + '/v1'
 
-    # ===== 0. 章号计算（#9：改用 max(order_index)+1，健壮性）=====
-    # 优先用前端传入的章号（前端基于 word_count>=100 已写判定，比后端 max+1 更准，
-    # 能正确处理"已生成未保存"和"中间有空章"的情况，避免上下文脱节）
+    # ===== 0. 章号计算（#9：max(order_index)+1 兜底；前端传入优先，处理"已生成未保存"场景）=====
     all_chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
     if target_chapter_num and isinstance(target_chapter_num, int) and target_chapter_num > 0:
         current_chapter_num = target_chapter_num
@@ -7144,10 +7114,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     else:
         chapters_text = '（开篇第一章，无前文）'
 
-    # 修复上下文脱节：若前端传入了"上一章已生成未保存"的内容，把它作为最近一章追加注入。
-    # 场景：用户生成第N章后没点保存就生成第N+1章，此时数据库里没有第N章，
-    # 但 AI 写第N+1章必须知道第N章发生了什么，否则剧情断档。
-    # 截断到 2400 字（单章篇幅），避免过长挤占预算。
+    # 修复上下文脱节：前端传入"上一章已生成未保存"内容时追加注入（截断2400字），避免剧情断档
     if prev_chapter_content and prev_chapter_content.strip():
         prev_trimmed = prev_chapter_content.strip()[:2400]
         prev_ch_num = current_chapter_num - 1
@@ -7164,8 +7131,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 【相关历史章节召回】（基于本章出场角色智能召回，补充前4章窗口盲区，角色历史经历须与此一致）：
 {chr(10).join(rc_lines)}
 """
-    # 借鉴 PlotPilot 语义检索：TF-IDF 语义召回，补充字符匹配的盲区（捕捉同义词/语义关联）
-    # 仅当字符召回不足 6 条时启用，避免重复
+    # 语义检索召回（embedding 优先，自动降级 TF-IDF）；字符召回不足 6 条时启用
     if len(recalled_chapters) < 6:
         try:
             from semantic_retriever import recall_semantic_chapters
@@ -7319,12 +7285,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     # ===== 7. 智能默认指令（#11）=====
     smart_instruction = _build_smart_instruction(instruction, last_chapter, current_chapter_num)
 
-    # ===== 8. 组装 system_prompt =====
-    # 【P1重构】bible设定（5000字预算）+ 前4章完整正文+动态报告（独立段，不挤占设定预算）
-    # 注意：memory_section 含前4章完整正文（约9600字）+ 10份动态报告（约8000字），总量较大但独立注入
-    # 【核心创作参数】卷数+风格流派，作为本章写作的核心依据（人物塑造/节奏/爽点须契合所选流派）
+    # ===== 8. 组装 system_prompt（bible设定5000字预算 + 记忆独立段不挤占；卷数+流派+本章文风为核心依据）=====
     core_params_block = _build_core_params_block(bb, book)
-    # 【本章语言风格】用户为本章选定的行文文风（最多3个叠加），指导行文基调
     chapter_lang_style_block = _build_chapter_lang_style_prompt(chapter_lang_styles)
     system_prompt = f"""你是番茄小说金番作者级别的写手，正在协作写一本小说，当前准备写第 {current_chapter_num} 章。
 
@@ -7424,16 +7386,10 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 @login_required
 def ai_continue(book_id):
     """正文滚动创作（多 Agent 协同版，14项优化）：
-    1. 分层注入 bible 上下文（key_rules/worldbuilding/character_profiles/plot_design/timeline/concept）+ 按卷维度数据 + 卷纲对齐
-    2. 分层滚动记忆（即时层最近1章 + 近期层动态报告按当前章号±10窗口筛选）防遗忘
-    3. 伏笔防遗忘：按到期紧迫度排序，注入 Top 25 待回收伏笔清单（百万字长线加权）
-    4. 章节计划前置（chapter_plan Agent）：先生成200字计划，再写正文
-    5. 正文生成（动态 temperature + 智能 instruction）
-    6. 去 AI 味审校 Agent：容错+可观测（deai_status）
-    7. 一致性检查 Agent：检查是否违反 key_rules/人设
-    优化项：#1按卷注入 #2伏笔紧迫度 #3卷目标对齐 #4章节计划前置 #5相关性筛选
-           #6审校容错 #7动态报告相关性 #10动态temperature #11智能instruction #12 max_tokens
-           #13多Agent协同 #14预算管理 #9章号健壮性"""
+    分层 bible 注入+按卷维度+卷纲对齐 / 滚动记忆防遗忘 / 伏笔紧迫度Top25 /
+    章节计划前置 / 动态temperature正文生成 / 去AI味审校（容错+deai_status）/
+    一致性检查（key_rules/人设）。【优化2】TaskGraph 统一编排：写前构建任务图，
+    伏笔任务等安全任务自动执行，各 LLM 阶段完成后 mark_stage 回写，结束持久化轨迹。"""
     book = Book.query.get(book_id)
     if not book: return jsonify({'error': 'Not found'}), 404
 
@@ -7464,13 +7420,22 @@ def ai_continue(book_id):
         base_url = ctx['base_url']
         model = ctx['model']
 
-        # ===== P2：Context Manifest（记录上下文来源 + hash + token 预算）=====
-        # 章节生成前生成 manifest，支持事后溯源与失效检测
+        # ===== 【优化2】TaskGraph 统一编排：写前任务图+安全任务；异常降级旧直连模式 =====
+        wp_graph = wp_runner = None
+        try:
+            from smart_planner import build_writing_pipeline
+            wp_graph, wp_runner, _mission = build_writing_pipeline(
+                book_id, bb, ctx['current_chapter_num'],
+                skill_pack_ids=skill_pack_ids, enable_consistency_check=enable_consistency_check)
+            if wp_runner: wp_runner.mark_stage(wp_graph, 't2_ctx', 'done')
+        except Exception:
+            wp_graph = wp_runner = None
+
+        # ===== P2：Context Manifest（上下文来源 + hash + token 预算，事后溯源）=====
         context_manifest_data = None
         if ContextOrchestrator is not None:
             try:
-                # S2：动态预算（启发式按模型窗口 + 生成预算 + system_prompt 估算）
-                # 默认 ceiling 12k；若模型上下文 ≥ 32k（GPT-4o-mini 档），自动放宽到 16k
+                # S2：动态预算（ceiling 12k；模型上下文 ≥ 32k 时放宽到 16k）
                 ctx_win = ContextOrchestrator._heuristic_context_window(model)
                 auto_ceiling = 16000 if ctx_win >= 32768 else 12000
                 # 粗估 system_prompt tokens
@@ -7512,9 +7477,11 @@ def ai_continue(book_id):
             status = 504 if (llm_error and '超时' in llm_error) else 502
             return jsonify({'error': llm_error or 'LLM 返回空内容，请重试'}), status
 
-        # 【修复】额外校验：剥离内部标签后是否仍有正文
-        # 防止 LLM 只输出 <pre_write_check>/<chapter_changes> 标签而无正文，导致后续 _extract_chapter_body 后变空、
-        # 落地门禁误报"正文为空"（这是用户反馈的关键问题）
+        if wp_runner:  # 优化2：t2_plan/t3_draft 阶段完成
+            wp_runner.mark_stage(wp_graph, 't2_plan', 'done' if ctx.get('chapter_plan') else 'skipped')
+            wp_runner.mark_stage(wp_graph, 't3_draft', 'done', {'chars': len(draft_content)})
+
+        # 【修复】额外校验：剥离内部标签后仍有正文，防止 LLM 只输出标签导致门禁误报"正文为空"
         _pre_check_body = _extract_chapter_body(draft_content)
         _pre_check_body = re.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', _pre_check_body).strip()
         if not _pre_check_body:
@@ -7524,6 +7491,7 @@ def ai_continue(book_id):
         # 【修复】改用公共函数 _ensure_word_count，与流式/连续/连续流式模式统一
         draft_content, review_notes_prefix = _ensure_word_count(
             draft_content, api_key, base_url, model, max_tokens, ctx['current_chapter_num'])
+        if wp_runner: wp_runner.mark_stage(wp_graph, 't4_wc', 'done', {'chars': len(draft_content)})
 
         # ===== 去 AI 味审校 Agent（#6：容错+可观测）=====
         polished_content = draft_content
@@ -7579,6 +7547,11 @@ def ai_continue(book_id):
                 api_key, base_url, ctx.get('recognition_model', model), max_tokens=800,
                 chapter_plan=ctx.get('chapter_plan', '')
             )
+        if wp_runner:  # 优化2：t5_deai/t6_cchk 阶段完成
+            wp_runner.mark_stage(wp_graph, 't5_deai', deai_status if deai_status != 'skipped' else 'skipped',
+                                 {'status': deai_status})
+            wp_runner.mark_stage(wp_graph, 't6_cchk', 'done' if enable_consistency_check else 'skipped',
+                                 {'passed': consistency_passed})
 
         # ===== P1-6 + P1-7：CHANGES 解析 + delta 回写（非流式版）=====
         changes_applied = None
@@ -7602,13 +7575,10 @@ def ai_continue(book_id):
                             db.session.rollback()
             except Exception:
                 pass  # 回写失败不阻断
+        if wp_runner: wp_runner.mark_stage(wp_graph, 't7_changes', 'done' if changes_applied else 'skipped')
 
         # ===== P0-1：确定性后写校验（非流式版，零 LLM 成本）=====
-        # P2 扩展：注入 bb 上下文，启用死亡角色复活/境界回退/角色名错写硬伤检测
-        # P3 补全：bible_ctx 覆盖全维度，启用境界表动态解析（依赖 key_rules/worldbuilding）、
-        # 地点/物资一致性参照（inventory/locations）
-        # 【P0修复】原 elif 分支导致文风漂移检测为死代码，现合并到同一分支：
-        # 先跑 validate_chapter_with_bible，再追加文风漂移检测（若基准可用）
+        # bible_ctx 覆盖全维度（死亡复活/境界回退/文风漂移检测）；漂移检测并入主校验分支
         post_validate = None
         if validate_chapter_with_bible:
             try:
@@ -7649,118 +7619,24 @@ def ai_continue(book_id):
                     post_validate = validation.to_dict()
             except Exception:
                 pass
+        if wp_runner: wp_runner.mark_stage(wp_graph, 't8_pval', 'done' if post_validate else 'skipped',
+                                           {'issues': len((post_validate or {}).get('issues', []))})
 
-        # ===== P2-10：落地门禁（3道，章节落库前拦截）=====
-        # 【修复】门禁移到 _extract_chapter_body 之后调用，确保传入的是纯正文（已剥离标签）
-        # 原代码在7075行 _extract_chapter_body 之前调用门禁，导致标签内容被计入字数误判
-        gate_result = None  # 延迟到 _extract_chapter_body 之后再调用
+        # ===== P2-10：落地门禁（3道，章节落库前拦截；延迟到 _extract_chapter_body 后传纯正文）=====
+        gate_result = None
 
-        # ===== P1-5：审计-修订闭环（draft→校验→修订→再校验，best snapshot 持久化）=====
-        # 仅当后写校验发现问题且分数不达标时触发，最多2轮，best snapshot 取最高分版本
-        # 合并 P2-6：local 类问题用 spot_fix（省 token），structural 类才整章重写
+        # ===== P1-5：审计-修订闭环（校验→修订→再校验，最多2轮；编排已抽取至 chapter_review_cycle）=====
         review_cycle_result = None
         if (run_review_cycle and validate_chapter_with_bible and bb
                 and post_validate and post_validate.get('issues')):
             try:
-                # 1. 构建 validate_fn：复用 validate_chapter_with_bible，注入全维度 bible_ctx
-                def _validate_fn(content, _bb=bb):
-                    body = _extract_chapter_body(content)
-                    _ctx = {
-                        'character_profiles': _bb.character_profiles or '',
-                        'chapter_changes_log': _bb.chapter_changes_log or '',
-                        'key_rules': _bb.key_rules or '',
-                        'worldbuilding': _bb.worldbuilding or '',
-                        'inventory': _bb.inventory or '',
-                        'locations': _bb.locations or '',
-                        'foreshadowing': _bb.foreshadowing or '',
-                    } if _bb else None
-                    return validate_chapter_with_bible(body, _ctx) if _ctx else validate_chapter(body)
-
-                # 2. 构建 revise_fn：auto 模式路由，local→spot_fix / structural→整章重写
-                def _revise_fn(content, validation, llm_call_fn, _bb=bb, _api_key=api_key,
-                               _base_url=base_url, _model=model):
-                    if not route_revision:
-                        return content
-                    v_dict = validation.to_dict() if validation else {}
-                    routing = route_revision(content, v_dict, mode='auto')
-                    if routing['strategy'] == 'none' or routing['strategy'] == 'rewrite':
-                        # structural 类问题：调用整章重写（复用 LLM call）
-                        rewrite_sys = ("你是小说修订专家。根据校验问题整章重写，保留原剧情走向与人物对话，"
-                                       "只修正结构性问题（OOC/剧情偏离/伏笔遗漏/一致性异常）。"
-                                       "只输出修订后的完整正文。")
-                        issues_text = '; '.join(v_dict.get('issues', [])[:5]) if isinstance(v_dict.get('issues'), list) else str(v_dict.get('issues', ''))[:500]
-                        rewrite_user = f'【校验问题】\n{issues_text}\n\n【原文】\n{content}'
-                        return llm_call_fn(rewrite_sys, rewrite_user)
-
-                    # local 类问题：spot_fix，只送问题段落给 LLM
-                    patches = routing['patches']
-                    if not patches:
-                        return content
-                    sys_prompt, user_prompt = build_spot_fix_prompt(content, patches)
-                    llm_output = llm_call_fn(sys_prompt, user_prompt)
-                    return apply_spot_fix_patches(content, patches, llm_output)
-
-                # 3. 构建 llm_call_fn：封装 requests.post
-                def _llm_call_fn(sys_prompt, user_prompt, _api_key=api_key, _base_url=base_url, _model=model):
-                    resp = requests.post(f'{_base_url}/chat/completions',
-                        headers=build_auth_headers(_api_key),
-                        json={'model': _model,
-                              'messages': [{'role': 'system', 'content': sys_prompt},
-                                           {'role': 'user', 'content': user_prompt}],
-                              'temperature': 0.3, 'max_tokens': 12000},
-                        timeout=180)
-                    result = resp.json()
-                    return result['choices'][0]['message']['content'].strip()
-
-                # 4. 执行闭环
-                cycle_outcome = run_review_cycle(
-                    draft_content=polished_content,
-                    validate_fn=_validate_fn,
-                    revise_fn=_revise_fn,
-                    llm_call_fn=_llm_call_fn,
-                )
-                # 5. best snapshot 落地：若最终内容优于初稿，替换 polished_content
-                if cycle_outcome.get('final_content') and cycle_outcome.get('best_score', 0) > 0:
-                    final_content = cycle_outcome['final_content']
-                    # 仅当 final 与 polished 不同时才替换（避免无谓覆盖）
-                    if final_content != polished_content:
-                        polished_content = final_content
-                    review_cycle_result = {
-                        'best_score': cycle_outcome.get('best_score'),
-                        'rounds': cycle_outcome.get('rounds'),
-                        'passed': cycle_outcome.get('passed'),
-                        'reason': cycle_outcome.get('reason'),
-                        'history': cycle_outcome.get('history'),
-                    }
-                    # best snapshot 持久化到对应 chapter（若已落库）
-                    try:
-                        ch_for_snapshot = Chapter.query.filter_by(
-                            book_id=book_id, is_volume=False
-                        ).order_by(Chapter.order_index.desc()).first()
-                        if ch_for_snapshot:
-                            snapshots = []
-                            if ch_for_snapshot.review_snapshots:
-                                try:
-                                    snapshots = json.loads(ch_for_snapshot.review_snapshots)
-                                    if not isinstance(snapshots, list):
-                                        snapshots = []
-                                except Exception:
-                                    snapshots = []
-                            snapshots.append({
-                                'chapter_num': ctx['current_chapter_num'],
-                                'best_score': cycle_outcome.get('best_score'),
-                                'rounds': cycle_outcome.get('rounds'),
-                                'passed': cycle_outcome.get('passed'),
-                                'timestamp': datetime.now(timezone.utc).isoformat(),
-                            })
-                            # 仅保留最近 20 条快照
-                            ch_for_snapshot.review_snapshots = json.dumps(snapshots[-20:], ensure_ascii=False)
-                            db.session.commit()
-                    except Exception:
-                        db.session.rollback()
+                polished_content, review_cycle_result = run_review_cycle_with_bible(
+                    polished_content, bb, post_validate, book_id, ctx['current_chapter_num'],
+                    api_key, base_url, model, _extract_chapter_body)
             except Exception:
-                # 闭环失败不阻断章节生成
-                db.session.rollback()
+                db.session.rollback()  # 闭环失败不阻断章节生成
+        if wp_runner: wp_runner.mark_stage(wp_graph, 't9_cycle', 'done' if review_cycle_result else 'skipped',
+                                           {'passed': (review_cycle_result or {}).get('passed')})
 
         # ===== 审校评分制：聚合 4 套检测结果计算 0-100 分（零 LLM 成本）=====
         try:
@@ -7785,8 +7661,11 @@ def ai_continue(book_id):
         if run_all_gates and polished_content and polished_content.strip():
             try:
                 gate_result = run_all_gates(polished_content, bb, ctx['current_chapter_num'])
+                if wp_runner: wp_runner.mark_stage(wp_graph, 't10_gates', 'done',
+                                                   {'passed': gate_result.get('passed'), 'blocked': gate_result.get('blocked')})
                 # S1：critical 默认 block；用户二次确认传 ignore_gates 则放行
                 if gate_result.get('blocked') and not ignore_gates:
+                    if wp_runner: wp_runner.persist_plan_log(wp_graph, 'generate_chapter', {'outcome': 'gate_blocked'})
                     return jsonify({
                         'gate_blocked': True,
                         'ignore_gates_required': True,
@@ -7807,6 +7686,13 @@ def ai_continue(book_id):
                     pass  # 仅 warning：不阻断
             except Exception:
                 pass
+
+        # 优化2：写作流水线轨迹持久化（plan_log_json，最近20条）+ 前端可观测
+        pipeline_plan = None
+        if wp_runner:
+            wp_runner.mark_stage(wp_graph, 't11_post', 'declared', {'note': '落库后由 _after_chapter_persisted 执行'})
+            wp_runner.persist_plan_log(wp_graph, 'generate_chapter', {'outcome': 'ok'})
+            pipeline_plan = wp_graph.to_dict()
 
         return jsonify({
             'content': polished_content,
@@ -7834,6 +7720,7 @@ def ai_continue(book_id):
             'formatted_title': formatted_title,  # 统一格式标题（如"第1章 小镇少年"），前端直接使用
             # P2 新增：上下文溯源 manifest（记录本次生成注入了哪些 bible 片段 + hash + token 预算）
             'context_manifest': context_manifest_data,
+            'pipeline_plan': pipeline_plan,  # 优化2：写作流水线任务图（12阶段执行轨迹）
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -7956,6 +7843,15 @@ def ai_continue_stream(book_id):
     base_url = ctx['base_url']
     model = ctx['model']
 
+    # 【优化2】TaskGraph 统一编排（流式版）：写前任务图，LLM 阶段随流推进 mark_stage
+    wp_graph = wp_runner = None
+    try:
+        from smart_planner import build_writing_pipeline
+        wp_graph, wp_runner, _mission = build_writing_pipeline(book_id, bb, ctx['current_chapter_num'],
+                                                               skill_pack_ids=skill_pack_ids)
+    except Exception:
+        wp_graph = wp_runner = None
+
     def generate():
         try:
             # 先推送元信息（计划、章号、卷信息、temperature）
@@ -7968,11 +7864,15 @@ def ai_continue_stream(book_id):
                 'temperature': ctx['temperature'],
             }
             yield f'data: {json.dumps(meta, ensure_ascii=False)}\n\n'
+            if wp_runner:  # 优化2：上下文构建+章节计划阶段完成
+                wp_runner.mark_stage(wp_graph, 't2_ctx', 'done')
+                wp_runner.mark_stage(wp_graph, 't2_plan', 'done' if ctx.get('chapter_plan') else 'skipped')
 
             # 标准文风与字数铁律已在 _build_ai_continue_context 内统一注入（三种模式一致）
             system_prompt = ctx['system_prompt']
 
-            # 流式生成正文初稿，同时收集完整内容用于后写校验（P0-1）
+            # 流式生成正文初稿，收集完整内容用于后写校验（P0-1）
+            # 【空回复修复1】非 200 显式报错（旧实现遍历错误页无 data 帧→流静默结束→前端"空回复"）
             full_content_parts = []
             resp = requests.post(f'{base_url}/chat/completions',
                 headers=build_auth_headers(api_key),
@@ -7983,6 +7883,15 @@ def ai_continue_stream(book_id):
                       'max_tokens': ctx['max_tokens'],
                       'stream': True},
                 stream=True, timeout=180)
+            if resp.status_code != 200:
+                _err_txt = ''
+                try:
+                    _err_txt = resp.text[:200]
+                except Exception:
+                    pass
+                _err_msg = f"LLM 流式调用失败（HTTP {resp.status_code}）：{_err_txt or '服务返回错误，请检查 API Key/额度'}"
+                yield f'data: {json.dumps({"error": _err_msg}, ensure_ascii=False)}\n\n'
+                return
             for line in resp.iter_lines():
                 if line:
                     line = line.decode('utf-8')
@@ -8012,6 +7921,13 @@ def ai_continue_stream(book_id):
                         except Exception:
                             pass  # 非 JSON 行跳过
 
+            # 【空回复修复2】流结束但零内容帧 → 显式 error 帧替代静默结束（前端不再"空回复"）
+            if not full_content_parts:
+                yield f'data: {json.dumps({"error": f"LLM 返回空内容（model={model}，可能原因：max_tokens 过小/模型拒答/网关异常），请重试"}, ensure_ascii=False)}\n\n'
+                return
+            if wp_runner: wp_runner.mark_stage(wp_graph, 't3_draft', 'done',
+                                               {'chars': sum(len(p) for p in full_content_parts)})
+
             # ===== P1-6 + P1-7：CHANGES 解析 + delta 回写（流结束后）=====
             # 解析 LLM 输出的 12 类变更声明，delta patch 到 dynamic_volumes/foreshadowing_graph
             if extract_changes and apply_chapter_changes and full_content_parts:
@@ -8037,9 +7953,9 @@ def ai_continue_stream(book_id):
                 except Exception as ce:
                     # 回写失败不阻断章节生成
                     pass
+            if wp_runner: wp_runner.mark_stage(wp_graph, 't7_changes', 'done')
 
-            # 【修复】流式模式补字数修正：与多Agent/连续模式统一，初稿字数不在2300-2500时AI重写
-            # 在流结束后执行，推送心跳告知前端正在修正字数
+            # 【修复】流式模式补字数修正：初稿字数不在 2300-2500 时 AI 重写（推心跳告知前端）
             if full_content_parts:
                 try:
                     raw_content = ''.join(full_content_parts)
@@ -8056,10 +7972,10 @@ def ai_continue_stream(book_id):
                             full_content_parts = [corrected]
                 except Exception:
                     pass  # 字数修正失败不阻断流式生成
+            if wp_runner: wp_runner.mark_stage(wp_graph, 't4_wc', 'done', {'chars': _count_cn_chars(''.join(full_content_parts)) if full_content_parts else 0})
 
-            # ===== P0-1：确定性后写校验（流结束后，零 LLM 成本）=====
-            # 推送校验报告给前端，critical 级问题提示作者可一键修订
-            # P2 扩展：注入 bb 上下文，启用死亡角色复活/境界回退/角色名错写硬伤检测
+            # ===== P0-1：确定性后写校验（流结束后，零 LLM 成本，报告推前端供一键修订）=====
+            # 注入 bb 上下文：死亡复活/境界回退/角色名错写硬伤检测
             _validator = validate_chapter_with_bible or validate_chapter
             if _validator and full_content_parts:
                 try:
@@ -8083,21 +7999,32 @@ def ai_continue_stream(book_id):
                 except Exception as ve:
                     # 校验失败不阻断章节生成
                     pass
+            if wp_runner: wp_runner.mark_stage(wp_graph, 't8_pval', 'done' if full_content_parts else 'skipped')
 
-            # ===== 标题自动生成：解析【标题】标签并推送给前端 =====
-            # 统一推送格式化后的标题（第X章 标题），与多Agent同步/连续创作模式一致
+            # ===== 【优化3】流式模式补齐落地门禁（与非流式对齐）=====
+            # 流式不落库（前端确认后另行保存），gates 只做告警不阻断：blocked 时推 gate_blocked 帧
+            if run_all_gates and full_content_parts:
+                try:
+                    _body_for_gates = _extract_chapter_body(''.join(full_content_parts))
+                    if _body_for_gates and _body_for_gates.strip():
+                        _gate = run_all_gates(_body_for_gates, bb, ctx['current_chapter_num'])
+                        if wp_runner: wp_runner.mark_stage(wp_graph, 't10_gates', 'done',
+                                                           {'passed': _gate.get('passed'), 'blocked': _gate.get('blocked')})
+                        yield f'data: {json.dumps({"gate_result": _gate, "gate_blocked": _gate.get('blocked', False)}, ensure_ascii=False)}\n\n'
+                except Exception:
+                    pass
+
+            # ===== 标题自动生成：解析【标题】标签并推送（统一格式"第X章 标题"，前端优先 formatted_title）=====
             if full_content_parts:
                 try:
                     full_content_for_title = ''.join(full_content_parts)
                     suggested_title = _extract_chapter_title(full_content_for_title)
                     formatted_title = _format_chapter_title(ctx['current_chapter_num'], suggested_title)
-                    # 同时推送纯标题和格式化标题，前端优先用 formatted_title
                     yield f'data: {json.dumps({"suggested_title": suggested_title, "formatted_title": formatted_title}, ensure_ascii=False)}\n\n'
                 except Exception:
                     pass
 
-            # 【P1-4修复】流式模式补去AI味 Agent（与多Agent/批处理模式对齐）
-            # 仅当有 review 类技能包时触发，零技能包则跳过（与多Agent模式一致）
+            # 【P1-4修复】流式模式补去AI味 Agent：仅当有 review 类技能包时触发（与多Agent模式一致）
             try:
                 review_skill_ids = _resolve_skill_ids_by_category(book, 'review') if book else []
                 if review_skill_ids and full_content_parts:
@@ -8123,6 +8050,19 @@ def ai_continue_stream(book_id):
                                     yield f'data: {json.dumps({"type": "deai_result", "content": deai_body}, ensure_ascii=False)}\n\n'
             except Exception:
                 pass  # 去AI味失败不阻断流式生成
+            # 优化2：t5_deai 收尾 + 任务图轨迹持久化 + 推送 pipeline_plan 终帧（前端可观测）
+            if wp_runner:
+                _deai_state = 'done' if (locals().get('deai_body') and len(locals().get('deai_body') or '') > 200) else 'skipped'
+                wp_runner.mark_stage(wp_graph, 't5_deai', _deai_state)
+                # 优化3：流式模式显式关闭重审校环节（由前端 Spot-Fix/保存后置触发），任务图不留悬空阶段
+                wp_runner.mark_stage(wp_graph, 't6_cchk', 'skipped', {'note': '流式一致性检查由前端触发'})
+                wp_runner.mark_stage(wp_graph, 't9_cycle', 'skipped', {'note': '流式审校闭环由前端 Spot-Fix 触发'})
+                wp_runner.mark_stage(wp_graph, 't11_post', 'declared', {'note': '落库后由 _after_chapter_persisted 执行'})
+                try:
+                    wp_runner.persist_plan_log(wp_graph, 'generate_chapter', {'outcome': 'ok', 'mode': 'stream'})
+                    yield f'data: {json.dumps({"pipeline_plan": wp_graph.to_dict()}, ensure_ascii=False)}\n\n'
+                except Exception:
+                    pass
         except Exception as e:
             yield f'data: {{"error": "{str(e)[:200]}"}}\n\n'
 
@@ -8133,10 +8073,9 @@ def ai_continue_stream(book_id):
 @login_required
 def ai_continue_batch(book_id):
     """连续创作模式（优化版）：批量生成 N 章，每章独立生成，普通 JSON 响应。
-    每章只调 1 次 LLM，把字数修正和去AI味要求合并到 system_prompt 里。
-    去掉 prev_content 注入（每章独立生成，避免上下文污染）。
-    保留标题解析和一致性检查（但一致性检查默认关闭）。
-    请求参数：{ instruction, skill_pack_ids, chapter_lang_styles, count(1-10), start_chapter_num? }"""
+    每章只调 1 次 LLM（字数修正/去AI味要求并入 system_prompt），不注入 prev_content；
+    保留标题解析与一致性检查（默认关闭）。参数：{instruction, skill_pack_ids,
+    chapter_lang_styles, count(1-10), start_chapter_num?}"""
     book = Book.query.get(book_id)
     if not book:
         return jsonify({'error': 'Not found'}), 404
@@ -8217,8 +8156,7 @@ def ai_continue_batch(book_id):
                 failed.append({'chapter_num': cur_ch, 'error': 'LLM 返回内容为空'})
                 break  # 【铁律】内容为空即停，避免后续章节无上下文可衔接
 
-            # 【修复】额外校验：剥离内部标签后是否仍有正文（防止 LLM 只输出标签而无正文，
-            # 后续 _extract_chapter_body 后变空，门禁误报"正文为空"）
+            # 【修复】额外校验：剥离内部标签后仍有正文（防止 LLM 只输出标签，门禁误报"正文为空"）
             _pre_check_body = _extract_chapter_body(draft_content)
             _pre_check_body = _re_batch.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', _pre_check_body).strip()
             if not _pre_check_body:
@@ -8255,10 +8193,8 @@ def ai_continue_batch(book_id):
             except Exception:
                 wc_note = ''
 
-            # Bug9 修复：统一使用 count_words 统计字数，避免前端展示与库不一致
+            # Bug9：统一 count_words 统计字数；★连续模式也跑 post_validate（与多agent对齐）
             wc = count_words(polished_content)
-
-            # ★ 修复问题二：连续模式也跑 post_validate（去AI味检测），与多agent模式对齐
             post_validate = None
             if validate_chapter_with_bible:
                 try:
@@ -8381,11 +8317,8 @@ def ai_continue_batch(book_id):
             prev_polished = ''
             break  # 【铁律】异常即停，避免错误级联放大
 
-    # Bug1 修复：移除 resort_chapters_by_title(rebin_volumes=True)。
-    # 该调用按标题中的章节号重排 order_index，但批处理标题可能不含"第X章"前缀
-    # （_extract_chapter_title 会剥离前缀），混合排序时顺序错乱；
-    # 同时 rebin_volumes=True 会用"第X卷（第X-X章）"覆盖用户自定义卷名。
-    # 批处理章节已按 order_index=max+1 顺序保存，归卷在循环内通过 parent_id 完成。
+    # Bug1 修复：不再调 resort_chapters_by_title(rebin_volumes=True)——批处理标题可能无"第X章"
+    # 前缀致混合排序错乱，且 rebin 会覆盖自定义卷名；章节已按 order_index=max+1 顺序保存
     return jsonify({
         'chapters': results,
         'total': len(results),
@@ -8507,16 +8440,9 @@ def _run_blocking_with_heartbeat(func, heartbeat_msg, heartbeat_interval=5):
 @login_required
 def ai_continue_batch_stream(book_id):
     """连续创作流式版（SSE）：解决 Render 同步请求超时（约100s）导致 Failed to fetch。
-    每章 LLM 调用改 stream 模式，逐 chunk 收集同时定期推送心跳，保持连接活跃；
-    每章完成推送完整章节内容，失败推送错误，全部完成推送结束事件。
-    事件类型：
-    - {type:'chapter_start', chapter_num}
-    - {type:'heartbeat', chapter_num, message} (生成期间每5s推送，防空闲超时)
-    - {type:'chapter_done', chapter:{chapter_num, chapter_id, title, content, word_count}}
-    - {type:'chapter_failed', chapter_num, error}
-    - {type:'batch_done', total, failed_count, failed:[...]}
-    - {type:'error', message} (致命错误，终止)
-    """
+    每章 LLM 调用 stream 模式逐 chunk 收集并定期推心跳保活；事件类型：
+    chapter_start / heartbeat(每5s防空闲超时) / chapter_done(含完整章节) /
+    chapter_failed / batch_done / error(致命终止)。"""
     import time as _time
 
     book = Book.query.get(book_id)
@@ -8839,14 +8765,8 @@ def ai_continue_batch_stream(book_id):
         # 推送批处理完成事件
         yield f'data: {json.dumps({"type": "batch_done", "total": len(results), "failed_count": len(failed), "failed": failed}, ensure_ascii=False)}\n\n'
 
-    # stream_with_context 保持请求/应用上下文，避免生成器在 yield 后恢复时
-    # 触发 "Working outside of application context"（批处理多章串行，循环内大量 DB 操作：
-    # Chapter.query / db.session.commit / update_book_stats / _check_and_auto_generate_report 等，
-    # 没有 stream_with_context 会在第一次 yield 后丢失上下文，后续 DB 操作报错导致连接异常断开 → network error）
-    # 响应头修复：Cloudflare/Render 代理默认缓冲响应体，SSE 流会被缓冲导致浏览器长时间收不到数据 → network error
-    # - Cache-Control: no-cache 禁止缓存
-    # - X-Accel-Buffering: no 禁止 Nginx/代理缓冲
-    # - Connection: keep-alive 保持长连接
+    # stream_with_context 保住应用上下文（多章串行含大量 DB 操作，yield 后丢上下文会 network error）；
+    # 响应头禁缓存/禁代理缓冲（Cloudflare/Render 默认缓冲 SSE 致浏览器长时间收不到数据）
     resp = app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
     resp.headers['Cache-Control'] = 'no-cache'
     resp.headers['X-Accel-Buffering'] = 'no'
