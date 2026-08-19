@@ -45,6 +45,12 @@ _RETRYABLE = {FailureClass.TIMEOUT, FailureClass.UNAVAILABLE, FailureClass.EMPTY
               FailureClass.FORMAT_ERROR, FailureClass.UNKNOWN}
 
 
+# 思考帧心跳哨兵：正文中不可能出现的控制字符序列（\x00 不可打印）。
+# chat_stream(yield_reasoning_heartbeat=True) 时，thinking 帧到达即 yield 此哨兵，
+# 上层据此向客户端发 SSE 注释心跳帧（': ping'），防止推理期间代理层 30s idle 掐断连接。
+REASONING_HB = "\x00\x00reasoning-heartbeat\x00\x00"
+
+
 def build_auth_headers(api_key: str, content_type: bool = True) -> dict:
     """构造 LLM 请求认证头。
 
@@ -258,10 +264,12 @@ class LLMGateway:
         return result
 
     def chat_stream(self, messages: list[dict], temperature: float = 0.7,
-                    max_tokens: int = 4096, **extra):
-        """流式调用 LLM，yield delta content。
+                    max_tokens: int = 4096, yield_reasoning_heartbeat: bool = False, **extra):
+        """流式调用 LLM，yield delta content.
 
         兼容多种 chunk 格式（标准 OpenAI / 简化 delta / 直接 content）。
+        yield_reasoning_heartbeat=True 时，thinking（reasoning_content）帧到达即 yield
+        REASONING_HB 哨兵（不混入正文），供上层转发 SSE 心跳防代理 idle 掐断。
         """
         url = f"{self.base_url}/chat/completions"
         headers = build_auth_headers(self.api_key)
@@ -318,6 +326,8 @@ class LLMGateway:
                         # 思考帧不计入输出，但证明模型在工作（思考耗尽 token 时 content 为空）
                         elif delta.get("reasoning_content"):
                             got_reasoning = True
+                            if yield_reasoning_heartbeat:
+                                yield REASONING_HB  # 上层据此发 SSE 心跳，防推理期代理 idle 掐断
                     # 简化格式：直接 content 字段
                     elif chunk.get("content"):
                         got_content = True

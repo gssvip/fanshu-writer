@@ -38,6 +38,15 @@ SSE_HEARTBEAT_COMMENT = ': ping-heartbeat-keepalive\n\n'
 SSE_HB_INTERVAL_SEC = 10  # 每10秒发1帧心跳，远小于30s阈值，留20s余量
 
 
+def gw_stream_with_hb(gw, msgs, **kw):
+    """【连接中断根因修复】chat_stream 包装：思考型模型推理期(reasoning 帧)转 SSE 心跳注释帧。
+    旧实现每轮仅 attempt 开始发 1 帧心跳，GLM-4.7/R1 等 thinking 30s+ 期间后端零输出 →
+    Render 30s idle 掐断连接 → 前端"AI 未返回任何内容(连接中断)"。哨兵详见 llm_gateway.REASONING_HB。"""
+    from llm_gateway import REASONING_HB
+    for chunk in gw.chat_stream(msgs, yield_reasoning_heartbeat=True, **kw):
+        yield SSE_HEARTBEAT_COMMENT if chunk == REASONING_HB else chunk
+
+
 def _run_blocking_with_heartbeat(blocking_fn, sse_fn, extra_frames=None):
     """在线程里跑 blocking_fn()，主 generator 按 SSE_HB_INTERVAL_SEC 周期 yield 心跳，直到返回。
     - 先 yield 1 帧心跳立即占坑，再按间隔发后续心跳。
@@ -1254,7 +1263,7 @@ def chat_smart():
             if auto_ctx_info['chapters'] or auto_ctx_info['dims']:
                 yield f'data: {json.dumps({"type": "meta", "kind": "auto_context", "info": auto_ctx_info}, ensure_ascii=False)}\n\n'
 
-            for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=4096):
+            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=4096):
                 full_text.append(chunk)
                 yield f'data: {json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)}\n\n'
 
@@ -1885,16 +1894,10 @@ def get_session_messages(session_id):
 # 方案A：副驾做指挥官，总创作/章节创作降级为被调度的能力
 # 统一动作调度接口：前端点快捷按钮 → 后端代理调用现有能力 → 统一转成副驾卡片协议
 # ============================================================================
-# 支持的动作：
-#   action=master_create  批量生成设定（调 ai-master-create 维度生成，每维度产一张卡）
-#   action=continue       续写本章正文（调 ai-continue/stream，产 SAVE_CHAPTER 卡）
-#   action=polish         润色本章正文（调 ai-continue/stream + 润色指令，产 SAVE_CHAPTER 卡）
-#
-# SSE 输出统一为副驾协议：
-#   data: {"type":"delta","content":"..."}\n\n          流式正文
-#   data: {"type":"card","card":{...},"session_id":"..."}\n\n  落地卡片
-#   data: {"type":"done","session_id":"..."}\n\n
-#   data: {"type":"error","error":"..."}\n\n
+# 支持的动作：master_create 批量生成设定（每维度产一张卡）/ continue 续写本章 /
+#             polish 润色本章（均调 ai-continue/stream，正文产 SAVE_CHAPTER 卡）
+# SSE 副驾协议：delta 流式正文 / card 落地卡片 / done 结束 / error 错误
+# ============================================================================
 
 # 动作 → 默认维度（master_create 用）
 _ACTION_DIMENSIONS = {
@@ -2119,7 +2122,7 @@ def _action_master_create(book, session, instruction, gw, sse):
                 'concept': 3000, 'key_rules': 3500, 'worldbuilding': 5000,
                 'character_profiles': 4200, 'plot_design': 3500,
             }.get(dim, 3000)
-            for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=_max_tok):
+            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=_max_tok):
                 content += chunk
                 yield sse({'type': 'delta', 'content': chunk})
         except Exception as e:
@@ -2486,10 +2489,8 @@ def _filter_dynamic_reports_for_chapter(book_id, target_chapter_num, limit=5):
 
 # ========================================================================
 # B2：风格对齐 SkillPack（style_packs/ 目录下的 txt 范本自动注入）
-# 开关逻辑（优先级从高到低）：
-# 1. book.style_skill_ids 若含禁用关键词（none/disable/off/禁用/关闭/无风格包）→ 彻底关
-# 2. book.style_skill_ids 若含具体 pack id（如"fantasy_xuanhuan_v1"）→ 强制启用该 pack
-# 3. 否则按 book.genre 自动匹配：genre_match 命中 → 自动启用对应 pack
+# 开关优先级：① style_skill_ids 含禁用词（none/off/禁用等）→ 彻底关
+#   ② 含具体 pack id（如 fantasy_xuanhuan_v1）→ 强制启用  ③ 否则按 book.genre 自动匹配
 # ========================================================================
 
 _STYLE_PACK_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'style_packs')
@@ -2856,7 +2857,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     messages = [{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': user_msg}]
     content = ''
     try:
-        for chunk in gw.chat_stream(messages, temperature=0.85, max_tokens=4096):
+        for chunk in gw_stream_with_hb(gw, messages, temperature=0.85, max_tokens=4096):
             content += chunk
             yield sse({'type': 'delta', 'content': chunk})
     except Exception as e:
@@ -4023,7 +4024,7 @@ def smart_general():
             if auto_ctx_info['chapters'] or auto_ctx_info['dims']:
                 yield sse({'type': 'meta', 'kind': 'auto_context', 'info': auto_ctx_info})
 
-            for chunk in gw.chat_stream(messages, temperature=0.8, max_tokens=4096):
+            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=4096):
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
@@ -5373,7 +5374,7 @@ def smart_generate():
                 try:
                     # 【聊天终止修复】单次流失败只记录原因并降级重试，不再炸掉整条 SSE（旧实现直接
                     # 进外层 except → error 帧 → 前端 removeEmptyAi 消息戛然而止）
-                    for chunk in gw.chat_stream(_msgs_for_this_call, temperature=_temp, max_tokens=_max_tok):
+                    for chunk in gw_stream_with_hb(gw, _msgs_for_this_call, temperature=_temp, max_tokens=_max_tok):
                         full.append(chunk)
                         yield sse({'type': 'delta', 'content': chunk})
                 except Exception as se:
@@ -5614,7 +5615,7 @@ def smart_dim_edit():
                 _msgs_call = cur_messages
                 if _attempt >= 1:
                     _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
-                for chunk in gw.chat_stream(_msgs_call, temperature=_temp, max_tokens=_max_tok):
+                for chunk in gw_stream_with_hb(gw, _msgs_call, temperature=_temp, max_tokens=_max_tok):
                     full.append(chunk)
                     yield sse({'type': 'delta', 'content': chunk})
                 raw_joined = ''.join(full)
@@ -5847,7 +5848,7 @@ def smart_batch():
                         _msgs_call = cur_messages
                         if _attempt >= 1:
                             _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
-                        for chunk in gw.chat_stream(_msgs_call, temperature=_temp, max_tokens=_max_tok):
+                        for chunk in gw_stream_with_hb(gw, _msgs_call, temperature=_temp, max_tokens=_max_tok):
                             raw_chunks.append(chunk)
                             yield sse({'type': 'delta', 'content': chunk})
                         raw_joined = ''.join(raw_chunks)
@@ -6127,7 +6128,7 @@ def smart_deai():
                 _msgs_call = cur_messages
                 if _attempt >= 1:
                     _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim='chapter_deai')
-                for chunk in gw.chat_stream(_msgs_call, temperature=_temp, max_tokens=_max_tok):
+                for chunk in gw_stream_with_hb(gw, _msgs_call, temperature=_temp, max_tokens=_max_tok):
                     full.append(chunk)
                     yield sse({'type': 'delta', 'content': chunk})
                 raw_joined = ''.join(full)
