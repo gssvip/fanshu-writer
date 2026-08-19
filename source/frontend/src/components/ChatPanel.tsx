@@ -1541,20 +1541,25 @@ export default function ChatPanel() {
     fixingDimKeyRef.current = selectedDim;
     const hasModification = !!input.trim();
     appendUserAi(`已选择方案${['一', '二', '三', '四', '五'][index] || (index + 1)}：${suggestion.title}\n${suggestion.preview}\n\n${hasModification ? '已在下方输入框保留你的修改意见，点右下角「按方案生成」即可。' : '正在按此方案直接生成（若需要调整可先停止再填写修改意见重生成）。'}`);
-    // 无修改意见：下一轮 tick 直接走生成流程（setSelectedSuggestion 已落到 state）
+    // 无修改意见：下一轮 tick 直接走生成流程。
+    // ⚠️ 关键：必须把 suggestion 作为参数传入，不能依赖 state——queueMicrotask 在 React
+    // 提交重渲染之前执行，ref 里的旧闭包读到的 selectedSuggestion 还是 null，会静默 return，
+    // 表现为"选中方案后无任何反应"。
     if (!hasModification) {
       queueMicrotask(() => {
-        handleGenerateFromSelectedRef.current?.();
+        handleGenerateFromSelectedRef.current?.(suggestion);
       });
     }
   }, [bookId, selectedDim, streaming, input, appendUserAi]);
 
   // 用 ref 绕开"刚 setSelectedSuggestion → 下一行就读 state 还是旧值"的闭包问题
-  const handleGenerateFromSelectedRef = useRef<(() => Promise<void>) | null>(null);
+  const handleGenerateFromSelectedRef = useRef<((overrideSuggestion?: { id: string; title: string; preview: string; _from_user?: boolean; _full_content?: string }) => Promise<void>) | null>(null);
 
   // 2b. 基于已选方案 + 用户修改意见 流式生成最终内容
-  const handleGenerateFromSelected = useCallback(async () => {
-    if (!bookId || !selectedDim || streaming || !selectedSuggestion) return;
+  // 支持外部直传 overrideSuggestion（点方案后自动触发的场景，state 尚未提交）
+  const handleGenerateFromSelected = useCallback(async (overrideSuggestion?: { id: string; title: string; preview: string; _from_user?: boolean; _full_content?: string }) => {
+    const sug = overrideSuggestion || selectedSuggestion;
+    if (!bookId || !selectedDim || streaming || !sug) return;
     const modification = input.trim();
     setInput('');
     setStreamError('');
@@ -1566,8 +1571,8 @@ export default function ChatPanel() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const isFromUser = !!selectedSuggestion._from_user;
-      const suggestionContent = isFromUser ? (selectedSuggestion._full_content || selectedSuggestion.preview) : selectedSuggestion.preview;
+      const isFromUser = !!sug._from_user;
+      const suggestionContent = isFromUser ? (sug._full_content || sug.preview) : sug.preview;
       const res = await api.smartGenerateStream(bookId, selectedDim, suggestionContent, modification, settingPacks, sessionId || undefined, ctrl.signal, isFromUser);
       await consumeSSE(res, ctrl);
       refreshProgress();
