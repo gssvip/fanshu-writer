@@ -52,7 +52,12 @@ WRITEPAGE_BASELINE = 8899
 #   - handleGenerateFromSelectedRef + useEffect sync ref（2行）
 #   - catch console.error真实错误名+消息+堆栈 + setStreamError（e.name:e.message）（3行）
 #   → 净增 15 行（3242→3257），属交互对齐+排障必需，不属业务膨胀
-CHATPANEL_BASELINE = 3257
+# 2026-08-19 重校准6（P0修复：点选方案后无响应的React闭包竞态bug）：
+#   - handleGenerateFromSelected 增加 overrideSuggestion 可选参数（queueMicrotask 在
+#     React提交前执行，旧闭包读到 selectedSuggestion=null 静默return→请求不发）
+#   - queueMicrotask 显式传 suggestion 对象 + ref 签名带参 + 关键注释
+#   → 净增 5 行（3257→3262），属P0故障修复必需，不属业务膨胀
+CHATPANEL_BASELINE = 3262
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
