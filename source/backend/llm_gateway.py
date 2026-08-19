@@ -178,6 +178,27 @@ class LLMGateway:
             result.attempts = attempt
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+                # 【对齐 chat_stream】非 200 状态码先分类报错（旧实现直接 resp.json()，
+                # 非 JSON 错误页抛异常进 UNKNOWN 盲目重试，错误信息不可读）
+                if resp.status_code != 200:
+                    fc = _classify_error(None, resp.status_code, None)
+                    body_text = ''
+                    try:
+                        err_body = resp.json()
+                        if isinstance(err_body, dict):
+                            err = err_body.get("error")
+                            if isinstance(err, dict):
+                                body_text = (err.get("message") or "")[:300]
+                    except Exception:
+                        body_text = (resp.text or "")[:200]
+                    last_error = f"LLM 调用失败（HTTP {resp.status_code}）：{body_text or '服务返回错误'}"
+                    result.failure_class = fc if fc != FailureClass.NONE else FailureClass.UNAVAILABLE
+                    result.error = last_error
+                    result.raw = {"status_code": resp.status_code}
+                    if result.failure_class not in _RETRYABLE or attempt > self.max_retries:
+                        return result
+                    time.sleep(min(2 ** (attempt - 1), 4))
+                    continue
                 body = resp.json()
 
                 content, finish_reason, fc = _extract_content(body)
@@ -254,6 +275,7 @@ class LLMGateway:
         payload.update(extra)
 
         got_content = False
+        got_reasoning = False  # 思考型模型（GLM-4.7/R1 等）先输出 reasoning_content 再输出 content
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout, stream=True)
             # 【空回复根因修复】非 200 状态码必须显式抛错：
@@ -293,6 +315,9 @@ class LLMGateway:
                         if content:
                             got_content = True
                             yield content
+                        # 思考帧不计入输出，但证明模型在工作（思考耗尽 token 时 content 为空）
+                        elif delta.get("reasoning_content"):
+                            got_reasoning = True
                     # 简化格式：直接 content 字段
                     elif chunk.get("content"):
                         got_content = True
@@ -302,6 +327,13 @@ class LLMGateway:
             # 【空回复根因修复】流走完但一个内容帧都没有（空回复/被网关吞帧）→ 显式抛错，
             # 让上层重试/报错，而不是静默结束让前端看到"聊天终止/消息截断"
             if not got_content:
+                if got_reasoning:
+                    # 思考型模型：思考产出正常但正文为空 → max_tokens 被思考耗尽（属截断，重试加大 max_tokens 有意义）
+                    raise LLMError(
+                        f"思考型模型正文为空：模型思考已产出但 max_tokens={max_tokens} 被耗尽，"
+                        f"无余量输出正文（model={self.model}）。请增大 max_tokens 或关闭思考模式",
+                        FailureClass.FORMAT_ERROR,
+                    )
                 raise LLMError(
                     f"LLM 流式返回空内容（HTTP 200 但无任何 content 帧，model={self.model}，"
                     f"可能原因：max_tokens 过小/模型拒答/供应商网关异常）",

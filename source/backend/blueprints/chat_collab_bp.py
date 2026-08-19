@@ -101,9 +101,7 @@ MAX_HISTORY_ROUNDS = 8
 MAX_MSG_CHARS = 2000
 
 # ============================================================================
-# 统一去AI味规则（融合“默认去AI味规则”+“去AI味执行规则精简版”）
-# 适用：正文写作（continue）、正文修改（polish）、去AI Tab（smart_deai）
-# 三处共用同一份规则，保证口径一致
+# 统一去AI味规则（正文写作/正文修改/去AI Tab 三处共用，保证口径一致）
 # ============================================================================
 DEAI_RULES = """【去AI味执行规则】
 定位：去AI味操作手册。写作时主动规避，去AI时只做减法/替换，不做润色扩写。
@@ -158,13 +156,10 @@ DEAI_RULES = """【去AI味执行规则】
 - 优先级铁律：人味 > 克制 > 流畅。""".strip()
 
 # ----------------------------------------------------------------------------
-# 【阶段隔离·规则拆分】把原"叙事工艺铁律"拆成4类，不同阶段只注入该阶段需要的
-#   GENERAL_CORE_RULES     → 构思+正文+去AI 三阶段通用（总则/冰山/结构/人物/情节）
-#   CONCEPTION_EXTRA_RULES → 只用于构思阶段（大纲/剧情 JSON 格式约束等）
-#   WRITING_STYLE_RULES    → 只用于正文写作阶段（行文规范/对白/禁词/情绪+自检清单）
-#   DEAI_ONLY_RULES        → 只用于去AI 阶段（独立去AI操作手册+行文识别与处理速查+去AI补充约束）
-# 注意：DEAI阶段不再注入 WRITING_STYLE_RULES，避免 DEAI_RULES 与 WRITING_STYLE_RULES 的
-#      解释腔/对白/工整句式/禁词表/执行流程等大块内容重复出现 2 遍。
+# 【阶段隔离·规则拆分】不同阶段只注入该阶段需要的规则：
+#   GENERAL_CORE_RULES（三阶段通用总则）/ CONCEPTION_EXTRA_RULES（构思 JSON 约束）
+#   WRITING_STYLE_RULES（正文行文）/ DEAI_ONLY_RULES（去AI 专用）。
+# DEAI 阶段不注入 WRITING_STYLE_RULES，避免禁词表/执行流程等大块内容重复 2 遍。
 # ----------------------------------------------------------------------------
 
 DEAI_ONLY_RULES = DEAI_RULES  # 别名：DEAI_RULES 就是"去AI阶段专用"的完整规则
@@ -301,10 +296,8 @@ NARRATIVE_CRAFT_RULES = (GENERAL_CORE_RULES + "\n\n" + WRITING_STYLE_RULES).stri
 
 
 # ============================================================================
-# 【阶段隔离·System Prompt 构建函数】
-#   build_conception_rules() → 构思阶段：通用核心 + 构思格式约束 + 构思类(master)技能包
-#   build_writing_rules()    → 正文阶段：通用核心 + 行文规范 + 文风类(style)技能包
-#   build_review_rules()     → 去AI/审稿阶段：通用核心 + 行文规范 + 独立去AI手册 + 审查类(review)技能包
+# 【阶段隔离·System Prompt 构建函数】按阶段注入：构思（master包）/ 正文（style包）/
+# 去AI审稿（review包 + 独立去AI手册），通用核心三阶段共用
 # ============================================================================
 
 def build_conception_rules(skill_pack_ids=None, mode='agent', extra_master_note: str = '', book=None) -> str:
@@ -928,15 +921,9 @@ def load_session_messages(session) -> list[dict]:
 
 # ============================================================================
 # 会话历史瘦身 + 安全提交（解决 messages_json 150KB+ 导致 PG SSL 断连）
-#
-# 根因：ai_sessions.messages_json 把完整卡片内容（章节正文/timeline JSON 数组）
-#       连同历史消息一起存进一个大 JSON 字符串，一次 UPDATE 动辄 100~300KB，
-#       Render/Neon 的 PG 代理层对大包+SSL 非常敏感，直接掐断连接 → OperationalError。
-#
-# 解法：
-#   1. 落盘前瘦身：卡片内容只保留元信息（id/type/title/target/status），不存正文；
-#      单条消息截到 800 字；总轮次上限 12；总 JSON 上限约 48KB。
-#   2. 提交捕获断连异常：rollback → 引擎 dispose 丢弃所有死连接 → 重查 session → 重试一次。
+# 根因：session 存完整卡片内容，一次 UPDATE 100~300KB，Render/Neon PG 代理掐断 SSL 连接。
+# 解法：① 落盘前瘦身（卡片只留元信息，单条截 800 字，12 轮/48KB 上限）
+#       ② 断连异常 rollback → dispose 死连接 → 重查 session → 重试一次。
 # ============================================================================
 
 # 落盘前单条消息最大字符（正文写作单条 AI assistant 内容可能 6000+ 字，会超）
@@ -1114,10 +1101,8 @@ def _get_latest_chapter_info(book_id):
 
 # ============================================================================
 # 章节标题剥离 + 字数统计统一口径
-# 解决：AI 输出"标题+空行+正文"被整体存入 card.content，导致
-#   1) 章节正文里混入标题行
-#   2) 字数统计 len(content) 含标题/空行，与 prompt 要求的"纯正文含标点"口径不一致
-# 统一：card.content / chapter.content 只存纯正文；字数用 _count_cn_chars（去空白含标点）
+# 解决：AI 输出"标题+空行+正文"整体入 card.content → 正文混标题、字数口径不一致。
+# 统一：content 只存纯正文；字数用 _count_cn_chars（去空白含标点）
 # ============================================================================
 
 def _strip_chapter_title(content, fallback_title=''):
@@ -5367,6 +5352,7 @@ def smart_generate():
             max_attempts = 4  # 首次 + 最多 3 次重试
             _EMPTY_FALLBACK_LEN = 30  # 兜底阈值（人物/文风/伏笔这类短内容维度也能触发）
             _last_stream_err = ''
+            _last_fc_truncated = False  # 上次失败是否为截断类（思考耗尽/输出被切）→ 重试直接顶满 max_tokens
             for _attempt in range(max_attempts):
                 yield SSE_HEARTBEAT_COMMENT  # SSE 保活：防 Render 30s idle timeout
                 if _attempt >= 1:
@@ -5376,7 +5362,12 @@ def smart_generate():
                                         'reason': _last_stream_err[:160] if _last_stream_err else ''}})
                 full = []
                 _temp = 0.7 + min(_attempt * 0.08, 0.2)  # 初始 0.7 起步，重试微增
-                _max_tok = max_tok if _attempt == 0 else min(int(max_tok * (1.5 if _attempt == 1 else 2)), 8000)
+                if _attempt == 0:
+                    _max_tok = max_tok
+                elif _last_fc_truncated:
+                    _max_tok = 8000  # 截断类失败（思考耗尽 token）重试直接顶满，渐进 1.5x 不够思考消耗
+                else:
+                    _max_tok = min(int(max_tok * (1.5 if _attempt == 1 else 2)), 8000)
                 # 第 2 次起进"精简模式"：截断过长 system/铁律，防 prompt 溢出 → 模型拒答吐空
                 _msgs_for_this_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key) if _attempt >= 1 else cur_messages
                 try:
@@ -5387,6 +5378,13 @@ def smart_generate():
                         yield sse({'type': 'delta', 'content': chunk})
                 except Exception as se:
                     _last_stream_err = str(se)[:300]
+                    # 【智驾生成错误修复】确定性失败（key 无效/额度耗尽/用户取消）重试无意义，
+                    # 直接跳出循环走下方空内容 error 帧立即报错（旧实现 401 也傻等 4 轮超时）
+                    from llm_gateway import FailureClass
+                    _fc = getattr(se, 'failure_class', None)
+                    _last_fc_truncated = _fc == FailureClass.FORMAT_ERROR  # 思考耗尽/输出被切 → 重试顶满 max_tokens
+                    if _fc in (FailureClass.AUTHENTICATION, FailureClass.QUOTA, FailureClass.CANCELLED):
+                        break
                     continue
                 raw_joined = ''.join(full)
                 # EMPTY_OUTPUT 兜底1：先全局剥离 think 标签（R1 系列模型最多的问题）
