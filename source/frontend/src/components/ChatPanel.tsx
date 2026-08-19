@@ -1530,8 +1530,9 @@ export default function ChatPanel() {
     }
   }, [input, bookId, selectedDim, streaming, settingPacks, dimensions, progress, appendUserAi, removeEmptyAi]);
 
-  // 2. 选中意见 → 若输入框为空则直接开始生成（用户默认预期：点方案=立刻开干，不再强制点第二下按钮）；
-  //    若输入框有文本则进入"基于该方案修改/生成"模式，等用户确认完修改再点按钮。
+  // 2. 选中方案 → 仅记录选中，绝不自动生成。
+  //    用户可在下方消息框补充修改意见，再点「按方案生成」按钮手动触发；
+  //    不填意见也可直接点按钮按原方案生成。
   const handleGenerate = useCallback((suggestion: { id: string; title: string; preview: string }, index: number) => {
     if (!bookId || !selectedDim || streaming) return;
     setStreamError('');
@@ -1539,27 +1540,12 @@ export default function ChatPanel() {
     setSelectedSuggestion(suggestion);
     streamBufferRef.current = '';
     fixingDimKeyRef.current = selectedDim;
-    const hasModification = !!input.trim();
-    appendUserAi(`已选择方案${['一', '二', '三', '四', '五'][index] || (index + 1)}：${suggestion.title}\n${suggestion.preview}\n\n${hasModification ? '已在下方输入框保留你的修改意见，点右下角「按方案生成」即可。' : '正在按此方案直接生成（若需要调整可先停止再填写修改意见重生成）。'}`);
-    // 无修改意见：下一轮 tick 直接走生成流程。
-    // ⚠️ 关键：必须把 suggestion 作为参数传入，不能依赖 state——queueMicrotask 在 React
-    // 提交重渲染之前执行，ref 里的旧闭包读到的 selectedSuggestion 还是 null，会静默 return，
-    // 表现为"选中方案后无任何反应"。
-    if (!hasModification) {
-      queueMicrotask(() => {
-        handleGenerateFromSelectedRef.current?.(suggestion);
-      });
-    }
-  }, [bookId, selectedDim, streaming, input, appendUserAi]);
+    appendUserAi(`已选择方案${['一', '二', '三', '四', '五'][index] || (index + 1)}：${suggestion.title}\n${suggestion.preview}\n\n可在下方输入框填写修改意见，再点「按方案生成」；不填则直接按此方案生成。`);
+  }, [bookId, selectedDim, streaming, appendUserAi]);
 
-  // 用 ref 绕开"刚 setSelectedSuggestion → 下一行就读 state 还是旧值"的闭包问题
-  const handleGenerateFromSelectedRef = useRef<((overrideSuggestion?: { id: string; title: string; preview: string; _from_user?: boolean; _full_content?: string }) => Promise<void>) | null>(null);
-
-  // 2b. 基于已选方案 + 用户修改意见 流式生成最终内容
-  // 支持外部直传 overrideSuggestion（点方案后自动触发的场景，state 尚未提交）
-  const handleGenerateFromSelected = useCallback(async (overrideSuggestion?: { id: string; title: string; preview: string; _from_user?: boolean; _full_content?: string }) => {
-    const sug = overrideSuggestion || selectedSuggestion;
-    if (!bookId || !selectedDim || streaming || !sug) return;
+  // 2b. 基于已选方案 + 用户（可选）修改意见 流式生成最终内容（仅「按方案生成」按钮手动触发）
+  const handleGenerateFromSelected = useCallback(async () => {
+    if (!bookId || !selectedDim || streaming || !selectedSuggestion) return;
     const modification = input.trim();
     setInput('');
     setStreamError('');
@@ -1571,8 +1557,8 @@ export default function ChatPanel() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const isFromUser = !!sug._from_user;
-      const suggestionContent = isFromUser ? (sug._full_content || sug.preview) : sug.preview;
+      const isFromUser = !!selectedSuggestion._from_user;
+      const suggestionContent = isFromUser ? (selectedSuggestion._full_content || selectedSuggestion.preview) : selectedSuggestion.preview;
       const res = await api.smartGenerateStream(bookId, selectedDim, suggestionContent, modification, settingPacks, sessionId || undefined, ctrl.signal, isFromUser);
       await consumeSSE(res, ctrl);
       refreshProgress();
@@ -1589,8 +1575,6 @@ export default function ChatPanel() {
       abortRef.current = null;
     }
   }, [bookId, selectedDim, streaming, selectedSuggestion, input, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
-
-  useEffect(() => { handleGenerateFromSelectedRef.current = handleGenerateFromSelected; }, [handleGenerateFromSelected]);
 
   // 3. 下游维度直接生成（不经过多选方案，把用户输入作为生成要求）
   const handleDirectGenerate = useCallback(async () => {
