@@ -78,7 +78,12 @@ TOOLSPAGE_BASELINE = 1192
 #   - _action_chapter字数校验段：_ensure_word_count从直接同步调用→包_run_blocking_with_heartbeat每10s心跳（21行）
 #   - 4处for _attempt in range(max_attempts)循环体首行：加心跳+第N次尝试delta（4处×6行=24行）
 #   → 净加 72 行（6932→7004），属NETWORK ERROR单点修复必需（堵住[字数校验]后断连这一用户实锤场景）
-CHAT_COLLAB_BP_BASELINE = 7004
+# 2026-08-19 重校准7（方案卡片中英混/Prompt规则复述垃圾P0兜底）：
+#   - smart_suggest sys_prompt末尾删正文写作PLAIN_TEXT_LAYOUT_RULES大段；
+#   - 新增P0禁令4条（禁英语/禁规则复述/禁占位短凑数/禁5条同义方案）+ 自检3条（约10行）；
+#   - 新增多层级解析兜底：suggestions/result/data字段兼容→指纹过滤→方案N分段→中文句号断句桶→硬行截（约90行）；
+#   → 净增 103 行（7004→7107），属修复用户截图"方案一：方案1+Each preview must中英混"的必需P0兜底，不属业务膨胀。
+CHAT_COLLAB_BP_BASELINE = 7107
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

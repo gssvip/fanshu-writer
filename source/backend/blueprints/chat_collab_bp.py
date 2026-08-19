@@ -4273,20 +4273,23 @@ def smart_suggest():
 
 {_skill_note_block}
 
-【重要·方案卡格式】请输出 3-5 个不同切入角度的方案。严格按以下 JSON 格式输出（不要任何其他内容、不要 Markdown 代码块）：
+【重要·方案卡格式】请生成 3-5 个不同切入角度的方案。严格按以下 JSON 格式输出（不要任何其他内容、不要 Markdown 代码块，不要解释性文字，不要思考过程，不要规则复述，不要英语）：
 {{
   "suggestions": [
-    {{"title": "方案标题（10字内）", "preview": "方案简介（80-150字，说清核心思路和亮点）"}}
+    {{"title": "方案标题（10字内，中文，说明该方案核心卖点）", "preview": "方案简介（120-220字，全中文，直接对读者讲清：故事核/核心设定差异/爽点钩子，绝不提本prompt里的任何规则/格式/自检要求）"}}
   ]
 }}
 
-【最终自检（在输出 JSON 之前必须做完）】
-1. 检查每条 preview 里提到的卷数（如果提到）是否等于用户设定的实际卷数（={tv_for_suggest if (tv_for_suggest and tv_for_suggest>=1) else '未设定，可省略'}）；
-2. 禁止出现"十卷、五卷、5-8 卷、十余卷"等默认数字；
-3. 若本任务属于大纲/剧情/构思维度，每条 preview 必须显式包含"{tv_for_suggest if (tv_for_suggest and tv_for_suggest>=1) else '__'}卷"字样；
-4. JSON 合法，无多余逗号，suggestions 长度 3-5。
+【P0 禁令·违者作废】
+1. 严禁在 title/preview 里出现任何英语（如 key requirements / theme / each preview must / I'm looking at 等）、严禁中英文混杂；
+2. 严禁把本 prompt 里的规则、自检要求、格式说明、"30卷"字样的约束语句当方案内容复述；
+3. 严禁 preview 用短于 80 字的占位句子凑数（如"方案二：方案2"），每一条 preview 都必须是完整的中文创意简介；
+4. 每条方案必须是"差异化创意"——不能是5条把同一个创意换个同义词重写，要有题材/主角身份/金手指形态/切入视角/核心冲突形态上的明确差异。
 
-{PLAIN_TEXT_LAYOUT_RULES}"""
+【最终自检（输出前必过）】
+1. 若本任务属于大纲/剧情/构思维度，每条 preview 必须显式包含"{tv_for_suggest if (tv_for_suggest and tv_for_suggest>=1) else '__'}卷"字样，不得写"十卷""五卷"等默认数字；
+2. 所有 preview 检查一遍：有没有英语？有没有复述本 prompt 里的规则/自检/格式说明？字数够 120-220？中文通顺？
+3. JSON 合法：无多余逗号，suggestions 长度 3-5，数组元素只含 title 与 preview。"""
 
     messages = [{'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': f'请生成{spec["label"]}的多选方案'}]
@@ -4297,22 +4300,133 @@ def smart_suggest():
         return jsonify({'error': f'生成方案失败：{err}'}), 500
 
     suggestions = []
+    _raw = content or ''
     try:
-        m = re.search(r'\{[\s\S]*\}', content or '')
+        m = re.search(r'\{[\s\S]*\}', _raw)
         if m:
             parsed = json.loads(m.group(0))
-            suggestions = parsed.get('suggestions', []) or []
+            if isinstance(parsed, dict):
+                # 支持 suggestions / result / data 等多种外层字段
+                for _k in ('suggestions', 'result', 'data', 'items', 'list'):
+                    v = parsed.get(_k)
+                    if isinstance(v, list):
+                        suggestions = v
+                        break
     except Exception:
         pass
 
-    # 兜底：按段落切分
+    # ===== 【P0兜底·用户截图根因】：模型把prompt规则原文/英语/占位句子当方案吐了，必须全打掉 =====
+    _BAD_FINGERPRINTS = [
+        # 用户截图里实锤出现过的指纹
+        'each preview must', 'key requirements', "i'm looking at",
+        '方案一：方案1', '方案二：方案2', '方案三：方案3', '方案四：方案4', '方案五：方案5',
+        # 规则复述类
+        'json格式', '输出格式', '自检', '默认数字', 'suggestions', 'preview must',
+        # 中英混类（连续2个以上英语单词夹在中文里）
+    ]
+    def _is_garbage_preview(txt: str) -> bool:
+        if not txt: return True
+        low = (txt or '').lower()
+        for fp in _BAD_FINGERPRINTS:
+            if fp in low: return True
+        # 英语单词（字母+空格+字母连续出现≥10字符且非纯URL）=垃圾
+        if re.search(r'[a-zA-Z]{3,}\s+[a-zA-Z]{3,}', txt): return True
+        # 纯占位标题+正文极短=垃圾（如标题"方案1"正文才20字）
+        if len(txt.strip()) < 60: return True
+        return False
+
+    def _normalize_suggestions(raw_sugs):
+        out = []
+        for s in (raw_sugs or []):
+            if isinstance(s, str):
+                out.append({'title': '', 'preview': s.strip()})
+            elif isinstance(s, dict):
+                title = str(s.get('title') or s.get('name') or s.get('方案名') or '').strip()
+                preview = str(s.get('preview') or s.get('content') or s.get('简介') or s.get('description') or s.get('desc') or '').strip()
+                if preview:
+                    out.append({'title': title, 'preview': preview})
+                elif title and len(title) >= 80:
+                    # 模型把内容塞进title了，迁移过来
+                    out.append({'title': '', 'preview': title})
+        return out
+
+    suggestions = _normalize_suggestions(suggestions)
+    suggestions = [s for s in suggestions if not _is_garbage_preview(s.get('preview', ''))]
+
+    # 二级兜底：从整段原始文本按"方案N："分段取3-5段（中文段为主，过滤英文/规则段）
     if not suggestions:
-        lines = [l.strip() for l in (content or '').split('\n') if l.strip() and not l.strip().startswith('```')]
+        cn_splits = re.split(r'(?:^|\n)\s*(?:方案\s*[一二三四五六1-5][：:\s\.、])', _raw)
+        cleaned = []
+        for chunk in cn_splits[1:6]:
+            chunk = chunk.strip()
+            if not chunk: continue
+            # 取chunk中第一段落（去掉```json 与 code fence）
+            chunk = re.sub(r'```[\s\S]*?```', '', chunk)
+            # 去明显是prompt说明/英文的句子
+            lines = [l.strip() for l in chunk.split('\n') if l.strip()]
+            kept_lines = []
+            for l in lines:
+                low = l.lower()
+                if any(fp in low for fp in _BAD_FINGERPRINTS):
+                    continue
+                if re.search(r'[a-zA-Z]{3,}\s+[a-zA-Z]{3,}', l):
+                    continue
+                kept_lines.append(l)
+            merged = ' '.join(kept_lines).strip()
+            if len(merged) >= 80:
+                cleaned.append({'title': f'方案{len(cleaned)+1}', 'preview': merged})
+        suggestions = cleaned
+
+    # 三级兜底：原始文本无JSON、也没"方案N："分段 → 按中文句号/问号断成连续长句，每 3-5 个长句合并为 1 条 preview
+    if not suggestions:
+        _clean_text = re.sub(r'```[\s\S]*?```', '', _raw)
+        _clean_text = re.sub(r'<[^>]+>', '', _clean_text)
+        # 去掉 prompt 类句子（带引号 Each preview / Key requirements / JSON合法 等）
+        _lines = [l.strip() for l in _clean_text.split('\n') if l.strip()]
+        good = []
+        for l in _lines:
+            low = l.lower()
+            if any(fp in low for fp in _BAD_FINGERPRINTS):
+                continue
+            if re.search(r'[a-zA-Z]{3,}\s+[a-zA-Z]{3,}', l):
+                continue
+            good.append(l)
+        merged = ''.join(good)
+        # 按中文句号/问号/叹号断句
+        sents = re.split(r'(?<=[。！？!?；;])', merged)
+        sents = [s.strip() for s in sents if len(s.strip()) >= 10]
+        bucket = []
+        cur_len = 0
+        cur_parts = []
+        for s in sents:
+            cur_parts.append(s)
+            cur_len += len(s)
+            if cur_len >= 140 and len(cur_parts) >= 2:
+                bucket.append(''.join(cur_parts))
+                cur_len = 0
+                cur_parts = []
+                if len(bucket) >= 5: break
+        if cur_parts and len(bucket) < 5:
+            bucket.append(''.join(cur_parts))
+        suggestions = [{'title': f'方案{i+1}', 'preview': p} for i, p in enumerate(bucket) if len(p) >= 80]
+
+    # 四级兜底：按行硬截前5段非空非英文
+    if not suggestions:
+        lines = [l.strip() for l in (_raw or '').split('\n') if l.strip() and not l.strip().startswith('```')]
         for i, line in enumerate(lines[:5]):
             # 去掉前导序号
             clean = re.sub(r'^[\d一二三四五1-5\.、\)\s]+', '', line)
-            if clean:
-                suggestions.append({'title': f'方案{i + 1}', 'preview': clean[:150]})
+            # 英文/规则指纹直接跳过
+            low = clean.lower()
+            if any(fp in low for fp in _BAD_FINGERPRINTS) or re.search(r'[a-zA-Z]{3,}\s+[a-zA-Z]{3,}', clean):
+                continue
+            if clean and len(clean) >= 60:
+                suggestions.append({'title': f'方案{i + 1}', 'preview': clean[:260]})
+
+    if not suggestions:
+        # 只有用户方案时，允许 suggestions 仅有 1 条（用户自己的），不强制要求 3-5 条
+        if not user_paste:
+            return jsonify({'error': 'AI 未返回有效方案，请重试或调整需求'}), 500
 
     # === 后端兜底：只纠正明显作为“全书总卷数”的违规描述，绝不碰任何卷号/卷号区间 ===
     #     惨痛教训：任何试图全局替换"第X卷"或"X-Y卷"的规则都会误伤，导致"第13-18卷"→"第125卷"。
