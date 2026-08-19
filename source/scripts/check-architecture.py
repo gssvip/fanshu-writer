@@ -83,7 +83,12 @@ TOOLSPAGE_BASELINE = 1192
 #   - 新增P0禁令4条（禁英语/禁规则复述/禁占位短凑数/禁5条同义方案）+ 自检3条（约10行）；
 #   - 新增多层级解析兜底：suggestions/result/data字段兼容→指纹过滤→方案N分段→中文句号断句桶→硬行截（约90行）；
 #   → 净增 103 行（7004→7107），属修复用户截图"方案一：方案1+Each preview must中英混"的必需P0兜底，不属业务膨胀。
-CHAT_COLLAB_BP_BASELINE = 7107
+# 2026-08-19 重校准8（提示词阶段隔离·去一股脑全加载）：
+#   - PLAIN_TEXT_LAYOUT_RULES 移除内嵌 NARRATIVE_CRAFT_RULES（=通用核心+正文行文规范两大包），只留排版格式；
+#   - build_chat_system_prompt（智驾聊天）显式注入 GENERAL_CORE_RULES 三阶段通用铁律；
+#   - _action_master_create（批量生成设定）显式调用 build_conception_rules() 构思阶段专属包；
+#   → 净增 10 行（7107→7117），属【提示词阶段隔离P0结构治理】：构思/正文/去AI三阶段规则精准注入、不一股脑全加载、不冗余冲突，不属业务膨胀。
+CHAT_COLLAB_BP_BASELINE = 7117
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

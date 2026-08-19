@@ -717,6 +717,13 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
     if core_iron:
         parts.append('\n' + core_iron)
 
+    # =====================================================================
+    # 【三阶段通用铁律】（智驾聊天=跨阶段讨论场景：只注入 GENERAL_CORE_RULES 通用铁律，
+    # 不注入 WRITING_STYLE_RULES 正文行文规范，也不注入 DEAI_ONLY_RULES 去AI手册
+    # ——正文写作/去AI有独立接口精准注入专属规则，这里不一股脑全加载。）
+    # =====================================================================
+    parts.append('\n' + GENERAL_CORE_RULES)
+
     # 注入最近章节（让 AI 知道作者正在写哪一章，便于讨论"接下来怎么写"）
     if recent_chapters:
         parts.append('\n【最近章节】')
@@ -2102,9 +2109,13 @@ def _action_master_create(book, session, instruction, gw, sse):
             '总字数不少于 1500 字。'
         ) if dim == 'plot_design' else ''
 
+        # 构思阶段·专属规则（通用核心+构思格式约束+master技能包，屏蔽正文行文规范/去AI手册）
+        master_conception_rules = build_conception_rules(mode='agent', book=book)
         sys_prompt = (
-            f'你是资深网文创作副驾。请为《{book.title}》生成“{label}”设定。'
+            f'你是资深网文创作副驾。请为《{book.title}》生成"{"label"}"设定。'
             f'\n\n{core_iron}'
+            f'\n\n【构思阶段·平台内置规则（只注入通用核心+构思格式，不注入正文行文规范，不一股脑全加载）】'
+            f'\n{master_conception_rules}'
             f'\n\n已有设定参考：\n{ctx_block}'
             f'\n用户补充要求：{instruction or "无"}'
             f'{concept_more}{key_rules_more}{worldbuilding_more}{character_more_master}{plot_design_more}'
@@ -3054,9 +3065,8 @@ PLAIN_TEXT_LAYOUT_RULES = """
 【纯文字排版铁律·平台级约束·所有输出必须遵守】
 （本条对正文、大纲、设定、人物、世界观、伏笔等所有内容生效；Action Card 内的卡片标题和卡片内容也必须遵守）
 
-""".strip() + "\n\n" + NARRATIVE_CRAFT_RULES + """
+一、平台级排版约束（只负责排版格式，不包含任何写作规则/行文规范——那些由各阶段专属 build_*_rules() 精准注入：构思=通用核心+构思格式，正文=通用核心+行文规范，去AI=通用核心+去AI手册，绝不一股脑全加载）
 
-八、纯文字排版补充约束
 1. 绝对禁止任何 Markdown 标记符号，包括：
    一）禁止 # 开头的标题（不要写 # 标题、## 二级标题这类形式）
    二）禁止 * 作为强调/列表/斜体/粗体（不要写 *xxx*、**xxx**、行首 * 列表）
