@@ -264,31 +264,33 @@ class TestChapterCardAndSession:
 
 
 class TestGwStreamWithHb:
-    """sse_keepalive.gw_stream_with_hb 心跳保活回归：思考型模型推理期不能被 30s idle 掐断。"""
+    """sse_keepalive.gw_stream_with_hb 回归：静默期 yield HEARTBEAT 哨兵（绝不混入正文）。"""
 
     def test_heartbeat_during_slow_llm(self, monkeypatch):
         import time
         import sse_keepalive
-        from sse_keepalive import gw_stream_with_hb, SSE_HEARTBEAT_COMMENT
+        from sse_keepalive import gw_stream_with_hb, HEARTBEAT
 
         class _SlowGW:
             def chat_stream(self, msgs, **kw):
-                time.sleep(0.15)  # 模拟思考型模型在首字节前的长阻塞（无任何输出）
+                time.sleep(0.15)  # 模拟思考型模型首字节前长阻塞
                 yield "正文A"
                 yield "正文B"
 
         monkeypatch.setattr(sse_keepalive, "SSE_HB_INTERVAL_SEC", 0.05)
         out = list(gw_stream_with_hb(_SlowGW(), []))
 
-        # 正文完整透传，且首字节前至少发过 1 帧心跳（防 Render 30s 掐断）
+        # 契约（P0）：静默期 yield HEARTBEAT 哨兵对象（不是字符串），正文完整透传
         assert "正文A" in out and "正文B" in out
         assert out[-1] == "正文B"
-        assert SSE_HEARTBEAT_COMMENT in out
-        assert out.index(SSE_HEARTBEAT_COMMENT) < out.index("正文A")
+        assert any(c is HEARTBEAT for c in out)
+        assert out.index(next(c for c in out if c is HEARTBEAT)) < out.index("正文A")
+        # 哨兵绝不能是 str（曾被调用方当正文包进 delta → 聊天窗口刷屏 ping）
+        assert not any(isinstance(c, str) and 'ping' in c for c in out)
 
     def test_normal_chunks_pass_through(self, monkeypatch):
         import sse_keepalive
-        from sse_keepalive import gw_stream_with_hb
+        from sse_keepalive import gw_stream_with_hb, HEARTBEAT
 
         class _FastGW:
             def chat_stream(self, msgs, **kw):
@@ -297,7 +299,7 @@ class TestGwStreamWithHb:
 
         monkeypatch.setattr(sse_keepalive, "SSE_HB_INTERVAL_SEC", 5)
         out = list(gw_stream_with_hb(_FastGW(), []))
-        assert out == ["一", "二"]
+        assert out == ["一", "二"]  # 快速流不掺任何心跳哨兵
 
     def test_worker_exception_propagates(self, monkeypatch):
         import sse_keepalive

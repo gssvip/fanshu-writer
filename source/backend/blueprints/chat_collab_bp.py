@@ -33,7 +33,7 @@ chat_collab_bp = Blueprint('chat_collab', __name__)
 
 # SSE 保活工具（SSE_HEARTBEAT_COMMENT / SSE_HB_INTERVAL_SEC / gw_stream_with_hb）
 # 已抽到 sse_keepalive.py 独立模块，避免 chat_collab_bp.py 巨石继续增长（架构门禁约束）
-from sse_keepalive import gw_stream_with_hb, SSE_HEARTBEAT_COMMENT, SSE_HB_INTERVAL_SEC
+from sse_keepalive import gw_stream_with_hb, SSE_HEARTBEAT_COMMENT, SSE_HB_INTERVAL_SEC, HEARTBEAT
 
 
 def _run_blocking_with_heartbeat(blocking_fn, sse_fn, extra_frames=None):
@@ -1253,6 +1253,9 @@ def chat_smart():
                 yield f'data: {json.dumps({"type": "meta", "kind": "auto_context", "info": auto_ctx_info}, ensure_ascii=False)}\n\n'
 
             for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=4096):
+                if chunk is HEARTBEAT:
+                    yield SSE_HEARTBEAT_COMMENT  # 裸注释心跳帧：前端自动忽略，不进正文
+                    continue
                 full_text.append(chunk)
                 yield f'data: {json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)}\n\n'
 
@@ -2110,6 +2113,9 @@ def _action_master_create(book, session, instruction, gw, sse):
                 'character_profiles': 4200, 'plot_design': 3500,
             }.get(dim, 3000)
             for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=_max_tok):
+                if chunk is HEARTBEAT:
+                    yield SSE_HEARTBEAT_COMMENT
+                    continue
                 content += chunk
                 yield sse({'type': 'delta', 'content': chunk})
         except Exception as e:
@@ -2845,6 +2851,9 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     content = ''
     try:
         for chunk in gw_stream_with_hb(gw, messages, temperature=0.85, max_tokens=4096):
+            if chunk is HEARTBEAT:
+                yield SSE_HEARTBEAT_COMMENT
+                continue
             content += chunk
             yield sse({'type': 'delta', 'content': chunk})
     except Exception as e:
@@ -4012,6 +4021,9 @@ def smart_general():
                 yield sse({'type': 'meta', 'kind': 'auto_context', 'info': auto_ctx_info})
 
             for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=4096):
+                if chunk is HEARTBEAT:
+                    yield SSE_HEARTBEAT_COMMENT
+                    continue
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
             content = ''.join(full).strip()
@@ -5361,6 +5373,9 @@ def smart_generate():
                     # 【聊天终止修复】单次流失败只记录原因并降级重试，不再炸掉整条 SSE（旧实现直接
                     # 进外层 except → error 帧 → 前端 removeEmptyAi 消息戛然而止）
                     for chunk in gw_stream_with_hb(gw, _msgs_for_this_call, temperature=_temp, max_tokens=_max_tok):
+                        if chunk is HEARTBEAT:
+                            yield SSE_HEARTBEAT_COMMENT
+                            continue
                         full.append(chunk)
                         yield sse({'type': 'delta', 'content': chunk})
                 except Exception as se:
@@ -5601,6 +5616,9 @@ def smart_dim_edit():
                 if _attempt >= 1:
                     _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
                 for chunk in gw_stream_with_hb(gw, _msgs_call, temperature=_temp, max_tokens=_max_tok):
+                    if chunk is HEARTBEAT:
+                        yield SSE_HEARTBEAT_COMMENT
+                        continue
                     full.append(chunk)
                     yield sse({'type': 'delta', 'content': chunk})
                 raw_joined = ''.join(full)
@@ -5833,6 +5851,9 @@ def smart_batch():
                         if _attempt >= 1:
                             _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
                         for chunk in gw_stream_with_hb(gw, _msgs_call, temperature=_temp, max_tokens=_max_tok):
+                            if chunk is HEARTBEAT:
+                                yield SSE_HEARTBEAT_COMMENT
+                                continue
                             raw_chunks.append(chunk)
                             yield sse({'type': 'delta', 'content': chunk})
                         raw_joined = ''.join(raw_chunks)
@@ -6112,6 +6133,9 @@ def smart_deai():
                 if _attempt >= 1:
                     _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim='chapter_deai')
                 for chunk in gw_stream_with_hb(gw, _msgs_call, temperature=_temp, max_tokens=_max_tok):
+                    if chunk is HEARTBEAT:
+                        yield SSE_HEARTBEAT_COMMENT
+                        continue
                     full.append(chunk)
                     yield sse({'type': 'delta', 'content': chunk})
                 raw_joined = ''.join(full)

@@ -6,7 +6,14 @@
   2. iter_content 读流时两个 token 之间的 >30s 空窗
 
 方案：把整段 chat_stream 丢后台线程，主 generator 用 Queue.get(timeout=interval)
-消费，超时即发 1 帧心跳，与 LLM 状态无关，彻底覆盖上述全部阻塞场景。
+消费，超时即 yield HEARTBEAT 哨兵，与 LLM 状态无关，彻底覆盖上述全部阻塞场景。
+
+⚠️ 契约（P0，勿违反）：本函数 yield 两种东西——
+  1. HEARTBEAT 哨兵对象（不是字符串！）—— 调用方必须 yield SSE_HEARTBEAT_COMMENT
+     裸注释帧并 continue，绝不能 append 进内容缓冲/包进 data: delta 帧。
+     （旧版直接 yield 注释字符串，被调用方当正文包进 delta → 用户聊天窗口
+      刷屏 ": ping-heartbeat-keepalive"，且污染卡片内容，实锤 P0 事故。）
+  2. 真实正文 chunk（str）—— 正常 append + 包 delta 帧。
 独立成模块以避免 chat_collab_bp.py 巨石继续增长（架构门禁约束）。
 """
 from __future__ import annotations
@@ -20,43 +27,44 @@ SSE_HEARTBEAT_COMMENT = ': ping-heartbeat-keepalive\n\n'
 SSE_HB_INTERVAL_SEC = 10
 
 
+class _Heartbeat:
+    """心跳哨兵：identity 唯一（`is HEARTBEAT` 判定），绝不混入正文内容。"""
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return '<SSE-HEARTBEAT>'
+
+
+HEARTBEAT = _Heartbeat()
+
+
 def gw_stream_with_hb(gw, msgs, **kw):
-    """在后台线程跑 gw.chat_stream，主 generator 按 SSE_HB_INTERVAL_SEC 发心跳。
+    """在后台线程跑 gw.chat_stream，静默期 yield HEARTBEAT 哨兵。
 
-    思考帧（REASONING_HB 哨兵）同样转成心跳，不混入正文；worker 异常会在主 generator
-    重新抛出，由上层 SSE 的 try/except 转成 error 帧。
+    思考帧（REASONING_HB 哨兵）同样转成 HEARTBEAT，不混入正文；worker 异常会在
+    主 generator 重新抛出，由上层 SSE 的 try/except 转成 error 帧。
     """
-    import logging
     from llm_gateway import REASONING_HB
-
-    logger = logging.getLogger("sse_keepalive")
     q: Queue = Queue()
 
     def _worker():
-        logger.info("[gw_stream_with_hb] worker start")
         try:
             for chunk in gw.chat_stream(msgs, yield_reasoning_heartbeat=True, **kw):
                 q.put(("chunk", chunk))
-            logger.info("[gw_stream_with_hb] worker done (stream exhausted)")
             q.put(("done", None))
         except Exception as e:  # noqa: BLE001 在调用处重新抛出
-            logger.error("[gw_stream_with_hb] worker error: %s", e)
             q.put(("error", e))
 
     threading.Thread(target=_worker, daemon=True).start()
-    hb_count = 0
     while True:
         try:
             kind, payload = q.get(timeout=SSE_HB_INTERVAL_SEC)
         except Empty:
-            hb_count += 1
-            logger.info("[gw_stream_with_hb] heartbeat #%d (LLM still silent)", hb_count)
-            yield SSE_HEARTBEAT_COMMENT  # 10s 内 LLM 无输出 → 心跳占住连接
+            yield HEARTBEAT  # 10s 内 LLM 无输出 → 调用方据此发裸注释心跳帧占住连接
             continue
         if kind == "chunk":
-            yield SSE_HEARTBEAT_COMMENT if payload == REASONING_HB else payload
+            yield HEARTBEAT if payload == REASONING_HB else payload
         elif kind == "error":
             raise payload
         else:  # done
-            logger.info("[gw_stream_with_hb] finished. total heartbeats=%d", hb_count)
             return
