@@ -108,6 +108,30 @@ async function fetchWithRetry(url: string, options: RequestInit, externalSignal?
   throw lastError;
 }
 
+/**
+ * SSE 流式请求专用 fetch：带连接期自动重试 + 友好错误提示。
+ * - 复用 fetchWithRetry：仅在「响应头到达前」的网络错误/5xx 重试（请求未真正建立，
+ *   重试无副作用）；一旦流建立（fetch resolve）立即返回，绝不干扰流读取。
+ * - 流中途断开（移动网络波动/代理掐断，移动端浏览器报 "TypeError: network error"）
+ *   不在本层重试（重复生成有副作用），转为友好错误提示，用户点重试即可。
+ */
+async function fetchStream(url: string, cfg: RequestInit, signal?: AbortSignal): Promise<Response> {
+  // cfg.signal 一律改走第三参：fetchWithRetry 内部会用自己的 controller.signal 覆盖
+  // options.signal，若不抽出来外部中止信号会静默丢失
+  const externalSignal = signal ?? (cfg.signal as AbortSignal | undefined);
+  const { signal: _omit, ...rest } = cfg;
+  try {
+    return await fetchWithRetry(url, rest, externalSignal);
+  } catch (e: any) {
+    if (e?.name === 'AbortError') throw e;
+    const msg = String(e?.message || '');
+    if (e?.name === 'TypeError' || msg === 'Failed to fetch' || msg.includes('NetworkError') || msg.includes('network error')) {
+      throw new Error('连接中断（网络波动或服务正在重启），已自动重试仍失败。请稍候重试，已生成的内容不会丢失');
+    }
+    throw e;
+  }
+}
+
 async function request<T>(url: string, options?: RequestInit, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(options?.headers as Record<string, string> || {}) };
   const token = getToken();
@@ -210,7 +234,7 @@ export const api = {
   aiChatStream: (messages: { role: string; content: string }[], signal?: AbortSignal) => {
     const cfg: RequestInit = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages }) };
     if (signal) cfg.signal = signal;
-    return fetch(`${getApiBaseUrl()}/ai/chat/stream`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/ai/chat/stream`, cfg, signal);
   },
 
   // AI Sessions
@@ -425,7 +449,7 @@ export const api = {
     };
     if (signal) cfg.signal = signal;
     // 不设 timeout：SSE 流式持续推送心跳，不会触发浏览器/Render 空闲超时
-    return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-continue-batch/stream`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/books/${bookId}/ai-continue-batch/stream`, cfg, signal);
   },
 
   // P2-9：Spot-Fix 修订（按校验问题路由：local 类只修补问题段落，省 token）
@@ -475,7 +499,7 @@ export const api = {
       }),
     };
     if (signal) cfg.signal = signal;
-    return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-continue/stream`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/books/${bookId}/ai-continue/stream`, cfg, signal);
   },
 
   // AI Analyze Book
@@ -739,7 +763,7 @@ export const api = {
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const cfg: RequestInit = { method: 'POST', headers, body: JSON.stringify({ dimensions, skill_pack_ids: skillPackIds, instruction, session_outputs: sessionOutputs || {} }) };
     if (signal) cfg.signal = signal;
-    return fetch(`${getApiBaseUrl()}/books/${bookId}/ai-master-create/stream`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/books/${bookId}/ai-master-create/stream`, cfg, signal);
   },
 
   // ============================================================================
@@ -756,7 +780,7 @@ export const api = {
       body: JSON.stringify({ book_id: bookId, message, session_id: sessionId, scope: scope || 'general' }),
     };
     if (signal) cfg.signal = signal;
-    return fetch(`${getApiBaseUrl()}/ai/chat/smart`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/ai/chat/smart`, cfg, signal);
   },
   // 采纳 Action Card，落地到对应维度
   applyChatCard: (bookId: string, card: ActionCard, sessionId?: string) =>
@@ -797,7 +821,7 @@ export const api = {
       }),
     };
     if (signal) cfg.signal = signal;
-    return fetch(`${getApiBaseUrl()}/ai/chat/smart/action`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/ai/chat/smart/action`, cfg, signal);
   },
 
   // ============================================================================
@@ -825,7 +849,7 @@ export const api = {
       body: JSON.stringify({ book_id: bookId, dimension, suggestion, requirement, skill_pack_ids: skillPackIds, session_id: sessionId, from_user_paste: fromUserPaste }),
     };
     if (signal) cfg.signal = signal;
-    return fetch(`${getApiBaseUrl()}/ai/smart/generate`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/ai/smart/generate`, cfg, signal);
   },
   // 设定Tab：单独维度AI修改（SSE 流式）
   smartDimEditStream: (bookId: string, dimension: string, currentContent: string, editRequest: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal) => {
@@ -838,7 +862,7 @@ export const api = {
       body: JSON.stringify({ book_id: bookId, dimension, current_content: currentContent, edit_request: editRequest, skill_pack_ids: skillPackIds, session_id: sessionId }),
     };
     if (signal) cfg.signal = signal;
-    return fetch(`${getApiBaseUrl()}/ai/smart/dim-edit`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/ai/smart/dim-edit`, cfg, signal);
   },
   // 设定Tab：批量生成多维度（SSE 流式）
   smartBatchStream: (bookId: string, dimensions: string[], requirement: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal) => {
@@ -851,7 +875,7 @@ export const api = {
       body: JSON.stringify({ book_id: bookId, dimensions, requirement, skill_pack_ids: skillPackIds, session_id: sessionId }),
     };
     if (signal) cfg.signal = signal;
-    return fetch(`${getApiBaseUrl()}/ai/smart/batch`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/ai/smart/batch`, cfg, signal);
   },
   // 正文Tab：获取最新章节（自动定位）
   smartLatestChapter: (bookId: string) =>
@@ -874,7 +898,7 @@ export const api = {
       body: JSON.stringify({ book_id: bookId, chapter_id: chapterId, skill_pack_ids: skillPackIds, session_id: sessionId }),
     };
     if (signal) cfg.signal = signal;
-    return fetch(`${getApiBaseUrl()}/ai/smart/deai`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/ai/smart/deai`, cfg, signal);
   },
   // B3：去AI Tab·风格对齐诊断（12维评分 + 范本并排 + 改点建议）
   smartStyleAlign: (bookId: string, chapterId: string) =>
@@ -902,7 +926,7 @@ export const api = {
       body: JSON.stringify({ book_id: bookId, message, skill_pack_ids: skillPackIds, session_id: sessionId }),
     };
     if (signal) cfg.signal = signal;
-    return fetch(`${getApiBaseUrl()}/ai/smart/general`, cfg);
+    return fetchStream(`${getApiBaseUrl()}/ai/smart/general`, cfg, signal);
   },
 
   // 校审Tab：防遗忘 / 一致性检查（支持按卷）
