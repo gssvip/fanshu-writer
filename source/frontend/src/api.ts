@@ -72,11 +72,12 @@ export function warmUpBackend(): void {
 /**
  * 带自动重试的 fetch：应对 Render 免费版冷启动超时。
  * - 第 1 次失败后等 3 秒重试
- * - 第 2 次失败后等 8 秒重试（共等待约 11 秒，覆盖大部分冷启动场景）
- * - 第 3 次仍失败则抛错
+ * - 第 2 次失败后等 8 秒重试
+ * - 第 3 次失败后等 15 秒重试（累计约 26 秒，覆盖后端唤醒 + 数据库冷启动窗口）
+ * - 第 4 次仍失败则抛错
  */
-async function fetchWithRetry(url: string, options: RequestInit, externalSignal?: AbortSignal, maxRetries = 2): Promise<Response> {
-  const delays = [3000, 8000]; // 重试间隔（毫秒）
+async function fetchWithRetry(url: string, options: RequestInit, externalSignal?: AbortSignal, maxRetries = 3): Promise<Response> {
+  const delays = [3000, 8000, 15000]; // 重试间隔（毫秒）
   let lastError: any;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (externalSignal?.aborted) throw new DOMException('Aborted', 'AbortError');

@@ -1,0 +1,29 @@
+name: Keep-Alive
+
+# ============================================================================
+# 后端保活：Render 免费版 Web Service 15 分钟无流量自动休眠，下次请求需完整
+# 唤醒（拉起容器 + init_db），期间前端报"无法连接到服务器，可能正在冷启动中"。
+# 本工作流每 10 分钟轻量探活一次 /api/health，保持实例常温，消除冷启动。
+# 免费额度 750 实例小时/月 > 全月 720 小时，常温运行不超额。
+# ============================================================================
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: 探活后端健康检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: GET /api/health
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 120 https://fanshu-writer-backend.onrender.com/api/health)
+          echo "health endpoint status: $code"
+          # 2xx 即成功；部署窗口内可能超时/502 属正常，等下一轮再探，不让工作流失败
+          if [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
+            echo "backend is warm"
+          else
+            echo "backend not responding (likely deploying), will retry next round"
+          fi

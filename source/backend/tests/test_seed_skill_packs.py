@@ -62,3 +62,35 @@ class TestSeedSkillPacksSerialization:
             assert json.loads(victim['workflow'])[0]['name'] == 'x'
         finally:
             victim['workflow'] = original
+
+    def test_stage_keys_synced_on_existing_pack(self, app):
+        """stage_keys 漂移修复：老库存量包的 stage_keys 必须被 seed 同步。
+
+        线上事故（2026-08-20）：13 个纯构思包在老库中残留早期 seed 的 draft 阶段，
+        更新分支漏同步 stage_keys → 「章节字数铁律」按 draft 过滤后仍误报违规。
+        """
+        from app import db, SkillPack, seed_skill_packs, SEED_SKILL_PACKS
+        with app.app_context():
+            seed_skill_packs()
+            # 找一个 seed 中不含 draft 的包，人为制造线上漂移现场
+            victim = next(
+                p for p in SkillPack.query.filter_by(is_builtin=True).all()
+                if 'draft' not in json.loads(p.stage_keys_json or '[]')
+            )
+            victim.stage_keys_json = json.dumps(json.loads(victim.stage_keys_json) + ['draft'])
+            db.session.commit()
+            seed_skill_packs()  # 再同步一次，必须把漂移的 stage_keys 拉回 seed 版本
+            fresh = SkillPack.query.filter_by(name=victim.name).first()
+            seed_sp = next(sp for sp in SEED_SKILL_PACKS if sp['name'] == victim.name)
+            assert fresh.stage_keys_json == seed_sp['stage_keys'], \
+                '老库 stage_keys 漂移必须被 seed 同步（铁律误报根因）'
+
+    def test_init_db_version_gate_idempotent(self, app):
+        """init_db 版本门禁：二次调用命中快速路径，不重复迁移/种子且不报错。"""
+        from app import db, AppMeta, SCHEMA_SEED_VERSION, init_db
+        with app.app_context():
+            init_db()  # session 首次已 stamp → 此处命中快速路径（或全量后 stamp）
+            init_db()  # 快速路径必须可重复执行
+            row = db.session.get(AppMeta, 'schema_seed_version')
+            assert row is not None and row.value == SCHEMA_SEED_VERSION, \
+                'init_db 必须落库 schema_seed_version 供下次启动走快速路径'

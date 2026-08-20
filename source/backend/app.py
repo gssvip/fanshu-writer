@@ -4756,6 +4756,12 @@ def seed_skill_packs():
                 pack.workflow_json = sp['workflow']
                 pack.description = sp['description']
                 updated = True
+            # 同步 stage_keys（2026-08-20 修复：构思包早期 seed 含 draft 阶段、后已移除，
+            # 但更新分支漏同步该字段 → 老库 stage_keys 漂移残留 draft →「章节字数铁律」
+            # 按 draft 过滤后仍误报 13 个纯构思包违规）
+            if pack.stage_keys_json != sp['stage_keys']:
+                pack.stage_keys_json = sp['stage_keys']
+                updated = True
             # 同步 github_source 字段
             gh = sp.get('github_source', '')
             if gh and pack.github_source != gh:
@@ -13794,8 +13800,35 @@ def export_analysis():
     return send_file(bio, mimetype='application/json', as_attachment=True, download_name='analysis_result.json')
 
 
+# 【冷启动提速·2026-08-20】schema+seed 版本号：改动数据库结构（新表/新列/迁移）
+# 或种子数据（SEED_SKILL_PACKS / 内置模板）时必须递增此版本，老库才会重新走全量初始化。
+SCHEMA_SEED_VERSION = '2026-08-20.1'
+
+
+class AppMeta(db.Model):
+    """应用元数据 KV 表：记录 schema/seed 版本，支持启动快速路径。"""
+    __tablename__ = 'app_meta'
+    key = db.Column(db.String(100), primary_key=True)
+    value = db.Column(db.Text)
+
+
 def init_db():
     with app.app_context():
+        # 【冷启动提速】版本门禁：schema 与种子均无变化时，跳过 create_all + 全量 ALTER
+        # 迁移 + 种子同步。外部免费 PostgreSQL（冷唤醒/限流）上全量路径 130+ 次往返实测
+        # 约 2.5 分钟，期间端口不监听 → Render 报 "No open ports detected"、前端报
+        # "无法连接到服务器"。命中本门禁后常规重启降到秒级。
+        try:
+            row = db.session.execute(db.text(
+                "SELECT value FROM app_meta WHERE key = 'schema_seed_version'"
+            )).fetchone()
+        except Exception:
+            db.session.rollback()  # app_meta 尚不存在（首次部署/新库）→ 走全量初始化
+            row = None
+        if row and row[0] == SCHEMA_SEED_VERSION:
+            print(f'[INIT] ✅ schema/seed 版本一致（{SCHEMA_SEED_VERSION}），跳过迁移与种子同步', flush=True)
+            _print_db_diagnosis()
+            return
         db.create_all()
         # Migration: 逐条独立提交，避免 PostgreSQL 事务污染
         # （PG 中一条 ALTER 失败会使整个事务 aborted，后续语句全失败）
@@ -13869,22 +13902,32 @@ def init_db():
         seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
-        # 铁律诊断：每次启动打印数据库状态，确认用户数据持久化
+        # 版本落库：下次启动命中快速路径，跳过全部迁移与种子同步
         try:
-            user_count = User.query.count()
-            book_count = Book.query.count()
-            uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
-            is_pg = uri.startswith('postgresql')
-            db_label = 'PostgreSQL ✅' if is_pg else 'SQLite ⚠️'
-            print(f'[铁律] 用户数据持久化检查：{db_label} | users={user_count} | books={book_count}', flush=True)
-            if is_pg:
-                print(f'[铁律] ✅ 已连接 PostgreSQL，用户数据将持久化，部署/重启不丢失', flush=True)
-            else:
-                print(f'[铁律] ❌ 检测到 SQLite！本地开发可用，但生产环境会拒绝启动。请配置 DATABASE_URL', flush=True)
-            if user_count == 0:
-                print(f'[铁律] ℹ️ 用户表为空（新数据库正常；若之前注册过账号说明数据未持久化）', flush=True)
-        except Exception as e:
-            print(f'[铁律] 诊断失败: {e}', flush=True)
+            db.session.merge(AppMeta(key='schema_seed_version', value=SCHEMA_SEED_VERSION))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        _print_db_diagnosis()
+
+
+def _print_db_diagnosis():
+    """铁律诊断：每次启动打印数据库状态，确认用户数据持久化。"""
+    try:
+        user_count = User.query.count()
+        book_count = Book.query.count()
+        uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+        is_pg = uri.startswith('postgresql')
+        db_label = 'PostgreSQL ✅' if is_pg else 'SQLite ⚠️'
+        print(f'[铁律] 用户数据持久化检查：{db_label} | users={user_count} | books={book_count}', flush=True)
+        if is_pg:
+            print(f'[铁律] ✅ 已连接 PostgreSQL，用户数据将持久化，部署/重启不丢失', flush=True)
+        else:
+            print(f'[铁律] ❌ 检测到 SQLite！本地开发可用，但生产环境会拒绝启动。请配置 DATABASE_URL', flush=True)
+        if user_count == 0:
+            print(f'[铁律] ℹ️ 用户表为空（新数据库正常；若之前注册过账号说明数据未持久化）', flush=True)
+    except Exception as e:
+        print(f'[铁律] 诊断失败: {e}', flush=True)
 
 
 # ==== 前端静态文件托管（生产环境）====
