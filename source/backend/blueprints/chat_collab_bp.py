@@ -37,7 +37,9 @@ from sse_keepalive import gw_stream_with_hb, SSE_HEARTBEAT_COMMENT, SSE_HB_INTER
 
 # 会话消息持久化（load/_safe_save/断流抢救）已抽到 session_persist.py 独立模块
 # （架构门禁约束：chat_collab_bp.py 行数禁止超过基线，新功能必须拆模块）
-from .session_persist import (
+# 注意：session_persist.py 位于 backend 根目录（与 sse_keepalive.py 同级），
+# 必须用绝对导入；`from .session_persist` 会在启动时 ModuleNotFoundError → Render 部署 503
+from session_persist import (
     load_session_messages,
     _safe_save_session_messages,
     _save_partial_on_disconnect,

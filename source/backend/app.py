@@ -13814,6 +13814,10 @@ class AppMeta(db.Model):
 
 def init_db():
     with app.app_context():
+        # 部署冷启动兜底：先确认 PG 连接可用再跑版本门禁，避免"连接失败"被门禁
+        # 误判成"新库"而走全量初始化（详见 db_boot_guard.wait_for_db_ready 注释）
+        from db_boot_guard import wait_for_db_ready
+        wait_for_db_ready()
         # 【冷启动提速】版本门禁：schema 与种子均无变化时，跳过 create_all + 全量 ALTER
         # 迁移 + 种子同步。外部免费 PostgreSQL（冷唤醒/限流）上全量路径 130+ 次往返实测
         # 约 2.5 分钟，期间端口不监听 → Render 报 "No open ports detected"、前端报
