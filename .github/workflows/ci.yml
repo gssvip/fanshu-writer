@@ -147,6 +147,8 @@ jobs:
       - name: 触发 Render 部署
         # 若 Render 服务已开启 Auto-Deploy on push（默认开启），上一步产物提交已触发部署，
         # 此 Hook 作为兜底双保险；secret 未配置时静默跳过。
+        # Hook 失败不阻断 CI：Render hook 在服务部署中会 500，Auto-Deploy 已兜底，
+        # 此处重试 1 次后降级为警告（历史事故：hook 500 导致 CI 连红误判为代码问题）。
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
@@ -156,11 +158,15 @@ jobs:
           fi
           echo "🚀 触发 Render 部署..."
           STATUS_CODE=$(curl -s -o /tmp/render_resp.json -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+          if [ "$STATUS_CODE" != "200" ] && [ "$STATUS_CODE" != "202" ]; then
+            echo "Hook 返回 $STATUS_CODE，10s 后重试一次..."
+            sleep 10
+            STATUS_CODE=$(curl -s -o /tmp/render_resp.json -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+          fi
           echo "Render 响应状态码: $STATUS_CODE"
           cat /tmp/render_resp.json
           if [ "$STATUS_CODE" = "200" ] || [ "$STATUS_CODE" = "202" ]; then
             echo "✅ Render 部署已触发"
           else
-            echo "❌ Render 部署触发失败（HTTP $STATUS_CODE）"
-            exit 1
+            echo "⚠️  Render 部署触发失败（HTTP $STATUS_CODE）——不阻断 CI，Auto-Deploy 会兜底部署"
           fi
