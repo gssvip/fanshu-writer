@@ -8016,7 +8016,8 @@ def ai_continue_stream(book_id):
                         _gate = run_all_gates(_body_for_gates, bb, ctx['current_chapter_num'])
                         if wp_runner: wp_runner.mark_stage(wp_graph, 't10_gates', 'done',
                                                            {'passed': _gate.get('passed'), 'blocked': _gate.get('blocked')})
-                        yield f'data: {json.dumps({"gate_result": _gate, "gate_blocked": _gate.get('blocked', False)}, ensure_ascii=False)}\n\n'
+                        _gate_blocked = bool(_gate.get('blocked', False))
+                        yield f'data: {json.dumps({"gate_result": _gate, "gate_blocked": _gate_blocked}, ensure_ascii=False)}\n\n'
                 except Exception:
                     pass
 
