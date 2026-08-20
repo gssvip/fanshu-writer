@@ -31,20 +31,9 @@ from flask import Blueprint, jsonify, request, Response, stream_with_context
 chat_collab_bp = Blueprint('chat_collab', __name__)
 
 
-# ----------------------------------------------------------------------------
-# SSE 保活工具：Render idle timeout=30s，任何同步阻塞(非流式LLM/校验)期间必须间隔<30s发1帧
-# ----------------------------------------------------------------------------
-SSE_HEARTBEAT_COMMENT = ': ping-heartbeat-keepalive\n\n'
-SSE_HB_INTERVAL_SEC = 10  # 每10秒发1帧心跳，远小于30s阈值，留20s余量
-
-
-def gw_stream_with_hb(gw, msgs, **kw):
-    """【连接中断根因修复】chat_stream 包装：思考型模型推理期(reasoning 帧)转 SSE 心跳注释帧。
-    旧实现每轮仅 attempt 开始发 1 帧心跳，GLM-4.7/R1 等 thinking 30s+ 期间后端零输出 →
-    Render 30s idle 掐断连接 → 前端"AI 未返回任何内容(连接中断)"。哨兵详见 llm_gateway.REASONING_HB。"""
-    from llm_gateway import REASONING_HB
-    for chunk in gw.chat_stream(msgs, yield_reasoning_heartbeat=True, **kw):
-        yield SSE_HEARTBEAT_COMMENT if chunk == REASONING_HB else chunk
+# SSE 保活工具（SSE_HEARTBEAT_COMMENT / SSE_HB_INTERVAL_SEC / gw_stream_with_hb）
+# 已抽到 sse_keepalive.py 独立模块，避免 chat_collab_bp.py 巨石继续增长（架构门禁约束）
+from sse_keepalive import gw_stream_with_hb, SSE_HEARTBEAT_COMMENT, SSE_HB_INTERVAL_SEC
 
 
 def _run_blocking_with_heartbeat(blocking_fn, sse_fn, extra_frames=None):

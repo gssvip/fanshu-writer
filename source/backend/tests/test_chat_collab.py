@@ -261,3 +261,54 @@ class TestChapterCardAndSession:
         assert 'cards' in msgs[1]
         assert len(msgs[1]['cards']) == 1
         assert msgs[1]['cards'][0]['type'] == 'SAVE_CHAPTER'
+
+
+class TestGwStreamWithHb:
+    """sse_keepalive.gw_stream_with_hb 心跳保活回归：思考型模型推理期不能被 30s idle 掐断。"""
+
+    def test_heartbeat_during_slow_llm(self, monkeypatch):
+        import time
+        import sse_keepalive
+        from sse_keepalive import gw_stream_with_hb, SSE_HEARTBEAT_COMMENT
+
+        class _SlowGW:
+            def chat_stream(self, msgs, **kw):
+                time.sleep(0.15)  # 模拟思考型模型在首字节前的长阻塞（无任何输出）
+                yield "正文A"
+                yield "正文B"
+
+        monkeypatch.setattr(sse_keepalive, "SSE_HB_INTERVAL_SEC", 0.05)
+        out = list(gw_stream_with_hb(_SlowGW(), []))
+
+        # 正文完整透传，且首字节前至少发过 1 帧心跳（防 Render 30s 掐断）
+        assert "正文A" in out and "正文B" in out
+        assert out[-1] == "正文B"
+        assert SSE_HEARTBEAT_COMMENT in out
+        assert out.index(SSE_HEARTBEAT_COMMENT) < out.index("正文A")
+
+    def test_normal_chunks_pass_through(self, monkeypatch):
+        import sse_keepalive
+        from sse_keepalive import gw_stream_with_hb
+
+        class _FastGW:
+            def chat_stream(self, msgs, **kw):
+                yield "一"
+                yield "二"
+
+        monkeypatch.setattr(sse_keepalive, "SSE_HB_INTERVAL_SEC", 5)
+        out = list(gw_stream_with_hb(_FastGW(), []))
+        assert out == ["一", "二"]
+
+    def test_worker_exception_propagates(self, monkeypatch):
+        import sse_keepalive
+        from sse_keepalive import gw_stream_with_hb
+
+        class _FailGW:
+            def chat_stream(self, msgs, **kw):
+                raise RuntimeError("LLM 炸了")
+                yield "永远不会到"  # pragma: no cover
+
+        monkeypatch.setattr(sse_keepalive, "SSE_HB_INTERVAL_SEC", 5)
+        import pytest
+        with pytest.raises(RuntimeError, match="LLM 炸了"):
+            list(gw_stream_with_hb(_FailGW(), []))
