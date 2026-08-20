@@ -26,22 +26,31 @@ def gw_stream_with_hb(gw, msgs, **kw):
     思考帧（REASONING_HB 哨兵）同样转成心跳，不混入正文；worker 异常会在主 generator
     重新抛出，由上层 SSE 的 try/except 转成 error 帧。
     """
+    import logging
     from llm_gateway import REASONING_HB
+
+    logger = logging.getLogger("sse_keepalive")
     q: Queue = Queue()
 
     def _worker():
+        logger.info("[gw_stream_with_hb] worker start")
         try:
             for chunk in gw.chat_stream(msgs, yield_reasoning_heartbeat=True, **kw):
                 q.put(("chunk", chunk))
+            logger.info("[gw_stream_with_hb] worker done (stream exhausted)")
             q.put(("done", None))
         except Exception as e:  # noqa: BLE001 在调用处重新抛出
+            logger.error("[gw_stream_with_hb] worker error: %s", e)
             q.put(("error", e))
 
     threading.Thread(target=_worker, daemon=True).start()
+    hb_count = 0
     while True:
         try:
             kind, payload = q.get(timeout=SSE_HB_INTERVAL_SEC)
         except Empty:
+            hb_count += 1
+            logger.info("[gw_stream_with_hb] heartbeat #%d (LLM still silent)", hb_count)
             yield SSE_HEARTBEAT_COMMENT  # 10s 内 LLM 无输出 → 心跳占住连接
             continue
         if kind == "chunk":
@@ -49,4 +58,5 @@ def gw_stream_with_hb(gw, msgs, **kw):
         elif kind == "error":
             raise payload
         else:  # done
+            logger.info("[gw_stream_with_hb] finished. total heartbeats=%d", hb_count)
             return

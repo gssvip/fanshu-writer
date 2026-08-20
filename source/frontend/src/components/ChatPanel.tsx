@@ -1450,12 +1450,13 @@ export default function ChatPanel() {
           receivedSessionId = evt.session_id;
         }
       } else if (evt.type === 'error') {
+        gotPayload = true; // 收到 error 帧也算"有响应"，避免被下方空回复兜底覆盖真实错误
         throw new Error(evt.error);
       }
     }
     // 【空回复兜底】流正常结束但一帧正文/卡片都没有 → 显式报错（替代静默空消息/被移除的气泡）
     if (!gotPayload && !ctrl.signal.aborted) {
-      throw new Error('AI 连接中断：未收到任何生成内容。常见原因：思考型模型推理超 30 秒被代理掐断/网络波动。请重试；反复出现请换非思考型模型');
+      throw new Error('AI 未返回任何内容（模型空回复或连接中断），请重试或检查模型配置');
     }
   }, [sessionId]);
 
