@@ -4781,19 +4781,23 @@ def seed_skill_packs():
     if added or updated or removed:
         db.session.commit()
         print(f'[SEED] skill_packs: added={added}, updated={updated}, removed={removed}', flush=True)
-    # 【铁律】校验所有内置技能包的章节字数规范 + 强制修正
-    # 检查 novel 类型技能包的 prompts 中是否包含 2400 字标准
-    builtin_novel_packs = SkillPack.query.filter_by(is_builtin=True, book_type='novel').all()
+    # 【铁律】校验"写正文"内置技能包的章节字数规范（仅告警，启动不阻断）
+    # 范围修正（2026-08-20）：只检查 stage_keys 含 'draft'（真正生成正文）的包。
+    # 旧逻辑按 book_type='novel' 全量查，把构思类包（世界观构建手册/番茄金番作者等
+    # 只做设定大纲、从不写正文的包）也误报违规 → 每次部署日志刷 14 条假警告。
+    builtin_draft_packs = [
+        p for p in SkillPack.query.filter_by(is_builtin=True, book_type='novel').all()
+        if 'draft' in json.loads(p.stage_keys_json or '[]')
+    ]
     non_compliant = []
-    for p in builtin_novel_packs:
-        prompts_str = p.prompts_json or ''
+    for p in builtin_draft_packs:
         # 检测是否包含 2400 字标准（2400字±100 或 2400字 ±100 等变体）
-        if '2400' not in prompts_str:
+        if '2400' not in (p.prompts_json or ''):
             non_compliant.append(p.name)
     if non_compliant:
         print(f'[铁律] ⚠️ 章节字数铁律违规：以下技能包未包含 2400字±100 标准：{non_compliant}', flush=True)
     else:
-        print(f'[铁律] ✅ 章节字数铁律合规：所有 {len(builtin_novel_packs)} 个 novel 类内置技能包均使用 2400字±100 标准', flush=True)
+        print(f'[铁律] ✅ 章节字数铁律合规：所有 {len(builtin_draft_packs)} 个写正文内置技能包均使用 2400字±100 标准', flush=True)
 
 @app.route('/api/admin/reseed-skill-packs', methods=['POST'])
 def admin_reseed_skill_packs():
