@@ -1578,6 +1578,7 @@ export default function ChatPanel() {
         // eslint-disable-next-line no-console
         console.error('[ChatPanel] 方案生成失败', e?.name, e?.message, e?.stack);
         removeEmptyAi();
+        refreshHistory(); // 断流后刷新会话历史（后端已抢救保存部分内容，可从历史找回）
       }
     } finally {
       setStreaming(false);
@@ -1607,6 +1608,7 @@ export default function ChatPanel() {
       if (e.name !== 'AbortError') {
         setStreamError(e.message || '生成失败');
         removeEmptyAi();
+        refreshHistory(); // 断流后刷新会话历史（后端已抢救保存部分内容，可从历史找回）
       }
     } finally {
       setStreaming(false);
@@ -1638,6 +1640,7 @@ export default function ChatPanel() {
       if (e.name !== 'AbortError') {
         setStreamError(e.message || '修订失败');
         removeEmptyAi();
+        refreshHistory(); // 断流后刷新会话历史（后端已抢救保存部分内容，可从历史找回）
       }
     } finally {
       setStreaming(false);
@@ -1702,6 +1705,7 @@ export default function ChatPanel() {
           : (e?.name || `${label}失败`);
         setStreamError(msg);
         removeEmptyAi();
+        refreshHistory(); // 断流后刷新会话历史（后端已抢救保存部分内容，可从历史找回）
       }
     } finally {
       setStreaming(false);
@@ -2181,6 +2185,7 @@ export default function ChatPanel() {
       if (e.name !== 'AbortError') {
         setStreamError(e.message || '通用聊天失败');
         removeEmptyAi();
+        refreshHistory(); // 断流后刷新会话历史（后端已抢救保存部分内容，可从历史找回）
       }
     } finally {
       setStreaming(false);

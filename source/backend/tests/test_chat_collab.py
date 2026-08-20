@@ -314,3 +314,66 @@ class TestGwStreamWithHb:
         import pytest
         with pytest.raises(RuntimeError, match="LLM 炸了"):
             list(gw_stream_with_hb(_FailGW(), []))
+
+
+class TestSavePartialOnDisconnect:
+    """SSE 客户端断开（GeneratorExit）时的部分内容抢救回归测试。
+
+    线上事故（2026-08-20）：移动端生成中途锁屏/切后台掐断连接，旧实现直接丢弃
+    已流出的正文。现在必须同步写入会话历史，且任何异常不得外逃（GeneratorExit
+    上下文里外逃异常会替代 GeneratorExit 导致 WSGI 层报错）。
+    """
+
+    def test_partial_content_saved_to_history(self, app):
+        import json
+        from app import db, AISession
+        from blueprints.chat_collab_bp import _save_partial_on_disconnect, load_session_messages
+
+        with app.app_context():
+            session = AISession(book_id='bk-test', scope='general', title='断流抢救')
+            db.session.add(session)
+            db.session.commit()
+
+            _save_partial_on_disconnect(
+                session, '续写第 3 章', '写一场对峙',
+                '林天推门而入，殿内烛火摇曳，长老缓缓抬起头……')
+
+            msgs = load_session_messages(session)
+            assert msgs, '断流抢救必须写入会话历史'
+            assistant = [m for m in msgs if m['role'] == 'assistant'][-1]
+            assert '连接中断' in assistant['content']
+            assert '林天推门而入' in assistant['content'], '已生成的部分正文必须保留'
+            user = [m for m in msgs if m['role'] == 'user'][-1]
+            assert '续写第 3 章' in user['content']
+
+    def test_empty_partial_is_noop(self, app):
+        from app import db, AISession
+        from blueprints.chat_collab_bp import _save_partial_on_disconnect, load_session_messages
+
+        with app.app_context():
+            session = AISession(book_id='bk-test2', scope='general', title='空内容')
+            db.session.add(session)
+            db.session.commit()
+
+            _save_partial_on_disconnect(session, '续写第 3 章', '', '   ')
+            assert load_session_messages(session) == [], '空内容不应写历史（避免半截垃圾消息）'
+
+    def test_db_failure_never_raises(self, app):
+        """抢救落库失败必须静默：不能让异常替代 GeneratorExit 逃逸到 WSGI 层。"""
+        from app import AISession
+        from blueprints.chat_collab_bp import _save_partial_on_disconnect
+
+        class _BrokenSession:
+            """messages_json setter 后 commit 必炸（模拟 PG SSL 断连）。"""
+            id = 'broken'
+            messages_json = None
+            updated_at = None
+
+            class _Q:
+                def get(self, _id):
+                    return None
+
+            query = _Q()
+
+        # 不抛异常即为通过（内部吞掉 OperationalError）
+        _save_partial_on_disconnect(_BrokenSession(), '续写', '', '部分内容')

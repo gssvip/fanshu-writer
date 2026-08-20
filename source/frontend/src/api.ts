@@ -126,7 +126,7 @@ async function fetchStream(url: string, cfg: RequestInit, signal?: AbortSignal):
     if (e?.name === 'AbortError') throw e;
     const msg = String(e?.message || '');
     if (e?.name === 'TypeError' || msg === 'Failed to fetch' || msg.includes('NetworkError') || msg.includes('network error')) {
-      throw new Error('连接中断（网络波动或服务正在重启），已自动重试仍失败。请稍候重试，已生成的内容不会丢失');
+      throw new Error('连接中断（网络波动或服务重启），已自动重试仍失败。已生成的部分内容已保存到会话历史，可稍后重试');
     }
     throw e;
   }

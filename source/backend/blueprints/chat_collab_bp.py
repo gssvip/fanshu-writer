@@ -981,6 +981,32 @@ def _compact_history_for_persist(history: list) -> list:
     return h
 
 
+def _save_partial_on_disconnect(session, label: str, user_note: str, partial_content: str) -> None:
+    """SSE 客户端断开（GeneratorExit）时抢救已生成的部分内容。
+
+    线上事故（2026-08-20）：生成一章/一个设定要 1-3 分钟，移动端锁屏/切后台/网络切换
+    会掐断 SSE 连接 → generator 收到 GeneratorExit → 旧实现直接丢弃已流出的正文，
+    用户只能整章重新生成（再等几分钟 + 再扣一次 LLM token）。
+    现把部分内容同步写入会话历史，前端断流后刷新历史即可找回。
+
+    约束：GeneratorExit 上下文禁止 yield（会 RuntimeError），本函数必须纯同步；
+    抢救失败必须吞异常——不能让它替代 GeneratorExit 逃逸。
+    """
+    try:
+        if not partial_content or not partial_content.strip():
+            return
+        history = load_session_messages(session)
+        history.append({'role': 'user', 'content': f'{label}：{user_note or ""}'[:120]})
+        history.append({
+            'role': 'assistant',
+            'content': (f'【连接中断·已保留生成到一半的内容（约 {len(partial_content)} 字），'
+                        f'可点击重试重新生成】\n{partial_content}'),
+        })
+        _safe_save_session_messages(session, history)
+    except Exception:
+        pass
+
+
 def _safe_save_session_messages(session, history: list) -> None:
     """会话消息落盘 + 处理 PG SSL 断连（OperationalError）重试。
 
@@ -2108,6 +2134,10 @@ def _action_master_create(book, session, instruction, gw, sse):
                     continue
                 content += chunk
                 yield sse({'type': 'delta', 'content': chunk})
+        except GeneratorExit:
+            # 客户端断开：同步抢救当前维度已生成部分（已完成的维度已随卡片发出，前端有）
+            _save_partial_on_disconnect(session, f'批量设定·{label}', instruction or '', content)
+            raise
         except Exception as e:
             yield sse({'type': 'error', 'error': f'{label}生成失败：{e}'})
             continue
@@ -2845,6 +2875,11 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
                 continue
             content += chunk
             yield sse({'type': 'delta', 'content': chunk})
+    except GeneratorExit:
+        # 客户端断开（锁屏/切后台/网络切换）：同步抢救已生成的半章正文再退出
+        _save_partial_on_disconnect(session, f'{mode_label}第 {target_chapter_num or "?"} 章',
+                                    instruction or '', content)
+        raise
     except Exception as e:
         yield sse({'type': 'error', 'error': f'{mode_label}失败：{e}'})
         return
@@ -5367,6 +5402,11 @@ def smart_generate():
                             continue
                         full.append(chunk)
                         yield sse({'type': 'delta', 'content': chunk})
+                except GeneratorExit:
+                    # 客户端断开：同步抢救本轮已流出的部分内容再退出（禁止 yield）
+                    _save_partial_on_disconnect(session, f'智驾生成·{spec["label"]}',
+                                                requirement or suggestion[:60], ''.join(full))
+                    raise
                 except Exception as se:
                     _last_stream_err = str(se)[:300]
                     # 【智驾生成错误修复】确定性失败（key 无效/额度耗尽/用户取消）重试无意义，
