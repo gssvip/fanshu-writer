@@ -1283,7 +1283,6 @@ def chat_smart():
             yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    direct_passthrough=True,
                     headers={'Cache-Control': 'no-cache, no-transform',
                              'X-Accel-Buffering': 'no',
                              'Connection': 'keep-alive'})
@@ -1993,7 +1992,6 @@ def chat_smart_action():
                 pass
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    direct_passthrough=True,
                     headers={'Cache-Control': 'no-cache, no-transform',
                              'X-Accel-Buffering': 'no',
                              'Connection': 'keep-alive'})
@@ -4045,7 +4043,6 @@ def smart_general():
             yield sse({'type': 'error', 'error': str(e)})
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    direct_passthrough=True,
                     headers={'Cache-Control': 'no-cache, no-transform',
                              'X-Accel-Buffering': 'no',
                              'Connection': 'keep-alive'})
@@ -5466,7 +5463,6 @@ def smart_generate():
             yield sse({'type': 'error', 'error': str(e)})
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    direct_passthrough=True,
                     headers={'Cache-Control': 'no-cache, no-transform',
                              'X-Accel-Buffering': 'no',
                              'Connection': 'keep-alive'})
@@ -5680,7 +5676,6 @@ def smart_dim_edit():
             yield sse({'type': 'error', 'error': str(e)})
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    direct_passthrough=True,
                     headers={'Cache-Control': 'no-cache, no-transform',
                              'X-Accel-Buffering': 'no',
                              'Connection': 'keep-alive'})
@@ -5929,7 +5924,6 @@ def smart_batch():
             yield sse({'type': 'error', 'error': str(e)})
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    direct_passthrough=True,
                     headers={'Cache-Control': 'no-cache, no-transform',
                              'X-Accel-Buffering': 'no',
                              'Connection': 'keep-alive'})
@@ -6179,7 +6173,6 @@ def smart_deai():
             yield sse({'type': 'error', 'error': str(e)})
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
-                    direct_passthrough=True,
                     headers={'Cache-Control': 'no-cache, no-transform',
                              'X-Accel-Buffering': 'no',
                              'Connection': 'keep-alive'})
