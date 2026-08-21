@@ -146,6 +146,10 @@ def validate_chapter(content: str) -> ValidationResult:
     #     若有维度 <60 分则追加 warning，给具体改法，不扣现有总分（独立维度）。
     _check_style_alignment_score(text, cfg, result)
 
+    # 16. 硬卡4·整章量化双轨自检（段内句号≤2 / 段均字数比例 / 句均字数 / 段均句数）
+    #     对接 app.py 文风铁律硬卡4；任何一条严重违规则升级为 critical（作者必须修订）。
+    _check_quantitative_hardcards(text, cfg, result)
+
     return result
 
 
@@ -1267,6 +1271,198 @@ def validate_chapter_with_drift(content: str, baseline_fp: Optional[Dict[str, fl
     except Exception:
         pass
     return result
+
+
+def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult):
+    """硬卡4：整章量化双轨自检 —— 对应 app.py 文风铁律硬卡 4.1~4.4。
+    统计口径：
+      - 段落：空行分割（忽略 HTML <p> 包裹，先脱标签）
+      - 句子段内句数：段内「。！？」合计作为句号数（句终标点总计数）
+      - 句均字数：按 _SENTENCE_END_PATTERN 拆句，单句字数=句内字符数（含标点）
+      - 段均句数 = 全章句终标点数 / 段落数；段均句数比值越大越碎（目标 ≤ 1.8）
+    """
+    # 1) 脱 <p> 等标签再统计（避免 html 化正文干扰空行计数）
+    stripped = re.sub(r'</?[^>]+>', '', text)
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', stripped) if p and p.strip()]
+    if not paragraphs:
+        paragraphs = [stripped] if stripped else []
+    if not paragraphs:
+        return
+    n_par = len(paragraphs)
+
+    # 4.1 段内句号/句终标点硬上限 ≤ 2；含 ≥ 3 句终标点的段数必须 = 0
+    over3_per_par = 0
+    first_over3_idx = -1
+    first_over3_count = 0
+    per_par_period_counts = []
+    total_sentences = 0
+    total_sentence_chars = 0
+    sent_lengths = []
+    for i, p in enumerate(paragraphs):
+        c = 0
+        for pend in ('。', '！', '？'):
+            c += p.count(pend)
+        per_par_period_counts.append(c)
+        total_sentences += c
+        # 句级切分：按句终标点切开后算每个单句长度（含标点，把句号算入前一句尾）
+        frags = re.split(r'([。！？])', p)
+        # 把标点并回前一句
+        sents = []
+        buf = ''
+        for ch in frags:
+            if ch in ('。', '！', '？'):
+                sents.append((buf + ch).strip())
+                buf = ''
+            else:
+                buf = ch
+        if buf.strip():
+            pass  # 段尾未结句的不计数
+        for s in sents:
+            sl = len(s)
+            if sl > 0:
+                total_sentence_chars += sl
+                sent_lengths.append(sl)
+        if c >= 3:
+            over3_per_par += 1
+            if first_over3_idx < 0:
+                first_over3_idx = i + 1
+                first_over3_count = c
+
+    # 4.2 段均字数比例：≤70字 占比 ≥ 70%；<40字（两行内）占比 ≥ 40%
+    par_lengths = [len(p) for p in paragraphs]
+    le70_ratio = sum(1 for l in par_lengths if l <= 70) / n_par if n_par else 1
+    lt40_ratio = sum(1 for l in par_lengths if l < 40) / n_par if n_par else 1
+
+    # 4.3 句均字数 12–22（含标点）
+    if sent_lengths:
+        avg_sent_len = total_sentence_chars / len(sent_lengths)
+    else:
+        avg_sent_len = 0.0
+    short_shards = sum(1 for l in sent_lengths if l < 10)
+    short_shard_ratio = short_shards / len(sent_lengths) if sent_lengths else 0.0
+
+    # 4.4 段均句数：全章句数 / 段落数 目标 ≤ 1.8；> 2.0 立即判碎
+    if n_par and total_sentences:
+        sentences_per_par = total_sentences / n_par
+    else:
+        sentences_per_par = 0.0
+
+    # 写入 stats（无论是否告警都记录，前端 / 报告可展示）
+    stats = result.stats
+    stats['par_count'] = n_par
+    stats['sentences_total'] = total_sentences
+    stats['sentences_per_par'] = round(sentences_per_par, 2)
+    stats['avg_sent_len'] = round(avg_sent_len, 1)
+    stats['sent_len_samples'] = len(sent_lengths)
+    stats['par_length_le70_ratio'] = round(le70_ratio, 3)
+    stats['par_length_lt40_ratio'] = round(lt40_ratio, 3)
+    stats['short_sent_shard_ratio'] = round(short_shard_ratio, 3)
+    stats['pars_with_periods_ge3'] = over3_per_par
+
+    # ===== 告警判定（分 critical / warning 两级）=====
+    # 4.1 段内≥3句号 —— 只要有 ≥ 1 段，直接 critical（AI 味最浓来源）
+    if over3_per_par > 0:
+        severity = 'critical' if over3_per_par >= 3 else 'warning'
+        sev_label = '严重不合格' if severity == 'critical' else '不合格'
+        result.add(ValidationIssue(
+            severity=severity,
+            category='硬卡4.1·段内句号数超限',
+            pattern='段内含≥3个句号（句终标点）',
+            count=over3_per_par,
+            position=f'例如第 {first_over3_idx} 段含 {first_over3_count} 句；整章共 {over3_per_par} 段',
+            suggestion=(
+                f'文风铁律 4.1 规定每段 ≤ 2 个句号（=1–2 句完整话），'
+                f'但本章有 {over3_per_par} 段堆了 ≥ 3 句小短句（漫画分镜脚本化是最浓 AI 味来源）。'
+                f'修复：把同 POV/同镜头/同动作链的 3+ 个小短句合并成 1–2 句完整中长句；'
+                f'绝不允许一句话硬剁成 3+ 个残切碎段。'
+            ),
+        ))
+
+    # 4.4 段均句数 > 2.0 → critical；1.8–2.0 → warning
+    if sentences_per_par > 2.0:
+        result.add(ValidationIssue(
+            severity='critical',
+            category='硬卡4.4·段均句数超限（整章碎段）',
+            pattern='句数/段数 比值',
+            count=int(sentences_per_par * 10),
+            position=f'段均句数 = {total_sentences}/{n_par} ≈ {sentences_per_par:.2f}（硬卡 ≤ 1.8；> 2.0 立即判定 AI 碎段）',
+            suggestion=(
+                f'整章段落切得太碎：平均每段塞了 {sentences_per_par:.1f} 句话。'
+                f'修复：①连续 3 段一句话独立段 → 至少合并相邻 2 段成 1 段含 1–2 句；'
+                f'②把同镜头动作链的残切小句合并（例如「他抬手。他握拳。他砸下。」→「他抬手握拳，狠狠砸下。」）。'
+            ),
+        ))
+    elif sentences_per_par > 1.8:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='硬卡4.4·段均句数偏高（接近碎段）',
+            pattern='句数/段数 比值',
+            count=int(sentences_per_par * 10),
+            position=f'段均句数 = {total_sentences}/{n_par} ≈ {sentences_per_par:.2f}（硬卡 ≤ 1.8）',
+            suggestion='部分段落仍偏碎：把同 POV/同场景的相邻短段合并，降低段均句数。',
+        ))
+
+    # 4.3 句均字数
+    if sent_lengths:
+        if avg_sent_len < 10:
+            result.add(ValidationIssue(
+                severity='critical',
+                category='硬卡4.3·句均字数过短（整章碎句）',
+                pattern='句均字数',
+                count=int(avg_sent_len * 10),
+                position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句；短碎句(<10字)占比 {short_shard_ratio*100:.0f}%（硬卡句均 12–22 字）',
+                suggestion='整章句子被切成了碎碎的几个字一句（像 AI 战报）。修复：连续 4 个 ＜10 字残句必须合并成 1–2 句完整中长句；句内补连接词/状语使主谓齐全。',
+            ))
+        elif avg_sent_len < 12:
+            result.add(ValidationIssue(
+                severity='warning',
+                category='硬卡4.3·句均字数偏短',
+                pattern='句均字数',
+                count=int(avg_sent_len * 10),
+                position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句（硬卡 12–22 字）',
+                suggestion='句子偏短：把同场景同动作链的相邻短句合并，补连接词（而/便/于是/也/却）让句长落到 12–22 字区间。',
+            ))
+        elif avg_sent_len > 28:
+            result.add(ValidationIssue(
+                severity='warning',
+                category='硬卡4.3·句均字数偏长',
+                pattern='句均字数',
+                count=int(avg_sent_len * 10),
+                position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句（硬卡 12–22 字）',
+                suggestion='句子过长：在语义节点处拆成 2 句完整话，每句 12–22 字，避免一大坨逗号。',
+            ))
+
+        # 短碎句占比过高也单独报
+        if short_shard_ratio >= 0.35:
+            result.add(ValidationIssue(
+                severity='warning' if short_shard_ratio < 0.55 else 'critical',
+                category='硬卡4.3·短碎句占比过高',
+                pattern='单句 < 10 字',
+                count=short_shards,
+                position=f'{short_shards}/{len(sent_lengths)} 句（{short_shard_ratio*100:.0f}%）为 <10 字残句',
+                suggestion='一堆「几字小句」拼起来最像 AI 战报。修复：按动作链/镜头合并残句，每 3–4 个残句拼成 1 句完整话。',
+            ))
+
+    # 4.2 段均字数比例
+    if le70_ratio < 0.60:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='硬卡4.2·长段占比过高（手机端难读）',
+            pattern='段字数 ≤ 70 字占比',
+            count=int(le70_ratio * 100),
+            position=f'{int(le70_ratio*100)}% 的段落 ≤ 70 字（硬卡 ≥ 70%）',
+            suggestion='段落普遍过长（>手机端三行）。修复：在场景切换/镜头切换/对白前后空行分段，把 80+ 字的长段从语义节点处拆成 2–3 段，每段 40–70 字。',
+        ))
+    if lt40_ratio < 0.25:
+        result.add(ValidationIssue(
+            severity='info',
+            category='硬卡4.2·两行内短段偏少（节奏偏平）',
+            pattern='段字数 < 40 字占比',
+            count=int(lt40_ratio * 100),
+            position=f'{int(lt40_ratio*100)}% 的段落 < 40 字（建议 ≥ 40%）',
+            suggestion='建议把炸点/对白/最狠那句单独成段，制造视觉停顿与节奏呼吸。',
+        ))
+
 
 
 # ====================================================================

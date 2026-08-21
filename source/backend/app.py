@@ -7237,10 +7237,16 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 
 【文风铁律 · 最高权威（任一条违规即为不合格章节，必须重写）】
 {skill_note}
-（三项全局附加硬卡，叠加文风包红线生效）
+（四项全局附加硬卡，叠加文风包红线共同生效——任何一条命中视为不合格章节，必须输出前自行调整修正，不得带违规提交）
 - 硬卡1·段落完整（铁律A）：1-2句成段只为节奏；相邻≥3句同POV/场景/镜头必须合并≥2句，不得残切碎句
 - 硬卡2·禁修正式否定（禁令0）：禁写「不是A而是B/不是修辞/不是地震」等修正式句式，一律改成直接陈述句
-- 硬卡3·摄像机词限额：「看见/看着/听见/注意到/盯着/望向」一章合计≤3次，超额用动作/物象/感官代替"""
+- 硬卡3·摄像机词限额：「看见/看着/听见/注意到/盯着/望向」一章合计≤3次，超额用动作/物象/感官代替
+- 硬卡4·【整章量化双轨自检（输出前必须逐条检查，任一不达标即判定为不合格章节必须重写）】
+  4.1 段内句号数硬上限 ≡ 每段 ≤ 2 个句号（=每段最多 2 句完整话），整章中含 ≥ 3 个句号的段落数必须 = 0；绝对不允许一段里堆 3–6 个小短句（漫画分镜脚本化是最浓AI味来源之一）
+  4.2 段均字数比例 ≡ 一章 70% 的段落字数须 ≤ 70 字（手机端三行以内），其中 ＜ 40 字（两行以内）的短段占比 ≥ 40%；但长段也必须完整，不允许把一个自然动作链切成 4+ 句独立段
+  4.3 句均字数 ≡ 单句平均字数 12–22 字（含标点），注意是「单句内部的汉字数」不是「一段里按句号切成 N 句再拼」；连续 ≥ 4 个句号的单句 ＜ 10 字短碎句必须合并成 1–2 句完整中长句
+  4.4 段均句数 ≡ 整章合计 段落数 与 合计句数 的比值 ≤ 1.8；比值 > 2.0 立即判定 AI 碎段，必须合并改写
+  4.5 最后一步必做：把写好的整章正文复制到「段数/句数/句号数计数器」里跑一下，确认同时满足 4.1–4.4，再输出"""
 
     if enable_structured_tags and build_pre_write_check_prompt:
         system_prompt += build_pre_write_check_prompt(current_chapter_num, bb)
@@ -7522,16 +7528,21 @@ def ai_continue(book_id):
                             validation.stats['style_drift'] = drift_validation.stats['style_drift']
                 except Exception:
                     pass  # 漂移检测失败不影响主校验
-                if validation.issues:
-                    post_validate = validation.to_dict()
+                # 无论有没有问题，都把统计项(stats)抛给前端（段均句数/句均字数等健康指标）
+                post_validate = validation.to_dict()
+                if not validation.issues:
+                    post_validate['_hardcard4_ok'] = True
             except Exception:
                 pass
         elif validate_chapter:
             try:
                 body_for_check = _extract_chapter_body(polished_content)
                 validation = validate_chapter(body_for_check)
-                if validation.issues:
-                    post_validate = validation.to_dict()
+                # 无论有没有问题，都把统计项(stats)抛给前端监控（段均句数/句均字数/短碎句占比/段内≥3句号数）
+                post_validate = validation.to_dict()
+                if not validation.issues:
+                    # 没命中问题时也要保留 stats 和 passed/score 摘要，前端可展示"健康值"
+                    post_validate['_hardcard4_ok'] = True
             except Exception:
                 pass
         if wp_runner: wp_runner.mark_stage(wp_graph, 't8_pval', 'done' if post_validate else 'skipped',
