@@ -477,6 +477,13 @@ class LLMGateway:
         兼容多种 chunk 格式（标准 OpenAI / 简化 delta / 直接 content）。
         yield_reasoning_heartbeat=True 时，thinking（reasoning_content）帧到达即 yield
         REASONING_HB 哨兵（不混入正文），供上层转发 SSE 心跳防代理 idle 掐断。
+
+        【流式重试规则 · 新增 2026-08-21】
+        仅在"第一个正文/思考 chunk 吐出去之前"的失败允许重试（避免已吐部分内容导致正文重复）：
+          - 5xx / CONNECTION / TIMEOUT / SERVICE_BUSY 类 → 指数退避最多 2 次重试（3 次机会）
+          - 401 / 429 / 4xx（非 400/422）→ 不重试，直接把真实错误体摘要抛出来
+          - 400/422 且报错指向 max_tokens 超限 → 解析真实上限钳制 payload 后重发
+        任何抛错都带 status_code/body_text/traceId（若上游给了），不再只说"状态码:503"。
         """
         url = f"{self.base_url}/chat/completions"
         headers = build_auth_headers(self.api_key)
@@ -491,83 +498,142 @@ class LLMGateway:
 
         got_content = False
         got_reasoning = False  # 思考型模型（GLM-4.7/R1 等）先输出 reasoning_content 再输出 content
-        try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout, stream=True)
-            # 【输出上限自适应】400/422 且报错指向 max_tokens 超限 → 解析真实上限、
-            # 钳制 payload 后重发一次；解析不出具体数字则退 8192 兜底（均只重发一次）。
-            if resp.status_code in (400, 422):
-                _limit = _learn_output_limit(self.base_url, self.model,
-                                             _error_text(resp), payload["max_tokens"])
-                if _limit and _limit < payload["max_tokens"]:
-                    payload["max_tokens"] = _limit
-                    resp = requests.post(url, headers=headers, json=payload,
-                                         timeout=self.timeout, stream=True)
-                if not _limit and payload["max_tokens"] > 8192:
-                    payload["max_tokens"] = 8192
-                    resp = requests.post(url, headers=headers, json=payload,
-                                         timeout=self.timeout, stream=True)
-            # 【空回复根因修复】非 200 状态码必须显式抛错：
-            # 旧实现直接 iter_lines 遍历错误页（无 data: 帧），流静默结束 → 调用方拿到空内容还以为成功
-            if resp.status_code != 200:
-                body_text = ''
-                try:
-                    body_text = resp.text[:300]
-                except Exception:
-                    pass
-                fc = _classify_error(None, resp.status_code, None)
-                try:
-                    err_body = resp.json()
-                    if isinstance(err_body, dict) and isinstance(err_body.get("error"), dict):
-                        body_text = (err_body["error"].get("message") or body_text)[:300]
-                except Exception:
-                    pass
-                raise LLMError(
-                    f"LLM 流式调用失败（HTTP {resp.status_code}）：{body_text or '服务返回错误'}",
-                    fc if fc != FailureClass.NONE else FailureClass.UNAVAILABLE,
-                )
-            for kind, value in _iter_sse_events(resp):
-                if kind == "message":
-                    # 服务端忽略 stream 参数返回非流式 message → 一次性 yield 完整正文
-                    got_content = True
-                    yield value
-                elif kind == "delta":
-                    got_content = True
-                    yield value
-                elif kind == "reasoning":
-                    got_reasoning = True
-                    if yield_reasoning_heartbeat:
-                        yield REASONING_HB  # 上层据此发 SSE 心跳，防推理期代理 idle 掐断
-            # 【空回复根因修复】流走完但一个内容帧都没有 → 先非流式兜底再报错：
-            # 很多聚合/中转服务测试连接(stream=False)正常，但 stream=True 支持有缺陷，
-            # 此时补一次非流式请求仍能拿到正文，避免"测试成功、智驾空回复"的假故障。
-            if not got_content:
-                if got_reasoning:
-                    # 思考型模型：思考产出正常但正文为空 → max_tokens 被思考耗尽（属截断，重试加大 max_tokens 有意义）
+        max_attempts = self.max_retries + 1  # 1 次首发 + max_retries 重试（默认 3 次总机会）
+        last_exc = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout, stream=True)
+                # 【输出上限自适应】400/422 且报错指向 max_tokens 超限 → 解析真实上限、
+                # 钳制 payload 后重发一次；解析不出具体数字则退 8192 兜底（均只重发一次）。
+                if resp.status_code in (400, 422):
+                    _limit = _learn_output_limit(self.base_url, self.model,
+                                                 _error_text(resp), payload["max_tokens"])
+                    if _limit and _limit < payload["max_tokens"]:
+                        payload["max_tokens"] = _limit
+                        resp = requests.post(url, headers=headers, json=payload,
+                                             timeout=self.timeout, stream=True)
+                    elif not _limit and payload["max_tokens"] > 8192:
+                        payload["max_tokens"] = 8192
+                        resp = requests.post(url, headers=headers, json=payload,
+                                             timeout=self.timeout, stream=True)
+                # 【非 200 先分类，再决定重试 vs 直接抛】（旧实现非 200 一律一次不重试直接抛，
+                # 导致上游鉴权 SERVICE_BUSY 这种理应重试的 503 瞬间失败）
+                if resp.status_code != 200:
+                    body_text = ''
+                    trace_id = ''
+                    try:
+                        body_text = resp.text[:500]
+                    except Exception:
+                        pass
+                    try:
+                        # 某些网关把 traceId 放到 header（比如阿里云/火山/豆包），抓出来方便用户
+                        for h in ('x-trace-id', 'trace-id', 'X-Tt-Logid'):
+                            if resp.headers.get(h):
+                                trace_id = resp.headers[h]
+                                break
+                        # 响应体里有 traceId 字段也取
+                        try:
+                            import json as _json
+                            _jb = _json.loads(body_text or '{}')
+                            if isinstance(_jb, dict):
+                                trace_id = _jb.get('traceId') or trace_id or _jb.get('trace_id') or trace_id
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    try:
+                        err_body = resp.json()
+                        if isinstance(err_body, dict) and isinstance(err_body.get("error"), dict):
+                            body_text = (err_body["error"].get("message") or body_text)[:500]
+                    except Exception:
+                        pass
+                    fc = _classify_error(None, resp.status_code, None)
+                    # 401/403/429（鉴权配额耗尽）永不重试——否则循环打空 quota
+                    is_no_retry = fc in (FailureClass.AUTHENTICATION, FailureClass.QUOTA) \
+                        or resp.status_code in (401, 403, 429) \
+                        or (400 <= resp.status_code < 500 and resp.status_code not in (400, 408, 422, 429, 401, 403, 499))
+                    suffix = f"（traceId={trace_id}）" if trace_id else ""
+                    err_msg = f"LLM 流式调用失败（HTTP {resp.status_code}）{suffix}：{body_text or '服务返回错误'}"
+                    # 只有"还没吐出任何内容帧"才能重试——否则内容重复
+                    can_retry = (not got_content) and (not got_reasoning) and attempt < max_attempts \
+                        and (not is_no_retry) and (fc in _RETRYABLE or fc == FailureClass.NONE)
+                    if can_retry:
+                        time.sleep(min(2 ** (attempt - 1), 4))
+                        continue
+                    raise LLMError(err_msg,
+                                   fc if fc != FailureClass.NONE else FailureClass.UNAVAILABLE)
+
+                for kind, value in _iter_sse_events(resp):
+                    if kind == "message":
+                        got_content = True
+                        yield value
+                    elif kind == "delta":
+                        got_content = True
+                        yield value
+                    elif kind == "reasoning":
+                        got_reasoning = True
+                        if yield_reasoning_heartbeat:
+                            yield REASONING_HB
+                # 【空回复根因修复】流走完但一个内容帧都没有 → 先非流式兜底再报错：
+                if not got_content:
+                    if got_reasoning:
+                        raise LLMError(
+                            f"思考型模型正文为空：模型思考已产出但 max_tokens={max_tokens} 被耗尽，"
+                            f"无余量输出正文（model={self.model}）。请增大 max_tokens 或关闭思考模式",
+                            FailureClass.FORMAT_ERROR,
+                        )
+                    try:
+                        fb_payload = dict(payload)
+                        fb_payload["stream"] = False
+                        fb_resp = requests.post(url, headers=headers, json=fb_payload, timeout=self.timeout)
+                        if fb_resp.status_code == 200:
+                            fb_content, fb_reason, fb_fc = _extract_content(fb_resp.json())
+                            if fb_content:
+                                yield fb_content
+                                return
+                    except Exception:
+                        pass
+                    # 空内容（非流式兜底也空）：可重试吗？（也只在首发 attempt 允许重发）
+                    if attempt < max_attempts and not got_content:
+                        time.sleep(min(2 ** (attempt - 1), 4))
+                        continue
                     raise LLMError(
-                        f"思考型模型正文为空：模型思考已产出但 max_tokens={max_tokens} 被耗尽，"
-                        f"无余量输出正文（model={self.model}）。请增大 max_tokens 或关闭思考模式",
-                        FailureClass.FORMAT_ERROR,
+                        f"LLM 流式返回空内容（HTTP 200 但无任何 content 帧，model={self.model}，"
+                        f"已尝试非流式兜底仍为空。可能原因：max_tokens 过小/模型拒答/供应商网关异常）",
+                        FailureClass.EMPTY_RESPONSE,
                     )
-                try:
-                    fb_payload = dict(payload)
-                    fb_payload["stream"] = False
-                    fb_resp = requests.post(url, headers=headers, json=fb_payload, timeout=self.timeout)
-                    if fb_resp.status_code == 200:
-                        fb_content, fb_reason, fb_fc = _extract_content(fb_resp.json())
-                        if fb_content:
-                            yield fb_content
-                            return
-                except Exception:
-                    pass
+                # 正常走完流 + 有内容 → 返回
+                return
+            except requests.exceptions.Timeout as e:
+                if attempt < max_attempts and (not got_content) and (not got_reasoning):
+                    time.sleep(min(2 ** (attempt - 1), 4))
+                    last_exc = e
+                    continue
+                raise LLMError(f"LLM 流式调用超时（{self.timeout}秒，attempt={attempt}/{max_attempts}）",
+                               FailureClass.TIMEOUT)
+            except requests.exceptions.ConnectionError as e:
+                if attempt < max_attempts and (not got_content) and (not got_reasoning):
+                    time.sleep(min(2 ** (attempt - 1), 4))
+                    last_exc = e
+                    continue
+                raise LLMError(f"LLM 服务不可达：{str(e)[:100]}（attempt={attempt}/{max_attempts}）",
+                               FailureClass.UNAVAILABLE)
+            except LLMError:
+                # 上面分类抛出来的 LLMError 已经带了正确 failure_class 和完整信息，直接抛
+                raise
+            except Exception as e:
+                if attempt < max_attempts and (not got_content) and (not got_reasoning):
+                    time.sleep(min(2 ** (attempt - 1), 4))
+                    last_exc = e
+                    continue
                 raise LLMError(
-                    f"LLM 流式返回空内容（HTTP 200 但无任何 content 帧，model={self.model}，"
-                    f"已尝试非流式兜底仍为空。可能原因：max_tokens 过小/模型拒答/供应商网关异常）",
-                    FailureClass.EMPTY_RESPONSE,
+                    f"LLM 流式调用异常：{type(e).__name__}: {str(e)[:300]}（attempt={attempt}/{max_attempts}）",
+                    FailureClass.UNKNOWN,
                 )
-        except requests.exceptions.Timeout:
-            raise LLMError(f"LLM 流式调用超时（{self.timeout}秒）", FailureClass.TIMEOUT)
-        except requests.exceptions.ConnectionError as e:
-            raise LLMError(f"LLM 服务不可达：{str(e)[:100]}", FailureClass.UNAVAILABLE)
+        # 所有尝试用完但被静默掉的最后保险
+        if last_exc is not None:
+            raise LLMError(f"LLM 流式调用重试耗尽：{type(last_exc).__name__} {str(last_exc)[:200]}",
+                           FailureClass.UNAVAILABLE)
 
 
 def get_llm_config(app_module=None):
