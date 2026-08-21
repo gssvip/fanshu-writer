@@ -95,6 +95,28 @@ class PostGenValidator:
                 lines.append(f'   修复建议：{e.auto_fix}')
         return '\n'.join(lines)
 
+    @staticmethod
+    def sections_missing_issues(issues: List[ValidationIssue]) -> List[ValidationIssue]:
+        """warn 级缺节问题（*_SECTIONS_MISSING），用于触发缺节自动补写。"""
+        return [i for i in issues if i.severity == 'warn' and i.code.endswith('_SECTIONS_MISSING')]
+
+    def build_sections_retry_hint(self, issues: List[ValidationIssue]) -> str:
+        """缺节自动补写提示：列出缺失分节，要求在上一版基础上补全输出完整版。
+
+        与 build_retry_hint 的区别：面向 warn 级缺节（内容够长但分节不全，常因 token
+        截断或模型跳节），要求"保留已有优质分节 + 补写缺失分节"，而非推倒重来。
+        """
+        miss = self.sections_missing_issues(issues)
+        if not miss:
+            return ''
+        lines = ['上一版内容分节不全（可能被截断或跳节），请基于上一版补全后重新输出完整版：']
+        for i in miss:
+            lines.append(f'- {i.message}')
+            if i.auto_fix:
+                lines.append(f'  {i.auto_fix}')
+        lines.append('要求：保留上一版已写好的分节内容，只在其基础上补写缺失分节并衔接成完整文档；节标题保留，不要跳节，不要输出任何解释。')
+        return '\n'.join(lines)
+
     def to_meta(self, issues: List[ValidationIssue]) -> list:
         """转为可下发给前端的 meta 结构"""
         return [asdict(i) for i in issues]

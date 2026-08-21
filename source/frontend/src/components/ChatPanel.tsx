@@ -161,12 +161,12 @@ function formatChapterOption(c: {
   return `${head}（${wc}字）`;
 }
 
-// 判断维度是否走"方案选择"流程：构思/核心设定/世界观 需要发散多方案；
-// 大纲/剧情/人物/伏笔 等下游维度已由上游确定，直接生成或修改即可。
-function shouldShowSuggestions(dimKey: string | null): boolean {
+// 判断维度是否走"方案选择"流程：构思/核心设定/世界观 需要发散多方案；大纲/剧情/人物/伏笔等下游维度已由上游确定，直接生成或修改即可。
+// 世界观例外：构思+设定均已定稿（各≥200字）→ 创作方向已被上游钉死，跳过方案选择直接生成。
+function shouldShowSuggestions(dimKey: string | null, bible?: BookBible | null): boolean {
   if (!dimKey || dimKey === 'general') return false;
-  const suggestDims = ['concept', 'key_rules', 'worldbuilding', 'locations', 'inventory'];
-  return suggestDims.includes(dimKey);
+  if (dimKey === 'worldbuilding' && (bible?.concept || '').trim().length >= 200 && (bible?.key_rules || '').trim().length >= 200) return false;
+  return ['concept', 'key_rules', 'worldbuilding', 'locations', 'inventory'].includes(dimKey);
 }
 
 // ============================================================================
@@ -1498,7 +1498,7 @@ export default function ChatPanel() {
     const text = input.trim();
     if (!bookId || !selectedDim || streaming) return;
     // 仅方案选择型维度才走多选意见流程
-    if (!shouldShowSuggestions(selectedDim)) return;
+    if (!shouldShowSuggestions(selectedDim, bible)) return;
     const dimStatus = progress?.dims.find(d => d.field === selectedDim)?.status;
     const isUserPaste = dimStatus === 'empty' && text.length > 300;
     const userRawContent = text;
@@ -1533,7 +1533,7 @@ export default function ChatPanel() {
     } finally {
       setLoadingSuggest(false);
     }
-  }, [input, bookId, selectedDim, streaming, settingPacks, dimensions, progress, appendUserAi, removeEmptyAi]);
+  }, [input, bookId, selectedDim, streaming, settingPacks, dimensions, progress, bible, appendUserAi, removeEmptyAi]);
 
   // 2. 选中方案 → 仅记录选中，绝不自动生成。
   //    用户可在下方消息框补充修改意见，再点「按方案生成」按钮手动触发；
@@ -2146,7 +2146,7 @@ export default function ChatPanel() {
       if (selectedSuggestion) {
         return `已选「${selectedSuggestion.title}」。可输入修改意见，不填则直接按此方案生成…`;
       }
-      if (shouldShowSuggestions(selectedDim)) {
+      if (shouldShowSuggestions(selectedDim, bible)) {
         return `描述你对「${dimLabel}」的构思方向，AI 会给出多个方案供选择…`;
       }
       return `输入要求直接生成或修改「${dimLabel}」（无需方案选择）…`;
@@ -2209,7 +2209,7 @@ export default function ChatPanel() {
     const dimStatus = progress?.dims.find(d => d.field === selectedDim)?.status;
     // 下游维度（大纲/剧情/人物/伏笔等）由上游确定，不再给出多选方案：
     // 有内容则修改，无内容则直接基于用户要求生成。
-    if (!shouldShowSuggestions(selectedDim)) {
+    if (!shouldShowSuggestions(selectedDim, bible)) {
       if (dimStatus && dimStatus !== 'empty') {
         handleDimEdit();
       } else {
@@ -2222,7 +2222,7 @@ export default function ChatPanel() {
     } else {
       handleSuggest();
     }
-  }, [activeTab, selectedDim, suggestions, selectedSuggestion, progress, handleSuggest, handleDimEdit, handleGeneral, handleDirectGenerate, handleGenerateFromSelected]);
+  }, [activeTab, selectedDim, suggestions, selectedSuggestion, progress, bible, handleSuggest, handleDimEdit, handleGeneral, handleDirectGenerate, handleGenerateFromSelected]);
 
   // 重新生成：找到该AI消息前最近的用户消息，重新触发对应动作
   const handleRegenerate = useCallback((index: number) => {
@@ -2958,7 +2958,7 @@ export default function ChatPanel() {
             </div>
 
             {/* 多选意见列表（设定Tab专属，仅对方案选择型维度显示） */}
-            {activeTab === 'setting' && suggestions.length > 0 && shouldShowSuggestions(selectedDim) && (
+            {activeTab === 'setting' && suggestions.length > 0 && shouldShowSuggestions(selectedDim, bible) && (
               <div className="smart-suggestions">
                 <div className="smart-suggestions-head">请选择一个方案，AI 将基于它生成完整内容：</div>
                 {suggestions.map((s, i) => {
@@ -3104,7 +3104,7 @@ export default function ChatPanel() {
                       loadingSuggest ? '…' :
                       selectedSuggestion ? '按方案生成' :
                       selectedDim === 'general' ? '发送' :
-                      shouldShowSuggestions(selectedDim) ? '生成方案' : '生成/修改'
+                      shouldShowSuggestions(selectedDim, bible) ? '生成方案' : '生成/修改'
                     }</button>
                   )}
                 </div>

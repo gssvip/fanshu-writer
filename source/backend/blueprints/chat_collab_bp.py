@@ -46,6 +46,31 @@ from session_persist import (
 )
 
 
+# ============================================================================
+# 各维度生成 max_tokens 首跑配额（防 finish_reason=length 截断）
+# 线上事故（2026-08-20）：旧值统一 2000（timeline 除外），而中文 ≈1.0-1.5 token/字，
+# 设定铁律要求 ≥1500 字、世界观 ≥2000 字 → 输出撞 token 上限被切半。
+# 截断后的半成品又恰好过字数门禁（≥1500字）→ 不触发 error 重试 → 直接交付
+# "生成了一部分"的残缺内容。现按校验器字数下限 × ~2.5 安全系数给足。
+# ============================================================================
+_DIM_MAX_TOKENS = {
+    'timeline': 8000,            # 全书按卷 JSON，结构最长
+    'worldbuilding': 8000,       # ≥2000 字 × 15 节
+    'character_profiles': 8000,  # 7+ 角色 × 15 项
+    'key_rules': 6000,           # ≥1500 字 × 11 节
+    'plot_design': 6000,         # 五幕总纲 + 跨卷钩子总览
+    'concept': 4000,             # ≥1200 字 × 10 节
+    'locations': 4000,
+    'foreshadowing': 4000,
+    'style_guide': 4000,
+}
+
+
+def _dim_max_tokens(dim_key: str) -> int:
+    """维度生成首跑 max_tokens（重试链路另按 1.5x/2x 顶格到 8000）。"""
+    return _DIM_MAX_TOKENS.get(dim_key, 4000)
+
+
 def _run_blocking_with_heartbeat(blocking_fn, sse_fn, extra_frames=None):
     """在线程里跑 blocking_fn()，主 generator 按 SSE_HB_INTERVAL_SEC 周期 yield 心跳，直到返回。
     - 先 yield 1 帧心跳立即占坑，再按间隔发后续心跳。
@@ -1966,11 +1991,8 @@ def _action_master_create(book, session, instruction, gw, sse):
                     {'role': 'user', 'content': f'请生成{label}'}]
         content = ''
         try:
-            # master_create 多维度分节清单更长，需要更多 token
-            _max_tok = {
-                'concept': 3000, 'key_rules': 3500, 'worldbuilding': 5000,
-                'character_profiles': 4200, 'plot_design': 3500,
-            }.get(dim, 3000)
+            # master_create 多维度分节清单更长，统一走按维度配额（见 _DIM_MAX_TOKENS 注释）
+            _max_tok = _dim_max_tokens(dim)
             for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=_max_tok):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
@@ -5200,8 +5222,8 @@ def smart_generate():
                 yield sse({'type': 'done', 'session_id': session_id})
                 return
 
-            # timeline 维度需要更多 token（全书各卷 JSON 输出较长）
-            max_tok = 6000 if dim_key == 'timeline' else 2000
+            # 按维度给足 token（旧值 2000 会把设定/世界观截成半截，见 _DIM_MAX_TOKENS 注释）
+            max_tok = _dim_max_tokens(dim_key)
 
             # 【P0改进】LLM 调用 + 生成后自检重试
             from .post_gen_validator import PostGenValidator
@@ -5219,6 +5241,7 @@ def smart_generate():
             _EMPTY_FALLBACK_LEN = 30  # 兜底阈值（人物/文风/伏笔这类短内容维度也能触发）
             _last_stream_err = ''
             _last_fc_truncated = False  # 上次失败是否为截断类（思考耗尽/输出被切）→ 重试直接顶满 max_tokens
+            _sections_retried = False   # 缺节自动补写是否已触发过（只补一次，防空转）
             for _attempt in range(max_attempts):
                 yield SSE_HEARTBEAT_COMMENT  # SSE 保活：防 Render 30s idle timeout
                 if _attempt >= 1:
@@ -5301,11 +5324,17 @@ def smart_generate():
                 content = cleaned
                 issues = validator.validate(dim_key, content, raw_length_hint=len((raw_no_think or '').strip()))
                 _log_validation_issues(bb, dim_key, issues)
-                if not validator.should_retry(issues) or _attempt >= max_attempts - 1:
+                # 【增强·缺节自动补写】warn 级缺节（分节命中 <60%，常因截断/跳节）也触发一次
+                # 带缺失清单的重试（旧实现只重试 error 级 → 半成品直接交付，用户看到"生成了一部分"）
+                _sec_retry = (not _sections_retried and _attempt < max_attempts - 1
+                              and bool(validator.sections_missing_issues(issues)))
+                if _sec_retry:
+                    _sections_retried = True  # 缺节补写只触发一次，避免空转烧 token
+                if (not validator.should_retry(issues) and not _sec_retry) or _attempt >= max_attempts - 1:
                     validation_meta = validator.to_meta(issues)
                     break
-                # 需要重试：带错误反馈重新生成
-                retry_hint = validator.build_retry_hint(issues)
+                # 需要重试：带错误反馈重新生成（error 级优先，其次缺节补写清单）
+                retry_hint = validator.build_retry_hint(issues) or validator.build_sections_retry_hint(issues)
                 yield sse({'type': 'meta', 'kind': 'validation_retry',
                           'info': {'attempt': _attempt + 1,
                                    'max_attempts': max_attempts,
@@ -5469,9 +5498,10 @@ def smart_dim_edit():
         cur_messages = messages
         validation_meta = []
         try:
-            max_tok = 6000 if dim_key == 'timeline' else 2000
+            max_tok = _dim_max_tokens(dim_key)  # 旧值 2000 会截断设定/世界观，见 _DIM_MAX_TOKENS 注释
             max_attempts = 4
             _EMPTY_FALLBACK_LEN = 30
+            _sections_retried = False  # 缺节自动补写只触发一次（同 smart/generate）
             for _attempt in range(max_attempts):
                 # === SSE 保活：每次 LLM 调用前（含重试）先发 1 帧心跳，占住连接防 Render 30s idle timeout ===
                 yield SSE_HEARTBEAT_COMMENT
@@ -5535,10 +5565,15 @@ def smart_dim_edit():
                 # 自检
                 issues = validator.validate(dim_key, content, raw_length_hint=len((raw_no_think or '').strip()))
                 _log_validation_issues(bb, dim_key, issues)
-                if not validator.should_retry(issues) or _attempt >= max_attempts - 1:
+                # 【增强·缺节自动补写】同 smart/generate：warn 级缺节也带清单重试一次（防截断/跳节半成品交付）
+                _sec_retry = (not _sections_retried and _attempt < max_attempts - 1
+                              and bool(validator.sections_missing_issues(issues)))
+                if _sec_retry:
+                    _sections_retried = True
+                if (not validator.should_retry(issues) and not _sec_retry) or _attempt >= max_attempts - 1:
                     validation_meta = validator.to_meta(issues)
                     break
-                retry_hint = validator.build_retry_hint(issues)
+                retry_hint = validator.build_retry_hint(issues) or validator.build_sections_retry_hint(issues)
                 yield sse({'type': 'meta', 'kind': 'validation_retry',
                           'info': {'dim': dim_key, 'attempt': _attempt + 1,
                                    'max_attempts': max_attempts,
@@ -5702,10 +5737,11 @@ def smart_batch():
                 cur_messages = messages
                 validation_meta = []
                 try:
-                    max_tok = 6000 if _is_tl else 1500
+                    max_tok = _dim_max_tokens(dim_key)  # 旧值 1500 连校验器字数下限都装不下（必截断）
                     # 自检重试循环（首次 + 最多 3 次重试，think 剥离 + 客套检测 + 低阈值兜底）
                     max_attempts = 4
                     _EMPTY_FALLBACK_LEN = 30
+                    _sections_retried = False  # 缺节自动补写只触发一次（同 smart/generate）
                     for _attempt in range(max_attempts):
                         # === SSE 保活：每次 LLM 调用前（含重试）先发 1 帧心跳，占住连接防 Render 30s idle timeout ===
                         yield SSE_HEARTBEAT_COMMENT
@@ -5767,10 +5803,15 @@ def smart_batch():
                         # 自检（用去think后长度做提示）
                         issues = validator.validate(dim_key, content, raw_length_hint=len((raw_no_think or '').strip()))
                         _log_validation_issues(bb, dim_key, issues)
-                        if not validator.should_retry(issues) or _attempt >= max_attempts - 1:
+                        # 【增强·缺节自动补写】同 smart/generate：warn 级缺节也带清单重试一次（防截断/跳节半成品交付）
+                        _sec_retry = (not _sections_retried and _attempt < max_attempts - 1
+                                      and bool(validator.sections_missing_issues(issues)))
+                        if _sec_retry:
+                            _sections_retried = True
+                        if (not validator.should_retry(issues) and not _sec_retry) or _attempt >= max_attempts - 1:
                             validation_meta = validator.to_meta(issues)
                             break
-                        retry_hint = validator.build_retry_hint(issues)
+                        retry_hint = validator.build_retry_hint(issues) or validator.build_sections_retry_hint(issues)
                         yield sse({'type': 'meta', 'kind': 'validation_retry',
                                   'info': {'dim': dim_key, 'attempt': _attempt + 1,
                                            'max_attempts': max_attempts,
