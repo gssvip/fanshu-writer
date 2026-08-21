@@ -228,7 +228,6 @@ COVERS_DIR.mkdir(exist_ok=True)
 TEMPLATES_DIR = DATA_DIR / 'templates'
 TEMPLATES_DIR.mkdir(exist_ok=True)
 
-
 class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -241,7 +240,6 @@ class User(db.Model):
         return {'id': self.id, 'username': self.username, 'email': self.email,
                 'created_at': self.created_at.isoformat() if self.created_at else None}
 
-
 class AuthToken(db.Model):
     __tablename__ = 'auth_tokens'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -249,7 +247,6 @@ class AuthToken(db.Model):
     token = db.Column(db.String(100), unique=True, nullable=False)
     expires_at = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-
 
 class PasswordResetToken(db.Model):
     __tablename__ = 'password_reset_tokens'
@@ -259,7 +256,6 @@ class PasswordResetToken(db.Model):
     used = db.Column(db.Boolean, default=False)
     expires_at = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-
 
 def generate_token():
     return hashlib.sha256(os.urandom(32)).hexdigest()
@@ -300,7 +296,6 @@ def optional_login(f):
             request.current_user_id = None
         return f(*args, **kwargs)
     return decorated
-
 
 class Book(db.Model):
     __tablename__ = 'books'
@@ -352,7 +347,6 @@ class Book(db.Model):
             'metadata': json.loads(self.metadata_json or '{}')
         }
 
-
 class Chapter(db.Model):
     __tablename__ = 'chapters'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -391,7 +385,6 @@ class Chapter(db.Model):
             d['content'] = self.content
         return d
 
-
 class ChapterVersion(db.Model):
     __tablename__ = 'chapter_versions'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -407,7 +400,6 @@ class ChapterVersion(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'summary': self.summary, 'content': self.content
         }
-
 
 class Character(db.Model):
     __tablename__ = 'characters'
@@ -433,7 +425,6 @@ class Character(db.Model):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 
-
 class Outline(db.Model):
     __tablename__ = 'outlines'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -455,7 +446,6 @@ class Outline(db.Model):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 
-
 class DailyStats(db.Model):
     __tablename__ = 'daily_stats'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -471,7 +461,6 @@ class DailyStats(db.Model):
             'words_written': self.words_written, 'time_spent_minutes': self.time_spent_minutes,
             'chapters_completed': self.chapters_completed
         }
-
 
 class Template(db.Model):
     __tablename__ = 'templates'
@@ -495,7 +484,6 @@ class Template(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
-
 class AISession(db.Model):
     __tablename__ = 'ai_sessions'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -515,7 +503,6 @@ class AISession(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
-
 
 class AIConfig(db.Model):
     __tablename__ = 'ai_config'
@@ -561,7 +548,6 @@ class AIConfig(db.Model):
         db.session.commit()
         return cfg
 
-
 class AppPreference(db.Model):
     __tablename__ = 'app_preferences'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -582,7 +568,6 @@ class AppPreference(db.Model):
             db.session.add(AppPreference(key=key, value=value))
         db.session.commit()
 
-
 class StageContent(db.Model):
     __tablename__ = 'stage_contents'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -601,7 +586,6 @@ class StageContent(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
-
 
 class BookBible(db.Model):
     __tablename__ = 'book_bible'
@@ -689,7 +673,6 @@ class BookBible(db.Model):
             'novel_styles': self.novel_styles or '[]'
         }
 
-
 class SkillPack(db.Model):
     __tablename__ = 'skill_packs'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -727,7 +710,6 @@ class SkillPack(db.Model):
             'github_synced_at': self.github_synced_at.isoformat() if self.github_synced_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
-
 
 class DynamicMemory(db.Model):
     """动态文件库 - 长篇小说防遗忘系统（5文件版）"""
@@ -801,7 +783,6 @@ class DynamicMemory(db.Model):
         }
         return templates.get(file_key, '{}')
 
-
 class DynamicReport(db.Model):
     """动态文件报告 - 长篇小说防遗忘摘要（每5-10章自动生成）"""
     __tablename__ = 'dynamic_reports'
@@ -825,7 +806,6 @@ class DynamicReport(db.Model):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
 
-
 class PromptTemplate(db.Model):
     __tablename__ = 'prompt_templates'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -847,7 +827,6 @@ class PromptTemplate(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
-
 def count_words(text):
     """统计字数：中文按字符计数，英文按单词计数"""
     if not text:
@@ -863,13 +842,11 @@ def count_words(text):
     numbers = len(re.findall(r'\d+', text))
     return cn_chars + en_words + numbers
 
-
 def _count_cn_chars(s):
     """统计中文字符数（含标点），去除空白。四模式字数校验统一用此函数。"""
     if not s:
         return 0
     return len(re.sub(r'\s', '', s))
-
 
 def _llm_chat(messages, api_key=None, base_url=None, model=None,
               temperature=0.7, max_tokens=4096, timeout=180):
@@ -908,7 +885,6 @@ def _llm_chat(messages, api_key=None, base_url=None, model=None,
     if result.ok:
         return result.content, ''
     return '', result.error or 'LLM 返回空内容'
-
 
 def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chapter_num=0, count_fn=None):
     """【字数铁律】公共字数修正函数：初稿字数不在 2300-2500 区间时调 AI 重写。
@@ -966,12 +942,10 @@ def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chap
     except Exception as e:
         return content, f'[字数铁律] 初稿{draft_len}字，AI修正异常：{str(e)[:80]}，保留初稿。'
 
-
 _CN_DIGITS = {'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'零':0,'〇':0}
 _CN_UNITS = {'十':10,'百':100,'千':1000,'万':10000,'亿':100000000}
 # 全角数字 → 半角
 _FULLWIDTH_DIGITS = str.maketrans('０１２３４５６７８９', '0123456789')
-
 
 def _chinese_to_int(s):
     """将中文数字（如 十一/二十三/一百零五/一千二百/两万零一）转为 int。
@@ -1044,7 +1018,6 @@ def _chinese_to_int(s):
         return 0 if has_digit else None
     return result
 
-
 def parse_chapter_number(title):
     """从章节标题解析章节号，返回 int 或 None。
     支持的格式（阿拉伯/中文数字可混用）：
@@ -1106,7 +1079,6 @@ def parse_chapter_number(title):
 
     return None
 
-
 def resort_chapters_by_title(book_id, rebin_volumes=False):
     """按章节标题中的章节号对作品章节重新排序（稳定排序）。
     - 有章节号的按章节号升序排在前
@@ -1167,7 +1139,6 @@ def resort_chapters_by_title(book_id, rebin_volumes=False):
     db.session.flush()
     return len(keyed)
 
-
 def update_book_stats(book_id):
     book = Book.query.get(book_id)
     if not book:
@@ -1177,7 +1148,6 @@ def update_book_stats(book_id):
     book.chapter_count = len(chapters)
     book.updated_at = datetime.now(timezone.utc)
     db.session.commit()
-
 
 def build_outline_tree(outlines):
     outline_map = {o.id: o.to_dict() for o in outlines}
@@ -1190,7 +1160,6 @@ def build_outline_tree(outlines):
         elif not o.parent_id:
             tree.append(node)
     return tree
-
 
 # ==== Auth API ====
 
@@ -1249,7 +1218,6 @@ def logout():
     db.session.commit()
     return jsonify({'success': True})
 
-
 # ==== 邮件发送（用于找回密码） ====
 # SMTP 配置通过环境变量覆盖；默认发件邮箱为 xiyiji@88.com
 SMTP_HOST = os.environ.get('FANSHU_SMTP_HOST', 'smtp.qiye.aliyun.com')
@@ -1260,7 +1228,6 @@ SMTP_FROM_NAME = os.environ.get('FANSHU_SMTP_FROM_NAME', '蚂蚁写作')
 SMTP_FROM_ADDR = os.environ.get('FANSHU_SMTP_FROM_ADDR', 'xiyiji@88.com')
 # 前端站点地址，用于拼接重置链接
 SITE_BASE_URL = os.environ.get('FANSHU_SITE_BASE_URL', '')
-
 
 def send_reset_email(to_email, reset_token, site_url=None):
     """发送密码重置邮件。如果 SMTP 未配置密码则降级为返回链接（开发模式）。
@@ -1315,7 +1282,6 @@ def send_reset_email(to_email, reset_token, site_url=None):
         app.logger.exception('发送重置邮件失败')
         return False, f'邮件发送失败：{e}', reset_link
 
-
 # ==== 修改密码 / 找回密码 / 重置密码 ====
 
 @app.route('/api/auth/change-password', methods=['POST'])
@@ -1339,7 +1305,6 @@ def change_password():
     user.password_hash = generate_password_hash(new_password)
     db.session.commit()
     return jsonify({'success': True})
-
 
 @app.route('/api/auth/forgot-password', methods=['POST'])
 def forgot_password():
@@ -1374,7 +1339,6 @@ def forgot_password():
         resp['dev_mode'] = True
     return jsonify(resp)
 
-
 @app.route('/api/auth/reset-password', methods=['POST'])
 def reset_password():
     """用户凭重置令牌设置新密码。"""
@@ -1404,7 +1368,6 @@ def reset_password():
     db.session.commit()
     return jsonify({'success': True, 'message': '密码已重置，请使用新密码登录'})
 
-
 @app.route('/api/auth/verify-reset-token', methods=['POST'])
 def verify_reset_token():
     """校验重置令牌是否有效（用于前端跳转后预检）。"""
@@ -1421,7 +1384,6 @@ def verify_reset_token():
     if exp < datetime.now(timezone.utc):
         return jsonify({'valid': False}), 200
     return jsonify({'valid': True}), 200
-
 
 # ==== Books API ====
 
@@ -1546,7 +1508,6 @@ def delete_book(book_id):
     db.session.delete(book)
     db.session.commit()
     return jsonify({'success': True})
-
 
 # ==== Chapters API ====
 
@@ -1707,7 +1668,6 @@ def reorder_chapters(book_id):
     db.session.commit()
     return jsonify({'success': True})
 
-
 @app.route('/api/books/<book_id>/chapters/rebin-volumes', methods=['POST'])
 @login_required
 def rebin_volumes(book_id):
@@ -1734,7 +1694,6 @@ def rebin_volumes(book_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-
 # ==== Chapter Versions ====
 
 @app.route('/api/books/<book_id>/chapters/<chapter_id>/versions', methods=['GET'])
@@ -1754,7 +1713,6 @@ def restore_chapter_version(book_id, chapter_id, version_id):
     db.session.flush()
     update_book_stats(book_id)
     return jsonify(ch.to_dict(include_content=True))
-
 
 # ==== Characters API ====
 
@@ -1801,7 +1759,6 @@ def delete_character(book_id, char_id):
     db.session.commit()
     return jsonify({'success': True})
 
-
 # ==== Outlines API ====
 
 @app.route('/api/books/<book_id>/outlines', methods=['GET'])
@@ -1847,7 +1804,6 @@ def delete_outline(book_id, outline_id):
     outlines = Outline.query.filter_by(book_id=book_id).order_by(Outline.order_index).all()
     return jsonify({'tree': build_outline_tree(outlines)})
 
-
 # ==== Stats API ====
 
 @app.route('/api/books/<book_id>/stats', methods=['GET'])
@@ -1880,7 +1836,6 @@ def add_daily_stats(book_id):
         prev_words = 0
     db.session.commit()
     return jsonify(stat.to_dict())
-
 
 # ==== Templates API ====
 
@@ -1999,7 +1954,6 @@ def create_template():
     db.session.commit()
     return jsonify(template.to_dict()), 201
 
-
 # ==== AI API ====
 # 注：/api/ai/config GET/PUT 已迁移至 blueprints/ai_config_bp.py（多配置支持）
 
@@ -2028,7 +1982,6 @@ def _do_fetch_models(base_url, api_key):
             })
     models.sort(key=lambda x: x['id'])
     return models, None, 200
-
 
 def _do_test_connection(base_url, api_key, model):
     """实际测试连接的内部函数，供多个接口复用"""
@@ -2068,7 +2021,6 @@ def _do_test_connection(base_url, api_key, model):
     else:
         return None, f'返回数据异常：{str(result)[:200]}', 400
 
-
 @app.route('/api/ai/models', methods=['POST'])
 def fetch_ai_models():
     """根据 base_url 和 api_key 拉取可用模型列表（OpenAI 兼容的 /v1/models 接口）"""
@@ -2100,7 +2052,6 @@ def fetch_ai_models():
         return jsonify({'error': '请求超时，请稍后重试'}), 400
     except Exception as e:
         return jsonify({'error': f'拉取模型失败：{str(e)}'}), 500
-
 
 @app.route('/api/ai/test', methods=['POST'])
 def test_ai_connection():
@@ -2218,7 +2169,6 @@ def ai_chat_stream():
 
     return app.response_class(generate(), mimetype='text/event-stream')
 
-
 # ==== AI Sessions ====
 
 @app.route('/api/ai/sessions', methods=['GET'])
@@ -2278,7 +2228,6 @@ def delete_ai_session(session_id):
     db.session.commit()
     return jsonify({'success': True})
 
-
 # ==== 实体注册表 API（P2：跨维度重命名/合并） ====
 
 @app.route('/api/books/<book_id>/entities', methods=['GET'])
@@ -2311,7 +2260,6 @@ def list_entities(book_id):
         db.session.rollback()
     return jsonify(entities)
 
-
 @app.route('/api/books/<book_id>/entities/rename', methods=['POST'])
 @login_required
 def rename_entity_api(book_id):
@@ -2331,7 +2279,6 @@ def rename_entity_api(book_id):
     db.session.commit()
     return jsonify(result)
 
-
 @app.route('/api/books/<book_id>/entities/merge', methods=['POST'])
 @login_required
 def merge_entities_api(book_id):
@@ -2350,7 +2297,6 @@ def merge_entities_api(book_id):
     result = merge_entities(bb, chapters_q, main_name, alias_names, entity_type)
     db.session.commit()
     return jsonify(result)
-
 
 # ==== Export API ====
 
@@ -2441,7 +2387,6 @@ def export_book(book_id):
 
     return jsonify({'error': 'Unsupported format'}), 400
 
-
 # ==== Cover Upload ====
 
 @app.route('/api/books/<book_id>/cover', methods=['POST'])
@@ -2469,7 +2414,6 @@ def upload_cover(book_id):
 def serve_cover(filename):
     return send_file(COVERS_DIR / filename)
 
-
 # ==== Preferences ====
 
 @app.route('/api/preferences', methods=['GET'])
@@ -2489,7 +2433,6 @@ def set_preferences():
     for k, v in data.items():
         AppPreference.set(k, str(v))
     return jsonify({'success': True})
-
 
 # ==== Import/Export ZIP ====
 
@@ -2520,7 +2463,6 @@ def export_book_zip(book_id):
         return send_file(zippath, mimetype='application/zip', as_attachment=True, download_name=f'{book.title}.zip')
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-
 
 @app.route('/api/books/<book_id>/export-full', methods=['GET'])
 @login_required
@@ -2570,7 +2512,6 @@ def export_book_full(book_id):
 
     buf.seek(0)
     return send_file(buf, mimetype='application/zip', as_attachment=True, download_name=f'{book_title}.zip')
-
 
 @app.route('/api/books/import-zip', methods=['POST'])
 def import_book_zip():
@@ -2631,7 +2572,6 @@ def import_book_zip():
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-
 def _natural_sort_key(name):
     """文件名自然排序键，支持中文数字章节号（第1章 < 第2章 < ... < 第10章）。
     解析出章节号的按章节号升序排前；无法解析的按文件名字典序排后。"""
@@ -2640,7 +2580,6 @@ def _natural_sort_key(name):
     if n is not None:
         return (0, n, base)
     return (1, 0, base)
-
 
 def _strip_leading_title_line(text, title):
     """若正文第一行与章节标题（文件名）相同或高度相似，去除该行，避免标题重复。
@@ -2672,7 +2611,6 @@ def _strip_leading_title_line(text, title):
     if nf == nt or nt in nf or nf in nt:
         return '\n'.join(lines[1:]).strip()
     return text
-
 
 def _extract_zip_chapters(zippath):
     """解压 zip，若含多个文本文件，返回 [{'title','content'}, ...] 按文件名自然排序，
@@ -2706,7 +2644,6 @@ def _extract_zip_chapters(zippath):
         body = _strip_leading_title_line(text, ch_title)
         result.append({'title': ch_title, 'content': body})
     return result
-
 
 def split_into_chapters(text):
     """将纯文本按章节标记拆分为多个章节，支持多种章节标题格式。
@@ -2759,7 +2696,6 @@ def split_into_chapters(text):
     # 无法拆分，作为单个章节
     return None
 
-
 def _merge_empty_chapters(chapters):
     """合并空章节：处理"同章双标题"导致的空章。
     规则：
@@ -2803,7 +2739,6 @@ def _merge_empty_chapters(chapters):
     if not result:
         result = [{'title': chapters[0].get('title', '')[:100], 'content': chapters[0].get('content', '')}]
     return result
-
 
 @app.route('/api/books/import-files', methods=['POST'])
 @login_required
@@ -2934,7 +2869,6 @@ def import_book_files():
         return jsonify(book.to_dict()), 201
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-
 
 @app.route('/api/books/<book_id>/ai-import-recognize', methods=['POST'])
 @login_required
@@ -3070,9 +3004,6 @@ def ai_import_recognize(book_id):
         'bible': bb.to_dict()
     })
 
-
-
-
 def _after_chapter_persisted(book_id, chapter) -> Optional[Dict[str, Any]]:
     """【P1-2】章节创建/内容变更落库后统一钩子：
        · 事件抽取（关键章自动 LLM，普通章正则）
@@ -3137,7 +3068,6 @@ def _after_chapter_persisted(book_id, chapter) -> Optional[Dict[str, Any]]:
     except Exception:
         # 不阻塞主流程：失败静默
         return None
-
 
 def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
     """【P0-3】防遗忘报告自动触发：每 10 章自动跑一次防遗忘检查。
@@ -3245,7 +3175,6 @@ def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
         except Exception:
             pass
     return None
-
 
 @app.route('/api/books/<book_id>/ai-anti-forget-check', methods=['POST'])
 @login_required
@@ -3678,7 +3607,6 @@ def ai_anti_forget_check(book_id):
         'source_label': source_label
     })
 
-
 @app.route('/api/books/<book_id>/anti-forget-reports', methods=['GET'])
 @login_required
 def list_anti_forget_reports(book_id):
@@ -3695,7 +3623,6 @@ def list_anti_forget_reports(book_id):
     # 按 seq 倒序返回（最新在前）
     reports.sort(key=lambda r: r.get('seq', 0) if isinstance(r, dict) else 0, reverse=True)
     return jsonify({'reports': reports})
-
 
 @app.route('/api/books/<book_id>/anti-forget-reports/<report_id>', methods=['PUT'])
 @login_required
@@ -3758,7 +3685,6 @@ def update_anti_forget_report(book_id, report_id):
     db.session.commit()
     return jsonify({'success': True, 'reports': reports})
 
-
 @app.route('/api/books/<book_id>/anti-forget-reports/<report_id>', methods=['DELETE'])
 @login_required
 def delete_anti_forget_report(book_id, report_id):
@@ -3778,7 +3704,6 @@ def delete_anti_forget_report(book_id, report_id):
     bb.anti_forget_reports = json.dumps(new_reports, ensure_ascii=False, indent=2)
     db.session.commit()
     return jsonify({'success': True, 'reports': new_reports})
-
 
 @app.route('/api/books/<book_id>/import-chapters', methods=['POST'])
 @login_required
@@ -3848,14 +3773,12 @@ def append_import_chapters(book_id):
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-
 # ==== Count Words ====
 
 @app.route('/api/utils/count-words', methods=['POST'])
 def count_words_api():
     text = request.json.get('text', '')
     return jsonify({'count': count_words(text)})
-
 
 # ==== Stage Content API ====
 
@@ -3891,7 +3814,6 @@ def get_stages_for_type(book_type):
         return SCRIPT_STAGES
     return SHORT_STAGES
 
-
 @app.route('/api/books/<book_id>/stages', methods=['GET'])
 def list_stages(book_id):
     book = Book.query.get(book_id)
@@ -3921,7 +3843,6 @@ def save_stage(book_id, stage_key):
     sc.content = request.json.get('content', '')
     db.session.commit()
     return jsonify(sc.to_dict())
-
 
 # ==== Prompt Template API ====
 
@@ -4010,7 +3931,6 @@ def update_prompt(prompt_id):
     db.session.commit()
     return jsonify(pt.to_dict())
 
-
 # ==== Book Bible API (项目宪法) ====
 
 def _normalize_bible_formats(bb):
@@ -4041,7 +3961,6 @@ def _normalize_bible_formats(bb):
             db.session.commit()
         except Exception:
             db.session.rollback()
-
 
 @app.route('/api/books/<book_id>/bible', methods=['GET'])
 def get_book_bible(book_id):
@@ -4202,7 +4121,6 @@ def review_book(book_id):
         return jsonify(json.loads(result['choices'][0]['message']['content']))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 # ==== Skill Pack API ====
 
@@ -5154,7 +5072,6 @@ def _identify_current_volume(book_id, current_chapter_num):
     # 章号在所有卷之前：归属于第一卷
     return vols[0], 1
 
-
 def _inject_volume_dimensions(bb, vol_chapter, volume_index, sections):
     """按卷注入对应卷的维度数据（人物/伏笔/地点/动态）。
     这些字段是 JSON 数组，每条含 volume_id/volume/volume_index + 维度专属字段。
@@ -5210,7 +5127,6 @@ def _inject_volume_dimensions(bb, vol_chapter, volume_index, sections):
     if dv_entry and dv_entry.get('data'):
         dyn_text = json.dumps(dv_entry['data'], ensure_ascii=False)
         sections.append(f'【本卷动态摘要】{priority_note}\n{dyn_text[:1000]}')
-
 
 def _get_volume_outline(vol_chapter, volume_index):
     """获取当前卷的卷纲。
@@ -5302,7 +5218,6 @@ def _get_volume_outline(vol_chapter, volume_index):
         pass
     return ''
 
-
 def _get_adjacent_volumes_outline(book_id, volume_index):
     """获取前一卷+本卷+后一卷共三卷的卷纲摘要（用于正文写作上下文）。
     【改造】从全量 timeline 注入改为三卷注入，避免上下文膨胀且聚焦当前创作位置。
@@ -5390,7 +5305,6 @@ def _get_adjacent_volumes_outline(book_id, volume_index):
     except (json.JSONDecodeError, ValueError, TypeError):
         return ''
 
-
 def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=25):
     """伏笔按"到期紧迫度"排序，提取 Top N 待回收伏笔。
     【P2优化·百万字长线防遗忘】
@@ -5477,7 +5391,6 @@ def _sort_foreshadowings_by_urgency(bb, vol_chapter, current_chapter_num, top_n=
     pending.sort(key=lambda x: x[0])
     return pending[:top_n]
 
-
 def _extract_appearing_characters(recent_chapters, bb=None):
     """从最近章节正文中启发式提取出场角色名。
     P2增强：融合 chapter_changes_log 的结构化角色名（CharacterStateChanges.CharacterId），
@@ -5523,7 +5436,6 @@ def _extract_appearing_characters(recent_chapters, bb=None):
                 names.add(name)
     return names
 
-
 def _compute_style_baseline(book_id, current_chapter_num, sample_count=5):
     """计算前 N 章的文风指纹基准（借鉴 PlotPilot 文风指纹漂移检测）。
     取当前章之前最近 sample_count 章的正文，计算文风指纹平均值作为基准。
@@ -5562,7 +5474,6 @@ def _compute_style_baseline(book_id, current_chapter_num, sample_count=5):
         return baseline if baseline else None
     except Exception:
         return None
-
 
 def _recall_related_chapters(book_id, appearing_chars, current_chapter_num, max_chapters=6):
     """轻量RAG：基于出场角色召回相关历史章节摘要，补充前4章完整正文窗口的盲区。
@@ -5603,7 +5514,6 @@ def _recall_related_chapters(book_id, appearing_chars, current_chapter_num, max_
     # 按章号升序排列（剧情时间顺序）
     recalled.sort(key=lambda x: x['chapter_num'])
     return recalled
-
 
 def _filter_bible_by_relevance(bb, appearing_chars, max_per_field=None):
     """按出场角色相关性筛选 bible 维度。
@@ -5666,7 +5576,6 @@ def _filter_bible_by_relevance(bb, appearing_chars, max_per_field=None):
 
     return result
 
-
 def _collect_relevant_reports(book_id, current_chapter_num, window=10, max_reports=3, per_report_limit=800):
     """收集当前章号 ±window 范围内的动态报告，每份截取摘要。
     优先时效性（接近当前章号），其次数量上限。"""
@@ -5695,7 +5604,6 @@ def _collect_relevant_reports(book_id, current_chapter_num, window=10, max_repor
             'content': content,
         })
     return result
-
 
 def _collect_historical_volume_digest(book_id, current_chapter_num, max_volumes=4, per_volume_limit=400):
     """百万字长线记忆：聚合"早期卷"的动态报告为按卷摘要，补充 _collect_relevant_reports 的窗口盲区。
@@ -5735,7 +5643,6 @@ def _collect_historical_volume_digest(book_id, current_chapter_num, max_volumes=
         })
     return result
 
-
 # ===== Ai总创作公共常量（被 ai_master_create 和 ai_master_create_stream 共用，避免重复定义）=====
 # 维度协同顺序：上游维度产物会注入到下游维度的 prompt（严格按 DAG 依赖，不再无差别全注入）
 MASTER_DIM_ORDER = ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design', 'timeline', 'foreshadowing', 'locations', 'inventory']
@@ -5774,7 +5681,6 @@ MASTER_DIM_MAP = {
                   'prompt': '生成主要物品/功法/法宝清单。\n【输出格式】严格 JSON 数组：[{"name","type","source","effect","owner","first_appearance"}]. type 取值：法宝/功法/丹药/武器/防具/其他。设计 8-15 个核心物品。'},
 }
 
-
 def _build_master_ctx(bb, session_outputs=None):
     """构建维度创作的上下文字典：本轮已生成内容(session_outputs)优先，回退 bible 已有内容。
     【P2-7修复】session_outputs 纯空白字符串视为无效，回退到 bb 已落库值。"""
@@ -5797,7 +5703,6 @@ def _build_master_ctx(bb, session_outputs=None):
         'locations': _pick('locations', bb.locations),
         'inventory': _pick('inventory', bb.inventory),
     }
-
 
 def _validate_and_align_timeline_volumes(parsed_tl, total_volumes):
     """【P0-1修复】timeline 卷数校验与对齐：解析成功后强制对齐 total_volumes。
@@ -5849,7 +5754,6 @@ def _validate_and_align_timeline_volumes(parsed_tl, total_volumes):
         }
         aligned.append(placeholder)
     return aligned, f'timeline仅生成{actual}卷，少于用户设定的{total_volumes}卷，已自动补齐到{total_volumes}卷（后{total_volumes - actual}卷为占位，建议手动重写补齐或重新执行分卷提取）'
-
 
 # 网文风格流派标签库（基于2025中国网络文学蓝皮书与起点三江榜趋势）
 # 题材 → 风格流派映射表（长篇）
@@ -6022,7 +5926,6 @@ SHORT_FALLBACK_STYLES = {
     'first_person': '第一人称', 'shacao_dp': '沙雕爽文', 'dianwen': '颠文', 'bailan': '摆烂流',
 }
 
-
 def _get_style_label(book_type, genre, style_key):
     """根据类型+题材查风格流派中文标签，找不到则原样返回 key。"""
     table = SHORT_GENRE_STYLES if book_type == 'short_story' else NOVEL_GENRE_STYLES
@@ -6033,7 +5936,6 @@ def _get_style_label(book_type, genre, style_key):
         else:
             genre_map = NOVEL_GENRE_STYLES.get('fantasy', {})
     return genre_map.get(style_key, style_key)
-
 
 # 题材中英文映射（与前端 constants.ts GENRES 保持一致）
 # 注入 prompt 时用中文标签，避免 AI 看到英文 key（如 fantasy）约束力弱
@@ -6130,7 +6032,6 @@ STANDARD_WRITING_STYLE_PROMPT = """【标准文风铁律·必须严格执行】
 - **本章伏笔是否过载？**暗线超过2条？有则分散到其他章。
 - **角色是否全知全能？**主角/反派有没有不合理地"料事如神"？有则让其失算一次。"""
 
-
 def _get_genre_label(book=None, bb=None):
     """获取题材中文标签（用于 prompt 注入）。优先 book.genre，回退 bb.genre。
     找不到映射时原样返回，确保不丢信息。"""
@@ -6142,7 +6043,6 @@ def _get_genre_label(book=None, bb=None):
     if not genre:
         return '通用'
     return GENRE_LABELS.get(genre, genre)
-
 
 # 修炼体系小说题材关键词（玄幻/仙侠/都市异能/高武/历史脑洞等带修炼体系的小说）
 # 命中任一关键词即视为修炼体系小说，用于在人物/大纲/剧情维度注入修炼天赋/境界变化区间/
@@ -6166,7 +6066,6 @@ _CULTIVATION_GENRE_KEYWORDS = (
     '神话修真', '洪荒封神', '都市脑洞', '境界', '灵根', '丹田', '经脉', '功法',
 )
 
-
 def is_cultivation_novel(book=None, bb=None):
     """判断是否为修炼体系小说（玄幻/仙侠/都市异能/高武/历史脑洞等）。
 
@@ -6187,7 +6086,6 @@ def is_cultivation_novel(book=None, bb=None):
         if kw.lower() in blob:
             return True
     return False
-
 
 def _cultivation_dimension_hint(dim, book=None, bb=None):
     """返回修炼体系小说在各维度的专属输出要求（非修炼体系小说返回空串）。
@@ -6220,7 +6118,6 @@ def _cultivation_dimension_hint(dim, book=None, bb=None):
                 '   "时间锚点": "本节点时间线锚点，如：开篇第3年夏"\n'
                 '各节点境界/年龄/时间线须全书连续递进，不得跳变或倒流。')
     return ''
-
 
 def _sync_book_meta_to_bible(book, bb):
     """P0-3修复：把 book 的 total_volumes / novel_styles / genre / book_type 同步到 bible。
@@ -6268,7 +6165,6 @@ def _sync_book_meta_to_bible(book, bb):
                 bb.novel_styles = book_styles
     except Exception:
         pass
-
 
 def _get_total_volumes(bb, book=None):
     """获取总卷数：严格按用户设定（BB→Book→Bible文本正则提取），不再硬编码默认 10。
@@ -6338,7 +6234,6 @@ def _get_total_volumes(bb, book=None):
         return 0
     return max(1, tv_i)
 
-
 def _get_chapters_per_volume(bb, book=None):
     """P3-10：按题材流派动态计算每卷章数，替代硬编码 50。
     - 短篇/短卷题材（短篇集、都市短篇）：30 章/卷
@@ -6361,7 +6256,6 @@ def _get_chapters_per_volume(bb, book=None):
         return 30
     return 50
 
-
 def _get_novel_styles_text(bb, book=None):
     """获取风格流派描述文本（最多3种叠加），按当前题材查对应风格表，用于注入创作上下文。"""
     styles_raw = None
@@ -6382,7 +6276,6 @@ def _get_novel_styles_text(bb, book=None):
     labels = [_get_style_label(bt, genre, s) for s in styles_list[:3]]
     return '、'.join(labels)
 
-
 def _build_core_params_block(bb, book):
     """构建“核心创作参数”注入块：题材+卷数+风格流派，作为所有维度创作与章节写作的核心依据。
     三大约束统一在此注入，确保用户选定项在下游真正生效。"""
@@ -6400,7 +6293,6 @@ def _build_core_params_block(bb, book):
     if styles_text:
         parts.append(f'风格流派：{styles_text}（人物塑造、节奏、爽点设计、叙事手法须契合所选流派，这是硬约束）')
     return '\n'.join(parts)
-
 
 # 章节正文“语言风格”表（行文文风，区别于题材流派）
 # 与前端 constants.ts CHAPTER_LANG_STYLES 保持一致
@@ -6420,7 +6312,6 @@ CHAPTER_LANG_STYLES = {
     'kouyu': ('口语化', '语言贴近日常口语，句式短、用词俗；可省主语、语序倒置、语气词丰富；叙述如说话，代入感强。适合都市生活、青春校园、第一人称与轻松吐槽向。'),
     'huangdan': ('荒诞', '以反逻辑与错位制造荒诞感，正经写荒唐、冷静写癫狂；语言可冷面幽默或黑色幽默；解构套路，预期违背生笑点。适合黑色幽默、讽刺、反套路与癫系创作。'),
 }
-
 
 def _build_chapter_lang_style_prompt(style_keys):
     """根据前端传入的语言风格 key 列表，拼装注入 system_prompt 的“本章语言风格”铁律约束。
@@ -6445,7 +6336,6 @@ def _build_chapter_lang_style_prompt(style_keys):
             + '\n'.join(parts)
             + '\n（此为硬约束：用词、句式、节奏、修辞须符合上述风格，违反即为不合格章节）')
 
-
 def _build_master_upstream_ctx(dim, ctx):
     """按 DAG 依赖图只注入该维度的上游维度产物（不再无差别全注入）。
     自适应截断：世界观/人物档案给 2000 字预算（下游 timeline/dynamic_volumes/foreshadowing
@@ -6463,7 +6353,6 @@ def _build_master_upstream_ctx(dim, ctx):
             budget = HIGH_BUDGET_DIMS.get(up_dim, 800)
             parts.append(f'【{up_label}（已确认上游）】\n{up_val[:budget]}')
     return '\n\n'.join(parts) if parts else '（暂无上游维度，自由发挥）'
-
 
 def _build_master_storyline_ctx(book_id, bb):
     """构建"已写剧情"上下文：章节正文摘要 + 最近动态报告 + 伏笔图 + 关系图。
@@ -6619,7 +6508,6 @@ def _build_master_storyline_ctx(book_id, bb):
 
     return '\n\n'.join(parts) if parts else ''
 
-
 def _collect_anti_forget_alerts(bb, max_reports=3, max_alerts=12):
     """提取最近 N 份防遗忘检查报告的诊断要点（违规/待回收伏笔/叙事债务/改进建议）。
     用于在后续 AI 创作（章节写作/维度创作/一致性检查）中回注，让 AI 自动规避已诊断出的问题。
@@ -6700,7 +6588,6 @@ def _collect_anti_forget_alerts(bb, max_reports=3, max_alerts=12):
         return ''
     return '\n\n'.join(sections)
 
-
 def _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, chapters_in_vol):
     """根据章节在卷中的位置动态计算 temperature。
     - 卷开篇（第1章）：0.8（需要更多创意建立场景）
@@ -6717,7 +6604,6 @@ def _compute_dynamic_temperature(current_chapter_num, vol_chapter, vol_index, ch
         if pos_in_vol >= chapters_in_vol - 1:
             return 0.5  # 卷收尾
     return 0.7  # 日常推进
-
 
 def _build_smart_instruction(instruction, last_chapter, current_chapter_num):
     """生成智能默认指令。若用户未提供 instruction，结合上一章章尾内容生成承接指令。
@@ -6740,7 +6626,6 @@ def _build_smart_instruction(instruction, last_chapter, current_chapter_num):
     elif any(kw in tail for kw in ['发现', '出现', '现身', '传来']):
         hook_hint = '承接上一章末尾的新信息钩子，本章展开新信息的影响'
     return f'请继续写第 {current_chapter_num} 章。{hook_hint}。\n\n{word_count_clause}'
-
 
 def _smart_truncate(text, budget):
     """语义截断：按段落/换行/句号切，保证每段完整，避免拦腰截断关键规则。
@@ -6774,7 +6659,6 @@ def _smart_truncate(text, budget):
     # 兜底硬截断
     return text[:budget]
 
-
 def _apply_budget_management(sections_with_labels, total_budget=8000):
     """上下文窗口预算管理：按权重分配总预算给各段，避免单段超长挤掉关键信息。
     sections_with_labels: [(label, content, weight), ...]  weight 越大优先级越高
@@ -6793,7 +6677,6 @@ def _apply_budget_management(sections_with_labels, total_budget=8000):
             content = _smart_truncate(content, budget)
         parts.append(content if not label else f'{label}\n{content}')
     return '\n\n'.join(parts)
-
 
 def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_index,
                            memory_section, foreshadowing_section, skill_pack_ids,
@@ -6905,7 +6788,6 @@ def _generate_chapter_plan(book_id, bb, current_chapter_num, vol_chapter, vol_in
         pass
     return ''
 
-
 def _consistency_check(book_id, bb, draft_content, current_chapter_num,
                        api_key, base_url, model, max_tokens=1200, chapter_plan=''):
     """一致性检查 Agent：检查正文是否违反 key_rules/人设，并比对 chapter_plan 是否被执行。
@@ -6999,7 +6881,6 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
     except Exception as e:
         app.logger.error(f"一致性检查执行异常: {e}")
         return False, "一致性检查执行异常，请人工复核"
-
 
 def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None, chapter_lang_styles=None, enable_structured_tags=True, skip_chapter_plan=False):
     """构建章节写作完整上下文（ai_continue / stream / batch 共用），返回含
@@ -7297,7 +7178,14 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 
     # ===== 6. 技能包提示词 =====
     # 【三类无污染】正文生成阶段：只注入文风类（style）技能包，不注入构思/审查类
-    skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'style')
+    # 【fix1】请求体 skill_pack_ids 为空时自动回退读 book.*_skill_ids，避免勾了文风没生效
+    from skill_pack_runtime import resolve_active_style_ids
+    _active_style_ids = resolve_active_style_ids(skill_pack_ids, book)
+    # 【fix2】传 book_genre 让 genre_target 题材匹配生效；不匹配时 WARNING 日志
+    skill_note = _get_skill_prompts_by_category(
+        _active_style_ids, 'style',
+        book_genre=getattr(book, 'genre', None) if book else None,
+    )
 
     # ===== 7. 智能默认指令（#11）=====
     smart_instruction = _build_smart_instruction(instruction, last_chapter, current_chapter_num)
@@ -7333,24 +7221,27 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 
 {plan_section}
 
-{skill_note}
-
 【写作要求】
-1. 严格遵循项目宪法中的设定（核心规则/金手指/世界观/人设/物资库/地图），不可违反
-2. 保持前后人物性格、关系、能力一致；严格衔接【最近4章完整正文】的剧情走向，不得跳跃或矛盾
+1. 严格遵循项目宪法中的设定，不可违反
+2. 保持前后人物性格、关系、能力一致；严格衔接【最近4章完整正文】剧情走向
 3. 延续现有文风和叙事节奏
-4. 【字数绝对铁律】每章正文必须 2400 字 ±100（即 2300-2500 字区间，含标点）。低于 2300 字=内容不足需扩展场景细节；超过 2500 字=冗余需删减。这是不可违反的硬约束，优先级高于所有其他要求。
-5. 主动考虑回收"待回收伏笔清单"中的伏笔（若有），避免长线遗忘
-6. 三明治结构：苦(困境)→甜(获得)→爽(反击)→钩子(新信息/新困境)
+4. 【字数绝对铁律】每章正文必须 2400 字 ±100（2300-2500 字区间，含标点）。低于2300字=扩展；超过2500字=删减。不可违反，优先级最高。
+5. 主动回收"待回收伏笔清单"中的伏笔（若有）
+6. 三明治结构：苦→甜→爽→钩子
 7. 章尾必留钩子，七种类型不重复
-8. 若存在【本章计划】，必须严格按计划展开剧情
-9. 【剧情连贯铁律】必须严格承接【最近4章完整正文】的结尾场景与悬念，不得凭空开启新场景；人物位置、状态、对话内容必须与前文一致。
-10. 【字数自检】输出前必须自检字数：用中文计数（含标点），若不在 2300-2500 区间必须调整后再输出。
-11. 【防遗忘规避】若上方存在【防遗忘检查诊断】，必须主动规避其中列出的一致性违规，并优先回收/修正已诊断的待回收伏笔与叙事债务，不可重复犯错。
-12. 【OOC 专项检测】注意角色人设一致性，不要OOC（Out of Character）。角色行为必须符合人物设定：说话语气、行为模式、决策逻辑、情绪反应都要与人设档案一致。禁止角色突然性格大变（如沉稳角色突然话多、冷酷角色突然唠叨、谨慎角色突然鲁莽）。"""
+8. 若存在【本章计划】，必须严格按计划展开
+9. 【剧情连贯铁律】严格承接前4章结尾场景与悬念，不得凭空开新场景；人物位置/状态/对话一致
+10.【字数自检】输出前用中文计数，不在 2300-2500 区间必须调整
+11.【防遗忘规避】若有【防遗忘检查诊断】，主动规避已列违规并优先回收已诊断伏笔/叙事债务
+12.【OOC专项】角色不得突然性格大变。
 
-    # P2-11：在 system_prompt 末尾追加 PRE_WRITE_CHECK 模板（要求 LLM 写正文前先输出意图表）
-    # 流式模式不注入（enable_structured_tags=False），避免内部标签实时显示给用户
+【文风铁律 · 最高权威（任一条违规即为不合格章节，必须重写）】
+{skill_note}
+（三项全局附加硬卡，叠加文风包红线生效）
+- 硬卡1·段落完整（铁律A）：1-2句成段只为节奏；相邻≥3句同POV/场景/镜头必须合并≥2句，不得残切碎句
+- 硬卡2·禁修正式否定（禁令0）：禁写「不是A而是B/不是修辞/不是地震」等修正式句式，一律改成直接陈述句
+- 硬卡3·摄像机词限额：「看见/看着/听见/注意到/盯着/望向」一章合计≤3次，超额用动作/物象/感官代替"""
+
     if enable_structured_tags and build_pre_write_check_prompt:
         system_prompt += build_pre_write_check_prompt(current_chapter_num, bb)
 
@@ -7383,6 +7274,10 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     # ===== 10. 组装 user_prompt（第6142行返回引用，必须在此定义）=====
     user_prompt = instruction or f'请写第 {current_chapter_num} 章正文，严格遵循上方设定与计划。'
 
+    # ===== 【fix4】激活文风包自证清单：返回时带 activated_skill_packs，前端可拉取自证
+    from skill_pack_runtime import build_activated_skill_pack_manifest
+    _activated_sp_names = build_activated_skill_pack_manifest(_active_style_ids)
+
     return {
         'system_prompt': system_prompt,
         'user_prompt': user_prompt,
@@ -7399,8 +7294,8 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
         'base_url': base_url,
         'model': model,
         'recognition_model': recognition_model,  # 识别/检查类任务用
+        'activated_skill_packs': _activated_sp_names,  # 自证用：本次正文生成实际注入的文风包
     }
-
 
 @app.route('/api/books/<book_id>/ai-continue', methods=['POST'])
 @login_required
@@ -7745,7 +7640,6 @@ def ai_continue(book_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/api/books/<book_id>/ai-spot-fix', methods=['POST'])
 @login_required
 def ai_spot_fix(book_id):
@@ -7832,7 +7726,6 @@ def ai_spot_fix(book_id):
         })
     except Exception as e:
         return jsonify({'error': f'修订失败：{str(e)[:200]}'}), 500
-
 
 @app.route('/api/books/<book_id>/ai-continue/stream', methods=['POST'])
 @login_required
@@ -8088,7 +7981,6 @@ def ai_continue_stream(book_id):
             yield f'data: {{"error": "{str(e)[:200]}"}}\n\n'
 
     return app.response_class(generate(), mimetype='text/event-stream')
-
 
 @app.route('/api/books/<book_id>/ai-continue-batch', methods=['POST'])
 @login_required
@@ -8347,7 +8239,6 @@ def ai_continue_batch(book_id):
         'failed_count': len(failed),
     })
 
-
 def _stream_llm_chunks_with_heartbeat(resp, chapter_num, last_heartbeat, heartbeat_interval=5):
     """后台线程读取 LLM 流式响应，主生成器从队列消费，无数据时 yield 心跳。
 
@@ -8412,7 +8303,6 @@ def _stream_llm_chunks_with_heartbeat(resp, chapter_num, last_heartbeat, heartbe
             except Exception:
                 pass
 
-
 def _run_blocking_with_heartbeat(func, heartbeat_msg, heartbeat_interval=5):
     """在后台线程运行阻塞函数 func，主生成器 yield 心跳保持 SSE 连接活跃。
 
@@ -8455,7 +8345,6 @@ def _run_blocking_with_heartbeat(func, heartbeat_msg, heartbeat_interval=5):
             if now - last_hb >= heartbeat_interval:
                 yield heartbeat_msg
                 last_hb = now
-
 
 @app.route('/api/books/<book_id>/ai-continue-batch/stream', methods=['POST'])
 @login_required
@@ -8794,7 +8683,6 @@ def ai_continue_batch_stream(book_id):
     resp.headers['Connection'] = 'keep-alive'
     return resp
 
-
 def _extract_chapter_body(full_content: str) -> str:
     """从 LLM 完整输出中剥离 PRE_WRITE_CHECK、chapter_changes、【标题】标签，只保留正文。
     P1-6 启用后 LLM 会输出结构化标签，校验器只检查正文部分。"""
@@ -8807,7 +8695,6 @@ def _extract_chapter_body(full_content: str) -> str:
     # 剥离 【标题】... 标签行（标题自动生成产物）
     body = _re.sub(r'【标题】[^\n]*', '', body)
     return body.strip()
-
 
 def _format_chapter_title(chapter_num, suggested_title):
     """统一章节标题格式：第X章 标题文本
@@ -8830,7 +8717,6 @@ def _format_chapter_title(chapter_num, suggested_title):
     if not title:
         return prefix
     return f'{prefix} {title}'
-
 
 def _extract_chapter_title(full_content: str, fallback_content: str = '') -> str:
     """从 LLM 完整输出中解析标题。
@@ -8864,7 +8750,6 @@ def _extract_chapter_title(full_content: str, fallback_content: str = '') -> str
             return clean[:20] + ('...' if len(clean) > 20 else '')
     
     return ''
-
 
 def _calc_chapter_score(post_validate, consistency_passed, consistency_issues, gate_result, word_count,
                         chapter_plan=None):
@@ -8906,7 +8791,6 @@ def _calc_chapter_score(post_validate, consistency_passed, consistency_issues, g
         'has_issues': len(issues) > 0,
         'issues': issues
     }
-
 
 # ==== LLM 调用辅助函数 ====
 def _extract_json_from_llm(content, expect='auto'):
@@ -8992,7 +8876,6 @@ def _extract_json_from_llm(content, expect='auto'):
 
     return None, f'未找到有效JSON（最后错误: {last_error}），原始内容前300字: {content[:300]}'
 
-
 def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation'):
     """统一的 LLM 调用辅助函数，返回 (content, error)
     task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)
@@ -9029,7 +8912,6 @@ def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation')
         return None, str(result)
     except Exception as e:
         return None, str(e)
-
 
 def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500, mode='agent'):
     """从技能包提取指定 prompt_keys 的提示词（agent 协同模式：所有匹配 prompt 都注入）。
@@ -9081,7 +8963,6 @@ def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500, mode='a
             notes.append(f'【{pack.name}】\n' + '\n'.join(parts))
     return '\n\n'.join(notes)
 
-
 def _get_skill_prompts_by_category(skill_pack_ids, category, prompt_keys=None, mode='agent',
                                    book_genre=None):
     """按类别过滤技能包后提取提示词（三类无污染隔离的核心调度函数）。
@@ -9114,7 +8995,19 @@ def _get_skill_prompts_by_category(skill_pack_ids, category, prompt_keys=None, m
             if not target:
                 return True
             return target == book_genre
+        _before = len(filtered)
         filtered = [p for p in filtered if _style_match(p)]
+        _after = len(filtered)
+        # 【fix2】有包被 genre_target 过滤掉时记 WARNING，便于排查"勾了文风但没生效"（否则就是静默失败）
+        if _before != _after:
+            try:
+                _skipped = [f"{p.name}(target={p.genre_target or ''})" for p in packs if (p.category or 'master') == category and not _style_match(p)]
+                app.logger.warning(
+                    f'[skill_pack] 文风包题材不匹配已跳过 ids={skill_pack_ids} book_genre={book_genre} '
+                    f'通过={_after}/{_before} 跳过={_skipped}'
+                )
+            except Exception:
+                pass
         if not filtered:
             return ''
     # 文风类按 priority 排序（数字小的先注入）
@@ -9143,7 +9036,6 @@ def _get_skill_prompts_by_category(skill_pack_ids, category, prompt_keys=None, m
             notes.append(f'【{pack.name}】\n' + '\n'.join(parts))
     return '\n\n'.join(notes)
 
-
 def _get_enabled_style_pack(book):
     """正文阶段启用的文风技能包。实现 & 优先级如下：
     1) 先从 book.style_skill_ids 取用户勾选的文风包 ID 列表（_resolve_skill_ids_by_category）
@@ -9161,7 +9053,6 @@ def _get_enabled_style_pack(book):
         mode='agent',
         book_genre=getattr(book, 'genre', None),
     )
-
 
 def _resolve_skill_ids_by_category(book, category):
     """从 Book 表的三类字段中取出对应类别的技能包ID列表。
@@ -9181,7 +9072,6 @@ def _resolve_skill_ids_by_category(book, category):
     except Exception:
         pass
     return []
-
 
 def _split_legacy_skill_ids_to_categories(book):
     """老数据迁移：将老的 skill_pack_ids 按 category 自动分流到3个新字段。
@@ -9227,7 +9117,6 @@ def _split_legacy_skill_ids_to_categories(book):
         db.session.commit()
     except Exception:
         db.session.rollback()
-
 
 # ==== 大纲工作流：五幕式总纲 + 卷纲滚动生成 ====
 @app.route('/api/books/<book_id>/ai-outline-master', methods=['POST'])
@@ -9328,7 +9217,6 @@ def ai_outline_master(book_id):
     db.session.commit()
     return jsonify({'master_outline': content, 'volume_count': volume_count})
 
-
 def _sync_foreshadowings_to_volumes(bb):
     """【P0修复】把各卷 timeline 中的 foreshadow_new/foreshadowing/foreshadow_recycle
     汇总到 bb.foreshadowing_volumes（按卷结构化），打通前期伏笔到写作阶段的防遗忘链路。
@@ -9375,7 +9263,6 @@ def _sync_foreshadowings_to_volumes(bb):
     except (json.JSONDecodeError, ValueError, TypeError):
         pass
 
-
 def _calc_start_chapter_fallback(volume_index, chapters_per_volume, existing_volumes):
     """【P1修复】start_chapter 解析失败的健壮回退：
     按 volume_index * chapters_per_volume + 1 估算，避免静默回退为1导致章号断裂。"""
@@ -9391,7 +9278,6 @@ def _calc_start_chapter_fallback(volume_index, chapters_per_volume, existing_vol
                          (int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0) < vi))
         return prev_count * cpc + 1
     return (vi - 1) * cpc + 1
-
 
 def _extract_volume_index(text):
     """从卷名/卷ID中提取卷号数字，如'第3卷'/'卷三'/'卷二十三'/'Volume 2' → 3/3/23/2
@@ -9440,7 +9326,6 @@ def _extract_volume_index(text):
             return total
     return 0
 
-
 def _split_volume_title(raw):
     """从卷标题行剩余内容中拆分出 (纯卷名, 剧情描述剩余)。
 
@@ -9474,7 +9359,6 @@ def _split_volume_title(raw):
     if len(s) <= 15:
         return s, ''
     return '', s
-
 
 @app.route('/api/books/<book_id>/ai-outline-volume', methods=['POST'])
 def ai_outline_volume(book_id):
@@ -10063,7 +9947,6 @@ BOSS：{volume_data.get('boss', '')}
 
     return jsonify({'volume_data': volume_data, 'timeline': bb.timeline, 'bible': bb.to_dict()})
 
-
 @app.route('/api/books/<book_id>/ai-extract-volumes-from-outline', methods=['POST'])
 def ai_extract_volumes_from_outline(book_id):
     """从 plot_design 总纲一次性提取全部卷的剧情 JSON 数组，写入 timeline。
@@ -10290,7 +10173,6 @@ def ai_extract_volumes_from_outline(book_id):
         result['warning'] = align_warning
     return jsonify(result)
 
-
 @app.route('/api/books/<book_id>/ai-reverse-generate-outline', methods=['POST'])
 def ai_reverse_generate_outline(book_id):
     """反生成五幕式总纲：从已导入的各卷剧情（timeline）反向提炼五幕式总纲，
@@ -10395,7 +10277,6 @@ def ai_reverse_generate_outline(book_id):
     db.session.commit()
 
     return jsonify({'success': True, 'master_outline': master_outline, 'bible': bb.to_dict()})
-
 
 @app.route('/api/books/<book_id>/ai-import-plot-outline', methods=['POST'])
 def ai_import_plot_outline(book_id):
@@ -10696,7 +10577,6 @@ def ai_import_plot_outline(book_id):
 
     return jsonify({'success': True, 'volumes': existing_volumes, 'imported_count': len(volumes), 'bible': bb.to_dict()})
 
-
 # ==== 总 AI 创作：总览全局各维度，用户确认后填入 ====
 @app.route('/api/books/<book_id>/ai-master-create', methods=['POST'])
 def ai_master_create(book_id):
@@ -10929,7 +10809,6 @@ def ai_master_create(book_id):
 
     # 返回最新 bible 供前端同步状态
     return jsonify({'results': results, 'bible': bb.to_dict()})
-
 
 @app.route('/api/books/<book_id>/ai-master-create/stream', methods=['POST'])
 @login_required
@@ -11200,7 +11079,6 @@ def ai_master_create_stream(book_id):
     resp.headers['Connection'] = 'keep-alive'
     return resp
 
-
 # ==== AI 共创 / 头脑风暴 ====
 
 @app.route('/api/books/<book_id>/brainstorm', methods=['POST'])
@@ -11298,7 +11176,6 @@ def ai_brainstorm(book_id):
         return jsonify(json.loads(content))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/api/books/<book_id>/ai-analyze-content', methods=['POST'])
 @login_required
@@ -11404,7 +11281,6 @@ def ai_analyze_content(book_id):
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/api/books/<book_id>/ai-analyze-dimension', methods=['POST'])
 @login_required
@@ -11587,7 +11463,6 @@ def ai_analyze_dimension(book_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/api/books/<book_id>/ai-analyze-character', methods=['POST'])
 @login_required
 def ai_analyze_character(book_id):
@@ -11715,7 +11590,6 @@ def ai_analyze_character(book_id):
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/api/books/<book_id>/ai-analyze-plot-volume', methods=['POST'])
 @login_required
@@ -11977,7 +11851,6 @@ def ai_analyze_plot_volume(book_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 def _get_volume_chapters_ordered(book_id, volume_id):
     """返回指定卷下的非卷章节列表（按 order_index 排序）。
     优先用 parent_id 关联（标准结构）；若该卷无任何 parent_id 指向它的章节，
@@ -12002,7 +11875,6 @@ def _get_volume_chapters_ordered(book_id, volume_id):
             vol_chs.append(ch)
     return vol_chs
 
-
 def _collect_volume_chapters(book_id, volume_id):
     """收集指定卷的章节内容文本。volume_id 为空则取全部非卷章节。
     章节检索逻辑见 _get_volume_chapters_ordered（parent_id 优先，回退顺序遍历）。"""
@@ -12025,7 +11897,6 @@ def _collect_volume_chapters(book_id, volume_id):
             break
         chapter_text += segment
     return chapter_text, len(volume_chapters)
-
 
 def _collect_dimension_source(bb, volume_title=''):
     """当无章节时，从设定/大纲/剧情等主要维度收集基础数据作为识别来源。
@@ -12082,7 +11953,6 @@ def _collect_dimension_source(bb, volume_title=''):
         label = f'设定/大纲/剧情维度（针对“{volume_title}”）'
     return source_text, label
 
-
 def _get_volume_list(bb):
     """从 bible.timeline 解析卷列表，返回 [{volume_id, volume, volume_index}]"""
     if not bb or not bb.timeline:
@@ -12094,7 +11964,6 @@ def _get_volume_list(bb):
     except (json.JSONDecodeError, ValueError):
         pass
     return []
-
 
 def _upsert_volume_entry(bb, field_name, entry):
     """在 bible.<field_name> 的 JSON 数组中按 volume_id/volume upsert 一条记录。
@@ -12135,7 +12004,6 @@ def _upsert_volume_entry(bb, field_name, entry):
     data_list.sort(key=lambda v: int(v.get('volume_index', 0) or _extract_volume_index(v.get('volume', v.get('volume_id', '0'))) or 0))
     setattr(bb, field_name, json.dumps(data_list, ensure_ascii=False, indent=2))
     return data_list
-
 
 @app.route('/api/books/<book_id>/ai-analyze-character-volume', methods=['POST'])
 @login_required
@@ -12257,7 +12125,6 @@ def ai_analyze_character_volume(book_id):
         'character_volumes': data_list,
         'bible': bb.to_dict()
     })
-
 
 @app.route('/api/books/<book_id>/ai-analyze-inventory-volume', methods=['POST'])
 @login_required
@@ -12387,7 +12254,6 @@ def ai_analyze_inventory_volume(book_id):
         'bible': bb.to_dict()
     })
 
-
 @app.route('/api/books/<book_id>/ai-analyze-dynamic-volume', methods=['POST'])
 @login_required
 def ai_analyze_dynamic_volume(book_id):
@@ -12509,7 +12375,6 @@ def ai_analyze_dynamic_volume(book_id):
         'bible': bb.to_dict()
     })
 
-
 @app.route('/api/books/<book_id>/ai-analyze-foreshadowing-volume', methods=['POST'])
 @login_required
 def ai_analyze_foreshadowing_volume(book_id):
@@ -12612,7 +12477,6 @@ def ai_analyze_foreshadowing_volume(book_id):
         'bible': bb.to_dict()
     })
 
-
 @app.route('/api/books/<book_id>/ai-analyze-locations-volume', methods=['POST'])
 @login_required
 def ai_analyze_locations_volume(book_id):
@@ -12713,7 +12577,6 @@ def ai_analyze_locations_volume(book_id):
         'bible': bb.to_dict()
     })
 
-
 @app.route('/api/books/<book_id>/clear-timeline', methods=['POST'])
 @login_required
 def clear_timeline(book_id):
@@ -12729,7 +12592,6 @@ def clear_timeline(book_id):
     bb.last_synced_at = datetime.now(timezone.utc)
     db.session.commit()
     return jsonify({'success': True, 'bible': bb.to_dict()})
-
 
 @app.route('/api/books/<book_id>/dynamic-memory', methods=['GET'])
 @login_required
@@ -12749,7 +12611,6 @@ def get_dynamic_memory(book_id):
         db.session.commit()
 
     return jsonify(dm.to_dict())
-
 
 @app.route('/api/books/<book_id>/dynamic-memory/<file_key>', methods=['PUT'])
 @login_required
@@ -12785,7 +12646,6 @@ def update_dynamic_memory_file(book_id, file_key):
 
     return jsonify({'success': True, 'file_key': file_key, 'content': content})
 
-
 @app.route('/api/books/<book_id>/dynamic-memory/init', methods=['POST'])
 @login_required
 def init_dynamic_memory(book_id):
@@ -12804,7 +12664,6 @@ def init_dynamic_memory(book_id):
     db.session.commit()
 
     return jsonify({'success': True, 'data': dm.to_dict()})
-
 
 @app.route('/api/books/<book_id>/dynamic-memory/ai-generate', methods=['POST'])
 @login_required
@@ -12928,11 +12787,9 @@ def ai_generate_dynamic_memory(book_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 # ==== 动态报告 API（防遗忘摘要系统） ====
 
 DYNAMIC_REPORT_INTERVAL = 5  # 每5章生成一份报告
-
 
 def _generate_dynamic_report_content(book_id, chapter_start, chapter_end, skill_pack_ids=None):
     """内部函数：调用AI生成动态报告内容。
@@ -13054,7 +12911,6 @@ def _generate_dynamic_report_content(book_id, chapter_start, chapter_end, skill_
         # 连降级都失败的极端情况
         return None, f'{str(e)} | last_error={last_error}'
 
-
 def _check_and_auto_generate_report(book_id):
     """检查是否需要自动生成动态报告（每5章触发）"""
     chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
@@ -13104,7 +12960,6 @@ def _check_and_auto_generate_report(book_id):
 
     return {'report': report.to_dict()}
 
-
 def _create_state_snapshot(book_id, chapter_end):
     """创建叙事状态检查点快照（借鉴 PlotPilot checkpoint）。
     备份 BookBible 关键字段 + DynamicMemory 5文件，存入 bb.state_snapshots。
@@ -13150,14 +13005,12 @@ def _create_state_snapshot(book_id, chapter_end):
     bb.state_snapshots = json.dumps(existing, ensure_ascii=False)
     db.session.commit()
 
-
 @app.route('/api/books/<book_id>/dynamic-reports', methods=['GET'])
 @login_required
 def list_dynamic_reports(book_id):
     """获取所有动态报告"""
     reports = DynamicReport.query.filter_by(book_id=book_id).order_by(DynamicReport.chapter_start).all()
     return jsonify([r.to_dict() for r in reports])
-
 
 @app.route('/api/books/<book_id>/dynamic-reports', methods=['POST'])
 @login_required
@@ -13190,7 +13043,6 @@ def create_dynamic_report(book_id):
     db.session.add(report)
     db.session.commit()
     return jsonify(report.to_dict()), 201
-
 
 @app.route('/api/books/<book_id>/dynamic-reports/batch-generate', methods=['POST'])
 @login_required
@@ -13291,7 +13143,6 @@ def batch_generate_dynamic_reports(book_id):
         'errors': errors,
     })
 
-
 @app.route('/api/books/<book_id>/dynamic-reports/<report_id>', methods=['PUT'])
 @login_required
 def update_dynamic_report(book_id, report_id):
@@ -13307,7 +13158,6 @@ def update_dynamic_report(book_id, report_id):
     db.session.commit()
     return jsonify(report.to_dict())
 
-
 @app.route('/api/books/<book_id>/dynamic-reports/<report_id>', methods=['DELETE'])
 @login_required
 def delete_dynamic_report(book_id, report_id):
@@ -13318,7 +13168,6 @@ def delete_dynamic_report(book_id, report_id):
     db.session.delete(report)
     db.session.commit()
     return jsonify({'success': True})
-
 
 @app.route('/api/books/<book_id>/dynamic-reports/batch-delete', methods=['POST'])
 @login_required
@@ -13339,7 +13188,6 @@ def batch_delete_dynamic_reports(book_id):
     db.session.commit()
     return jsonify({'success': True, 'deleted_count': len(deleted_ids), 'deleted_ids': deleted_ids})
 
-
 @app.route('/api/books/<book_id>/dynamic-reports/<report_id>/regenerate', methods=['POST'])
 @login_required
 def regenerate_dynamic_report(book_id, report_id):
@@ -13358,7 +13206,6 @@ def regenerate_dynamic_report(book_id, report_id):
     db.session.commit()
     return jsonify(report.to_dict())
 
-
 @app.route('/api/books/<book_id>/dynamic-reports/auto-check', methods=['POST'])
 @login_required
 def auto_check_dynamic_report(book_id):
@@ -13369,7 +13216,6 @@ def auto_check_dynamic_report(book_id):
     if 'error' in result:
         return jsonify({'success': False, 'error': result['error']}), 500
     return jsonify({'success': True, 'message': '已自动生成动态报告', 'report': result['report']})
-
 
 @app.route('/api/books/<book_id>/dynamic-reports/context', methods=['GET'])
 @login_required
@@ -13385,7 +13231,6 @@ def get_dynamic_report_context(book_id):
         'reports': [r.to_dict() for r in reports],
         'context_text': '\n\n'.join([f'【{r.title}】\n{r.content}' for r in reports if r.content])
     })
-
 
 @app.route('/api/books/<book_id>/ai-analyze-from-reports', methods=['POST'])
 @login_required
@@ -13609,7 +13454,6 @@ def ai_analyze_from_reports(book_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
 @app.route('/api/books/<book_id>/sync-analysis', methods=['POST'])
 @login_required
 def sync_analysis_to_book(book_id):
@@ -13700,7 +13544,6 @@ def sync_analysis_to_book(book_id):
         'bible': bb.to_dict()
     })
 
-
 # ==== File Upload / 拆书导入导出 ====
 
 UPLOAD_DIR = DATA_DIR / 'uploads'
@@ -13740,7 +13583,6 @@ def _detect_and_decode(raw_bytes):
         return raw_bytes.decode('gb18030', errors='replace')
     except Exception:
         return raw_bytes.decode('utf-8', errors='replace')
-
 
 def extract_text_from_file(filepath, filename):
     ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
@@ -13809,18 +13651,15 @@ def export_analysis():
     bio.seek(0)
     return send_file(bio, mimetype='application/json', as_attachment=True, download_name='analysis_result.json')
 
-
 # 【冷启动提速·2026-08-20】schema+seed 版本号：改动数据库结构（新表/新列/迁移）
 # 或种子数据（SEED_SKILL_PACKS / 内置模板）时必须递增此版本，老库才会重新走全量初始化。
 SCHEMA_SEED_VERSION = '2026-08-20.1'
-
 
 class AppMeta(db.Model):
     """应用元数据 KV 表：记录 schema/seed 版本，支持启动快速路径。"""
     __tablename__ = 'app_meta'
     key = db.Column(db.String(100), primary_key=True)
     value = db.Column(db.Text)
-
 
 def init_db():
     with app.app_context():
@@ -13924,7 +13763,6 @@ def init_db():
             db.session.rollback()
         _print_db_diagnosis()
 
-
 def _print_db_diagnosis():
     """铁律诊断：每次启动打印数据库状态，确认用户数据持久化。"""
     try:
@@ -13942,7 +13780,6 @@ def _print_db_diagnosis():
             print(f'[铁律] ℹ️ 用户表为空（新数据库正常；若之前注册过账号说明数据未持久化）', flush=True)
     except Exception as e:
         print(f'[铁律] 诊断失败: {e}', flush=True)
-
 
 # ==== 前端静态文件托管（生产环境）====
 # 当后端直接提供服务时，托管前端构建产物，避免前后端分离部署导致的 /api 请求失败
@@ -13982,7 +13819,6 @@ def serve_frontend(path):
         resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
         return resp
     return jsonify({'error': 'index.html not found'}), 404
-
 
 if __name__ == '__main__':
     init_db()
