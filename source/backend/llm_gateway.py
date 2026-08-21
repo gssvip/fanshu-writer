@@ -218,6 +218,122 @@ def _parse_sse_event(blob: bytes):
         yield ("reasoning", reasoning)
 
 
+# ============================================================================
+# 模型输出上限自动适配（2026-08-21）
+#
+# 背景：chat_collab_bp 生成链路统一请求 max_tokens=27000 给足输出预算，但各家模型
+# 输出上限不一（deepseek-chat 8192、gpt-4o 16384、claude-3.5 8192……），超限时 API
+# 直接 400 拒绝 → 生成必失败。适配策略（三层）：
+#   1. 已知模型表 _KNOWN_OUTPUT_LIMITS：常见模型直接钳制，省一次 400 往返
+#   2. 报错自学习 _LEARNED_OUTPUT_LIMITS：解析 400 报错里的真实上限（各家文案不同：
+#      OpenAI "maximum allowed value of 16384"、Anthropic "at most 8191"、
+#      中文服务 "最大值为 65536"），记入进程级缓存，后续调用直接使用
+#   3. 兜底：解析不出具体上限时，本次调用退到 8192（最常见档位）重试一次
+# 原则：宁可表里漏记（多付一次 400 自学习往返），不可错记低值（会静默截断输出）。
+# ============================================================================
+
+_KNOWN_OUTPUT_LIMITS = {
+    # DeepSeek（本项目默认配置）
+    'deepseek-chat': 8192, 'deepseek-v3': 8192,
+    'deepseek-reasoner': 65536, 'deepseek-r1': 65536,
+    # OpenAI
+    'gpt-4o': 16384, 'gpt-4o-mini': 16384,
+    'gpt-4.1': 32768, 'gpt-4.1-mini': 32768, 'gpt-4.1-nano': 32768,
+    'gpt-5': 128000, 'gpt-5-mini': 128000, 'gpt-5-nano': 128000,
+    'o1': 100000, 'o3': 100000, 'o4-mini': 100000,
+    # Anthropic
+    'claude-3-5-sonnet': 8192, 'claude-3-5-haiku': 8192,
+    'claude-3-7-sonnet': 64000, 'claude-sonnet-4': 64000, 'claude-opus-4': 32000,
+    # Google
+    'gemini-2.5-pro': 65536, 'gemini-2.5-flash': 65536, 'gemini-2.0-flash': 8192,
+}
+
+# (base_url, model) → 报错学到的输出上限（进程级缓存，重启后首跑自学习一次）
+_LEARNED_OUTPUT_LIMITS: dict[tuple[str, str], int] = {}
+
+_MAX_TOKENS_MENTION_RE = re.compile(r'max[\s_-]?tokens', re.I)
+# 上限值锚点：紧随"maximum allowed value of / at most / 不能超过 / 最大值为"等措辞的数字
+_OUTPUT_LIMIT_ANCHOR_RE = re.compile(
+    r'(?:maximum allowed (?:value|number) of|at most|maximum of|limit (?:is|of)'
+    r'|<=|must be (?:at most|no greater than)|不能超过|最多|最大值(?:为)?|上限(?:为)?)'
+    r'[\s:：]*([\d][\d,]{2,9})',
+    re.I,
+)
+
+
+def _known_output_limit(model: str) -> int:
+    """查已知模型表。变体名（带日期/版本后缀，如 gpt-4o-2024-08-06）按子串匹配，
+    多个命中取最大值（宁高勿低：偏高只多一次 400 自学习，偏低会静默截断）。未知返回 0。"""
+    m = (model or '').lower()
+    if not m:
+        return 0
+    if m in _KNOWN_OUTPUT_LIMITS:
+        return _KNOWN_OUTPUT_LIMITS[m]
+    best = 0
+    for key, lim in _KNOWN_OUTPUT_LIMITS.items():
+        if len(key) >= 5 and key in m:
+            best = max(best, lim)
+    return best
+
+
+def _parse_max_tokens_limit(message: str, requested: int) -> int:
+    """从 API 400/422 报错文案解析模型允许的 max_tokens 上限；解析不出返回 0。
+
+    兼容各家文案（实测样例）：
+      OpenAI:    Invalid 'max_tokens': integer exceeds the maximum allowed value of 16384
+      Anthropic: max_tokens: 27000 > 8191, which is the maximum allowed number of output tokens
+      旧式:       max_tokens is too large: 27000. This model supports at most 4096
+      中文:       max_tokens 参数最大值为 65536 / max_tokens 不能超过 8192
+    """
+    if not message or not _MAX_TOKENS_MENTION_RE.search(message):
+        return 0
+    candidates: list[int] = []
+    for m in _OUTPUT_LIMIT_ANCHOR_RE.finditer(message):
+        candidates.append(int(m.group(1).replace(',', '')))
+    # 兜底：报错文本里的其余整数（剔除请求值本身，限定合理区间）
+    for m in re.finditer(r'\d[\d,]{2,9}', message):
+        n = int(m.group(0).replace(',', ''))
+        if n != requested and 512 <= n <= 1_000_000:
+            candidates.append(n)
+    if not candidates:
+        return 0
+    limit = max(candidates)
+    return limit if limit < requested else 0
+
+
+def get_output_limit(base_url: str, model: str) -> int:
+    """模型输出上限：报错自学习缓存优先，其次已知模型表；未知返回 0（不钳制）。"""
+    key = ((base_url or '').rstrip('/'), (model or '').lower())
+    learned = _LEARNED_OUTPUT_LIMITS.get(key)
+    if learned:
+        return learned
+    return _known_output_limit(model)
+
+
+def _learn_output_limit(base_url: str, model: str, error_text: str, requested: int) -> int:
+    """从 400 报错解析并缓存真实输出上限；返回解析到的上限（0 = 没解析到）。"""
+    limit = _parse_max_tokens_limit(error_text, requested)
+    if limit:
+        _LEARNED_OUTPUT_LIMITS[((base_url or '').rstrip('/'), (model or '').lower())] = limit
+    return limit
+
+
+def _error_text(resp) -> str:
+    """提取响应体里的错误文案（优先 JSON error.message，退回纯文本）。"""
+    try:
+        err_body = resp.json()
+        if isinstance(err_body, dict):
+            err = err_body.get("error")
+            if isinstance(err, dict):
+                return (err.get("message") or "")[:300]
+    except Exception:
+        pass
+    try:
+        return (resp.text or "")[:300]
+    except Exception:
+        return ""
+
+
 class LLMGateway:
     """统一 LLM 调用网关。
 
@@ -237,6 +353,11 @@ class LLMGateway:
         self.timeout = timeout
         self.max_retries = max_retries
 
+    def _effective_max_tokens(self, max_tokens: int) -> int:
+        """请求值按模型已知/已学习输出上限钳制；上限未知则原样发出（报错自适应兜底）。"""
+        limit = get_output_limit(self.base_url, self.model)
+        return min(max_tokens, limit) if limit else max_tokens
+
     def chat(self, messages: list[dict], temperature: float = 0.7,
              max_tokens: int = 4096, **extra) -> ModelResult:
         """同步调用 LLM，返回 ModelResult。
@@ -250,7 +371,7 @@ class LLMGateway:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_tokens": self._effective_max_tokens(max_tokens),
         }
         payload.update(extra)
 
@@ -272,6 +393,17 @@ class LLMGateway:
                                 body_text = (err.get("message") or "")[:300]
                     except Exception:
                         body_text = (resp.text or "")[:200]
+                    # 【输出上限自适应】400/422 且报错指向 max_tokens 超限 → 解析真实
+                    # 上限、钳制 payload 后立即重发（解析不出具体数字则退 8192 兜底）
+                    if resp.status_code in (400, 422):
+                        _limit = _learn_output_limit(self.base_url, self.model,
+                                                     body_text, payload["max_tokens"])
+                        if _limit and _limit < payload["max_tokens"]:
+                            payload["max_tokens"] = _limit
+                            continue
+                        if not _limit and payload["max_tokens"] > 8192:
+                            payload["max_tokens"] = 8192
+                            continue
                     last_error = f"LLM 调用失败（HTTP {resp.status_code}）：{body_text or '服务返回错误'}"
                     result.failure_class = fc if fc != FailureClass.NONE else FailureClass.UNAVAILABLE
                     result.error = last_error
@@ -352,7 +484,7 @@ class LLMGateway:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_tokens": self._effective_max_tokens(max_tokens),
             "stream": True,
         }
         payload.update(extra)
@@ -361,6 +493,19 @@ class LLMGateway:
         got_reasoning = False  # 思考型模型（GLM-4.7/R1 等）先输出 reasoning_content 再输出 content
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout, stream=True)
+            # 【输出上限自适应】400/422 且报错指向 max_tokens 超限 → 解析真实上限、
+            # 钳制 payload 后重发一次；解析不出具体数字则退 8192 兜底（均只重发一次）。
+            if resp.status_code in (400, 422):
+                _limit = _learn_output_limit(self.base_url, self.model,
+                                             _error_text(resp), payload["max_tokens"])
+                if _limit and _limit < payload["max_tokens"]:
+                    payload["max_tokens"] = _limit
+                    resp = requests.post(url, headers=headers, json=payload,
+                                         timeout=self.timeout, stream=True)
+                if not _limit and payload["max_tokens"] > 8192:
+                    payload["max_tokens"] = 8192
+                    resp = requests.post(url, headers=headers, json=payload,
+                                         timeout=self.timeout, stream=True)
             # 【空回复根因修复】非 200 状态码必须显式抛错：
             # 旧实现直接 iter_lines 遍历错误页（无 data: 帧），流静默结束 → 调用方拿到空内容还以为成功
             if resp.status_code != 200:

@@ -107,7 +107,7 @@ def run_review_cycle_with_bible(polished_content, bb, post_validate, book_id, ch
     from datetime import datetime, timezone
     from post_write_validator import validate_chapter, validate_chapter_with_bible
     from revise import route_revision, build_spot_fix_prompt, apply_spot_fix_patches
-    from llm_gateway import build_auth_headers
+    from llm_gateway import build_auth_headers, get_output_limit
 
     review_cycle_result = None
     if not (post_validate and post_validate.get('issues') and bb):
@@ -149,12 +149,14 @@ def run_review_cycle_with_bible(polished_content, bb, post_validate, book_id, ch
 
         # 3. llm_call_fn：封装 requests.post
         def _llm_call_fn(sys_prompt, user_prompt):
+            # 【输出上限适配】12000 会撞 8k 输出上限的模型直接 400，按已知/已学习上限钳制
+            _rev_max_tok = min(12000, get_output_limit(base_url, model) or 12000)
             resp = requests.post(f'{base_url}/chat/completions',
                 headers=build_auth_headers(api_key),
                 json={'model': model,
                       'messages': [{'role': 'system', 'content': sys_prompt},
                                    {'role': 'user', 'content': user_prompt}],
-                      'temperature': 0.3, 'max_tokens': 12000},
+                      'temperature': 0.3, 'max_tokens': _rev_max_tok},
                 timeout=180)
             result = resp.json()
             return result['choices'][0]['message']['content'].strip()

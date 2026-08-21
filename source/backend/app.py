@@ -86,7 +86,7 @@ except ImportError:
 
 # P3：LLM Gateway 统一入口（错误分类 + 智能重试 + 空内容检测）
 try:
-    from llm_gateway import LLMGateway, ModelResult, FailureClass, LLMError, get_llm_config, create_gateway, build_auth_headers
+    from llm_gateway import LLMGateway, ModelResult, FailureClass, LLMError, get_llm_config, create_gateway, build_auth_headers, get_output_limit
 except ImportError:
     LLMGateway = None
     ModelResult = None
@@ -94,6 +94,9 @@ except ImportError:
     LLMError = None
     get_llm_config = None
     create_gateway = None
+    def get_output_limit(base_url: str, model: str) -> int:
+        """导入失败时的回退实现：未知上限，不钳制。"""
+        return 0
     def build_auth_headers(api_key: str, content_type: bool = True) -> dict:
         """导入失败时的回退实现：仅下发 Authorization: Bearer（标准 OpenAI 兼容）。"""
         headers = {'Authorization': f'Bearer {api_key}'}
@@ -941,12 +944,14 @@ def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chap
 {method}
 只输出修正后的完整正文，不输出任何说明或前缀。"""
     try:
+        # 【输出上限适配】默认 12000 会撞 8k 输出上限的模型直接 400，按已知/已学习上限钳制
+        _wc_max_tok = min(int(max_tokens), get_output_limit(base_url, model) or int(max_tokens))
         rewrite_resp = requests.post(f'{base_url}/chat/completions',
             headers=build_auth_headers(api_key),
             json={'model': model,
                   'messages': [{'role': 'system', 'content': rewrite_system},
                                {'role': 'user', 'content': f'请修正以下章节正文字数：\n\n{content}'}],
-                  'temperature': 0.5, 'max_tokens': max_tokens},
+                  'temperature': 0.5, 'max_tokens': _wc_max_tok},
             timeout=180)
         rewrite_result = rewrite_resp.json()
         rewritten = rewrite_result['choices'][0]['message']['content'].strip()
@@ -2155,7 +2160,7 @@ def ai_chat():
                 'model': cfg.model,
                 'messages': messages,
                 'temperature': cfg.temperature,
-                'max_tokens': cfg.max_tokens,
+                'max_tokens': min(cfg.max_tokens, get_output_limit(base, cfg.model) or cfg.max_tokens),
                 'stream': False
             },
             timeout=120
@@ -2193,7 +2198,7 @@ def ai_chat_stream():
                     'model': cfg.model,
                     'messages': messages,
                     'temperature': cfg.temperature,
-                    'max_tokens': cfg.max_tokens,
+                    'max_tokens': min(cfg.max_tokens, get_output_limit(base, cfg.model) or cfg.max_tokens),
                     'stream': True
                 },
                 stream=True,
@@ -7382,7 +7387,10 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
         'system_prompt': system_prompt,
         'user_prompt': user_prompt,
         'temperature': temperature,
-        'max_tokens': 12000,  # 【字数铁律】给足输出空间不物理截断；含 PRE_WRITE_CHECK 13行表 + CHANGES JSON 12字段，12000 token 确保完整
+        # 【字数铁律】给足输出空间不物理截断；含 PRE_WRITE_CHECK 13行表 + CHANGES JSON 12字段，12000 token 确保完整。
+        # 【输出上限适配】模型上限低于 12000（如 deepseek-chat 8192）时按已知/已学习上限钳制，
+        # 防下游直连 requests.post 的调用（去AI味/字数修正/审校等）400
+        'max_tokens': min(12000, get_output_limit(base_url, model) or 12000),
         'chapter_plan': chapter_plan,
         'current_chapter_num': current_chapter_num,
         'vol_chapter': vol_chapter,
@@ -9004,12 +9012,14 @@ def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation')
             'stream': False
         }
         # max_tokens：0 表示不限制（不下发），None 用配置默认值，正整数显式限定
+        # 【输出上限适配】请求值按模型已知/已学习输出上限钳制，防大值撞 8k 上限直接 400
+        _mt_limit = get_output_limit(base, model)
         if max_tokens == 0:
             pass  # 不下发，让模型用自身默认输出上限
         elif max_tokens:
-            payload['max_tokens'] = max_tokens
+            payload['max_tokens'] = min(max_tokens, _mt_limit) if _mt_limit else max_tokens
         else:
-            payload['max_tokens'] = cfg.max_tokens
+            payload['max_tokens'] = min(cfg.max_tokens, _mt_limit) if _mt_limit else cfg.max_tokens
         resp = requests.post(f'{base}/chat/completions',
             headers=build_auth_headers(cfg.api_key),
             json=payload, timeout=180)

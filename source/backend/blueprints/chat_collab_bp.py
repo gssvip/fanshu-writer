@@ -47,28 +47,16 @@ from session_persist import (
 
 
 # ============================================================================
-# 各维度生成 max_tokens 首跑配额（防 finish_reason=length 截断）
-# 线上事故（2026-08-20）：旧值统一 2000（timeline 除外），而中文 ≈1.0-1.5 token/字，
-# 设定铁律要求 ≥1500 字、世界观 ≥2000 字 → 输出撞 token 上限被切半。
-# 截断后的半成品又恰好过字数门禁（≥1500字）→ 不触发 error 重试 → 直接交付
-# "生成了一部分"的残缺内容。现按校验器字数下限 × ~2.5 安全系数给足。
+# 2026-08-21 按用户要求统一上调至 27000（宁可给足不留截断），不再区分维度档位；
+# 模型实际输出上限低于 27000 时由 llm_gateway 自动适配：已知模型表预钳制 +
+# 400 报错解析真实上限自学习（见 llm_gateway._KNOWN_OUTPUT_LIMITS）。
 # ============================================================================
-_DIM_MAX_TOKENS = {
-    'timeline': 8000,            # 全书按卷 JSON，结构最长
-    'worldbuilding': 8000,       # ≥2000 字 × 15 节
-    'character_profiles': 8000,  # 7+ 角色 × 15 项
-    'key_rules': 6000,           # ≥1500 字 × 11 节
-    'plot_design': 6000,         # 五幕总纲 + 跨卷钩子总览
-    'concept': 4000,             # ≥1200 字 × 10 节
-    'locations': 4000,
-    'foreshadowing': 4000,
-    'style_guide': 4000,
-}
+_DIM_MAX_TOKENS = 27000
 
 
 def _dim_max_tokens(dim_key: str) -> int:
-    """维度生成首跑 max_tokens（重试链路另按 1.5x/2x 顶格到 8000）。"""
-    return _DIM_MAX_TOKENS.get(dim_key, 4000)
+    """维度生成 max_tokens（用户要求统一 27000，防任何维度截断）。"""
+    return _DIM_MAX_TOKENS
 
 
 def _run_blocking_with_heartbeat(blocking_fn, sse_fn, extra_frames=None):
@@ -5254,9 +5242,9 @@ def smart_generate():
                 if _attempt == 0:
                     _max_tok = max_tok
                 elif _last_fc_truncated:
-                    _max_tok = 8000  # 截断类失败（思考耗尽 token）重试直接顶满，渐进 1.5x 不够思考消耗
+                    _max_tok = 27000  # 截断类失败（思考耗尽 token）重试直接顶满，渐进 1.5x 不够思考消耗
                 else:
-                    _max_tok = min(int(max_tok * (1.5 if _attempt == 1 else 2)), 8000)
+                    _max_tok = min(int(max_tok * (1.5 if _attempt == 1 else 2)), 27000)
                 # 第 2 次起进"精简模式"：截断过长 system/铁律，防 prompt 溢出 → 模型拒答吐空
                 _msgs_for_this_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key) if _attempt >= 1 else cur_messages
                 try:
@@ -5511,9 +5499,9 @@ def smart_dim_edit():
                 _temp = 0.7 + min(_attempt * 0.08, 0.2)
                 _max_tok = max_tok
                 if _attempt == 1:
-                    _max_tok = min(int(max_tok * 1.5), 8000)
+                    _max_tok = min(int(max_tok * 1.5), 27000)
                 elif _attempt >= 2:
-                    _max_tok = min(int(max_tok * 2), 8000)
+                    _max_tok = min(int(max_tok * 2), 27000)
                 _msgs_call = cur_messages
                 if _attempt >= 1:
                     _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
@@ -5752,9 +5740,9 @@ def smart_batch():
                         _temp = 0.7 + min(_attempt * 0.08, 0.2)
                         _max_tok = max_tok
                         if _attempt == 1:
-                            _max_tok = min(int(max_tok * 1.5), 8000)
+                            _max_tok = min(int(max_tok * 1.5), 27000)
                         elif _attempt >= 2:
-                            _max_tok = min(int(max_tok * 2), 8000)
+                            _max_tok = min(int(max_tok * 2), 27000)
                         _msgs_call = cur_messages
                         if _attempt >= 1:
                             _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
@@ -6039,9 +6027,9 @@ def smart_deai():
                 _temp = 0.5 + min(_attempt * 0.08, 0.2)
                 _max_tok = max_tok
                 if _attempt == 1:
-                    _max_tok = min(int(max_tok * 1.5), 8000)
+                    _max_tok = min(int(max_tok * 1.5), 27000)
                 elif _attempt >= 2:
-                    _max_tok = min(int(max_tok * 2), 8000)
+                    _max_tok = min(int(max_tok * 2), 27000)
                 _msgs_call = cur_messages
                 if _attempt >= 1:
                     _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim='chapter_deai')
