@@ -224,11 +224,12 @@ class SmartPlanner:
         - kind='exec'：安全读侧任务，TaskRunner 直接执行（如伏笔任务计算）
         - kind='declared'：LLM 生成/审校阶段，由宿主端点实际执行后回写状态
           （流式生成必须留在 SSE generator，无法搬进 TaskRunner）
-        - opts 可选开关：skill_pack_ids（去AI味）/ enable_consistency_check（一致性）
-          / enable_structured_tags，与 ai_continue 入参一致，决定条件阶段的取舍
+        - opts 可选开关：enable_consistency_check（一致性）/ enable_structured_tags，
+          与 ai_continue 入参一致，决定条件阶段的取舍。
+          t5_deai（去AI味审校）默认启用（内置规则常驻；skill_pack_ids 里的审查类
+          技能包作为增强叠加，不再作为启停开关）
         """
         g = TaskGraph()
-        has_deai = bool(opts.get('skill_pack_ids'))
         has_cchk = bool(opts.get('enable_consistency_check'))
         t = f'chapter_{chapter_num}'
 
@@ -262,11 +263,6 @@ class SmartPlanner:
         _stage('t10_gates', 'landing_gates', '落地门禁（3道，critical拦截落库）',
                depends_on=['t9_cycle'])
         _stage('t11_post', 'post_persist_sync', '落库后置同步（事件日志+伏笔反查+实体注册）')
-        if not has_deai:
-            for tid in ('t5_deai',):
-                if tid in g.tasks:
-                    g.tasks[tid].status = 'skipped'
-                    g.tasks[tid].result = {'note': '未启用技能包，去AI味审校跳过'}
         return g
 
 

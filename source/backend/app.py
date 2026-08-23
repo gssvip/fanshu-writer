@@ -5993,6 +5993,7 @@ STANDARD_WRITING_STYLE_PROMPT = """【标准文风铁律·必须严格执行】
 - 每章开头尽快进入场景或事件。
 - 每章中段用对白和行动推进信息。
 - 每章结尾落在新风险、新线索或新决策上。
+- 章尾三禁：禁环境描写收尾、禁主角心理独白收尾、禁无意义配角台词收尾。钩子必须紧扣本章冲突与爽点方向。
 - 不用空泛总结收尾。不用连续大段设定说明。
 
 ## 禁用倾向
@@ -6027,12 +6028,30 @@ STANDARD_WRITING_STYLE_PROMPT = """【标准文风铁律·必须严格执行】
 震惊、复杂、激动、愤怒、悲伤、喜悦、紧张、恐惧、害怕、疑惑、怀疑、
 诧异、惊讶、兴奋、高兴、难过、痛苦、焦虑、担心、担忧、不安、
 欣喜、失落、绝望、骄傲、傲慢、羞涩、害羞、感动、感激、愧疚、懊悔。
+【复合情绪词禁用（一律拆成具体身体反应或动作）】
+百感交集、五味杂陈、心潮澎湃、忐忑不安、怅然若失、喜出望外、
+怒不可遏、悲痛欲绝、思绪万千、百感千思。
+【弱化副词"X地"禁令（删"地"或换具体动词）】
+快速地、轻轻地、慢慢地、缓缓地、静静地、默默地、狠狠地、死死地、
+微微地、悄悄地——"快速地跑"→"窜"，"死死地盯着"→"盯得死死的"。
+【因果目的词限用（每章合计≤2处，冲突直接呈现不靠连接词串逻辑）】
+因为、所以、由于、因此、为了、试图、企图、想要、于是。
+【"的/了/着"控量】
+每句"的"≤1个；每段"了"≤3个、"着"≤2个，超出即删或改句。
 
 ## 冰山人物·反常行为刻画（代替贴标签情绪词·铁律）
 - 写情绪时，永远不给结论词，只给"反常行为 + 小动作 + 体感 + 微表情"四要素。
 - 例（不能写"他很愤怒"）：→ 他指尖捏断了那支用了三年的钢笔，指节发白到发青，嘴角却还维持着礼貌的笑（反常=笑+动作捏断+体感发白+微表情礼貌笑）。
 - 例（不能写"她很紧张"）：→ 她三次去够口袋里的钥匙都没拔出来，鞋跟在同一块地砖上磨出了半道白印，明明是冬天，额角却浸出了细汗（反常=3次够不到+磨鞋+冬天出汗）。
 - 冰山理论：80% 心理藏在水下，只能 20% 外露成反常行为；全章不得出现任何一句"他/她感到 + 情绪名词"。
+
+## 生理反应置换表（情绪的"标价"——重情绪必须配重反应，不许只写情绪词）
+- 愤怒：轻=指节捏响/笔尖戳破纸/牙关咬紧；重=手背青筋暴起/掀翻桌子/抄起东西砸过去。
+- 恐惧：轻=后退半步/手指发僵/呼吸变浅；重=腿软扶墙/牙齿打颤/手抖得握不住东西。
+- 悲伤：轻=喉头发紧/半天说不出话/目光放空；重=蹲下去捂住脸/哭到干呕/一夜白头。
+- 震惊：轻=手里的笔停住/话说到一半断掉；重=手里的东西掉在地上/当场定住/耳膜嗡嗡响。
+- 得意：轻=嘴角压不住/手指敲桌面；重=哼出声/翘腿晃脚/当众炫耀。
+- 规则：写情绪前先问"这情绪值多少钱"——轻情绪一笔带过，重情绪必须给上表量级的身体反应；"生气"不值钱，"砸东西"才值钱。
 
 ## 段落合并三同时（硬执行·防漫画分镜脚本化）
 相邻 3 句若同时满足以下三条件，必须至少合并相邻 2 句成 1 段：
@@ -6060,6 +6079,7 @@ STANDARD_WRITING_STYLE_PROMPT = """【标准文风铁律·必须严格执行】
 - 是否避免了大段心理独白和形容词堆砌？
 - 描写是否服务情报、动作和悬念？
 - 有没有可以用动作代替的心理描写？
+- 有没有"X地"副词没删？"因为/所以/为了"全章超没超 2 处？复合情绪词（百感交集/五味杂陈类）有没有清零？重情绪段落有没有配上生理反应置换表量级的身体反应？
 - 这段能不能再短一点？这句话像真人说的吗？
 - 有没有"AI必删词30+"或书面化表达？内心独白是否控制在5%以内？
 - **8大AI比喻禁词是不是 0 次命中？**（宛如/犹如/恍若/宛若+大海/巨龙/深渊/星河 必须全章 0 次；每千字比喻 ≤ 3 处且必须原创）
@@ -7456,49 +7476,53 @@ def ai_continue(book_id):
             draft_content, api_key, base_url, model, max_tokens, ctx['current_chapter_num'])
         if wp_runner: wp_runner.mark_stage(wp_graph, 't4_wc', 'done', {'chars': len(draft_content)})
 
-        # ===== 去 AI 味审校 Agent（#6：容错+可观测）=====
+        # ===== 去 AI 味审校 Agent（#6：容错+可观测；2026-08-23 默认启用）=====
+        # 内置统一去AI规则（chat_collab_bp 的 GENERAL_CORE_RULES + DEAI_RULES）常驻生效，
+        # 不再依赖技能包勾选；审查类(review)技能包作为增强叠加（build_review_rules 内部合并）。
         polished_content = draft_content
         review_notes = review_notes_prefix
         deai_status = 'skipped'  # skipped / success / failed
-        if skill_pack_ids:
-            # 【三类无污染】去AI味属于审查阶段：只注入审查类（review）技能包
-            deai_skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'review', ['tomato_deai', 'de_ai_flavor', 'polish'], mode='agent')
-            if deai_skill_note:
-                deai_system = f"""你是番茄去AI味审查员。对以下刚写好的章节正文做去AI味审校，按规则修改后只输出修改后的正文。
-
-{deai_skill_note}
-
-【优先级铁律】人味>克制>流畅。删完AI味后读起来像机器人汇报→加口语碎片。太啰嗦→删修饰。磕磕绊绊→调句式。
-【必删清单】一股/一抹/不由得/不禁/随即/旋即/与此同时/颇为/甚为/极为/缓缓/淡淡/轻轻/微微/毫无疑问/毋庸置疑/不言而喻/深吸一口气/眼中闪过一丝/心中暗想/心念电转/若有所思/不知不觉间/转眼间/恍然大悟/面无表情/淡漠/漠然/眸子/嘴角微微上扬/如同/宛如/犹如/周身/周遭/气息/威压/那道身影/说话间/话音未落/当即/顿时/瞬时。
-【人味注入】加入不完美细节(结巴/重复/打断)/感官碎片/小动作微表情/语气词和断句/适当留白。
-【硬性约束】修改后字数仍须 2400±100，保留原章节的剧情走向和钩子，只改文风不改剧情。"""
-
-                try:
-                    deai_resp = requests.post(f'{base_url}/chat/completions',
-                        headers=build_auth_headers(api_key),
-                        json={'model': model,
-                              'messages': [{'role':'system','content':deai_system},
-                                           {'role':'user','content':f'请审校以下章节正文：\n\n{draft_content}'}],
-                              'temperature': 0.5, 'max_tokens': max_tokens},
-                        timeout=180)
-                    deai_result = deai_resp.json()
-                    polished = deai_result['choices'][0]['message']['content'].strip()
-                    # 【字数铁律】审校后字数校验：必须落在 2300-2500 区间
-                    polished_len = _count_cn_chars(polished)
-                    if polished and 2300 <= polished_len <= 2500:
-                        polished_content = polished
-                        review_notes = (review_notes_prefix + ' 已自动去AI味审校(' + str(polished_len) + '字)').strip()
-                        deai_status = 'success'
-                    elif polished and polished_len > 500:
-                        # 字数不达标但有内容，标记为失败但仍返回初稿
-                        review_notes = (review_notes_prefix + f' 去AI味审校返回字数异常({polished_len}字)，已回滚使用初稿').strip()
-                        deai_status = 'failed'
-                    else:
-                        review_notes = (review_notes_prefix + ' 去AI味审校返回为空，已回滚使用初稿').strip()
-                        deai_status = 'failed'
-                except Exception as e:
-                    review_notes = (review_notes_prefix + f' 去AI味审校异常：{str(e)[:100]}，已回滚使用初稿').strip()
+        deai_rules_block = ''
+        try:
+            from blueprints.chat_collab_bp import build_review_rules
+            deai_rules_block = build_review_rules(
+                skill_pack_ids, mode='agent',
+                prompt_keys_filter=['tomato_deai', 'de_ai_flavor', 'polish'], book=book)
+        except Exception as _deai_e:
+            try:
+                app.logger.error(f'ai_continue 去AI规则构建失败: {_deai_e}')
+            except Exception:
+                pass
+        if deai_rules_block:
+            deai_system = ("你是番茄去AI味审查员。对以下刚写好的章节正文做去AI味审校，按规则修改后只输出修改后的正文。\n\n"
+                           + deai_rules_block
+                           + "\n\n【硬性约束】修改后字数仍须 2400±100（2300-2500区间，含标点），保留原章节的剧情走向和钩子，只改文风不改剧情。")
+            try:
+                deai_resp = requests.post(f'{base_url}/chat/completions',
+                    headers=build_auth_headers(api_key),
+                    json={'model': model,
+                          'messages': [{'role':'system','content':deai_system},
+                                       {'role':'user','content':f'请审校以下章节正文：\n\n{draft_content}'}],
+                          'temperature': 0.5, 'max_tokens': max_tokens},
+                    timeout=180)
+                deai_result = deai_resp.json()
+                polished = deai_result['choices'][0]['message']['content'].strip()
+                # 【字数铁律】审校后字数校验：必须落在 2300-2500 区间
+                polished_len = _count_cn_chars(polished)
+                if polished and 2300 <= polished_len <= 2500:
+                    polished_content = polished
+                    review_notes = (review_notes_prefix + ' 已自动去AI味审校(' + str(polished_len) + '字)').strip()
+                    deai_status = 'success'
+                elif polished and polished_len > 500:
+                    # 字数不达标但有内容，标记为失败但仍返回初稿
+                    review_notes = (review_notes_prefix + f' 去AI味审校返回字数异常({polished_len}字)，已回滚使用初稿').strip()
                     deai_status = 'failed'
+                else:
+                    review_notes = (review_notes_prefix + ' 去AI味审校返回为空，已回滚使用初稿').strip()
+                    deai_status = 'failed'
+            except Exception as e:
+                review_notes = (review_notes_prefix + f' 去AI味审校异常：{str(e)[:100]}，已回滚使用初稿').strip()
+                deai_status = 'failed'
 
         # ===== 一致性检查 Agent（#13：独立 Agent，P1扩展：含 chapter_plan 比对）=====
         # 一致性检查属识别/检查类任务，用识别模型
@@ -8544,60 +8568,64 @@ def ai_continue_batch_stream(book_id):
                 polished_content = _re_bs.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', polished_content).rstrip()
 
                 # ===== 去AI味审校 Agent（选项A：批处理也跑去AI味修正，与单章模式对齐）=====
-                # 复用单章 ai_continue 的去AI味逻辑：选了含 tomato_deai 的技能包时再调一次 LLM 修正正文
+                # 2026-08-23 默认启用：内置统一去AI规则（build_review_rules）常驻，
+                # 不再依赖技能包勾选；审查类(review)技能包作为增强叠加。
                 # 字数校验通过→用修正版；字数异常/失败→回滚用初稿
                 deai_status = 'skipped'  # skipped / success / failed
-                if skill_pack_ids:
-                    # 【三类无污染】去AI味属于审查阶段：只注入审查类（review）技能包
-                    deai_skill_note = _get_skill_prompts_by_category(skill_pack_ids, 'review', ['tomato_deai', 'de_ai_flavor', 'polish'], mode='agent')
-                    if deai_skill_note:
-                        # 推送心跳：去AI味审校中
-                        yield f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在去AI味审校第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
-                        deai_system = f"""你是番茄去AI味审查员。对以下刚写好的章节正文做去AI味审校，按规则修改后只输出修改后的正文。
-
-{deai_skill_note}
-
-【优先级铁律】人味>克制>流畅。删完AI味后读起来像机器人汇报→加口语碎片。太啰嗦→删修饰。磕磕绊绊→调句式。
-【必删清单】一股/一抹/不由得/不禁/随即/旋即/与此同时/颇为/甚为/极为/缓缓/淡淡/轻轻/微微/毫无疑问/毋庸置疑/不言而喻/深吸一口气/眼中闪过一丝/心中暗想/心念电转/若有所思/不知不觉间/转眼间/恍然大悟/面无表情/淡漠/漠然/眸子/嘴角微微上扬/如同/宛如/犹如/周身/周遭/气息/威压/那道身影/说话间/话音未落/当即/顿时/瞬时。
-【人味注入】加入不完美细节(结巴/重复/打断)/感官碎片/小动作微表情/语气词和断句/适当留白。
-【硬性约束】修改后字数仍须 2400±100，保留原章节的剧情走向和钩子，只改文风不改剧情。"""
-                        try:
-                            deai_hb = f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在去AI味审校第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
-                            deai_resp = yield from _run_blocking_with_heartbeat(
-                                lambda: requests.post(f'{base_url}/chat/completions',
-                                    headers=build_auth_headers(api_key),
-                                    json={'model': model,
-                                          'messages': [{'role':'system','content':deai_system},
-                                                       {'role':'user','content':f'请审校以下章节正文：\n\n{polished_content}'}],
-                                          'temperature': 0.5, 'max_tokens': ctx['max_tokens']},
-                                    timeout=180),
-                                deai_hb)
-                            if deai_resp.status_code == 200:
-                                deai_result = deai_resp.json()
-                                deai_polished = deai_result['choices'][0]['message']['content'].strip()
-                                # 剥离可能的内部标签（去AI味 LLM 偶尔会带上）
-                                deai_polished = _extract_chapter_body(deai_polished)
-                                deai_polished = _re_bs.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', deai_polished).rstrip()
-                                deai_wc = count_words(deai_polished)
-                                if deai_polished and 2300 <= deai_wc <= 2500:
-                                    polished_content = deai_polished
-                                    deai_status = 'success'
-                                elif deai_polished and deai_wc > 500:
-                                    deai_status = 'failed'  # 字数异常，回滚用初稿
-                                else:
-                                    deai_status = 'failed'  # 内容为空，回滚用初稿
+                deai_rules_block = ''
+                try:
+                    from blueprints.chat_collab_bp import build_review_rules
+                    deai_rules_block = build_review_rules(
+                        skill_pack_ids, mode='agent',
+                        prompt_keys_filter=['tomato_deai', 'de_ai_flavor', 'polish'], book=book)
+                except Exception as _deai_e:
+                    try:
+                        app.logger.error(f'ai_continue_batch_stream 去AI规则构建失败: {_deai_e}')
+                    except Exception:
+                        pass
+                if deai_rules_block:
+                    # 推送心跳：去AI味审校中
+                    yield f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在去AI味审校第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
+                    deai_system = ("你是番茄去AI味审查员。对以下刚写好的章节正文做去AI味审校，按规则修改后只输出修改后的正文。\n\n"
+                                   + deai_rules_block
+                                   + "\n\n【硬性约束】修改后字数仍须 2400±100（2300-2500区间，含标点），保留原章节的剧情走向和钩子，只改文风不改剧情。")
+                    try:
+                        deai_hb = f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在去AI味审校第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
+                        deai_resp = yield from _run_blocking_with_heartbeat(
+                            lambda: requests.post(f'{base_url}/chat/completions',
+                                headers=build_auth_headers(api_key),
+                                json={'model': model,
+                                      'messages': [{'role':'system','content':deai_system},
+                                                   {'role':'user','content':f'请审校以下章节正文：\n\n{polished_content}'}],
+                                      'temperature': 0.5, 'max_tokens': ctx['max_tokens']},
+                                timeout=180),
+                            deai_hb)
+                        if deai_resp.status_code == 200:
+                            deai_result = deai_resp.json()
+                            deai_polished = deai_result['choices'][0]['message']['content'].strip()
+                            # 剥离可能的内部标签（去AI味 LLM 偶尔会带上）
+                            deai_polished = _extract_chapter_body(deai_polished)
+                            deai_polished = _re_bs.sub(r'\{[^{}]*"title"\s*:\s*"[^"]*"[^{}]*\}', '', deai_polished).rstrip()
+                            deai_wc = count_words(deai_polished)
+                            if deai_polished and 2300 <= deai_wc <= 2500:
+                                polished_content = deai_polished
+                                deai_status = 'success'
+                            elif deai_polished and deai_wc > 500:
+                                deai_status = 'failed'  # 字数异常，回滚用初稿
                             else:
-                                deai_status = 'failed'
-                                try:
-                                    app.logger.error(f'ai_continue_batch_stream 第{cur_ch}章 去AI味 HTTP {deai_resp.status_code}')
-                                except Exception:
-                                    pass
-                        except Exception as deai_err:
+                                deai_status = 'failed'  # 内容为空，回滚用初稿
+                        else:
                             deai_status = 'failed'
                             try:
-                                app.logger.error(f'ai_continue_batch_stream 第{cur_ch}章 去AI味异常: {deai_err}')
+                                app.logger.error(f'ai_continue_batch_stream 第{cur_ch}章 去AI味 HTTP {deai_resp.status_code}')
                             except Exception:
                                 pass
+                    except Exception as deai_err:
+                        deai_status = 'failed'
+                        try:
+                            app.logger.error(f'ai_continue_batch_stream 第{cur_ch}章 去AI味异常: {deai_err}')
+                        except Exception:
+                            pass
 
                 # 【修复】batch_stream模式补字数修正：与多Agent模式统一
                 try:
