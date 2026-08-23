@@ -63,6 +63,8 @@ def build_beat_prompt(dramatic_position: str, word_count: int = 2500) -> str:
         budget = beat.get('budget', 500)
         guide = beat.get('guide', '')
         lines.append(f'{i}. 【{name}】（约{budget}字）{guide}')
+    # 【信息增量铁律】防"没东西"：每拍必须推进 信息/关系/危机 之一
+    lines.append('【信息增量铁律】每一拍必须让读者新知道点什么（新信息/关系变化/危机升级三选一），写完自检：这一拍删掉读者损失什么？答不上来=空转，重写这一拍。')
 
     # 伏笔融入规则
     fs_rules = cfg.get('foreshadowing_rules', {})
