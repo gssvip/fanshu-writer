@@ -1,0 +1,120 @@
+<!doctype html><html lang="zh"><head><script>function isMobileDevice() {
+        const bo = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Mobile|Opera Mini/i.test(navigator.userAgent)
+        if (bo) {
+          if (window.screen.width >= 768)
+            return false
+        }
+        return bo
+      }
+      // if (isMobileDevice()) {
+      //   // 是移动设备
+      //   window.location.href = 'https://www.wawawriter.com/mobile/'
+      // }</script><script>// 仅 Web 端注入统计/收录脚本，避免 App 首次网络弹窗时阻塞首屏加载
+    (function () {
+      var appEnvRaw = String(`'false'`).trim();
+      if ((appEnvRaw[0] === '\'' && appEnvRaw[appEnvRaw.length - 1] === '\'')
+        || (appEnvRaw[0] === '"' && appEnvRaw[appEnvRaw.length - 1] === '"')) {
+        appEnvRaw = appEnvRaw.slice(1, -1);
+      }
+      var isApp = appEnvRaw === 'true';
+      if (isApp) return;
+
+      // 历史稳定可用的 Bing UET Tag ID（旧链接不需要新增参数）
+      var HISTORICAL_BING_UET_TAG_ID = '343194611';
+      var bingTagId = HISTORICAL_BING_UET_TAG_ID;
+      // 提前创建队列，确保 UET 初始化前事件不会丢失（与历史逻辑一致）
+      window.uetq = window.uetq || [];
+
+      function initBingUet() {
+        if (!bingTagId || window.__bingUetInited || typeof window.UET !== 'function')
+          return;
+        try {
+          window.uetq = window.uetq || [];
+          var preQueue = window.uetq;
+          var options = { ti: bingTagId, enableAutoSpaTracking: true, q: preQueue };
+          window.uetq = new window.UET(options);
+          window.uetq.push('pageLoad');
+          window.__bingUetInited = true;
+        } catch (e) {}
+      }
+
+      function inject(src, opts) {
+        var s = document.createElement('script');
+        s.src = src;
+        if (opts && opts.defer) s.defer = true;
+        if (opts && opts.async) s.async = true;
+        if (opts && opts.attrs) {
+          Object.keys(opts.attrs).forEach(function (k) { s.setAttribute(k, opts.attrs[k]); });
+        }
+        s.onload = function () {
+          if (opts && typeof opts.onLoad === 'function') {
+            try { opts.onLoad(); } catch (e) {}
+          }
+        };
+        var head = document.getElementsByTagName('head')[0];
+        head.appendChild(s);
+      }
+
+      var curProtocol = window.location.protocol.split(':')[0];
+      inject(curProtocol === 'https'
+        ? 'https://zz.bdstatic.com/linksubmit/push.js'
+        : 'http://push.zhanzhang.baidu.com/push.js', { defer: true });
+
+      // Bing UET
+      inject('//bat.bing.com/bat.js', {
+        async: true,
+        onLoad: function () {
+          initBingUet();
+        }
+      });
+      setTimeout(function () {
+        initBingUet();
+      }, 1500);
+
+      // bilibili track
+      inject('https://s1.hdslb.com/bfs/cm/cm-sdk/static/js/track-collect.js', { defer: true });
+
+      // CakeGrowth
+      inject('https://cakegrowth.cn/static/cg.min.js', { async: true, attrs: { 'data-cakegrowth': 'o02vqyzjm7' } });
+    })();</script><style>#monica-content-root{display:none}#monica-writing-entry-btn-root{display:none}</style><meta charset="UTF-8"><link rel="preload" href="/assets/meituantype-Regular.TTF" as="font" type="font/truetype" crossorigin><link rel="icon" href="/app/favicon.ico"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"><meta data-rh="true" name="description" property="og:description" content="蛙蛙写作辅助AI写文，帮助获取创意灵感，提供拆书、小说转剧本、视频生成等功能，是一款功能全面的AI智能写作工具。"><meta data-rh="true" name="keywords" content="AI写文、AI智能写作、deepseek、写网文、AI写作、写作辅助工具、视频生成工具、智能写作助手"><meta name="google-site-verification" content="WhQsRr6HqKQ-g8juhflllFdtgYqg3ApGtRXF9o1UZpk"/><link rel="canonical" href="https://wawawriter.com/"/><title>蛙蛙写作——超级AI智能写作助手</title><script>globalThis.$$time='2024/3/8 19:00:00';globalThis.$$activityUrl='https://www.wawawriter.com/activity/';globalThis.$$activityStartTime='2024/3/20 00:00:00';globalThis.$$activityEndTime='2024/3/24 23:59:59';</script><script src="https://tam.cdn-go.cn/aegis-sdk/latest/aegis.min.js"></script><script>function getUuid() {
+    function generateUUID() {
+      let d = new Date().getTime();
+      const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = (d + Math.random() * 16) % 16 | 0;
+        d = Math.floor(d / 16);
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
+      return uuid;
+    }
+    let uuid = localStorage.getItem('uuid');
+    if (!uuid) {
+      uuid = generateUUID();
+      localStorage.setItem('uuid', uuid);
+    }
+    return uuid;
+  }
+  if (typeof Aegis === 'function') {
+    // 增加静态资源测速的采样率
+    let speedReport = false
+    if (Math.random() < 0.1) {
+      speedReport = true
+    }
+
+    var aegis = new Aegis({
+      id: 'Jj1L2cl1rQo6LmKOar', // 上报 id
+      uin: getUuid(), // 用户唯一 ID（可选）
+      reportApiSpeed: false, // 接口测速
+      reportAssetSpeed: speedReport, // 静态资源测速
+      spa: true, // spa 应用页面跳转的时候开启 pv 计算
+      hostUrl: 'https://rumt-zh.com',
+      repeat: 3,
+      beforeRequest: (data) => {
+        // console.info(data)
+        // 拦截：日志类型为 speed，且url包含 event/trigger 的请求
+        // if (data.logType === 'speed' && data.logs &&  data.logs.url && data.logs.url.indexOf('event/trigger') > -1) {
+        //   return false;
+        // }
+        return data;
+      }
+    });
+  }</script><script type="module" crossorigin src="/app/assets/index.BBoeiWvc.js"></script><link rel="modulepreload" crossorigin href="/app/assets/icons.DxJZHwDH.js"><link rel="modulepreload" crossorigin href="/app/assets/vendor.CYk41CRW.js"><link rel="modulepreload" crossorigin href="/app/assets/element-plus.Cbud-kPc.js"><link rel="modulepreload" crossorigin href="/app/assets/purify.es.CkO3CgFE.js"><link rel="stylesheet" crossorigin href="/app/assets/vendor-CVuKwilv.css"><link rel="stylesheet" crossorigin href="/app/assets/element-plus-CYrBOru0.css"><link rel="stylesheet" crossorigin href="/app/assets/index-BdX3gjvV.css"><link rel="manifest" href="/app/manifest.webmanifest"></head><body><div id="app"></div></body></html>
