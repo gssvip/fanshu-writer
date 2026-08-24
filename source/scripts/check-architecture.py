@@ -28,7 +28,12 @@ MAX_ROUTES_PER_FILE = 30
 #   - _get_skill_prompts_by_category 新增 book_genre 参数+文风类 genre_target 过滤 (~22行)
 #   - 新增 _get_enabled_style_pack 真实实现（之前 build_writing_rules 引用它但不存在）(~19行)
 #   → 净增 14009 - 13976 = 33 行
-APP_PY_BASELINE = 14009
+# 2026-08-24 重校准4（Humanizer 去AI痕迹融合到内置规则）：
+#   - STANDARD_WRITING_STYLE_PROMPT 追加：Humanizer·废话黑名单/禁止句式6种/叙事恶习10条/
+#     被动→主动/副词→动作/其他AI模式6条/反例速查11条/快速检查6条 → 净+42行
+#   - 文风铁律追加硬卡5（5.1-5.6 全链路口径） → 净+6行
+#   → 净增 14057 - 14009 = 48 行
+APP_PY_BASELINE = 14057
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限

@@ -150,6 +150,9 @@ def validate_chapter(content: str) -> ValidationResult:
     #     对接 app.py 文风铁律硬卡4；任何一条严重违规则升级为 critical（作者必须修订）。
     _check_quantitative_hardcards(text, cfg, result)
 
+    # 17. Humanizer·去AI痕迹铁律5.2/5.3/5.4 专项检测（虽然但是/不仅而且/列举腔/连续了/被字句/X地副词）
+    _check_humanizer_patterns(text, result)
+
     return result
 
 
@@ -1041,6 +1044,12 @@ _STYLE_FORBIDDEN_WORDS = [
     '淡漠', '漠然', '眸子', '嘴角微微上扬', '如同', '宛如', '犹如', '周身', '周遭',
     '气息', '威压', '那道身影', '说话间', '话音未落', '当即', '顿时', '瞬时',
     '因此', '然而', '显而易见', '由此可见', '总而言之', '综上所述',
+    # ===== Humanizer 5.1·删废话黑名单（16+7 词，正文 0 次命中）=====
+    '值得注意的是', '总的来说', '不可否认', '众所周知', '值得一提的是', '换言之',
+    '从某种意义上说', '需要指出的是', '也就是说', '换句话说', '不难看出', '可以说',
+    '可以这么说', '需要说明的是',
+    # ===== Humanizer 5.5·分析报告术语（正文绝不能出现，像AI把PPT硬塞进小说）=====
+    '核心动机', '信息边界', '信息落差', '利益最大化', '底层逻辑', '认知差', '降维打击',
     '震惊', '复杂', '激动',
 ]
 
@@ -1536,6 +1545,104 @@ _COMPARISON_CHAIN_WORDS = ['比起', '可比', '相比', '可见', '小巫见大
 
 # 修正感句式触发词
 _CORRECTION_WORDS = ['不是', '准确说', '准确的说是', '不对', '……不对', '不，', '不…', '不是…']
+
+
+def _check_humanizer_patterns(text: str, result: ValidationResult):
+    """Humanizer 硬卡5 专项检测：5.2禁止句式 + 5.3被字句 + 5.4X地副词 + 5.1/5.5已由_style_forbidden_words+forbidden_patterns兜底。
+    此处做计数级统计 + 超阈值告警（独立计数方便前端展示）。"""
+    if not text:
+        return
+    stats = result.stats
+    # 5.2 虽然但是/不仅而且/第一第二第三列举腔/连续了堆砌/排比三连
+    sb_count = len(re.findall(r'虽然[^。！？]{4,60}但是', text))
+    bj_count = len(re.findall(r'不仅[^。！？]{4,60}(而且|并且|还同时|更进一步)', text))
+    enum3_count = len(re.findall(r'(?:第一|首先)[^。！？]{2,30}(?:第二|其次)[^。！？]{2,30}(?:第三|最后)', text))
+    # 连续「了」堆砌：按单句切，单句内 count('了')>=3 的句数
+    le_ge3_sents = 0
+    first_le_sent = ''
+    for s in re.split(r'[。！？\n]', text):
+        s = s.strip()
+        if not s:
+            continue
+        n = s.count('了')
+        if n >= 3:
+            le_ge3_sents += 1
+            if not first_le_sent:
+                first_le_sent = s[:36] + ('…' if len(s) > 36 else '')
+    # 5.3 被字句（简单计数：按"被…谓语动词"句型，认常见 28 个被动动词 + 被动构式）
+    bei_re = re.compile(r'被[^，。！？\n]{0,30}(?:捏碎|打碎|杀死|打伤|吓跑|传到|推开|吹开|吹倒|打开|关上|放开|咬住|刺伤|劈碎|砸烂|扔掉|丢下|拖走|拉住|拽住|按住|压住|撞上|抓住|发现|带走|传了出去|捏|抓|打|杀|吓|传|推|吹|开|关|放|咬|刺|劈|砸|扔|丢|拖|拉|拽|按|压|撞)')
+    bei_count = len(bei_re.findall(text))
+    # 补抓"被吓了一跳/被吓到"的短式（避免被上面 30 字范围 + 动词表卡掉）
+    bei_count += len(re.findall(r'被(?:他|她|它|他们|她们)?(?:给|把|叫|让)?吓了一跳', text))
+    # 5.4 X地副词（高频模板词）
+    adv_pat = re.compile(r'(冷冷地|悄悄地|快速地|慢慢地|缓缓地|死死地|轻轻地|狠狠地|微微地|默默地|静静地|重重地|深深地|紧紧地)')
+    adv_hits = {}
+    for m in adv_pat.finditer(text):
+        w = m.group(1)
+        adv_hits[w] = adv_hits.get(w, 0) + 1
+    adv_total = sum(adv_hits.values())
+    adv_top3 = sorted(adv_hits.items(), key=lambda x: -x[1])[:3]
+    stats['humanizer_suoran_danshi'] = sb_count
+    stats['humanizer_bujin_erqie'] = bj_count
+    stats['humanizer_enum3_liedui'] = enum3_count
+    stats['humanizer_sentence_le_ge3'] = le_ge3_sents
+    stats['humanizer_beizi_count'] = bei_count
+    stats['humanizer_advde_total'] = adv_total
+    # 告警判定（critical / warning）
+    if sb_count > 0:
+        result.add(ValidationIssue(
+            severity='critical' if sb_count >= 2 else 'warning',
+            category='Humanizer 5.2·「虽然…但是…」公式转折',
+            pattern='虽然…但是…',
+            count=sb_count,
+            position=f'全章 {sb_count} 处；写法属于AI标准对仗模板',
+            suggestion='不要用「虽然A但是B」硬套转折。改用角色内心吐槽/前后动作反差写转折：「虽然他很强，但是他输了」→「他确实强，可对面那个老东西更脏」。',
+        ))
+    if bj_count > 0:
+        result.add(ValidationIssue(
+            severity='critical' if bj_count >= 1 else 'warning',
+            category='Humanizer 5.2·「不仅…而且…」递进对仗',
+            pattern='不仅…而且/并且…',
+            count=bj_count,
+            position=f'全章 {bj_count} 处',
+            suggestion='「不仅A而且B」是AI写说明文的模板。拆成两句，各写一个事实，让读者自己感受递进。',
+        ))
+    if enum3_count > 0:
+        result.add(ValidationIssue(
+            severity='critical',
+            category='Humanizer 5.2·「第一/第二/第三」三段式列举腔',
+            pattern='第一…第二…第三/首先…其次…最后…',
+            count=enum3_count,
+            position=f'全章 {enum3_count} 处三段式列举',
+            suggestion='不要把正文写成会议纪要。两项或四项都比三项自然；改成散句叙述，每条信息埋在动作/对白里。',
+        ))
+    if le_ge3_sents > 0:
+        result.add(ValidationIssue(
+            severity='warning' if le_ge3_sents <= 1 else 'critical',
+            category='Humanizer 5.2·连续「了」字堆砌',
+            pattern='同一句≥3个「了」',
+            count=le_ge3_sents,
+            position=f'全章 {le_ge3_sents} 句；例：{first_le_sent}',
+            suggestion='一句只保留 1 个有力的"了"，其余删掉或改动词原形：「他走了过去，拿了杯子，喝了一口水」→「他走过去，端起杯子，灌了一口」。',
+        ))
+    if bei_count > 1:
+        result.add(ValidationIssue(
+            severity='warning' if bei_count == 2 else 'critical',
+            category='Humanizer 5.3·被字句超阈值（网文偏爱主动）',
+            pattern='含「被」+ 被动谓语',
+            count=bei_count,
+            position=f'整章 {bei_count} 处被字句（硬卡 ≤ 1 处）',
+            suggestion='翻成主动语态：「杯子被他捏碎了」→「他捏碎了杯子」；「消息被传到城里」→「消息传到城里」。主动语态天然有网文味。',
+        ))
+    if adv_total >= 3:
+        result.add(ValidationIssue(
+            severity='warning' if adv_total <= 5 else 'critical',
+            category='Humanizer 5.4·「X地」副词模板化',
+            pattern='冷冷地/悄悄地/快速地/慢慢地/死死地… 合计≥3处',
+            count=adv_total,
+            position=f'合计 {adv_total} 处；TOP：' + '，'.join(f'{w}×{c}' for w,c in adv_top3),
+            suggestion='不要写「X地XX」副词模板。冷冷地说→写动作微表情；悄悄地走→写声音+触感。副词一律删，换成具体描写。',
+        ))
 
 
 def _clamp_score(v):
