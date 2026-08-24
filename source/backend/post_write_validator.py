@@ -1291,14 +1291,20 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
     n_par = len(paragraphs)
 
     # 4.1 段内句号/句终标点硬上限 ≤ 2；含 ≥ 3 句终标点的段数必须 = 0
+    # 4.1b 补充口径：段落字数（含标点）≤15 字的短段，句终标点必须 ≤ 1（短段绝对不允许塞 2 句完整话）
     over3_per_par = 0
     first_over3_idx = -1
     first_over3_count = 0
+    short_le15_ge2 = 0                 # ≤15字短段 且 ≥2个句终标点 的段数
+    first_le15_idx = -1
+    first_le15_count = 0
+    first_le15_len = 0
     per_par_period_counts = []
     total_sentences = 0
     total_sentence_chars = 0
     sent_lengths = []
     for i, p in enumerate(paragraphs):
+        plen = len(p)
         c = 0
         for pend in ('。', '！', '？'):
             c += p.count(pend)
@@ -1327,6 +1333,13 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
             if first_over3_idx < 0:
                 first_over3_idx = i + 1
                 first_over3_count = c
+        # 4.1b 短段≤15字 但 ≥2个句终标点 → 违规（最典型AI碎段形态）
+        if plen <= 15 and c >= 2:
+            short_le15_ge2 += 1
+            if first_le15_idx < 0:
+                first_le15_idx = i + 1
+                first_le15_count = c
+                first_le15_len = plen
 
     # 4.2 段均字数比例：≤70字 占比 ≥ 70%（手机端三行内）；叙述短段(<40字)仅统计参考（含对白段，占比无下限要求）
     par_lengths = [len(p) for p in paragraphs]
@@ -1358,6 +1371,7 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
     stats['par_length_lt40_ratio'] = round(lt40_ratio, 3)
     stats['short_sent_shard_ratio'] = round(short_shard_ratio, 3)
     stats['pars_with_periods_ge3'] = over3_per_par
+    stats['pars_le15_periods_ge2'] = short_le15_ge2  # ≤15字短段塞≥2句号的段数
 
     # ===== 告警判定（分 critical / warning 两级）=====
     # 4.1 段内≥3句号 —— 只要有 ≥ 1 段，直接 critical（AI 味最浓来源）
@@ -1375,6 +1389,22 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
                 f'但本章有 {over3_per_par} 段堆了 ≥ 3 句小短句（漫画分镜脚本化是最浓 AI 味来源）。'
                 f'修复：把同 POV/同镜头/同动作链的 3+ 个小短句合并成 1–2 句完整中长句；'
                 f'绝不允许一句话硬剁成 3+ 个残切碎段。'
+            ),
+        ))
+
+    # 4.1b 短段（≤15字）塞 ≥2 个句终标点 → 命中即判 critical（典型AI碎段：短段里挤2个完整句号）
+    if short_le15_ge2 > 0:
+        short_le15_ratio = short_le15_ge2 / n_par if n_par else 0.0
+        result.add(ValidationIssue(
+            severity='critical' if (short_le15_ge2 >= 2 or short_le15_ratio >= 0.05) else 'warning',
+            category='硬卡4.1b·短段句号超限（≤15字硬塞≥2句）',
+            pattern='段落字数≤15字 且 句终标点≥2',
+            count=short_le15_ge2,
+            position=f'例如第 {first_le15_idx} 段仅 {first_le15_len} 字就塞了 {first_le15_count} 句；整章共 {short_le15_ge2} 段（占 {short_le15_ratio*100:.1f}%）',
+            suggestion=(
+                f'文风铁律 4.1 补充口径：≤15 字的短段只能含 ≤ 1 个句号（短段里绝对不允许塞 2 句完整话）。'
+                f'修复：①把 2 句短段合并成 1 句逗号长句（16–28字），要么②拆成 2 个独立短段各含 1 句（仅用于重拍/转折/收尾）；'
+                f'绝不允许 7–13 字一段里挤 2 个句号。'
             ),
         ))
 
