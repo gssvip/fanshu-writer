@@ -1955,7 +1955,8 @@ def _action_master_create(book, session, instruction, gw, sse):
         plot_design_more = (
             '\n\n【大纲维度铁律·禁止只写几句话五幕】必须写满：'
             '五幕(立身/立足/立势/立威/立命)对应到连续卷号 + 每卷6项指标 '
-            '(①本卷爽点4小1大 ②新登场2-3人 ③地点动线A→B→C至少3处 ④修炼/事业/财富/关系/势力五项进展 ⑤2-3条新伏笔+回收计划 ⑥卷尾得到/失去/新任务)；'
+            '(①本卷爽点4小1大 ②人物方向1句话(具体名单归人物/剧情维度) ③地点动线方向1句话(具体清单归剧情/地图维度) '
+            '④修炼/事业/财富/关系/势力五项进展 ⑤伏笔主题方向1-2句(具体条目归剧情/伏笔维度) ⑥卷尾得到/失去/新任务)；'
             '结尾附一张【跨卷尾钩子承接总览】(卷1尾 ←接→ 卷2头 ...)。'
             '总字数不少于 1500 字。'
         ) if dim == 'plot_design' else ''
@@ -3072,15 +3073,22 @@ def _downgrade_prompt_for_retry(messages, keep_dim=None):
 
 # 维度定义：用户可见的9个维度子按钮（设定Tab下）
 SMART_DIMENSIONS = [
-    {'key': 'concept',            'label': '构思',       'field': 'concept',            'card': 'SAVE_CONCEPT',      'icon': '💡', 'hint': '一句话讲清故事核：主角是谁、要什么、最大的阻碍'},
-    {'key': 'key_rules',          'label': '设定',       'field': 'key_rules',          'card': 'SAVE_RULE',         'icon': '⚙️', 'hint': '能力体系/修炼体系/科技树，硬规则'},
-    {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': '🌍', 'hint': '故事发生的世界，独特规则或设定（生成中会提取世界地图架构到“地图”维度）'},
-    {'key': 'plot_design',        'label': '大纲',       'field': 'plot_design',        'card': 'SAVE_OUTLINE_NODE', 'icon': '📋', 'hint': '主线走向，三幕式或起承转合'},
-    {'key': 'character_profiles', 'label': '人物',       'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': '👤', 'hint': '主角和核心配角的动机、性格、关系网'},
-    {'key': 'timeline',           'label': '剧情',       'field': 'timeline',           'card': 'SAVE_PLOT',         'icon': '📖', 'hint': '关键剧情节点的时间顺序'},
-    {'key': 'foreshadowing',      'label': '伏笔',       'field': 'foreshadowing',      'card': 'SAVE_FORESHADOW',   'icon': '🔮', 'hint': '长线伏笔的埋设与回收计划'},
-    {'key': 'locations',          'label': '地图',       'field': 'locations',          'card': 'SAVE_LOCATION',     'icon': '🗺️', 'hint': '故事中的地点、势力分布、世界地图架构'},
-    {'key': 'style_guide',        'label': '文风',       'field': 'style_guide',        'card': 'APPLY_STYLE',       'icon': '🎨', 'hint': '叙事风格、语言调性、节奏把控'},
+    # mode 说明（维度生成模式）：
+    #   suggest = 方向性选择维度：smart_suggest 生成 3-5 个差异化方案卡供作者多选一
+    #             （构思=方向源头 / 文风=口味偏好 / 大纲=结构路线多解，必须给选择）
+    #   direct  = 执行性展开维度：上游必填依赖已完善时不再出多方案（伪选择：上游已锁方向，
+    #             多方案只会诱导 LLM 各换一套体系，选定后与已定构思打架=拼凑感根源），
+    #             直接基于锁定上游生成 + 不满意整体重生成（reroll）；
+    #             依赖未完善时保留多方案作为探索模式兜底
+    {'key': 'concept',            'label': '构思',       'field': 'concept',            'card': 'SAVE_CONCEPT',      'icon': '💡', 'hint': '一句话讲清故事核：主角是谁、要什么、最大的阻碍', 'mode': 'suggest'},
+    {'key': 'key_rules',          'label': '设定',       'field': 'key_rules',          'card': 'SAVE_RULE',         'icon': '⚙️', 'hint': '能力体系/修炼体系/科技树，硬规则（构思已定金手指方向时直接生成）', 'mode': 'direct'},
+    {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': '🌍', 'hint': '故事发生的世界，独特规则或设定（生成中会提取世界地图架构到“地图”维度）', 'mode': 'direct'},
+    {'key': 'plot_design',        'label': '大纲',       'field': 'plot_design',        'card': 'SAVE_OUTLINE_NODE', 'icon': '📋', 'hint': '主线走向，五幕式总纲（卷数与五幕映射已锁定，方案只在每卷目标组织上差异）', 'mode': 'suggest'},
+    {'key': 'character_profiles', 'label': '人物',       'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': '👤', 'hint': '主角和核心配角的动机、性格、关系网（构思已定主角/反派框架时直接生成）', 'mode': 'direct'},
+    {'key': 'timeline',           'label': '剧情',       'field': 'timeline',           'card': 'SAVE_PLOT',         'icon': '📖', 'hint': '关键剧情节点的时间顺序（大纲已定每卷目标时直接生成）', 'mode': 'direct'},
+    {'key': 'foreshadowing',      'label': '伏笔',       'field': 'foreshadowing',      'card': 'SAVE_FORESHADOW',   'icon': '🔮', 'hint': '长线伏笔的埋设与回收计划（基于大纲/剧情派生，直接生成）', 'mode': 'direct'},
+    {'key': 'locations',          'label': '地图',       'field': 'locations',          'card': 'SAVE_LOCATION',     'icon': '🗺️', 'hint': '故事中的地点、势力分布、世界地图架构（基于世界观派生，直接生成）', 'mode': 'direct'},
+    {'key': 'style_guide',        'label': '文风',       'field': 'style_guide',        'card': 'APPLY_STYLE',       'icon': '🎨', 'hint': '叙事风格、语言调性、节奏把控', 'mode': 'suggest'},
 ]
 
 # 通用聊天：不属于任何维度，自由讨论小说/剧情分析，通过触发关键词填入各维度
@@ -4018,6 +4026,46 @@ def smart_suggest():
         pass
     ctx, self_content = _build_dim_context(book, bb, dim_key)
 
+    # ===== 【direct 模式·执行性展开维度】上游必填依赖已完善时不再出多方案 =====
+    # 上游（构思的金手指/世界观卖点/主角反派框架、大纲的每卷目标）已把方向锁死，
+    # 此时多方案是伪选择：LLM 会在不同方案里各换一套体系方向，选定后与已定上游打架
+    # = 拼凑感根源之一。→ 直接返回固定卡片（不调 LLM，零成本零延迟），
+    # 前端点卡片走 smart_generate 直生；不满意整体重生成（reroll，换角度不换方向）。
+    # 依赖未完善时保留多方案作为探索模式兜底；用户贴了自己的完整内容时走原流程。
+    if spec.get('mode') == 'direct' and not user_paste:
+        _dep_req = DIMENSION_DEPENDENCIES.get(dim_key, {}).get('required', [])
+        _direct_ready = True
+        try:
+            _direct_ready = check_dim_readiness(bb, dim_key).get('ready', True)
+        except Exception:
+            _direct_ready = True  # 就绪检查异常不阻断，宁可直生也不让作者卡住
+        if _direct_ready:
+            _dep_labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k in _dep_req if k in _DIM_KEY_TO_SPEC) or '上游设定'
+            _direct_hints = {
+                'key_rules': '力量体系/等级阶梯/经济数值严格按构思第六节金手指方向展开，禁止另起体系',
+                'worldbuilding': '地理/势力/历史严格按构思第九节世界观卖点钩子展开，禁止另起世界观',
+                'character_profiles': '主角严格按构思第七节魅力公式、反派按第八节框架展开，禁止换人设方向',
+                'timeline': '各卷剧情严格按大纲每卷目标/冲突/卷尾钩子展开，禁止偏离五幕框架',
+                'foreshadowing': '伏笔埋设/回收按大纲与剧情节点派生，禁止凭空新开主线级伏笔',
+                'locations': '地点严格按世界观地理分块与势力分布派生，禁止另起地名体系',
+            }
+            _direct_meta = {'direct_mode': True}
+            if params_sync_notes:
+                _direct_meta['params_sync'] = params_sync_notes
+            return jsonify({
+                'suggestions': [{
+                    'id': 'sug_1',
+                    'title': f'基于已定{_dep_labels}直接生成',
+                    'preview': (f'本维度为执行性展开，方向已由{_dep_labels}锁定：'
+                                + _direct_hints.get(dim_key, '基于已定上游方向直接展开')
+                                + '。生成后不满意可整体重新生成（换展开角度，方向不变）；需调整局部请在生成后对内容提修改意见。'),
+                }],
+                'dimension': dim_key,
+                'dimension_label': spec['label'],
+                'requirement': requirement,
+                'meta': _direct_meta,
+            })
+
     # 注入核心创作参数铁律（卷数/题材/风格），方案简介里禁止再出现"十卷/五卷/5-8卷"这种默认值
     # 【用户截图的根源】以前用的 _build_core_params_block 太弱，AI仍然按网文常识写"十卷"
     # 现在强制用 _core_params_iron_block（同 chat_smart 那条铁律），且对 preview 简介做专门约束
@@ -4439,8 +4487,11 @@ def smart_generate():
     session_id = data.get('session_id')
     # 用户选中了"我的方案"并要直接落地：跳过 LLM，原样 delta 输出 suggestion 并产卡片，保证内容不被 AI 改写
     from_user_paste = bool(data.get('from_user_paste'))
+    # 【direct 模式】整体重新生成（reroll）：换展开角度，方向仍锁定上游不变
+    reroll = bool(data.get('reroll'))
 
-    if not book_id or dim_key not in _DIM_KEY_TO_SPEC or not suggestion:
+    # reroll 允许 suggestion 为空：direct 模式的方向来自 DB 已定上游，不依赖方案卡片文本
+    if not book_id or dim_key not in _DIM_KEY_TO_SPEC or (not suggestion and not reroll):
         return jsonify({'error': '参数无效：需要 book_id/dimension/suggestion'}), 400
 
     spec = _DIM_KEY_TO_SPEC[dim_key]
@@ -4479,6 +4530,36 @@ def smart_generate():
 
     # 注入核心创作参数铁律（卷数/题材/风格），让大纲/剧情等维度严格按全书卷数规划
     core_params = _core_params_iron_block(bb, book)
+
+    # ===== 【direct 模式·上游方向锁定】执行性展开维度（设定/世界观/人物/剧情/伏笔/地图）=====
+    # 上游必填依赖已完善时：注入上游维度全文 + 方向锁定铁律，禁止另起方向与已定上游冲突。
+    # 这是"东拼西凑"的对症修复：下游生成不再漂移，构思的 direction 层权威落到生成时。
+    # reroll=True（整体重新生成）：换一个展开角度，但方向仍锁定不变。
+    direct_lock_note = ''
+    if spec.get('mode') == 'direct':
+        try:
+            _dep_req = DIMENSION_DEPENDENCIES.get(dim_key, {}).get('required', [])
+            _filled_deps = [k for k in _dep_req if _is_dim_filled(bb, k)]
+            if _filled_deps:
+                _dep_full_parts = []
+                for _dk in _filled_deps:
+                    _dspec = _DIM_KEY_TO_SPEC.get(_dk, {})
+                    _dval = (getattr(bb, _dspec.get('field', ''), '') or '').strip() if bb else ''
+                    if _dval:
+                        if _dk == 'character_profiles' and _dval.startswith('['):
+                            _dval = _character_profiles_to_text(_dval)
+                        _dep_full_parts.append(f'【已定{_dspec.get("label", _dk)}·方向锁定原文（最高权威，必须严格遵循）】\n{_dval}')
+                if _dep_full_parts:
+                    _roll_note = ('\n【整体重新生成·reroll】上一次生成的内容作者不满意，请换一个展开角度重新组织本维度'
+                                  '（不同的组织结构/切入顺序/细节侧重），但方向仍以上述锁定原文为准，禁止漂移。'
+                                  if reroll else '')
+                    direct_lock_note = ('\n\n' + '\n\n'.join(_dep_full_parts)
+                                        + '\n\n【方向锁定铁律·违规=作废】本维度是执行性展开，上面的已定上游就是方向源头：'
+                                          '所有体系/人物/事件必须在其框架内展开细化，禁止另起炉灶、禁止引入与上游冲突的体系/人设/走向；'
+                                          '若展开中发现上游有空缺，按上游已有逻辑自然补全，不得反向推翻上游。'
+                                        + _roll_note)
+        except Exception:
+            direct_lock_note = ''
 
     # 构思阶段·专属规则：通用核心+构思格式约束+master技能包（屏蔽文风/去AI规则）
     # 大纲/剧情维度的专属附加要求在后面组装后，再二次注入 extra_master_note
@@ -4529,7 +4610,7 @@ def smart_generate():
                             existing_volumes = '\n'.join(vol_lines)
                     except Exception:
                         pass
-                timeline_extra = f'\n\n【剧情维度专属要求】全书严格 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章。请基于五幕式总纲生成全部 {tv} 卷的剧情，各卷剧情连贯、卷间衔接（ending_hook与下一卷开头承接）。'
+                timeline_extra = f'\n\n【剧情维度专属要求】全书严格 {tv} 卷，每卷约 {cpv} 章，全书约 {total_chapters} 章。请基于五幕式总纲生成全部 {tv} 卷的剧情，各卷剧情连贯、卷间衔接（ending_hook与下一卷开头承接）。\n【大纲承接铁律】若已提供大纲（plot_design），各卷 main_events 的事件排序必须落在大纲该卷核心目标/主要冲突框架内，ending_hook 必须具体承接大纲该卷"卷尾高潮与悬念"（大纲定钩子方向，剧情写具体事件）；大纲未覆盖的空缺按其逻辑自然补全，禁止另起走向。'
                 if existing_volumes:
                     timeline_extra += f'\n\n【已有卷剧情（须保持连贯，可在其基础上完善）】\n{existing_volumes}'
                 # 核心密度约束：每卷 summary(总概要) + main_events(8-12个主要剧情事件，默认10)
@@ -4855,20 +4936,23 @@ def smart_generate():
 - 能力/境界能不能"掉落"？掉落之后如何恢复？有没有"二次破境更上一层"的可能？
 - 金手指/核心能力的"冷却时间/资源消耗/使用条件/触发场景"，至少写 3 条边界条件。
 
-九、【种族/职业/阵营基础设定（总表）】
+九、【种族/职业/阵营能力克制表】
+【维度边界】本节只写"能力与克制"（战斗/对抗怎么算）；种族的文化信仰、栖息地、外貌寿命、种族关系史归"世界观"维度种族大观节，本节不重复展开。
 列出本书的主要种族/职业/阵营（人族 / 妖族 / 魔族 / 灵族 / 机械族 / 异能者 / 修士 / 星舰军官 / 江湖门派 / 教会 / 联邦...）：
-- 每一方的核心能力方向、优势、劣势、寿命、外貌、居住区域、主要信仰；
-- 种族/阵营之间的历史矛盾（谁灭了谁的国、谁统治过谁、谁和谁有世代血仇）；
-- 跨种族/跨阵营的禁忌（通婚？夺舍？混血？背叛？地下交易？）。
+- 每一方的核心能力方向、战斗优势、战斗劣势（只写能力面）；
+- 种族/阵营之间的能力克制关系（谁克谁、什么条件下能跨级对抗）；
+- 跨种族/跨阵营的能力禁忌（夺舍？吞噬？血脉污染？借用异族之力会怎样？）。
 
 十、【世界硬规则与禁忌（铁律·剧情冲突的发动机）】
+【维度边界】本节只管"力量使用与超凡行为的禁忌"（修炼/异能/科技使用层面的铁律）；社会治理类律法（刑法/审判/政体/税收）归"世界观"维度政治与律法节，本节不重复。
 列出至少 8 条"世界铁律"，人物如果违反就会被追杀/死亡/天谴/降级/反噬/被剥夺权力：
 - 如：夺舍 = 魔道 / 修炼者不能对凡人大开杀戒 / 热武器在XX地失效 / 飞升或成神要献祭XX / 系统拒绝作弊 / 非凡者在公众面前暴露异能会被官方清洗 / 谁敢动XX遗迹谁就被诅咒 / 高级修士不可随意干预凡间；
 每条铁律还要写：执法者是谁？执法手段？是否有灰色地带/暗规则可以钻空子？主角会不会在剧情中主动/被动违反这些铁律？铁律本身是不是最终 Boss 用来维持秩序的工具？
 
-十一、【科技树/修炼树/文明水平总览】
-如果是科幻/机甲/星际/末世：写清科技树（能源、武器、护盾、跃迁、AI、生物技术、外骨骼、星舰等级、反物质）、文明分级（如I/II/III型文明）、当前主角所处的文明层级与天花板差多少？
-如果是玄幻/仙侠/奇幻：写清修炼文明的层级（王朝→大宗→圣地→皇朝→仙朝→神朝），每一级对应的平均实力、领地规模、可调动资源；
+十一、【体系天花板总览（战力/科技上限）】
+【维度边界】本节只写"力量体系的层级与天花板"（各级战力/科技上限）；文明的政体规模、社会形态、平均生活水平归"世界观"维度势力/阶级节，本节不重复。
+如果是科幻/机甲/星际/末世：写清科技树（能源、武器、护盾、跃迁、AI、生物技术、外骨骼、星舰等级、反物质）、当前主角所处的科技层级与全书天花板差多少？
+如果是玄幻/仙侠/奇幻：写清修炼文明的实力层级（王朝→大宗→圣地→皇朝→仙朝→神朝），每一级对应的平均实力上限、可调动战力规模；
 最终给出一句"下游任何剧情/战力/装备/经营描写如果和本节铁律冲突，以本节体系为准，必须自动修正。"
 """
 
@@ -4919,6 +5003,7 @@ def smart_generate():
 写出各阶层之间的流动是开是闭？有没有严格的种姓/血脉/出身限制？阶级矛盾是不是主线冲突的发动机？
 
 七、【政治与律法（谁制定规则、谁执法、谁钻空子）】
+【维度边界】本节写社会治理面（政体/法律来源/执法审判/灰色地带）；力量使用层面的超凡禁忌（夺舍=魔道、暴露异能被清洗等）归"设定"维度世界硬规则节，本节不重复。
 - 国体：君主专制/贵族共和/组织议会/联邦民主/神权/军政府？
 - 法律的来源：神谕/皇帝敕令/组织戒律/商会章程/旧例判例；
 - 执法者：禁军/锦衣卫/刑堂/审判庭/治安司/赏金猎人；
@@ -4926,6 +5011,7 @@ def smart_generate():
 - 灰色地带：黑市/地下钱庄/灰色法条/买官卖官/贵族豁免权——主角前期怎么在灰区活命、怎么利用灰区翻身、后期要不要打破这些灰区规则？
 
 八、【经济与贸易系统（生产/运输/商路/黑市）】
+【维度边界】本节写产业/商路/贸易/黑市与货币发行权；货币的具体面值、换算进制、物品价格表归"设定"维度资源与货币体系节，本节不重复列价格。
 1) 主要产业：农业/矿业/制造业/修炼业/服务业/信息业；
 2) 核心商路：哪几条大路/运河/航线/传送阵是经济命脉？分别掌握在谁手里？谁能卡住谁的脖子？
 3) 主要港口/坊市/交易都市：至少 3 个，写清它们的特色、税收制度、地下势力；
@@ -4933,6 +5019,7 @@ def smart_generate():
 5) 通货膨胀/货币发行权：谁能铸币？谁能印钞？会不会恶性通胀？主角是否会在中期通过经营/商战掌控货币权？
 
 九、【种族大观（至少5个智慧种族）】
+【维度边界】本节写种族的文化面（栖息地/信仰/习俗/种族关系/社会地位）；种族的战斗能力方向与克制关系归"设定"维度能力克制表节，本节不重复列战力数值。
 列出 5 个以上智慧种族（人/妖/魔/灵/龙/矮/精灵/鲛人/石族/亡灵/机械族/异兽族…），分别写：
 - 外貌、寿命、繁衍方式、栖息地、核心优势、核心短板；
 - 文化信仰、禁忌、主流价值观；
@@ -5030,11 +5117,12 @@ def smart_generate():
 【大纲分节清单·每卷必须写满 6 项 + 跨卷承接 + 爽点排布·最少1500字】
 除了五幕对应和核心目标外，**每一卷**你必须再额外把以下 6 项写出来，缺一项视为敷衍：
 1) 本卷爽点排布（至少4个小爽点+1个大高潮爽点），分别对应剧情哪个阶段；
-2) 本卷新登场的重要人物（至少2-3人）与他们的出场目的；
-3) 本卷主要场景/地点动线（A→B→C，至少3处地点转换）；
+2) 本卷人物方向（新登场的重要人物类型与出场目的，1句话方向即可，如"引入中期对手××及其势力"——具体人物名单与塑造归"人物"维度和"剧情"维度 characters，大纲不展开）；
+3) 本卷地点动线方向（起点→主要舞台→卷尾所在，1句话方向即可——具体地点清单与地理细节归"剧情"维度 location 和"地图"维度，大纲不展开）；
 4) 本卷主角的"修炼/事业/财富/关系/势力"五项进展指标，每项分别从X到Y；
-5) 本卷必须埋设的 2-3 条新伏笔、及预计回收卷；
+5) 本卷伏笔主题方向（本卷侧重埋什么类型的伏笔，如"主角身世线+上古遗迹线"，1-2句话方向即可——具体埋设条目/回收位置归"剧情"维度 bury/payoff 和"伏笔"维度，大纲不展开）；
 6) 本卷结尾处主角"得到了什么 / 失去了什么 / 主动承担的新任务"是什么，确保能把下一卷拉起来；
+【维度边界·防与剧情维度重复】大纲是目标层：写"每卷要完成什么、爽点怎么配、钩子往哪指"；人物名单/地点清单/伏笔条目/事件排序是执行层，归"剧情"维度（其卷级 characters/location 与事件 bury/payoff 会按卷展开），大纲写到方向为止，禁止逐条展开。
 另外，整体大纲结尾要补一张【跨卷连贯性总览】表格化文字（文本即可）：
 第1卷尾钩子 ←接→ 第2卷开头契机
 第2卷尾钩子 ←接→ 第3卷开头契机
@@ -5088,6 +5176,9 @@ def smart_generate():
         conception_rules += '\n\n' + style_extra.strip()
     if af_alerts_gen:
         conception_rules += '\n\n' + af_alerts_gen.strip()
+    # 【direct 模式】上游方向锁定块置于规则块最前（权威最高，先于分节清单读到）
+    if direct_lock_note:
+        conception_rules = direct_lock_note + '\n\n' + conception_rules
 
     # 预拼接块（Python 3.11 禁止 f-string 表达式内含反斜杠，故先算好再引用）
     _self_content_block = ("【当前维度已有内容（可在此基础上完善，不要简单重复）】\n" + self_content) if self_content else ""
@@ -5109,7 +5200,7 @@ def smart_generate():
 {requirement or "无"}
 
 【选中方案】
-{suggestion}
+{suggestion or "（整体重新生成：不基于旧方案，直接按上方方向锁定原文与规则重新展开）"}
 
 {_skill_note_block}
 {_tail_rule}"""

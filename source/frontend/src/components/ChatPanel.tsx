@@ -161,12 +161,14 @@ function formatChapterOption(c: {
   return `${head}（${wc}字）`;
 }
 
-// 判断维度是否走"方案选择"流程：构思/核心设定/世界观 需要发散多方案；大纲/剧情/人物/伏笔等下游维度已由上游确定，直接生成或修改即可。
-// 世界观例外：构思+设定均已定稿（各≥200字）→ 创作方向已被上游钉死，跳过方案选择直接生成。
+// 判断维度是否走"方案选择"流程：与后端 SMART_DIMENSIONS 的 mode 字段对齐——
+// suggest 型（构思/大纲/文风）是方向性选择，必须给多方案；
+// direct 型（设定/世界观/人物/剧情/伏笔/地图）已由上游锁定方向，直接生成或修改即可，
+// 不满意整体重新生成（后端 reroll：换展开角度，方向不变）。
 function shouldShowSuggestions(dimKey: string | null, bible?: BookBible | null): boolean {
   if (!dimKey || dimKey === 'general') return false;
-  if (dimKey === 'worldbuilding' && (bible?.concept || '').trim().length >= 200 && (bible?.key_rules || '').trim().length >= 200) return false;
-  return ['concept', 'key_rules', 'worldbuilding', 'locations', 'inventory'].includes(dimKey);
+  void bible; // 依赖判断已由后端 direct 模式接管（构思已定→返回固定直生卡片），前端不再重复判断
+  return ['concept', 'plot_design', 'style_guide', 'inventory'].includes(dimKey);
 }
 
 // ============================================================================
@@ -2244,8 +2246,8 @@ export default function ChatPanel() {
   }, [activeTab, selectedDim, handleMainSend]);
 
   // 设定Tab：选择维度后
-  // - 构思/设定/世界观 等上游维度：第一次输入走 suggest（生成多选意见），选中后 generate
-  // - 大纲/剧情/人物/伏笔 等下游维度：由上游确定，直接 generate 或 dim-edit，不再给方案
+  // - 构思/大纲/文风 等方向性维度：第一次输入走 suggest（生成多选意见），选中后 generate
+  // - 设定/世界观/人物/剧情/伏笔/地图 等执行性维度：由上游锁定方向，直接 generate 或 dim-edit，不再给方案
   // 生成落地后，再输入走 dim-edit（修订）
   // 通用模式：直接走 general（流式聊天）
   const onInputKeyDown = (e: React.KeyboardEvent) => {
