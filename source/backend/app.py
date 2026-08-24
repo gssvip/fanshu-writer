@@ -1840,99 +1840,27 @@ def add_daily_stats(book_id):
 # ==== Templates API ====
 
 def seed_builtin_templates():
-    if Template.query.filter_by(is_builtin=True).first():
-        return
-    builtins = [
-        {
-            'name': '经典三幕式', 'description': '适合长篇小说，采用开端-发展-结局三幕结构', 'genre': 'other', 'book_type': 'novel',
-            'structure': [
-                {'title': '第一幕：开端', 'is_volume': True, 'parent_id': ''},
-                {'title': '第一章 平凡世界', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第二章 冒险召唤', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第三章 拒绝召唤', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第二幕：发展', 'is_volume': True, 'parent_id': ''},
-                {'title': '第四章 跨越门槛', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第五章 试炼之路', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第六章 中点转折', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第七章 危机降临', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第三幕：结局', 'is_volume': True, 'parent_id': ''},
-                {'title': '第八章 高潮对决', 'is_volume': False, 'parent_id': 'v3'},
-                {'title': '第九章 回归之路', 'is_volume': False, 'parent_id': 'v3'},
-                {'title': '第十章 新的平衡', 'is_volume': False, 'parent_id': 'v3'},
-            ]
-        },
-        {
-            'name': '短篇小说模板', 'description': '简洁的四段式结构，适合万字以内短篇', 'genre': 'other', 'book_type': 'short_story',
-            'structure': [
-                {'title': '开篇：引入', 'is_volume': False},
-                {'title': '发展：冲突', 'is_volume': False},
-                {'title': '高潮：转折', 'is_volume': False},
-                {'title': '结尾：余韵', 'is_volume': False},
-            ]
-        },
-        {
-            'name': '都市言情模板', 'description': '现代都市爱情故事专用模板', 'genre': 'romance', 'book_type': 'novel',
-            'structure': [
-                {'title': '第一卷：相遇', 'is_volume': True, 'parent_id': ''},
-                {'title': '第一章 意外邂逅', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第二章 命运交错', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第三章 心动暗生', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第二卷：相知', 'is_volume': True, 'parent_id': ''},
-                {'title': '第四章 甜蜜日常', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第五章 误会波折', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第六章 真心考验', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第三卷：相守', 'is_volume': True, 'parent_id': ''},
-                {'title': '第七章 破镜重圆', 'is_volume': False, 'parent_id': 'v3'},
-                {'title': '第八章 携手未来', 'is_volume': False, 'parent_id': 'v3'},
-                {'title': '终章 此生不换', 'is_volume': False, 'parent_id': 'v3'},
-            ]
-        },
-        {
-            'name': '玄幻修仙模板', 'description': '玄幻修真小说的标准成长进阶结构', 'genre': 'fantasy', 'book_type': 'novel',
-            'structure': [
-                {'title': '第一卷：凡尘', 'is_volume': True, 'parent_id': ''},
-                {'title': '第一章 少年崛起', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第二章 初入宗门', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第三章 秘境试炼', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第二卷：问道', 'is_volume': True, 'parent_id': ''},
-                {'title': '第四章 宗门大比', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第五章 天劫淬体', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第六章 纵横四海', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第三卷：飞升', 'is_volume': True, 'parent_id': ''},
-                {'title': '第七章 宿命之战', 'is_volume': False, 'parent_id': 'v3'},
-                {'title': '第八章 问道长生', 'is_volume': False, 'parent_id': 'v3'},
-                {'title': '终章 飞升仙界', 'is_volume': False, 'parent_id': 'v3'},
-            ]
-        },
-        {
-            'name': '悬疑推理模板', 'description': '层层递进的悬疑推理小说结构', 'genre': 'mystery', 'book_type': 'novel',
-            'structure': [
-                {'title': '第一卷：迷雾', 'is_volume': True, 'parent_id': ''},
-                {'title': '第一章 案件发生', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第二章 线索初现', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第三章 误入歧途', 'is_volume': False, 'parent_id': 'v1'},
-                {'title': '第二卷：追逐', 'is_volume': True, 'parent_id': ''},
-                {'title': '第四章 新线索', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第五章 逼近真相', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第六章 惊天逆转', 'is_volume': False, 'parent_id': 'v2'},
-                {'title': '第三卷：真相', 'is_volume': True, 'parent_id': ''},
-                {'title': '第七章 凶手现身', 'is_volume': False, 'parent_id': 'v3'},
-                {'title': '第八章 真相大白', 'is_volume': False, 'parent_id': 'v3'},
-                {'title': '尾声 尘埃落定', 'is_volume': False, 'parent_id': 'v3'},
-            ]
-        },
-    ]
-    for t in builtins:
-        s = t['structure']
-        for i, item in enumerate(s):
-            item['order_index'] = i
-        template = Template(
-            name=t['name'], description=t['description'], genre=t['genre'],
-            book_type=t['book_type'], structure_json=json.dumps(s, ensure_ascii=False),
-            is_builtin=True
-        )
-        db.session.add(template)
-    db.session.commit()
+    """【已废弃】不再内置 5 个「经典三幕式/短篇/言情/玄幻/悬疑」固定结构模板。
+    原因：每个 genre 只给 1 套平均值目录骨架，会把同题材小说前 6 章的桥段/体量/节奏
+    全部框死（例如 10 章必须写完「宗门大比/误会波折/飞升仙界」），反而扼杀创作自由。
+
+    向后兼容：
+    - Template 表、GET/POST /api/templates、Book.template_id 字段完全保留；
+    - 用户仍可 POST /api/templates 自建自定义结构模板继续使用；
+    - 前端「模板」下拉框显示「不用模板」+ 用户自建模板，不再出现 5 个内置。
+    """
+    # 旧实现：seed_builtin_templates() 曾插入 5 条 is_builtin=True 的目录骨架。
+    # 为避免旧数据库残留，把已存在的 5 个内置模板标记为"非内置"，让 UI 不默认当"系统模板"强调展示。
+    try:
+        old_names = ('经典三幕式', '短篇小说模板', '都市言情模板', '玄幻修仙模板', '悬疑推理模板')
+        rows = Template.query.filter(Template.name.in_(old_names), Template.is_builtin.is_(True)).all()
+        for r in rows:
+            r.is_builtin = False
+        if rows:
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return
 
 # /api/health 已迁移到 blueprints/health_bp.py（Blueprint 示范）
 
