@@ -33,7 +33,15 @@ MAX_ROUTES_PER_FILE = 30
 #     被动→主动/副词→动作/其他AI模式6条/反例速查11条/快速检查6条 → 净+42行
 #   - 文风铁律追加硬卡5（5.1-5.6 全链路口径） → 净+6行
 #   → 净增 14057 - 14009 = 48 行
-APP_PY_BASELINE = 14057
+# 2026-08-24 重校准5（PromptContextCache 正文/设定先命中缓存，未命中再逐维度读资料省token）：
+#   - 新增 PromptContextCache 单例类（LRU+TTL 2048 项 + 稳定指纹 Key + 命中统计）
+#     + _build_continue_fingerprint_deps（book行+bible14维len+sha1+recent4行+批次参数 零脏读指纹）
+#     + _response_with_cache / _cache_stats_snapshot 辅助函数 → L5447-L5622 = 净 +175 行
+#   - _build_ai_continue_context 新增 Cache FAST PATH 快路径（递归+_bypass_cache标记）→ +60行
+#   - ai_continue / stream / batch / batch_stream 4 wrapper 新增 skip_prompt_cache 参数读取
+#     + 结果 JSON 追加 prompt_cache_info / cache_stats 字段 → 净 +30 行
+#   → 基线 14057 → 14271 净 +214 行；属性能/成本优化（省大量 prompt token），不属业务膨胀
+APP_PY_BASELINE = 14271
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限

@@ -5443,6 +5443,184 @@ def _recall_related_chapters(book_id, appearing_chars, current_chapter_num, max_
     recalled.sort(key=lambda x: x['chapter_num'])
     return recalled
 
+
+# ============================================================================
+# PromptContextCache：智驾设定/正文 prompt 上下文缓存（先命中再逐维度读资料 省 token）
+# - 失效策略：指纹 Key（零脏读）—— Key 本身就包含所有依赖的 hash，任一依赖变 Key 自动
+#   变 → 自动 MISS 重算，不需要维护任何写路由的失效 hook（漏一个 hook 就脏读灾难）
+# - 介质：进程内 LRU + TTL（OrderedDict），多 worker / 进程重启不共享，但退化为原直读
+#   逻辑不影响功能；后续要切 SQLite 持久化只换本类实现，调用处 0 改动
+# - 旁路：skip_cache=True 强制绕开；响应头 X-Prompt-Cache HIT/MISS + X-Tokens-Saved
+# ============================================================================
+from collections import OrderedDict
+import threading, time
+
+
+def _approx_tokens(*texts: str) -> int:
+    """近似 token 计数（中文≈1.5-2字/token → //4 估算，足以便捷对比命中前后）"""
+    total = 0
+    for t in texts:
+        if t:
+            total += max(1, len(t) // 4)
+    return total
+
+
+class PromptContextCache:
+    """单例：get_or_compute(stage, book_id, deps, compute_fn, ttl_sec=600, skip=False)
+    - stage: 'continue_ctx' / 'outline_master' / 'outline_volume' / 'master_dim' 等命名空间
+    - deps:  参与指纹的稳定字符串/tuple/list/dict（会做递归稳定序列化）
+    """
+    _instance = None
+    _instance_lock = threading.Lock()
+
+    @classmethod
+    def get(cls):
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = PromptContextCache(max_items=2048)
+        return cls._instance
+
+    def __init__(self, max_items: int = 2048):
+        self.max_items = max_items
+        self._store: 'OrderedDict[str, tuple]' = OrderedDict()
+        self._lock = threading.Lock()
+        # stats
+        self.hits = 0
+        self.misses = 0
+        self.evicted = 0
+        self.tokens_saved = 0
+
+    # ---------- 稳定哈希（指纹 Key 用）----------
+    @staticmethod
+    def _stable_dumps(obj) -> bytes:
+        if isinstance(obj, dict):
+            items = sorted(((k, PromptContextCache._stable_dumps(v)) for k, v in obj.items()), key=lambda x: x[0])
+            return b'd{' + b'\x1f'.join(k.encode('utf-8') + b'\x1e' + v for k, v in items) + b'}'
+        if isinstance(obj, (list, tuple)):
+            tag = b'l[' if isinstance(obj, list) else b't('
+            return tag + b'\x1f'.join(PromptContextCache._stable_dumps(x) for x in obj) + (b']' if isinstance(obj, list) else b')')
+        if obj is None:
+            return b'N'
+        if isinstance(obj, bool):
+            return b'T' if obj else b'F'
+        if isinstance(obj, (int, float)):
+            return repr(obj).encode('utf-8')
+        return str(obj).encode('utf-8')
+
+    @classmethod
+    def make_key(cls, stage: str, book_id, deps) -> str:
+        raw = b'stage=' + stage.encode('utf-8') + b'|book=' + str(book_id).encode('utf-8') + b'|deps=' + cls._stable_dumps(deps)
+        return stage + ':' + str(book_id) + ':' + hashlib.sha256(raw).hexdigest()[:16]
+
+    # ---------- 主接口 ----------
+    def get_or_compute(self, stage: str, book_id, deps, compute_fn, *, ttl_sec: int = 600, skip_cache: bool = False):
+        """return (payload, cache_info_dict)  cache_info = {'hit':bool,'tokens_saved':int,'key':str,'ttl':int}"""
+        key = self.make_key(stage, book_id, deps)
+        info = {'hit': False, 'tokens_saved': 0, 'key': key, 'ttl': ttl_sec}
+        now = time.time()
+        if not skip_cache:
+            with self._lock:
+                entry = self._store.get(key)
+                if entry is not None:
+                    payload, expire_at, tok_cost = entry
+                    if expire_at > now:
+                        self._store.move_to_end(key)
+                        self.hits += 1
+                        self.tokens_saved += tok_cost
+                        info['hit'] = True
+                        info['tokens_saved'] = tok_cost
+                        return payload, info
+                    else:
+                        try:
+                            del self._store[key]
+                            self.evicted += 1
+                        except Exception:
+                            pass
+        # MISS / skip
+        payload = compute_fn()  # compute_fn 负责真正从 bible/章节/维度 读资料 拼 prompt
+        tok_cost = self._estimate_payload_tokens(payload)
+        expire_at = now + ttl_sec
+        with self._lock:
+            self._store[key] = (payload, expire_at, tok_cost)
+            self._store.move_to_end(key)
+            while len(self._store) > self.max_items:
+                self._store.popitem(last=False)
+                self.evicted += 1
+            self.misses += 1
+        return payload, info
+
+    @staticmethod
+    def _estimate_payload_tokens(payload) -> int:
+        if payload is None:
+            return 0
+        if isinstance(payload, str):
+            return _approx_tokens(payload)
+        if isinstance(payload, dict):
+            texts = []
+            for v in payload.values():
+                if isinstance(v, str):
+                    texts.append(v)
+                elif isinstance(v, (list, tuple)):
+                    texts.extend(str(x) for x in v if isinstance(x, (str, int, float)))
+            return _approx_tokens(*texts)
+        if isinstance(payload, (list, tuple)):
+            return _approx_tokens(*(str(x) for x in payload if isinstance(x, (str, int, float))))
+        return _approx_tokens(str(payload))
+
+    # ---------- API stats ----------
+    def stats(self) -> Dict[str, Any]:
+        with self._lock:
+            size = len(self._store)
+        return {
+            'size': size, 'max_items': self.max_items,
+            'hits': self.hits, 'misses': self.misses,
+            'evicted': self.evicted, 'tokens_saved_approx': self.tokens_saved,
+            'hit_rate_pct': round(100 * self.hits / max(1, self.hits + self.misses), 2),
+        }
+
+    def invalidate_book(self, book_id) -> int:
+        """手动清理整本书的所有缓存（极端场景：改了设定但 MISS 还没触发时用）。返回清理条数"""
+        prefix = ':' + str(book_id) + ':'
+        removed = 0
+        with self._lock:
+            keys = [k for k in self._store.keys() if prefix in k]
+            for k in keys:
+                self._store.pop(k, None)
+                removed += 1
+        return removed
+
+    def clear_all(self):
+        with self._lock:
+            self._store.clear()
+            self.hits = 0
+            self.misses = 0
+            self.evicted = 0
+            self.tokens_saved = 0
+
+
+_PROMPT_CACHE_HELPERS_INJECTED = True
+
+def _response_with_cache(resp, info: Optional[dict]):
+    """给 flask.Response 加 X-Prompt-Cache: HIT/MISS + X-Tokens-Saved 头"""
+    if not info:
+        return resp
+    try:
+        resp.headers['X-Prompt-Cache'] = 'HIT' if info.get('hit') else 'MISS'
+        if info.get('tokens_saved'):
+            resp.headers['X-Tokens-Saved'] = str(int(info['tokens_saved']))
+        resp.headers['X-Cache-Key-Tail'] = str(info.get('key', ''))[-8:]
+    except Exception:
+        pass
+    return resp
+
+
+def _cache_stats_snapshot():
+    return PromptContextCache.get().stats()
+
+
+# ============================================================================
+
 def _filter_bible_by_relevance(bb, appearing_chars, max_per_field=None):
     """按出场角色相关性筛选 bible 维度。
     - character_profiles: 优先包含出场角色的档案块
@@ -6966,14 +7144,104 @@ def _consistency_check(book_id, bb, draft_content, current_chapter_num,
         app.logger.error(f"一致性检查执行异常: {e}")
         return False, "一致性检查执行异常，请人工复核"
 
-def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None, chapter_lang_styles=None, enable_structured_tags=True, skip_chapter_plan=False):
+def _build_continue_fingerprint_deps(book_id, bb, instruction, skill_pack_ids, target_chapter_num,
+                                    prev_chapter_content, chapter_lang_styles, enable_structured_tags,
+                                    skip_chapter_plan, book=None, recent_4ch_ids=None, cache_bible_version=None):
+    """正文创作阶段 指纹 Key（零脏读）：只取 DB 行级稳定标识+本批次参数，不做重查询，轻量。
+    任一依赖变动 → Key 自动变 → 自动 MISS 重算。"""
+    if bb is None:
+        bb_fields_t = (0, '', '', '', '', '', '', '', '', 0)
+    else:
+        # 10 个 bible 可变维度的「len+sha前16」混合指纹：变内容=指纹变（比取完整2000字轻量，又足够敏感）
+        def _fp(s):
+            if not s:
+                return '0'
+            return str(len(s)) + ':' + hashlib.sha1(str(s).encode('utf-8')).hexdigest()[:14]
+        bb_fields_t = (
+            int(getattr(bb, 'id', 0) or 0),
+            _fp(getattr(bb, 'concept', '') or ''),
+            _fp(getattr(bb, 'key_rules', '') or ''),
+            _fp(getattr(bb, 'worldbuilding', '') or ''),
+            _fp(getattr(bb, 'character_profiles', '') or ''),
+            _fp(getattr(bb, 'plot_design', '') or ''),
+            _fp(getattr(bb, 'timeline', '') or ''),
+            _fp(getattr(bb, 'relation_graph', '') or ''),
+            _fp(getattr(bb, 'inventory', '') or ''),
+            _fp(getattr(bb, 'outline_hierarchy', '') or ''),
+            _fp(getattr(bb, 'foreshadowing_graph', '') or ''),
+            _fp(getattr(bb, 'generated_summary', '') or ''),
+            _fp(getattr(bb, 'locations', '') or ''),
+            _fp(getattr(bb, 'style_guide', '') or ''),
+            int((getattr(bb, 'updated_at') or 0) and int(getattr(bb, 'updated_at', datetime(2020, 1, 1)).timestamp() * 1000 if hasattr(getattr(bb, 'updated_at', None), 'timestamp') else 0) or 0),
+        )
+    # book 行级稳定标识（genre/style 等用户可改字段也入指纹）
+    if book is None:
+        book_t = None
+    else:
+        book_t = (
+            int(book.id or 0),
+            str(getattr(book, 'genre', '') or ''),
+            str(getattr(book, 'book_type', '') or ''),
+            str(getattr(book, 'title', '') or ''),
+            str(getattr(book, 'total_volumes', 0) or 0),
+            str(getattr(book, 'chapters_per_volume', 0) or 0),
+            str(getattr(book, 'master_skill_ids', '') or ''),
+            str(getattr(book, 'style_skill_ids', '') or ''),
+        )
+    # recent_4ch_ids: 最近 4 章 id + word_count（正文每写完一章，下一章的 recent_4 滚动 → Key 自然变）
+    recent_ch_t = tuple(
+        (int(cid), int(wc or 0)) for (cid, wc) in (recent_4ch_ids or [])
+    )
+    # 批次参数
+    params_t = (
+        target_chapter_num,
+        instruction and (str(len(instruction or '')) + ':' + hashlib.sha1((instruction or '').encode('utf-8')).hexdigest()[:12]),
+        prev_chapter_content and (str(len(prev_chapter_content or '')) + ':' + hashlib.sha1((prev_chapter_content or '').encode('utf-8')).hexdigest()[:12]),
+        tuple(sorted([str(x) for x in (skill_pack_ids or [])])),
+        tuple(sorted([str(x) for x in (chapter_lang_styles or [])])),
+        bool(enable_structured_tags),
+        bool(skip_chapter_plan),
+        cache_bible_version,  # 预留：外部全局版本号，暂时 None 不影响
+    )
+    return (book_t, bb_fields_t, recent_ch_t, params_t)
+
+
+def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num=None, prev_chapter_content=None, chapter_lang_styles=None, enable_structured_tags=True, skip_chapter_plan=False, skip_cache=False, *, _bypass_cache=False):
     """构建章节写作完整上下文（ai_continue / stream / batch 共用），返回含
     system_prompt/user_prompt/temperature/max_tokens/chapter_plan/api 信息。
-    - target_chapter_num：前端传的待写章号（word_count>=100 判定，比后端 max+1 准）
-    - prev_chapter_content：上一章已生成未保存正文，注入避免接不上
-    - chapter_lang_styles：本章行文文风（最多3个）
-    - enable_structured_tags：注入 pre_write_check/chapter_changes 标签模板（流式传 False）
-    - skip_chapter_plan：批处理流式用，避免 chapter_plan 同步调用阻塞心跳致超时"""
+    新增缓存机制：先命中 PromptContextCache（零脏读指纹 Key）→ 命中直接 return，
+    未命中才执行下面 0–12 步所有逐维度资料读取拼 prompt 逻辑，执行完回填缓存。
+    _bypass_cache 私有参数：用于 cache 命中 lambda 内递归进入真实执行逻辑，不对外暴露。"""
+    # ============== CACHE FAST PATH（仅外层调用进入；内层递归 _bypass_cache=True 跳过）==============
+    if not _bypass_cache:
+        # 预取少量稳定标识用于指纹（绝不在这里跑 bible/章节全量读，保持快路径 <1ms）
+        _cache_book = Book.query.get(book_id)  # 行级查询，<1ms；下面真执行还会再取一次但 SQLAlchemy session 缓存掉
+        _cache_allch_tip = Chapter.query.filter_by(book_id=book_id, is_volume=False).with_entities(
+            Chapter.id, Chapter.word_count
+        ).order_by(Chapter.order_index.desc()).limit(4).all()
+        _cache_recent4 = [(c[0], c[1] or 0) for c in _cache_allch_tip] if _cache_allch_tip else []
+        deps = _build_continue_fingerprint_deps(
+            book_id, bb, instruction, skill_pack_ids, target_chapter_num,
+            prev_chapter_content, chapter_lang_styles, enable_structured_tags,
+            skip_chapter_plan, book=_cache_book, recent_4ch_ids=_cache_recent4,
+        )
+
+        def _compute():
+            return _build_ai_continue_context(
+                book_id, bb, instruction, skill_pack_ids, target_chapter_num,
+                prev_chapter_content, chapter_lang_styles, enable_structured_tags,
+                skip_chapter_plan, skip_cache=skip_cache, _bypass_cache=True,
+            )
+
+        payload, cache_info = PromptContextCache.get().get_or_compute(
+            'continue_ctx', book_id, deps, _compute, ttl_sec=1800, skip_cache=skip_cache,
+        )
+        # 在返回 dict 上挂 cache_info（上游 wrapper 加响应头时用）
+        if isinstance(payload, dict):
+            payload['_cache_info'] = cache_info
+        return payload
+
+    # ============== 以下是真正装配逻辑（以前代码一字不动，仅函数签名扩展了 2 个 kwarg）==============
     book = Book.query.get(book_id)
     config = AIConfig.get_active()
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
@@ -7465,11 +7733,13 @@ def ai_continue(book_id):
     prev_chapter_content = request.json.get('prev_chapter_content')
     # 章节正文语言风格（行文文风，最多3个叠加）
     chapter_lang_styles = request.json.get('chapter_lang_styles', [])
+    # Prompt 上下文缓存旁路：True=强制重新从各维度资料拼prompt(改了未存库的小设定时用)
+    skip_prompt_cache = bool(request.json.get('skip_prompt_cache', False) or request.json.get('skip_cache', False))
     # S1：critical 门禁被 block 后，前端二次确认可传 ignore_gates=True 强制落库
     ignore_gates = bool(request.json.get('ignore_gates', False))
 
     try:
-        ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles)
+        ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles, skip_cache=skip_prompt_cache)
         system_prompt = ctx['system_prompt']
         user_prompt = ctx['user_prompt']
         temperature = ctx['temperature']
@@ -7733,7 +8003,8 @@ def ai_continue(book_id):
                 # S1：critical 默认 block；用户二次确认传 ignore_gates 则放行
                 if gate_result.get('blocked') and not ignore_gates:
                     if wp_runner: wp_runner.persist_plan_log(wp_graph, 'generate_chapter', {'outcome': 'gate_blocked'})
-                    return jsonify({
+                    _cache_info = ctx.get('_cache_info') if isinstance(ctx, dict) else None
+                    _block_body = {
                         'gate_blocked': True,
                         'ignore_gates_required': True,
                         'content': polished_content,
@@ -7748,7 +8019,10 @@ def ai_continue(book_id):
                         'gate_result': gate_result,
                         'block_reason': '落地门禁检测到 critical 问题（如正文过短/为空等）。默认拦截自动落库，'
                                         '请在前端确认「忽略门禁强制保存」后再次提交。',
-                    }), 428
+                        'prompt_cache_info': _cache_info,
+                        'cache_stats': _cache_stats_snapshot(),
+                    }
+                    return _response_with_cache(jsonify(_block_body), _cache_info), 428
                 if not gate_result.get('passed'):
                     pass  # 仅 warning：不阻断
             except Exception:
@@ -7788,7 +8062,12 @@ def ai_continue(book_id):
             # P2 新增：上下文溯源 manifest（记录本次生成注入了哪些 bible 片段 + hash + token 预算）
             'context_manifest': context_manifest_data,
             'pipeline_plan': pipeline_plan,  # 优化2：写作流水线任务图（12阶段执行轨迹）
+            'prompt_cache_info': ctx.get('_cache_info', {'hit': False, 'tokens_saved': 0}) if isinstance(ctx, dict) else None,  # PromptCache命中信息
+            'cache_stats': _cache_stats_snapshot(),  # 全局cache统计（hits/misses/tokens_saved）
         })
+        # 加响应头：X-Prompt-Cache HIT/MISS + X-Tokens-Saved
+        _cache_info = ctx.get('_cache_info') if isinstance(ctx, dict) else None
+        return _response_with_cache(jsonify(result_body), _cache_info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -7902,8 +8181,10 @@ def ai_continue_stream(book_id):
     prev_chapter_content = request.json.get('prev_chapter_content')
     # 章节正文语言风格（行文文风，最多3个叠加）
     chapter_lang_styles = request.json.get('chapter_lang_styles', [])
+    # Prompt 上下文缓存旁路
+    skip_prompt_cache = bool(request.json.get('skip_prompt_cache', False) or request.json.get('skip_cache', False))
 
-    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles, enable_structured_tags=True)
+    ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_chapter_num, prev_chapter_content, chapter_lang_styles, enable_structured_tags=True, skip_cache=skip_prompt_cache)
     api_key = ctx['api_key']
     base_url = ctx['base_url']
     model = ctx['model']
@@ -8150,6 +8431,8 @@ def ai_continue_batch(book_id):
     chapter_lang_styles = data.get('chapter_lang_styles', [])
     count = max(1, min(10, int(data.get('count', 3))))  # 1-10 章
     start_chapter_num = data.get('start_chapter_num')
+    # Prompt 上下文缓存旁路（批量：每章内部走同一指纹，用户改了未存库的内容时传 True 绕开）
+    skip_prompt_cache = bool(data.get('skip_prompt_cache', False) or data.get('skip_cache', False))
     # S1：批量模式下，任意一章触发 critical 时的处理策略
     ignore_gates = bool(data.get('ignore_gates', False))
 
@@ -8170,7 +8453,8 @@ def ai_continue_batch(book_id):
             target_num = start_chapter_num + i if start_chapter_num else None
             # Bug5 修复：传递上一章已生成正文（数据库尚未保存或刚保存的场景都能承接剧情）
             ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids,
-                                              target_num, prev_polished or None, chapter_lang_styles)
+                                              target_num, prev_polished or None, chapter_lang_styles,
+                                              skip_cache=skip_prompt_cache)
             api_key = ctx['api_key']
             base_url = ctx['base_url']
             model = ctx['model']
@@ -8516,6 +8800,8 @@ def ai_continue_batch_stream(book_id):
     chapter_lang_styles = data.get('chapter_lang_styles', [])
     count = max(1, min(10, int(data.get('count', 3))))
     start_chapter_num = data.get('start_chapter_num')
+    # Prompt 上下文缓存旁路
+    skip_prompt_cache = bool(data.get('skip_prompt_cache', False) or data.get('skip_cache', False))
     # S1：流式批量模式下，critical 命中时推送 gate_blocked 事件并提前结束
     ignore_gates = bool(data.get('ignore_gates', False))
 
@@ -8540,7 +8826,7 @@ def ai_continue_batch_stream(book_id):
 
                 ctx = _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids,
                                                   target_num, prev_polished or None, chapter_lang_styles,
-                                                  skip_chapter_plan=True)
+                                                  skip_chapter_plan=True, skip_cache=skip_prompt_cache)
                 api_key = ctx['api_key']
                 base_url = ctx['base_url']
                 model = ctx['model']
