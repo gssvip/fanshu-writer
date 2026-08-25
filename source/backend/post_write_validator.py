@@ -1382,17 +1382,46 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
     stats['pars_with_periods_ge3'] = over3_per_par
     stats['pars_le15_periods_ge2'] = short_le15_ge2  # ≤15字短段塞≥2句号的段数
 
+    # 新增 Q-extra：对白占比（估算对白段数 / 总段数；简易版按段含""或「」引号算对白段）
+    dialogue_pars = 0
+    for p in paragraphs:
+        if '"' in p or '「' in p or '”' in p:
+            dialogue_pars += 1
+    dialog_ratio = dialogue_pars / n_par if n_par else 0.0
+    stats['dialog_ratio'] = round(dialog_ratio, 3)
+
+    # 新增 Q-extra：tension_score 简易估算（高张力词密度，按 emotion/conflict/动作词）
+    tension_high_tokens = [
+        '死','杀','血','炸','碎','震','崩','断','爆','刺','劈','砸','砸烂','撕','裂','喊','喝','吼','冷笑','咬牙','发抖','颤抖','恐惧','愤怒','暴怒','焦急','崩溃','绝望','危险','警报','警告','锁','扣','抓住','危机','倒计时','紧急','立刻','骤然','陡然','猛然','突然','忽然','竟','竟然','黑色','红','血色','火光','电火花','蜂鸣','咔哒','金属响','落锁','落下去',
+    ]
+    tension_low_tokens = ['豆浆','馒头','早餐','热','香气','冷','白','灯','影子','影子','脚步','慢走','走着','看了看','低下头','抬头','笑了','轻声','咳','嘟囔','划痕','指甲','油泥','机油','扳手','螺丝刀','笔记','账本','资料','纸张']
+    text_for_tension = text[:12000] if len(text) > 12000 else text
+    t_high = sum(text_for_tension.count(w) for w in tension_high_tokens)
+    t_low = sum(text_for_tension.count(w) for w in tension_low_tokens)
+    tension_den = t_high + t_low + 1
+    tension_score_raw = min(100, int(100 * (t_high + 0.5 * t_low) / tension_den))  # 相对比例0-100
+    # 校准：t_low >= 15 说明喘息段充足，按比例下调 tension score_raw 上限
+    if t_low >= 15:
+        tension_score_raw = int(tension_score_raw * 0.70)
+    elif t_low >= 8:
+        tension_score_raw = int(tension_score_raw * 0.85)
+    tension_score = max(0, min(100, tension_score_raw))
+    stats['tension_score'] = tension_score
+    stats['tension_high_words'] = t_high
+    stats['tension_low_words'] = t_low
+
     # ===== 告警判定（分 critical / warning 两级）=====
-    # 4.1 段内≥3句号 —— 只要有 ≥ 1 段，直接 critical（AI 味最浓来源）
+    # 4.1 段内≥3句号 —— 段数 ≥ 3 或 段占比 ≥ 10% 任一满足 → critical；段数 1–2 warning（更严口径：段占比+段数双阈值）
+    over3_ratio = over3_per_par / n_par if n_par else 0.0
     if over3_per_par > 0:
-        severity = 'critical' if over3_per_par >= 3 else 'warning'
+        severity = 'critical' if (over3_per_par >= 3 or over3_ratio >= 0.10) else 'warning'
         sev_label = '严重不合格' if severity == 'critical' else '不合格'
         result.add(ValidationIssue(
             severity=severity,
             category='硬卡4.1·段内句号数超限',
             pattern='段内含≥3个句号（句终标点）',
             count=over3_per_par,
-            position=f'例如第 {first_over3_idx} 段含 {first_over3_count} 句；整章共 {over3_per_par} 段',
+            position=f'例如第 {first_over3_idx} 段含 {first_over3_count} 句；整章共 {over3_per_par} 段（占 {over3_ratio*100:.1f}%）',
             suggestion=(
                 f'文风铁律 4.1 规定每段 ≤ 2 个句号（=1–2 句完整话），'
                 f'但本章有 {over3_per_par} 段堆了 ≥ 3 句小短句（漫画分镜脚本化是最浓 AI 味来源）。'
@@ -1453,14 +1482,25 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
                 suggestion='整章句子被切成了碎碎的几个字一句（像 AI 战报）。修复：连续 3 个 ＜12 字残句必须合并成逗号长句（整句 20-35 字、串 1-2 个动作单元收一个句号）；句内补连接词/状语使主谓齐全。',
             ))
         elif avg_sent_len < 18:
-            result.add(ValidationIssue(
-                severity='warning',
-                category='硬卡4.3·句均字数偏短',
-                pattern='句均字数',
-                count=int(avg_sent_len * 10),
-                position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句（硬卡 18–28 字，对白句天然短可放宽）',
-                suggestion='叙述句偏碎：把同场景同动作链的相邻句号短句合并成逗号长句（"他踩进泥水。脚底滑过硬东西。"→"他踩进泥水，脚底滑过硬东西。"），让叙述句落到 20-35 字区间。',
-            ))
+            # 口径升级：句均 < 17 且样本句数足够多(≥80 叙述文本规模) → 升 critical（现在 17.7 字的漫画分镜碎句版直接判不合格打回重写）
+            if avg_sent_len < 17 and len(sent_lengths) >= 80:
+                result.add(ValidationIssue(
+                    severity='critical',
+                    category='硬卡4.3·句均字数过短（叙述主力是漫画分镜碎句）',
+                    pattern='句均字数',
+                    count=int(avg_sent_len * 10),
+                    position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句（硬卡 18–28 字；<17字=叙述主力被切成15字小句）',
+                    suggestion='叙述主力句全被切成了15字左右的漫画分镜短句（AI最爱写这个节奏，像解说员念脚本）。修复：把同 POV/同镜头/同动作链的相邻2–3个句号短句合并成逗号长句（整句20-35字，串1-2个动作单元收一个句号）；叙述句七成以上必须落到 20-35 字区间。',
+                ))
+            else:
+                result.add(ValidationIssue(
+                    severity='warning',
+                    category='硬卡4.3·句均字数偏短',
+                    pattern='句均字数',
+                    count=int(avg_sent_len * 10),
+                    position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句（硬卡 18–28 字，对白句天然短可放宽）',
+                    suggestion='叙述句偏碎：把同场景同动作链的相邻句号短句合并成逗号长句（"他踩进泥水。脚底滑过硬东西。"→"他踩进泥水，脚底滑过硬东西。"），让叙述句落到 20-35 字区间。',
+                ))
         elif avg_sent_len > 32:
             result.add(ValidationIssue(
                 severity='warning',
@@ -1497,9 +1537,42 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
             severity='info',
             category='硬卡4.2·两行内短段偏少（节奏偏平）',
             pattern='段字数 < 40 字占比',
-            count=int(lt40_ratio * 100),
+            count=int(lt40_ratio * 10),
             position=f'{int(lt40_ratio*100)}% 的段落 < 40 字（建议 ≥ 40%）',
             suggestion='建议把炸点/对白/最狠那句单独成段，制造视觉停顿与节奏呼吸。',
+        ))
+
+    # Q-extra 告警判定：对白占比（<20% critical；20–25% warning）— 叙述全=作者讲解=僵硬AI味
+    if dialog_ratio < 0.20:
+        result.add(ValidationIssue(
+            severity='critical',
+            category='对白占比铁律不足（僵硬AI味头号来源）',
+            pattern='对白段 / 总段数',
+            count=int(dialog_ratio * 100),
+            position=f'对白段仅占 {dialog_ratio*100:.0f}%（13条铁律下限 25%，真人爽文 40-55%）；80%+都是叙述在"讲故事"，僵硬感直接出',
+            suggestion='对白拉到 35%+ 才会自然（真人对话占比高）。不用开新剧情，3种不用动脑的拉对白方法：①把叙述里人物会说的话改成旁边人碎嘴 ②把主角独白改成自言自语声口 ③每个叙述主力段后加5-10字碎对白（骂一句/疑问/吐槽），不推进剧情只拉人味。',
+        ))
+    elif dialog_ratio < 0.25:
+        result.add(ValidationIssue(
+            severity='warning',
+            category='对白占比偏低（接近僵硬阈值）',
+            pattern='对白段 / 总段数',
+            count=int(dialog_ratio * 100),
+            position=f'对白段占比 {dialog_ratio*100:.0f}%（下限 25%，建议 35%+）',
+            suggestion='用上面3种方法（碎嘴/自言自语/吐槽对白）补 3–5 段对白，叙述比例立刻降。',
+        ))
+
+    # Q-extra 告警判定：tension_score ≥ 95 → warning；连续紧绷（t_low <5 且 tension_score≥95 其实就是全程无喘息）→ 升级 critical
+    if tension_score >= 95:
+        t_low_cnt = stats.get('tension_low_words', 0)
+        sev = 'critical' if t_low_cnt < 5 else 'warning'
+        result.add(ValidationIssue(
+            severity=sev,
+            category='节奏温度·张力全程过高（无喘息段=读者疲劳+AI紧绷模板腔）',
+            pattern='tension_score',
+            count=tension_score,
+            position=f'张力评分 {tension_score}/100（高张力词 {t_high} vs 喘息词 {t_low_cnt}）；写作要求10.7铁律：至少 15% 段是 Band1/Band2 喘息段',
+            suggestion='立即补 1–2 段喘息段（不用推进剧情）3选1：①环境锚（豆浆热气裹脸/冷馒头渣卡喉咙咳3声）②人物小动作锚（抠表盖划痕到指甲发白）③碎嘴对白锚（主角自己吐槽1句）。喘息段补完，tension_score 就会自然降到 80-85 区间，疲劳没了，人味立刻出。',
         ))
 
 
@@ -1627,12 +1700,12 @@ def _check_humanizer_patterns(text: str, result: ValidationResult):
         ))
     if bei_count > 1:
         result.add(ValidationIssue(
-            severity='warning' if bei_count == 2 else 'critical',
+            severity='critical' if bei_count > 1 else ('warning' if bei_count == 1 else 'info'),
             category='Humanizer 5.3·被字句超阈值（网文偏爱主动）',
             pattern='含「被」+ 被动谓语',
             count=bei_count,
-            position=f'整章 {bei_count} 处被字句（硬卡 ≤ 1 处）',
-            suggestion='翻成主动语态：「杯子被他捏碎了」→「他捏碎了杯子」；「消息被传到城里」→「消息传到城里」。主动语态天然有网文味。',
+            position=f'整章 {bei_count} 处被字句（硬卡 ≤ 1 处，>1 直接 critical）',
+            suggestion='翻成主动语态：「杯子被他捏碎了」→「他捏碎了杯子」；「消息被传到城里」→「消息传到城里」；「被吓了一跳」→「他浑身一激灵」。主动语态天然有网文味。',
         ))
     if adv_total >= 3:
         result.add(ValidationIssue(

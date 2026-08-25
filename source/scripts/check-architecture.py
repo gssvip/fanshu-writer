@@ -41,7 +41,14 @@ MAX_ROUTES_PER_FILE = 30
 #   - ai_continue / stream / batch / batch_stream 4 wrapper 新增 skip_prompt_cache 参数读取
 #     + 结果 JSON 追加 prompt_cache_info / cache_stats 字段 → 净 +30 行
 #   → 基线 14057 → 14271 净 +214 行；属性能/成本优化（省大量 prompt token），不属业务膨胀
-APP_PY_BASELINE = 14271
+# 2026-08-25 重校准6（去AI味·6口径硬卡全链路落地：函谷关/颜值章双样本问题修复）：
+#   - STANDARD_WRITING_STYLE_PROMPT 追加：人物出场禁公式化排比对比（约5行）
+#   - 文风铁律硬卡4追加：禁令0执行铁律+5种改写公式（约14行）
+#   - 文风铁律硬卡4追加：冰山人物·角色情绪铁律使用上限（约4行）
+#   - 文风铁律硬卡4追加：偷懒转场词替换公式（约10行）
+#   - 文风铁律追加：节奏温度·15%喘息段铁律（约9行）
+#   → 净增 33 行（14271→14304），属去AI味P0修复硬卡注入，不属业务膨胀
+APP_PY_BASELINE = 14304
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -114,7 +121,15 @@ TOOLSPAGE_BASELINE = 1192
 #   - PRE_GENERATE_BAN_RULES：原"禁令7条"改名"禁令6条"，删除原禁令6（强压迫场景语气同质化，其引用的行文规范已无对应细则），原禁令7（结尾真相点破）降号→禁令6；
 #   - WRITING_STYLE_RULES 段落合并标题铁律A短段落→段落；
 #   → 净减 6 行（7117→7111），属用户明确要求的规则口径调整，不属业务膨胀。
-CHAT_COLLAB_BP_BASELINE = 7111
+# 2026-08-25 重校准10（去AI味·6口径硬卡全链路落地：post_write_validator新增对白占比/张力评分/段内句号双阈值/句均字数/被字句告警升级）：
+#   - _validate_chapter_post_write 新增：对白占比<20%→critical（约6行）
+#   - _validate_chapter_post_write 新增：张力评分≥95→critical（约8行）
+#   - _validate_chapter_post_write 新增：段内句号数双阈值判定（3→warning，4→critical）（约18行）
+#   - _validate_chapter_post_write 新增：句均字数<17→critical（约4行）
+#   - _validate_chapter_post_write 新增：被字句>1→critical（约3行）
+#   - ai_patterns.yaml：新增人物出场禁排比regex 2条，禁令0阈值注释4→2（约6行）
+#   → 净增 4 行（7111→7115），属去AI味P0修复后置校验硬卡，不属业务膨胀
+CHAT_COLLAB_BP_BASELINE = 7115
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
