@@ -265,7 +265,11 @@ const TimelineCardBody = memo(function TimelineCardBody({
       const newNodesCount = r?.volume_data?.nodes?.length ?? 0;
       alert(`《${volTitle}》情节子节点事件设计完成！共生成 ${newNodesCount} 个子节点（覆盖约 ${chaptersPerVolume || 50} 章）`);
     } catch (e: any) {
-      alert('节点设计失败：' + (e?.message || '请检查 AI 配置'));
+      // 用户主动取消或超时取消 → 不显示"失败"红警，避免误导；取消状态UI上的loading也会在finally被清除
+      const isCancelled = e?.name === 'AbortError' || e?.cancelled === true || String(e?.message || '') === '请求已取消';
+      if (!isCancelled) {
+        alert('节点设计失败：' + (e?.message || '请检查 AI 配置或稍候重试'));
+      }
     } finally {
       setDesigning(null);
     }

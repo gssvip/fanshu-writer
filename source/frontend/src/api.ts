@@ -150,7 +150,12 @@ async function request<T>(url: string, options?: RequestInit, signal?: AbortSign
     return {} as T;
   } catch (e: any) {
     if (e.name === 'AbortError') {
-      throw new Error('请求已取消');
+      // 【关键】：保留 name='AbortError'（让所有外层 if (e.name !== 'AbortError') 过滤分支正常工作），
+      // 不要因为包装成普通 Error 把 name 丢了 → 导致取消被当成失败渲染
+      const err = new Error('请求已取消');
+      (err as any).name = 'AbortError';
+      (err as any).cancelled = true;
+      throw err;
     }
     if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
       throw new Error('无法连接到服务器，可能正在冷启动中。请稍等几秒后重试，或检查「我的 → 服务器」配置');
@@ -399,8 +404,19 @@ export const api = {
       }
       return res.json();
     } catch (e: any) {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      if (e.name === 'AbortError') throw new Error('请求超时，Agent管线处理时间过长，请稍后重试');
+      if (signal?.aborted) {
+        const userErr: any = new DOMException('Aborted', 'AbortError');
+        userErr.cancelled = true;
+        throw userErr;
+      }
+      if (e.name === 'AbortError') {
+        // 内部 300s 超时触发 → 友好提示，但保留 cancelled 标记，外层过滤 if (e.name==='AbortError') 仍能识别为"非失败"
+        const timeoutErr: any = new Error('请求超时，Agent管线处理时间过长，请稍后重试');
+        timeoutErr.name = 'AbortError';
+        timeoutErr.cancelled = true;
+        timeoutErr.isTimeout = true;
+        throw timeoutErr;
+      }
       if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
         throw new Error('无法连接到服务器，可能正在冷启动中。请稍等几秒后重试');
       }
@@ -684,11 +700,42 @@ export const api = {
       body: JSON.stringify({ skill_pack_ids: skillPackIds || [], total_chapters: totalChapters || 300, chapters_per_volume: chaptersPerVolume || 50, volume_count: volumeCount }),
     }),
 
-  aiOutlineVolume: (bookId: string, volumeIndex: number, volumeTitle?: string, skillPackIds?: string[], chaptersPerVolume?: number, nodeOnly?: boolean) =>
-    request<{ volume_data: any; timeline: string; bible: any }>(`/books/${bookId}/ai-outline-volume`, {
-      method: 'POST',
-      body: JSON.stringify({ volume_index: volumeIndex, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [], chapters_per_volume: chaptersPerVolume || 50, node_only: !!nodeOnly }),
-    }),
+  // 情节节点/大纲分卷：不走 fetchWithRetry 默认 60s 超时（节点设计是 Agent 管线，LLM 要生成 50-80 个节点+6要素，总耗时 80-180s，
+  // 60s 硬超时会被自动 abort → UI 上显示"情节节点设计失败：请求已取消"，实际用户根本没取消。与 aiContinue 一样用直接 fetch + 300s 保护）
+  aiOutlineVolume: async (bookId: string, volumeIndex: number, volumeTitle?: string, skillPackIds?: string[], chaptersPerVolume?: number, nodeOnly?: boolean): Promise<{ volume_data: any; timeline: string; bible: any }> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // 300s 长超时，足够 50-80 节点 + 6 要素管线跑完
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/books/${bookId}/ai-outline-volume`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ volume_index: volumeIndex, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [], chapters_per_volume: chaptersPerVolume || 50, node_only: !!nodeOnly }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      return await res.json();
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        // 区分：外部未主动取消但超时(300s到达)→提示超时；外部取消→保留AbortError语义不提示失败
+        const err = new Error('请求已取消');
+        (err as any).name = 'AbortError';
+        (err as any).cancelled = true;
+        throw err;
+      }
+      if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
+        throw new Error('无法连接到服务器，可能正在冷启动中。请稍等几秒后重试');
+      }
+      throw e;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  },
 
   // 从大纲总纲一次性提取各卷剧情（替代逐卷循环，更稳定）
   extractVolumesFromOutline: (bookId: string, skillPackIds?: string[], volumeCount?: number) =>

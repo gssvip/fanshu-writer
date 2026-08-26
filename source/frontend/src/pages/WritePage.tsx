@@ -4674,7 +4674,11 @@ function PlotPanel(props: {
         if (result.bible) onBibleUpdate(result.bible);
         alert(`情节节点设计完成！已为「${volTitle}」生成 ${result.volume_data?.nodes?.length || 0} 个情节节点`);
       } catch (e: any) {
-        alert('情节节点设计失败：' + (e.message || '请检查AI配置'));
+        // 用户主动取消(AbortError/cancelled)或超时取消 → 不显示"失败"红警，避免误导
+        const isCancelled = e?.name === 'AbortError' || e?.cancelled === true || String(e?.message || '') === '请求已取消';
+        if (!isCancelled) {
+          alert('情节节点设计失败：' + (e?.message || '请检查AI配置或稍候重试'));
+        }
       }
       setNodeDesigning('');
     });
