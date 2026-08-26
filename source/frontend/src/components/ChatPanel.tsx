@@ -14,7 +14,7 @@ const __BUILD_TAG__ = 'v3-0814';
 // 手机优先：底部Tab栏 + 大按钮 + 紧凑输入区
 // ============================================================================
 
-type SmartTab = 'setting' | 'chapter' | 'deai' | 'review' | 'general';
+type SmartTab = 'setting' | 'chapter' | 'deai' | 'review';
 
 // 命中维度提示（通用聊天模式）+ 爆款流水线类型定义
 interface HitSuggestion {
@@ -1354,14 +1354,6 @@ export default function ChatPanel() {
   // 切换 Tab 时清空选中章节（各Tab独立）；切到正文Tab时填入默认写作要求
   const switchTab = useCallback((tab: SmartTab) => {
     setActiveTab(tab);
-    // 切到「通用对话」顶层Tab：清空消息+命中气泡（独立会话池，视觉上明显切走，用户能立即感知"界面变了"）
-    if (tab === 'general') {
-      setMessages([]);
-      setHitSuggestionPopups([]);
-      setAutoContextNotice(null);
-      setFixTasks([]);
-      setStreamError('');
-    }
     // 离开正文Tab 时清掉"待修改"状态，避免 armed 泄漏到其他 Tab
     if (tab !== 'chapter') setChapterEditArmed(false);
     setInput(prev => {
@@ -1383,12 +1375,11 @@ export default function ChatPanel() {
   const toggleSkillPack = useCallback((tab: SmartTab, id: string) => {
     const setter = tab === 'setting' ? setSettingPacks
       : tab === 'chapter' ? setChapterPacks
-      : setDeaiPacksSelected;  // 'deai' | 'review' | 'general'（通用对话Tab没有skill包概念，不改任何字段）
+      : setDeaiPacksSelected;  // 'deai' | 'review'
     setter(prev => {
       const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
-      if (bookId && tab !== 'general') {
-        // 注意：SmartTab多了一个general，但通用对话不绑任何持久化skill包，直接跳过updateBook
-        const fieldMap: Record<Exclude<SmartTab, 'general'>, 'master_skill_ids' | 'style_skill_ids' | 'review_skill_ids'> = {
+      if (bookId) {
+        const fieldMap: Record<SmartTab, 'master_skill_ids' | 'style_skill_ids' | 'review_skill_ids'> = {
           setting: 'master_skill_ids',
           chapter: 'style_skill_ids',
           deai: 'review_skill_ids',
@@ -2179,7 +2170,7 @@ export default function ChatPanel() {
   const inputPlaceholder = (() => {
     if (activeTab === 'setting') {
       if (!selectedDim) return '请先选择上方维度按钮…';
-      if (selectedDim === 'general') return '和 AI 智驾自由讨论小说/剧情…（提及人物/伏笔/世界观等会自动产出卡片）';
+      if (selectedDim === 'general') return '💬 和智驾聊任何事（构思/人物/剧情/世界观/扫榜都行）。命中关键词自动提示一键入库 📦；说「扫榜/爆款」自动打开3步流水线 🔥';
       const dimLabel = dimensions.find(d => d.key === selectedDim)?.label || selectedDim;
       if (selectedSuggestion) {
         return `已选「${selectedSuggestion.title}」。可输入修改意见，不填则直接按此方案生成…`;
@@ -2198,75 +2189,13 @@ export default function ChatPanel() {
   // 发送按钮是否可用
   const canSend = (() => {
     if (streaming || !input.trim()) return false;
-    if (activeTab === 'general') return true;
     if (activeTab === 'setting') return !!selectedDim;
     return false;
   })();
 
-  // ---------- 通用对话顶层Tab：调用 chatGeneralStream（SSE）+ 命中维度气泡 + 扫榜意图自动开流水线 ----------
-  const handleGeneralTabSend = useCallback(async () => {
-    const text = input.trim();
-    if (!text || streaming) return;
-    setInput('');
-    setStreamError('');
-    streamBufferRef.current = '';
-    appendUserAi(text);
-    setStreaming(true);
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    // 插入命中气泡：在用户消息之后（msg_index = 最后一条用户消息）
-    const insertedPopupIndex = { idx: -1 };
-    setMessages(prev => { insertedPopupIndex.idx = prev.length - 2; return prev; });
-    try {
-      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: undefined }, ctrl.signal);
-      await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
-        // meta 分发：命中维度提示气泡
-        if (kind === 'hit_suggestions' && Array.isArray(info?.suggestions) && info.suggestions.length > 0) {
-          const popId = 'hit-' + Math.random().toString(36).slice(2, 9);
-          setHitSuggestionPopups(prev => [...prev, { id: popId, msg_index: insertedPopupIndex.idx, suggestions: info.suggestions }]);
-        }
-        // meta 分发：命中"扫榜"意图 → 自动打开爆款流水线浮层，预填题材
-        if (kind === 'scan_intent' && info?.detected) {
-          setShowPipelineWizard(true);
-          setPipelineStep(1);
-          const autoTopic = (() => {
-            const t = text;
-            const rules = [
-              /都市异能|都市高武|系统文|玄幻高武|仙侠|修仙|历史脑洞|种田|宫斗|科幻末世|悬疑推理|恐怖灵异|言情甜宠|同人|军事|游戏/
-            ];
-            for (const r of rules) { const m = t.match(r); if (m) return m[0]; }
-            return '';
-          })();
-          if (autoTopic) setPipelineTopic(autoTopic);
-        }
-      });
-      // 如果流水线浮层没开，但用户消息里明确要扫榜，也打开（兜底）
-      if (!showPipelineWizard) {
-        const scanKeys = ['扫榜', '现在什么火', '什么书火', '番茄小说', '起点中文网', '七猫', '爆款', '热榜'];
-        if (scanKeys.some(k => text.includes(k))) {
-          setShowPipelineWizard(true);
-          setPipelineStep(1);
-        }
-      }
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
-        setStreamError(e.message || '通用聊天失败');
-        removeEmptyAi();
-      }
-    } finally {
-      setStreaming(false);
-      abortRef.current = null;
-    }
-  }, [input, streaming, bookId, sessionId, appendUserAi, removeEmptyAi, consumeSSE, showPipelineWizard]);
-
-  // 通用聊天（设定Tab里的"通用"子模式=老逻辑）+ 顶层"通用对话"Tab = 新逻辑分流
+  // 【设定】Tab内「通用」子维度（整合版）：调用 chatGeneralStream（任意话题+命中气泡+扫榜意图自动开流水线）
+  // 替换原旧smartGeneralStream：现在这个入口就是新版"通用聊天"的唯一入口
   const handleGeneral = useCallback(async () => {
-    // 顶层通用Tab：走新增的 chatGeneralStream（支持全局闲聊+命中气泡+扫榜意图）
-    if (activeTab === 'general') {
-      await handleGeneralTabSend();
-      return;
-    }
-    // 原有设定Tab内的"通用"子模式：保持旧行为不动
     const text = input.trim();
     if (!bookId || !text || streaming) return;
     setInput('');
@@ -2277,22 +2206,47 @@ export default function ChatPanel() {
     setStreaming(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    // 命中气泡：挂在用户消息之后（msg_index = 倒数第2条=这条用户消息）
+    const insertedPopupIndex = { idx: -1 };
+    setMessages(prev => { insertedPopupIndex.idx = prev.length - 2; return prev; });
     try {
-      const res = await api.smartGeneralStream(bookId, text, settingPacks, sessionId || undefined, ctrl.signal);
-      await consumeSSE(res, ctrl);
-      refreshProgress();
-      refreshHistory();
+      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: undefined }, ctrl.signal);
+      await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
+        // 命中创作维度 → 气泡提示一键入库
+        if (kind === 'hit_suggestions' && Array.isArray(info?.suggestions) && info.suggestions.length > 0) {
+          const popId = 'hit-' + Math.random().toString(36).slice(2, 9);
+          setHitSuggestionPopups(prev => [...prev, { id: popId, msg_index: insertedPopupIndex.idx, suggestions: info.suggestions }]);
+        }
+        // 命中扫榜意图 → 自动弹3步流水线浮层，预填题材
+        if (kind === 'scan_intent' && info?.detected) {
+          setShowPipelineWizard(true);
+          setPipelineStep(1);
+          const autoTopic = (() => {
+            const rules = [/都市异能|都市高武|系统文|玄幻高武|仙侠|修仙|历史脑洞|种田|宫斗|科幻末世|悬疑推理|恐怖灵异|言情甜宠|同人|军事|游戏/];
+            for (const r of rules) { const m = text.match(r); if (m) return m[0]; }
+            return '';
+          })();
+          if (autoTopic) setPipelineTopic(autoTopic);
+        }
+      });
+      // 兜底：输入文本里明确写了扫榜/爆款关键词也自动弹浮层
+      if (!showPipelineWizard) {
+        const scanKeys = ['扫榜', '现在什么火', '什么书火', '番茄小说', '起点中文网', '七猫', '爆款', '热榜'];
+        if (scanKeys.some(k => text.includes(k))) {
+          setShowPipelineWizard(true);
+          setPipelineStep(1);
+        }
+      }
     } catch (e: any) {
       if (e.name !== 'AbortError') {
-        setStreamError(e.message || '通用聊天失败');
+        setStreamError(e.message || '聊天失败');
         removeEmptyAi();
-        refreshHistory();
       }
     } finally {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [activeTab, handleGeneralTabSend, input, bookId, streaming, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+  }, [input, bookId, streaming, sessionId, appendUserAi, removeEmptyAi, consumeSSE, showPipelineWizard]);
 
   // 主发送动作（设定Tab：通用走general，维度已有内容走dim-edit，否则走suggest）
   const handleMainSend = useCallback(() => {
@@ -2352,8 +2306,8 @@ export default function ChatPanel() {
   const onInputKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      // 顶层"通用对话"Tab：直接发
-      if (activeTab === 'general') {
+      // 【设定】Tab内「通用」子维度（新整合版）：直接发
+      if (activeTab === 'setting' && selectedDim === 'general' && suggestions.length === 0) {
         handleGeneral();
         return;
       }
@@ -2364,7 +2318,6 @@ export default function ChatPanel() {
   };
 
   const TABS: Array<{ key: SmartTab; label: string; icon: string }> = [
-    { key: 'general', label: '通用对话', icon: '💬' },
     { key: 'setting', label: '设定', icon: '⚙️' },
     { key: 'chapter', label: '正文', icon: '✍️' },
     { key: 'deai', label: '去AI', icon: '🧹' },
@@ -2438,96 +2391,65 @@ export default function ChatPanel() {
 
             {/* Tab 工具区（根据当前Tab显示不同工具） */}
             <div className="smart-toolbar">
-              {activeTab === 'general' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', background: 'linear-gradient(135deg,#f8fbff 0%,#f5f3ff 100%)', borderRadius: 8, border: '1px solid #e0e7ff' }}>
-                  {/* 命中维度气泡提示 */}
-                  {hitSuggestionPopups.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {hitSuggestionPopups.map(pop => (
-                        <div key={pop.id} className="auto-context-notice" style={{ borderRadius: 8, margin: 0 }} onClick={() => setHitSuggestionPopups(prev => prev.filter(x => x.id !== pop.id))}>
-                          <span className="acn-icon">💡</span>
-                          <span className="acn-text">
-                            <strong>这段内容可能落入：</strong>
-                            {pop.suggestions.map((s: HitSuggestion, i: number) => (
-                              <span key={s.dim + i} style={{ marginLeft: 8, background: '#fff7ed', color: '#c2410c', padding: '2px 8px', borderRadius: 999, fontSize: 12 }}>
-                                {s.label}（{Math.round(s.confidence * 100)}%）
-                              </span>
-                            ))}
-                            <span className="acn-sub"> · 点击气泡忽略；或点下方按钮直接转成落地卡片入库</span>
-                          </span>
-                          <span className="acn-close" style={{ marginLeft: 8, padding: '0 8px', fontSize: 12 }}>×</span>
-                        </div>
-                      ))}
-                      {/* 一键落卡按钮（把命中的内容直接合成Action Card落库） */}
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {hitSuggestionPopups.flatMap(pop => pop.suggestions.map((s: HitSuggestion) => (
-                          <button
-                            key={pop.id + '-' + s.dim}
-                            className="btn-sm"
-                            style={{ fontSize: 12 }}
-                            onClick={() => {
-                              // 合成一张卡片并推给AI消息气泡最后一条（若没有AI消息则append一条空AI占位）
-                              const cardId = 'gen-' + Math.random().toString(36).slice(2, 8);
-                              const fakeCard: any = {
-                                id: cardId, type: s.card_type, title: s.suggested_title,
-                                content: input, target: s.label, status: 'pending',
-                              };
-                              setMessages(prev => {
-                                const next = [...prev];
-                                // 找到pop.msg_index对应的用户消息，后面的AI消息上挂卡片；没有就补一条
-                                const afterIndex = pop.msg_index + 1;
-                                if (next[afterIndex]?.role === 'assistant') {
-                                  next[afterIndex] = { ...next[afterIndex], cards: [...(next[afterIndex].cards || []), fakeCard] };
-                                } else {
-                                  next.splice(afterIndex, 0, { role: 'assistant', content: '', cards: [fakeCard] });
-                                }
-                                return next;
-                              });
-                              setHitSuggestionPopups(prev => prev.filter(x => x.id !== pop.id));
-                            }}
-                          >一键以「{s.label}」卡片入库（带输入内容）</button>
-                        )))}
-                      </div>
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: '#3730a3' }}>🔥 爆款3步流水线</span>
-                    <button
-                      className="btn-sm primary"
-                      style={{ background: 'linear-gradient(90deg,#4f46e5 0%,#7c3aed 100%)', color: '#fff', border: 'none' }}
-                      onClick={() => { setShowPipelineWizard(true); setPipelineStep(0); setPipelineSelectedPlan(null); setPipelineTrendReport(null); }}
-                    >
-                      🚀 打开
-                    </button>
-                    <span style={{ fontSize: 12, color: '#6b7280' }}>
-                      Step1 扫榜 → Step2 5方案 → Step3 世界观构建 · 全自动产出落地卡片
-                    </span>
-                  </div>
-                </div>
-              )}
 
               {activeTab === 'setting' && (
                 <>
-                  {/* 双保险引导：当用户还在"设定Tab内部旧通用子模式"时，横幅提醒有更好的顶层「💬通用对话」Tab */}
+                  {/* 【设定】Tab内「通用」子维度：精简入口（命中气泡+单一🔥扫榜按钮），不堆多余按钮 */}
                   {selectedDim === 'general' && (
-                    <div style={{
-                      margin: '8px 0 12px', padding: '12px 14px', borderRadius: 10,
-                      background: 'linear-gradient(100deg,#fff7ed 0%,#fef3c7 100%)',
-                      border: '1.5px solid #f59e0b', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
-                    }}>
-                      <span style={{ fontSize: 18 }}>💡</span>
-                      <div style={{ flex: 1, fontSize: 13, lineHeight: 1.55, minWidth: 240 }}>
-                        <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 3 }}>你当前用的是【设定】Tab 内部的旧「通用」子维度。</div>
-                        <div style={{ color: '#78350f' }}>
-                          更推荐使用 <strong style={{ color: '#c2410c' }}>底部导航栏最左侧的「💬通用对话」新 Tab</strong>：
-                          支持任意话题闲聊、命中创作关键词自动气泡「一键入库」📦、发送「扫榜/爆款」自动打开 3 步流水线（联网扫榜 + 5 方案 + 世界观构建）🔥。
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '6px 8px' }}>
+                      {hitSuggestionPopups.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {hitSuggestionPopups.map(pop => (
+                            <div key={pop.id} className="auto-context-notice" style={{ borderRadius: 6, margin: 0 }} onClick={() => setHitSuggestionPopups(prev => prev.filter(x => x.id !== pop.id))}>
+                              <span className="acn-icon">💡</span>
+                              <span className="acn-text">
+                                <strong>命中：</strong>
+                                {pop.suggestions.map((s: HitSuggestion, i: number) => (
+                                  <span key={s.dim + i} style={{ marginLeft: 6, background: '#fff7ed', color: '#c2410c', padding: '1px 6px', borderRadius: 999, fontSize: 12 }}>
+                                    {s.label} {Math.round(s.confidence * 100)}%
+                                  </span>
+                                ))}
+                              </span>
+                              <span className="acn-close" style={{ marginLeft: 8, padding: '0 6px', fontSize: 12 }}>×</span>
+                            </div>
+                          ))}
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {hitSuggestionPopups.flatMap(pop => pop.suggestions.map((s: HitSuggestion) => (
+                              <button
+                                key={pop.id + '-' + s.dim}
+                                className="btn-sm"
+                                style={{ fontSize: 12 }}
+                                onClick={() => {
+                                  const cardId = 'gen-' + Math.random().toString(36).slice(2, 8);
+                                  const fakeCard: any = {
+                                    id: cardId, type: s.card_type, title: s.suggested_title,
+                                    content: input, target: s.label, status: 'pending',
+                                  };
+                                  setMessages(prev => {
+                                    const next = [...prev];
+                                    const afterIndex = pop.msg_index + 1;
+                                    if (next[afterIndex]?.role === 'assistant') {
+                                      next[afterIndex] = { ...next[afterIndex], cards: [...(next[afterIndex].cards || []), fakeCard] };
+                                    } else {
+                                      next.splice(afterIndex, 0, { role: 'assistant', content: '', cards: [fakeCard] });
+                                    }
+                                    return next;
+                                  });
+                                  setHitSuggestionPopups(prev => prev.filter(x => x.id !== pop.id));
+                                }}
+                              >📦 以「{s.label}」入库</button>
+                            )))}
+                          </div>
                         </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <button
+                          className="btn-sm primary"
+                          style={{ background: 'linear-gradient(90deg,#f97316,#ef4444)', color: '#fff', border: 'none' }}
+                          onClick={() => { setShowPipelineWizard(true); setPipelineStep(1); }}
+                        >🔥 爆款3步流水线</button>
+                        <span style={{ fontSize: 12, color: '#6b7280' }}>（也可直接发送「扫榜XX题材」自动弹出）</span>
                       </div>
-                      <button
-                        className="btn-sm primary"
-                        style={{ background: 'linear-gradient(90deg,#d97706,#ea580c)', color: '#fff', border: 'none', flexShrink: 0 }}
-                        onClick={() => { switchTab('general'); }}
-                      >立即切换「💬通用对话」新 Tab →</button>
                     </div>
                   )}
                   {/* 维度子按钮栏：两行（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔） */}
@@ -2535,9 +2457,13 @@ export default function ChatPanel() {
                     <div className="smart-dim-row">
                       <button
                         className={`smart-dim-btn ${selectedDim === 'general' ? 'active' : ''}`}
-                        onClick={() => { setSelectedDim('general'); setSuggestions([]); setSelectedSuggestion(null); setInput(''); }}
+                        onClick={() => {
+                          // 切到【通用】子维度 = 清空消息/气泡/任务（独立会话池，和其他维度互不干扰）
+                          setSelectedDim('general'); setSuggestions([]); setSelectedSuggestion(null); setInput('');
+                          setMessages([]); setHitSuggestionPopups([]); setAutoContextNotice(null); setFixTasks([]); setStreamError('');
+                        }}
                         disabled={streaming || loadingSuggest}
-                        title="通用聊天：自由讨论小说/剧情，关键词触发填入各维度"
+                        title="通用聊天：自由讨论任何话题，命中创作关键词提示一键入库，说「扫榜/爆款」自动打开3步流水线"
                       >💬 通用</button>
                       {dimensions.filter(d => ['concept', 'key_rules', 'worldbuilding'].includes(d.key)).map(d => (
                         <button
@@ -3191,11 +3117,11 @@ export default function ChatPanel() {
               {messages.length === 0 && !loadingSuggest && (
                 <div className="chat-empty">
                   <div className="chat-empty-icon"><CarLogo size={56} /></div>
-                  {activeTab === 'general' ? (
+                  {activeTab === 'setting' && selectedDim === 'general' ? (
                     <div style={{ textAlign: 'center' }}>
-                      <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b' }}>💬 通用对话模式 · 想聊啥就聊啥</p>
-                      <p style={{ fontSize: 13, color: '#6b7280', margin: '6px 0 0' }}>闲聊、问问题、讨论创作构思/人物/剧情/世界观都行。</p>
-                      <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>命中创作关键词会自动提示一键入库📦，说「扫榜/爆款」自动打开3步流水线🔥。</p>
+                      <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b' }}>💬 通用聊天模式 · 想聊啥就聊啥</p>
+                      <p style={{ fontSize: 13, color: '#6b7280', margin: '6px 0 0' }}>任意话题闲聊、问问题、讨论构思/人物/剧情/世界观。</p>
+                      <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动打开3步流水线 🔥。</p>
                     </div>
                   ) : (
                     <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
@@ -3316,34 +3242,7 @@ export default function ChatPanel() {
               </div>
             )}
 
-            {/* 通用对话Tab输入区：textarea+发送，复用chat-input-area样式 */}
-            {activeTab === 'general' && (
-              <div className="chat-input-area">
-                <div className="chat-input-row">
-                  <textarea
-                    ref={inputRef}
-                    className="chat-input"
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={onInputKeyDown}
-                    placeholder={inputPlaceholder}
-                    rows={1}
-                    disabled={streaming}
-                  />
-                  {streaming ? (
-                    <button className="chat-send stop" onClick={stopStream}>停止</button>
-                  ) : (
-                    <button
-                      className="chat-send"
-                      onClick={handleGeneral}
-                      disabled={!canSend}
-                    >发送</button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {activeTab !== 'setting' && activeTab !== 'general' && (
+            {activeTab !== 'setting' && (
               <div className="chat-input-area">
                 <div className="chat-input-row">
                   <input
