@@ -1045,6 +1045,8 @@ export default function ChatPanel() {
     id: string; msg_index: number; suggestions: HitSuggestion[];
   }>>([]);
   // Q2 合并：事件日志重算（原先在工具栏浮层，现在合并进「校审」Tab 子面板）
+  // 扫榜→构思流水线缓存：Step1产出的trend_report存state，Step2直接用（解决Step2报"缺少trend_report需先Step1"）
+  const [lastStep1Report, setLastStep1Report] = useState<any>(null);
   const [showBackfill, setShowBackfill] = useState(false);
   const [backfillLLM, setBackfillLLM] = useState<'auto' | 'always' | 'never'>('auto');
   const [backfillRunning, setBackfillRunning] = useState(false);
@@ -2175,7 +2177,7 @@ export default function ChatPanel() {
   const inputPlaceholder = (() => {
     if (activeTab === 'setting') {
       if (!selectedDim) return '请先选择上方维度按钮…';
-      if (selectedDim === 'general') return '命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动开始3步流水线 🔥';
+      if (selectedDim === 'general') return '任意话题闲聊、问问题、讨论构思/人物/剧情/世界观。\n命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动开始3步流水线 🔥。';
       const dimLabel = dimensions.find(d => d.key === selectedDim)?.label || selectedDim;
       if (selectedSuggestion) {
         return `已选「${selectedSuggestion.title}」。可输入修改意见，不填则直接按此方案生成…`;
@@ -2222,7 +2224,11 @@ export default function ChatPanel() {
       abortRef.current = ctrl;
       try {
         const res = await api.pipelineStep1Scan(scannedTopic, undefined, ctrl.signal);
-        await consumeSSE(res, ctrl, undefined, undefined, true); // ignoreCards=true：只展示扫榜内容，不弹采纳卡片（没扫榜维度会空）
+        await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
+          // 存Step1的结构化报告（带原始抓取/错误信息），给Step2构思方案当trend_report入参
+          if (kind === 'pipeline_step1_done' && info) setLastStep1Report(info);
+          else if (kind === 'pipeline_trend_report' && info?.report) setLastStep1Report(info.report);
+        }, true);
         // 扫榜结束只追加一条简短提示，继续等用户说"出构思方案"或提意见
         appendAiNotice('✅ 扫榜完成。你可以说「按这个出构思方案」继续下一步，或先提调整意见。');
       } catch (e: any) {
@@ -2247,7 +2253,7 @@ export default function ChatPanel() {
       const ctrl2 = new AbortController();
       abortRef.current = ctrl2;
       try {
-        const res = await api.pipelineStep2Plans(planTopic, {}, undefined, ctrl2.signal);
+        const res = await api.pipelineStep2Plans(planTopic, lastStep1Report || {}, undefined, ctrl2.signal);
         await consumeSSE(res, ctrl2, undefined, undefined, true); // ignoreCards=true：构思方案是中间结果，先不入库，确认后再出设定
         appendAiNotice('✅ 构思方案生成完成。你可以说「按方案X出设定」继续落地，或先提修改意见。');
       } catch (e: any) {
@@ -2432,15 +2438,6 @@ export default function ChatPanel() {
 
               {activeTab === 'setting' && (
                 <>
-                  {/* 【设定】Tab内「通用」子维度：两行固定小提示（不堆按钮）+ 命中气泡入库（一键📦落卡） */}
-                  {selectedDim === 'general' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px' }}>
-                      <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5 }}>
-                        · 命中创作关键词自动提示一键入库 📦<br />
-                        · 说「扫榜XX题材」自动开始3步流水线 🔥
-                      </div>
-                    </div>
-                  )}
                   {selectedDim === 'general' && hitSuggestionPopups.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px' }}>
                       {hitSuggestionPopups.map(pop => (

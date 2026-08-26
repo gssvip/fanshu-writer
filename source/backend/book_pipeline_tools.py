@@ -10,6 +10,7 @@ Step 3: build_worldbuild_package(plan_dict) → 世界观+修炼+CDL角色+金�
 """
 from __future__ import annotations
 import json
+import os
 import re
 import time
 import urllib.parse
@@ -110,7 +111,10 @@ def _pick_fallback(topic: str) -> dict:
 # ============================================================================
 def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
                    web_fetch_fn: Optional[Callable[[str], str]] = None,
-                   llm_summarize_fn: Optional[Callable[[str, str], str]] = None) -> dict:
+                   llm_summarize_fn: Optional[Callable[[str, str], str]] = None,
+                   fetch_errors: Optional[dict[str, str]] = None,
+                   force_sites: Optional[list[str]] = None,
+                   original_query: str = '') -> dict:
     """Step1 实时扫榜：网络抓不下来时自动回退知识库。
 
     参数：
@@ -118,29 +122,52 @@ def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
       reference_books: 可选参考书名
       web_fetch_fn(url)->str : 可选 WebFetch 可调用；未传则直接走知识库回退
       llm_summarize_fn(prompt, scraped_raw)->str : 可选 LLM 归纳函数；不传则用内置启发式
+      fetch_errors(dict) : 外部传入的空dict，用于把每个站点的抓取错误写回来（前端展示是否真联网）
+      force_sites(list[str]) : 只抓取 SITE_SPECS 中指定的 site_key（如用户说"番茄小说网"只跑fanqie）
+      original_query(str) : 原始用户输入，用于检测是否指定了具体站点
 
     返回：与用户需求完全一致的"趋势方向"JSON字典（前端直接按格式渲染）
     """
     t0 = time.time()
     topic = (topic or '').strip() or '热门综合'
     refs = [r.strip() for r in (reference_books or []) if r and r.strip()]
+    fetch_errors = fetch_errors if isinstance(fetch_errors, dict) else {}
+
+    # 识别用户明确指定站点：番茄/起点/七猫
+    oq = (original_query or '').lower()
+    if not force_sites:
+        forced = []
+        if any(k in oq for k in ['番茄', 'fanqie', '番茄小说']): forced.append('fanqie')
+        if any(k in oq for k in ['起点', 'qidian', '起点中文']): forced.append('qidian')
+        if any(k in oq for k in ['七猫', 'qimao', '七猫小说']): forced.append('qimao')
+        if forced:
+            force_sites = forced
 
     # 抓取原始文本
     scraped_pages: list[str] = []
     used_web = False
+    per_site_bytes: dict[str, int] = {}
     if web_fetch_fn:
-        for site_key, spec in SITE_SPECS.items():
+        sites = list(SITE_SPECS.items())
+        if force_sites:
+            sites = [(k, v) for k, v in sites if k in force_sites]
+        for site_key, spec in sites:
             try:
                 url = spec['topic_search_tpl'].format(t=urllib.parse.quote(topic))
                 html = web_fetch_fn(url) or ''
-                if html and len(html) > 500:
+                n = len(html) if isinstance(html, str) else 0
+                per_site_bytes[site_key] = n
+                fetch_errors.setdefault(site_key, '')
+                if n > 500:
                     scraped_pages.append(f'==== {spec["name"]} 搜索页 ====\n{html[:12000]}')
                     used_web = True
-            except Exception:
-                pass
+                elif n == 0 and not fetch_errors.get(site_key):
+                    fetch_errors[site_key] = '返回空内容（可能被反爬或页面结构变化）'
+            except Exception as e:
+                fetch_errors.setdefault(site_key, f'{type(e).__name__}: {str(e)[:200]}')
     fallback = _pick_fallback(topic)
 
-    # LLM 归纳 or 启发式
+    # LLM 归纳 or 启发式（加随机seed/日期，避免同题材每次输出完全一样）
     scraped_concat = '\n\n'.join(scraped_pages) if scraped_pages else ''
     structured = None
     if llm_summarize_fn and scraped_concat:
@@ -162,13 +189,21 @@ def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
         'used_web_fetch': used_web and bool(scraped_concat),
         'latency_ms': int((time.time() - t0) * 1000),
         'sample_books_count': len(structured.get('sample_books_used', [])),
+        'per_site_bytes': per_site_bytes,
+        'fetch_errors': {k: v for k, v in fetch_errors.items() if v},
+        'force_sites': force_sites,
+        'site_names': {k: v.get('name', k) for k, v in SITE_SPECS.items()},
+        'random_seed': int.from_bytes(os.urandom(3), 'big') % 1_000_000,  # 前端调试用：同题材两次扫榜seed不一样则说明确实重算了，不是缓存结果
     }
     return structured
 
 
 def _build_scan_summary_prompt(topic: str, refs: list[str]) -> str:
     ref_block = ('\n参考书名（用户额外给的灵感来源）：' + '、'.join(refs)) if refs else ''
+    date = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    seed = int.from_bytes(os.urandom(4), 'big') % 10_000_000
     return f'''你是网文爆款分析师。下面是联网抓取到的【{topic}】题材热榜/排行榜/推荐页原始HTML（已去标签保留文字）。
+抓取日期：{date} | 本次随机扰动seed：{seed}（请基于seed让相同题材两次分析也有差异化结论，避开模板化复制）
 
 请严格按如下JSON结构输出"趋势方向"（不要输出任何解释，只输出一个合法JSON对象，可包裹在```json里）：
 {{
@@ -236,16 +271,47 @@ def _heuristic_scan_summary(topic: str, refs: list[str], scraped: str, fb: dict)
 
 
 def render_step1_text(r: dict) -> str:
-    """把JSON趋势报告渲染成用户要求的ASCII文本格式（直接塞SSE delta）。"""
+    """把JSON趋势报告渲染成用户要求的ASCII文本格式（直接塞SSE delta）。开头强制展示联网状态，避免假联网/知识库fallback被误判为真扫榜"""
     meta = r.get('_meta', {})
     date = meta.get('date', datetime.now().strftime('%Y-%m-%d'))
     topic = meta.get('topic', '')
     ct = r.get('current_trending', {})
     sw = r.get('style_wind', {})
     cl = r.get('cliche_landmines', {})
-    source_tag = '' if meta.get('used_web_fetch') else '（⚠️ ' + str(meta.get('source', '基于知识库，非实时数据')) + '）'
+    used_web = bool(meta.get('used_web_fetch'))
+    fetch_errors = meta.get('fetch_errors') or {}
+    per_site_bytes = meta.get('per_site_bytes') or {}
+    site_names = meta.get('site_names') or {}
+    force_sites = meta.get('force_sites') or []
+    seed = meta.get('random_seed', '-')
+
+    # ===== 第一块：强制联网状态（用户一眼判断是不是真联网）=====
+    status_lines = ['🔍 本次联网状态（可验证合理性）']
+    all_site_keys = list(dict.fromkeys(list(per_site_bytes.keys()) + list(fetch_errors.keys()) + list(SITE_SPECS.keys())))
+    n_success = 0
+    for sk in all_site_keys:
+        name = site_names.get(sk, sk)
+        b = per_site_bytes.get(sk, 0)
+        err = fetch_errors.get(sk, '')
+        force_tag = '（用户指定）' if force_sites and sk in force_sites else ''
+        if b and b > 500:
+            status_lines.append(f'  ✅ {name}{force_tag}：抓取 {b:,} 字节原始HTML')
+            n_success += 1
+        elif err:
+            err_snippet = str(err)[:120].replace('\n', ' ⏎ ')
+            status_lines.append(f'  ❌ {name}{force_tag}：失败 → {err_snippet}')
+        else:
+            status_lines.append(f'  ⚠️ {name}{force_tag}：未抓取或内容过短（{b}字节）')
+    if used_web:
+        status_lines.append(f'  📌 汇总：真联网，成功站点 {n_success}/{len(all_site_keys)}，seed={seed}')
+    else:
+        status_lines.append(f'  📌 汇总：❌ 未联网（全部站点失败/环境无外网出口），使用知识库Fallback（非实时，内容固定），seed={seed}')
+    status_lines.append('')
+
+    source_tag = '' if used_web else '（⚠️ ' + str(meta.get('source', '基于知识库，非实时数据')) + '）'
     sb = r.get('sample_books_used', [])
-    lines = [
+    lines = list(status_lines)
+    lines += [
         f'【实时扫榜 — {date} | 题材：{topic}】 {source_tag}',
         '',
         '🔥 当前火什么（基于{}本热榜作品归纳）：'.format(len(sb)),

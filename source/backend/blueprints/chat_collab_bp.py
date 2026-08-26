@@ -7296,23 +7296,37 @@ def pipeline_step1_scan():
 
     # WebFetch：如果环境里有可用 WebFetch，就用（部署在有外网的机器）
     web_fetch_fn = None
+    fetch_errors: dict[str, str] = {}
     try:
+        import traceback
         import urllib.request
         def _fetch(url):
+            # 从URL里判断对应站点名（返回tuple html, err_msg）；但兼容旧签名只返回str
+            site_key = 'fanqie'
+            if 'qidian' in url: site_key = 'qidian'
+            elif 'qimao' in url: site_key = 'qimao'
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) FanshuWriter/1.0'
             })
             try:
-                with urllib.request.urlopen(req, timeout=8) as r:
+                with urllib.request.urlopen(req, timeout=12) as r:
                     raw = r.read()
                     try:
-                        return raw.decode('utf-8', errors='ignore')
+                        html = raw.decode('utf-8', errors='ignore')
                     except Exception:
-                        return str(raw[:20000])
-            except Exception:
+                        html = str(raw[:20000])
+                    if len(html or '') < 50:
+                        fetch_errors[site_key] = f'返回内容过短({len(html or "")}字节，可能被反爬)'
+                    return html or ''
+            except Exception as e:
+                tb = traceback.format_exc(limit=2)
+                msg = f'{type(e).__name__}: {str(e)[:120]} | {tb.replace(chr(10)," ⏎ ")[:200]}'
+                fetch_errors[site_key] = msg
                 return ''
         web_fetch_fn = _fetch
-    except Exception:
+    except Exception as e:
+        import traceback as tb2
+        fetch_errors['_env'] = f'urllib不可用: {type(e).__name__}: {str(e)[:120]} | {tb2.format_exc(limit=1).replace(chr(10)," ⏎ ")[:200]}'
         web_fetch_fn = None
 
     # LLM归纳：包一层同步调用（非流式，因为还要出JSON报告）
@@ -7336,7 +7350,9 @@ def pipeline_step1_scan():
 
             report = run_step1_scan(topic, reference_books=refs,
                                     web_fetch_fn=web_fetch_fn,
-                                    llm_summarize_fn=llm_summarize)
+                                    llm_summarize_fn=llm_summarize,
+                                    fetch_errors=fetch_errors,
+                                    original_query=topic + ' ' + (' '.join(refs) if refs else ''))
             ascii_text = render_step1_text(report)
             # 先渲染ASCII友好文本给用户看
             for ch_line in ascii_text.split('\n'):
