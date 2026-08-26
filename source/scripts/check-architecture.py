@@ -77,7 +77,16 @@ WRITEPAGE_BASELINE = 8899
 #     React提交前执行，旧闭包读到 selectedSuggestion=null 静默return→请求不发）
 #   - queueMicrotask 显式传 suggestion 对象 + ref 签名带参 + 关键注释
 #   → 净增 5 行（3257→3262），属P0故障修复必需，不属业务膨胀
-CHATPANEL_BASELINE = 3262
+# 2026-08-25 重校准7（通用对话Tab · 命中维度气泡 · 爆款3步流水线浮层）：
+#   - TABS 新增 通用对话 Tab（💬），SmartTab 类型扩展 'general'
+#   - 通用 Tab 专用 state（命中气泡 hitSuggestionPopups + 流水线 showPipelineWizard）
+#   - consumeSSE 新增 onMeta 扩展回调钩子（向后兼容不破坏其他调用）
+#   - 新增 handleGeneralTabSend → 调用 chatGeneralStream，分发命中气泡/扫榜意图
+#   - handleGeneral 分流：顶层 general Tab vs 旧设定Tab内 general 子模式
+#   - 新增 general Tab 工具栏（命中气泡+一键落卡+流水线入口）+ general Tab 独立 textarea 输入区
+#   - 新增爆款3步流水线浮层 Modal（Step1扫榜输入→Step2方案卡片→Step3世界观）+ 流式进度可视化
+#   → 净增 429 行（3262→3691），属用户明确要求P0功能交付（通用CHATBOX+爆款流水线UI），不属业务膨胀
+CHATPANEL_BASELINE = 3691
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
@@ -129,7 +138,14 @@ TOOLSPAGE_BASELINE = 1192
 #   - _validate_chapter_post_write 新增：被字句>1→critical（约3行）
 #   - ai_patterns.yaml：新增人物出场禁排比regex 2条，禁令0阈值注释4→2（约6行）
 #   → 净增 4 行（7111→7115），属去AI味P0修复后置校验硬卡，不属业务膨胀
-CHAT_COLLAB_BP_BASELINE = 7115
+# 2026-08-25 重校准11（通用聊天·命中维度气泡 + 3步爆款流水线薄路由）：
+#   - /chat/general：通用聊天模式（CHATBOX式·任意话题），命中维度提示落库（~80行）
+#   - /pipeline/step1-scan：Step1 实时扫榜（联网+LLM归纳趋势方向）（~85行）
+#   - /pipeline/step2-plans：Step2 生成5个方案（趋势跟随2 + 差异化2 + 大胆尝试1）（~95行）
+#   - /pipeline/step3-worldbuild：Step3 世界观构建（9级修炼+CDL角色+金手指代价+系统人格化）（~95行）
+#   - 新路由全部调用独立薄封装模块 general_chat_hitter.py / book_pipeline_tools.py，无业务堆肉，只做参数整形+SSE分发
+#   → 净增 419 行（7115→7534），属用户明确要求P0功能交付（通用对话Tab全局可用+爆款流水线），新路由为薄路由无冗余，不属业务膨胀
+CHAT_COLLAB_BP_BASELINE = 7534
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

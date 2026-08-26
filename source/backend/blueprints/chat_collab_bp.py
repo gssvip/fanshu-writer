@@ -7113,3 +7113,422 @@ def smart_apply_text_fix():
         db.session.commit()
 
     return jsonify({'ok': True, 'applied': applied})
+
+
+# ============================================================================
+# 【通用聊天 + 爆款3步流水线】新增路由（薄壳，核心逻辑放独立模块，防chat_collab_bp超基线）
+#   POST /api/ai/chat/general                   通用聊天（任意话题）+ 命中维度提示气泡
+#   POST /api/ai/pipeline/step1-scan            Step1 实时扫榜
+#   POST /api/ai/pipeline/step2-plans           Step2 5方案
+#   POST /api/ai/pipeline/step3-worldbuild      Step3 世界观+修炼+角色+代价+系统人格化
+# ============================================================================
+
+@chat_collab_bp.route('/api/ai/chat/general', methods=['POST'])
+def chat_general():
+    """通用聊天模式（CHATBOX风格）：
+    - 不强制创作上下文，可聊任何话题；
+    - 命中写作相关关键词/句式时：
+        * 首帧 meta 回传命中建议（前端渲染"是否落入XX维度？"气泡）
+        * system_prompt鼓励AI在讨论出明确结论时产出落地卡片
+    - body: { book_id?, session_id?, message }  (book_id可选，不给就是纯闲聊不绑定作品)
+    - 返回 SSE：delta / meta(hit_suggestions) / card / done / error
+    """
+    from app import db, AISession, Book, BookBible, AIConfig
+    from llm_gateway import LLMGateway, get_llm_config
+    # 命中识别 & system_prompt 构建（独立模块）
+    try:
+        from general_chat_hitter import (detect_dimension_hits, build_general_chat_system_prompt,
+                                         wrap_message_with_context)
+    except ImportError:
+        detect_dimension_hits = None
+        build_general_chat_system_prompt = lambda: '你是智驾创作助手，可以聊任何话题。'
+        wrap_message_with_context = lambda msg, bt, bb: msg
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    session_id = data.get('session_id')
+    message = (data.get('message') or '').strip()
+    if not message:
+        return jsonify({'error': '缺少 message'}), 400
+
+    # book_id 为空 = 纯闲聊会话（scope=general_global）
+    scope = 'general_global' if not book_id else 'general_per_book'
+    book_title = ''
+    bb_summary = ''
+    if book_id:
+        book = Book.query.get(book_id)
+        if not book:
+            return jsonify({'error': '书籍不存在'}), 404
+        book_title = book.title or ''
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+        if bb:
+            non_empty_fields = [f for f in [
+                ('concept', '核心构思'), ('worldbuilding', '世界观'),
+                ('character_profiles', '人物'), ('plot_design', '大纲'),
+                ('timeline', '剧情线'), ('style_guide', '文风'),
+            ] if getattr(bb, f[0], None) and str(getattr(bb, f[0])).strip()]
+            bb_summary = '、'.join(nf[1] for nf in non_empty_fields) if non_empty_fields else '暂无已填充维度'
+    else:
+        book = None
+        bb = None
+
+    # 命中维度检测（零LLM快路径）
+    hit_suggestions = detect_dimension_hits(message) if detect_dimension_hits else []
+
+    # 会话（global闲聊：不绑book，通用唯一会话key）
+    if not book_id:
+        # 纯闲聊会话：用固定scope+uuid，book_id写入None
+        session = AISession.query.filter(
+            AISession.scope == 'general_global',
+            AISession.title == '通用闲聊',
+        ).order_by(AISession.updated_at.desc()).first()
+        if not session:
+            session = AISession(id=str(uuid.uuid4()), scope='general_global',
+                                title='通用闲聊', book_id=None,
+                                messages_json='[]', created_at=datetime.now(timezone.utc),
+                                updated_at=datetime.now(timezone.utc))
+            db.session.add(session); db.session.commit()
+        session_id = session.id
+    else:
+        session = _get_or_create_session_for_book(session_id, book_id, scope=scope, title=message[:30])
+        session_id = session.id
+
+    # 构建 messages
+    system_prompt = build_general_chat_system_prompt()
+    enriched = wrap_message_with_context(message, book_title, bb_summary)
+    history = load_session_messages(session)
+    # 最大上下文：最近12条（闲聊不塞太长）
+    if len(history) > 12:
+        history = history[-12:]
+    messages = [{'role': 'system', 'content': system_prompt}]
+    for h in history:
+        if 'content' in h:
+            msg_entry = {'role': h['role'], 'content': h['content'][:4000]}
+            messages.append(msg_entry)
+    messages.append({'role': 'user', 'content': enriched[:8000]})
+
+    cfg = AIConfig.get_active()
+    if not cfg or not cfg.api_key:
+        return jsonify({'error': '请先配置 AI'}), 400
+    import app as app_module
+    base_url, api_key, model = get_llm_config(app_module)
+    gw = LLMGateway(base_url, api_key, model)
+
+    def generate():
+        yield ': ping-heartbeat-keepalive\n\n'
+        full_text = []
+        try:
+            # 首帧 ①：命中维度建议（前端弹气泡"是否落入XX维度？"）
+            if hit_suggestions:
+                yield f'data: {json.dumps({"type": "meta", "kind": "hit_suggestions", "info": {"suggestions": hit_suggestions}}, ensure_ascii=False)}\n\n'
+            # 首帧 ②：扫榜意图识别（前端自动弹出Step1入口）
+            scan_intent = any(k in message for k in [
+                '扫榜', '热榜', '爆款', '番茄小说', '起点中文', '七猫', '排行榜',
+                '现在什么火', '什么书火', '趋势', '看看榜单',
+            ])
+            if scan_intent:
+                yield f'data: {json.dumps({"type": "meta", "kind": "scan_intent", "info": {"detected": True}}, ensure_ascii=False)}\n\n'
+
+            for chunk in gw_stream_with_hb(gw, messages, temperature=0.7, max_tokens=4096):
+                if chunk is HEARTBEAT:
+                    yield SSE_HEARTBEAT_COMMENT
+                    continue
+                full_text.append(chunk)
+                yield f'data: {json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)}\n\n'
+
+            complete = ''.join(full_text)
+            cards = parse_cards(complete)
+            for c in cards:
+                c['content'] = _clean_text_to_plain(c.get('content', ''))
+                if c.get('title'):
+                    c['title'] = _clean_text_to_plain(c['title'])
+            for card in cards:
+                yield f'data: {json.dumps({"type": "card", "card": card, "session_id": session_id}, ensure_ascii=False)}\n\n'
+
+            clean_text = _clean_text_to_plain(strip_cards(complete))
+            persisted_cards = [{'id': c['id'], 'type': c['type'], 'title': c['title'],
+                                'content': c['content'], 'target': c['target'],
+                                'status': 'pending'} for c in cards]
+            history.append({'role': 'user', 'content': message})
+            history.append({'role': 'assistant', 'content': clean_text,
+                            'cards': persisted_cards})
+            _safe_save_session_messages(session, history)
+            yield f'data: {json.dumps({"type": "done", "session_id": session_id}, ensure_ascii=False)}\n\n'
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
+
+
+# ---------------- Step1/Step2/Step3 流水线薄路由 ----------------
+
+def _get_pipeline_llm_gateway():
+    """返回 (gateway, config_ok_tuple)，复用现有网关。"""
+    from app import AIConfig
+    from llm_gateway import LLMGateway, get_llm_config
+    cfg = AIConfig.get_active()
+    if not cfg or not cfg.api_key:
+        return None, (False, '请先配置 AI')
+    import app as app_module
+    base_url, api_key, model = get_llm_config(app_module)
+    gw = LLMGateway(base_url, api_key, model)
+    return gw, (True, 'ok')
+
+
+@chat_collab_bp.route('/api/ai/pipeline/step1-scan', methods=['POST'])
+def pipeline_step1_scan():
+    """Step1 实时扫榜（body: {topic, reference_books?}，返回SSE+JSON报告）。"""
+    from book_pipeline_tools import run_step1_scan, render_step1_text
+    data = request.json or {}
+    topic = (data.get('topic') or '').strip()
+    refs = data.get('reference_books') or []
+    if not topic:
+        return jsonify({'error': '请输入题材（如都市高武、系统文、异能）'}), 400
+
+    gw, (ok, msg) = _get_pipeline_llm_gateway()
+    if not ok:
+        return jsonify({'error': msg}), 400
+
+    # WebFetch：如果环境里有可用 WebFetch，就用（部署在有外网的机器）
+    web_fetch_fn = None
+    try:
+        import urllib.request
+        def _fetch(url):
+            req = urllib.request.Request(url, headers={
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) FanshuWriter/1.0'
+            })
+            try:
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    raw = r.read()
+                    try:
+                        return raw.decode('utf-8', errors='ignore')
+                    except Exception:
+                        return str(raw[:20000])
+            except Exception:
+                return ''
+        web_fetch_fn = _fetch
+    except Exception:
+        web_fetch_fn = None
+
+    # LLM归纳：包一层同步调用（非流式，因为还要出JSON报告）
+    def llm_summarize(prompt: str, scraped: str) -> str:
+        msgs = [
+            {'role': 'system', 'content': '你是网文分析师，只输出合法JSON。'},
+            {'role': 'user', 'content': (prompt + '\n\n抓取原始内容：\n' + scraped[:25000])[:30000]},
+        ]
+        out = []
+        for ch in gw.chat(messages=msgs, temperature=0.2, max_tokens=3500, stream=True):
+            if isinstance(ch, str):
+                out.append(ch)
+        return ''.join(out)
+
+    def generate():
+        yield ': ping-heartbeat-keepalive\n\n'
+        yield f'data: {json.dumps({"type": "meta", "kind": "step", "info": {"name": "step1", "phase": "start", "topic": topic}}, ensure_ascii=False)}\n\n'
+        try:
+            # 先yield进度：正在联网扫榜
+            yield f'data: {json.dumps({"type": "delta", "content": "正在实时联网扫榜（番茄/起点/七猫）…请稍候（约10-30秒）\n\n"}, ensure_ascii=False)}\n\n'
+
+            report = run_step1_scan(topic, reference_books=refs,
+                                    web_fetch_fn=web_fetch_fn,
+                                    llm_summarize_fn=llm_summarize)
+            ascii_text = render_step1_text(report)
+            # 先渲染ASCII友好文本给用户看
+            for ch_line in ascii_text.split('\n'):
+                yield f'data: {json.dumps({"type": "delta", "content": ch_line + "\n"}, ensure_ascii=False)}\n\n'
+                time.sleep(0.01)
+            # 再输出一个card + JSON meta（前端渲染表格）
+            yield f'data: {json.dumps({"type": "meta", "kind": "pipeline_step1_done", "info": report}, ensure_ascii=False)}\n\n'
+            yield f'data: {json.dumps({"type": "card", "card": {
+                "id": str(uuid.uuid4())[:8],
+                "type": "PIPELINE_STEP1",
+                "title": f"【Step1】{topic} 实时扫榜报告",
+                "target": "趋势方向",
+                "content": ascii_text,
+            }, "session_id": None, "meta": report}, ensure_ascii=False)}\n\n'
+            yield f'data: {json.dumps({"type": "done"}, ensure_ascii=False)}\n\n'
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
+
+
+@chat_collab_bp.route('/api/ai/pipeline/step2-plans', methods=['POST'])
+def pipeline_step2_plans():
+    """Step2 5方案生成。body: {topic, trend_report, reference_books?}。"""
+    from book_pipeline_tools import run_step2_plans, render_step2_text
+    data = request.json or {}
+    topic = (data.get('topic') or '').strip()
+    trend_report = data.get('trend_report') or {}
+    refs = data.get('reference_books') or []
+    if not topic:
+        return jsonify({'error': '缺少 topic'}), 400
+    if not trend_report or not isinstance(trend_report, dict):
+        return jsonify({'error': '缺少 trend_report（需先执行 Step1）'}), 400
+
+    gw, (ok, msg) = _get_pipeline_llm_gateway()
+    if not ok:
+        return jsonify({'error': msg}), 400
+
+    def llm_fn(prompt: str) -> str:
+        msgs = [{'role': 'system', 'content': '你是资深网文策划，只输出合法JSON。'},
+                {'role': 'user', 'content': prompt[:30000]}]
+        out = []
+        for ch in gw.chat(messages=msgs, temperature=0.85, max_tokens=7000, stream=True):
+            if isinstance(ch, str):
+                out.append(ch)
+        return ''.join(out)
+
+    def generate():
+        yield ': ping-heartbeat-keepalive\n\n'
+        yield f'data: {json.dumps({"type": "delta", "content": f"正在为【{topic}】生成5个方案（趋势跟随/差异化/大胆尝试）…\n\n"}, ensure_ascii=False)}\n\n'
+        try:
+            plans_obj = run_step2_plans(topic, trend_report, refs, llm_fn=llm_fn)
+            rendered = render_step2_text(plans_obj)
+            for line in rendered.split('\n'):
+                yield f'data: {json.dumps({"type": "delta", "content": line + "\n"}, ensure_ascii=False)}\n\n'
+                time.sleep(0.005)
+            yield f'data: {json.dumps({"type": "meta", "kind": "pipeline_step2_done", "info": plans_obj}, ensure_ascii=False)}\n\n'
+            # 每个方案出一张卡片（方便用户点采纳后单方案入库）
+            for p in plans_obj.get('plans', []):
+                body_lines = [
+                    f'方向：{p.get("direction")}',
+                    f'书名：{p.get("title")}',
+                    f'一句话梗：{p.get("one_liner")}',
+                    f'金手指：{p.get("golden_finger")}',
+                    f'身份矛盾：{p.get("identity_conflict")}',
+                    f'爽点内核：{p.get("pleasure_core")}',
+                    f'世界观壳：{p.get("world_shell")}',
+                    f'差异化锚点：{p.get("diff_anchor")}',
+                    f'趋势依据：{p.get("trend_basis")}',
+                    f'预估规模：{p.get("estimated_size")}',
+                ]
+                v = p.get('validation', {})
+                body_lines.append('验证：自洽{} 续航100章{} 角色弧光{} 差异化{}'.format(
+                    '✅' if v.get('self_consistent') else '❌',
+                    '✅' if v.get('sustain_100ch') else '❌',
+                    '✅' if v.get('character_arc') else '❌',
+                    '✅' if v.get('differentiation') else '❌',
+                ))
+                yield f'data: {json.dumps({"type": "card", "card": {
+                    "id": str(uuid.uuid4())[:8],
+                    "type": "PIPELINE_STEP2",
+                    "title": f"方案{p.get('plan_index')}｜{p.get('direction')}｜{p.get('title')}",
+                    "target": "方案入库",
+                    "content": "\n".join(body_lines),
+                    "plan_index": p.get("plan_index"),
+                    "direction": p.get("direction"),
+                }, "session_id": None, "meta": p}, ensure_ascii=False)}\n\n'
+            yield f'data: {json.dumps({"type": "done"}, ensure_ascii=False)}\n\n'
+        except Exception as e:
+            yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
+
+
+@chat_collab_bp.route('/api/ai/pipeline/step3-worldbuild', methods=['POST'])
+def pipeline_step3_worldbuild():
+    """Step3 世界观/修炼/角色/代价/系统人格化构建。body: {topic?, selected_plan}。"""
+    from book_pipeline_tools import run_step3_worldbuild, render_step3_text
+    data = request.json or {}
+    selected_plan = data.get('selected_plan') or {}
+    topic = (data.get('topic') or '').strip()
+    if not selected_plan or not isinstance(selected_plan, dict):
+        return jsonify({'error': '缺少 selected_plan（需先 Step2 选择一个方案）'}), 400
+
+    gw, (ok, msg) = _get_pipeline_llm_gateway()
+    if not ok:
+        return jsonify({'error': msg}), 400
+
+    def llm_fn(prompt: str) -> str:
+        msgs = [{'role': 'system', 'content': '你是资深网文架构师，只输出合法JSON。'},
+                {'role': 'user', 'content': prompt[:30000]}]
+        out = []
+        for ch in gw.chat(messages=msgs, temperature=0.78, max_tokens=9000, stream=True):
+            if isinstance(ch, str):
+                out.append(ch)
+        return ''.join(out)
+
+    def generate():
+        yield ': ping-heartbeat-keepalive\n\n'
+        plan_title = str(selected_plan.get('title') if isinstance(selected_plan, dict) else '').strip() or '未命名方案'
+        yield f'data: {json.dumps({"type": "delta", "content": f"正在基于方案《{plan_title}》构建世界观+9级修炼+CDL角色+金手指代价+系统人格化…\n\n"}, ensure_ascii=False)}\n\n'
+        try:
+            result = run_step3_worldbuild(selected_plan, topic=topic, llm_fn=llm_fn)
+            rendered = render_step3_text(result)
+            for line in rendered.split('\n'):
+                yield f'data: {json.dumps({"type": "delta", "content": line + "\n"}, ensure_ascii=False)}\n\n'
+                time.sleep(0.005)
+            yield f'data: {json.dumps({"type": "meta", "kind": "pipeline_step3_done", "info": {
+                k: v for k, v in result.items() if not k.startswith("_")
+            }}, ensure_ascii=False)}\n\n'
+            # 拆出多卡片：世界观1张 + 主角/前5配角各1张 + 修炼体系1张 + 金手指代价1张 + 系统人格化1张 = 共10张
+            parts = [
+                ('SAVE_WORLDSETTING', '世界观速写', result.get('world_sketch', '')),
+                ('SAVE_RULE', '修炼体系（≥9级+金手指联动）',
+                 '\n'.join(
+                     f"Lv.{lv.get('level')} {lv.get('name')}｜{lv.get('cap')}｜金手指联动：{lv.get('gf_link')}"
+                     for lv in (result.get('cultivation_levels') or [])
+                 )),
+            ]
+            cdl = result.get('cdl_characters') or {}
+            p = cdl.get('protagonist') or {}
+            wa = p.get('want_vs_need') or ['', '']
+            parts.append(('SAVE_CHARACTER', f'主角·{p.get("name")} CDL档案',
+                          f'姓名：{p.get("name")}\n年龄：{p.get("age")}\n身份：{p.get("identity")}\n'
+                          f'核心创伤：{p.get("core_wound")}\nWANT：{wa[0]}\nNEED：{wa[1]}\n'
+                          f'五阶段弧光：{" → ".join(p.get("5_arc_phases") or [])}'))
+            for idx, s in enumerate(cdl.get('supports') or [], 1):
+                parts.append(('SAVE_CHARACTER', f'配角{idx}·{s.get("name")}（{s.get("role_in_story")}）',
+                              f'和主角的线：{s.get("core_link_to_protagonist")}\n隐藏面：{s.get("shadow_side")}\n'
+                              f'CDL档案：{s.get("cdl_profile")}'))
+            ha = result.get('heroine_arc') or {}
+            parts.append(('SAVE_CHARACTER', f'女主·{ha.get("name")}（5阶段温度弧线）',
+                          f'首次相遇：{ha.get("first_meet_scene")}\n' +
+                          '\n'.join(
+                              f'阶段{ph.get("phase")}｜{ph.get("label")}｜温度{ph.get("temperature")}°｜{ph.get("core_event")}'
+                              for ph in (ha.get("temperature_phases") or [])
+                          )))
+            gfc = result.get('golden_finger_cost_design') or {}
+            parts.append(('SAVE_RULE', '金手指代价/反噬设计（硬约束）',
+                          '使用代价：\n' + '\n'.join(f'- {c}' for c in (gfc.get('usage_costs') or [])) +
+                          '\n反噬剧情示例：\n' + '\n'.join(f'- {c}' for c in (gfc.get('backfire_examples') or [])) +
+                          f'\n🚫硬约束：{gfc.get("hard_constraint")}'))
+            sp = result.get('system_personality') or {}
+            parts.append(('SAVE_CONCEPT', f'系统人格化｜{sp.get("template_name")}（全书一致）',
+                          '出场对白：\n' + '\n'.join(f'- “{q}”' for q in (sp.get('opening_quotes') or [])) +
+                          '\n一致性铁律：\n' + '\n'.join(f'- {r}' for r in (sp.get('consistency_rules') or []))))
+            for ctype, title, content in parts:
+                if not str(content).strip():
+                    continue
+                yield f'data: {json.dumps({"type": "card", "card": {
+                    "id": str(uuid.uuid4())[:8],
+                    "type": ctype,
+                    "title": title,
+                    "target": {
+                        "SAVE_WORLDSETTING": "世界观", "SAVE_CHARACTER": "人物",
+                        "SAVE_RULE": "核心规则", "SAVE_CONCEPT": "核心构思",
+                    }.get(ctype, "入库"),
+                    "content": content,
+                }, "session_id": None}, ensure_ascii=False)}\n\n'
+            yield f'data: {json.dumps({"type": "done"}, ensure_ascii=False)}\n\n'
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})

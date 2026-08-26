@@ -14,7 +14,13 @@ const __BUILD_TAG__ = 'v3-0814';
 // 手机优先：底部Tab栏 + 大按钮 + 紧凑输入区
 // ============================================================================
 
-type SmartTab = 'setting' | 'chapter' | 'deai' | 'review';
+type SmartTab = 'setting' | 'chapter' | 'deai' | 'review' | 'general';
+
+// 命中维度提示（通用聊天模式）+ 爆款流水线类型定义
+interface HitSuggestion {
+  dim: string; label: string; card_type: string; confidence: number;
+  hits: string[]; suggested_title: string;
+}
 
 // 维度定义（与后端 SMART_DIMENSIONS 对齐）
 interface DimSpec {
@@ -1033,6 +1039,20 @@ export default function ChatPanel() {
   // 系统学习面板折叠（默认收起 → 只占一行高度）
   const [showOptReport, setShowOptReport] = useState(false);
 
+  // ──────── 通用对话Tab专属state（命中维度气泡 + 3步爆款流水线） ────────
+  // 命中维度提示气泡：接收到 hit_suggestions meta 时弹出
+  const [hitSuggestionPopups, setHitSuggestionPopups] = useState<Array<{
+    id: string; msg_index: number; suggestions: HitSuggestion[];
+  }>>([]);
+  // 爆款3步流水线浮层
+  const [showPipelineWizard, setShowPipelineWizard] = useState(false);
+  const [pipelineTopic, setPipelineTopic] = useState('');
+  const [pipelineRefs, setPipelineRefs] = useState<string[]>([]);
+  const [pipelineStep, setPipelineStep] = useState<0 | 1 | 2 | 3>(0); // 0=未开始, 1=扫榜, 2=方案, 3=世界观
+  const [pipelineTrendReport, setPipelineTrendReport] = useState<any>(null);
+  const [pipelineSelectedPlan, setPipelineSelectedPlan] = useState<any>(null);
+  const [pipelineWorking, setPipelineWorking] = useState(false);
+
   // Q2 合并：事件日志重算（原先在工具栏浮层，现在合并进「校审」Tab 子面板）
   const [showBackfill, setShowBackfill] = useState(false);
   const [backfillLLM, setBackfillLLM] = useState<'auto' | 'always' | 'never'>('auto');
@@ -1380,7 +1400,9 @@ export default function ChatPanel() {
   }, [chatPanelOpen]);
 
   // 公共：消费 SSE 流
-  const consumeSSE = useCallback(async (res: Response, ctrl: AbortController, onCardMeta?: (card: ActionCard, meta: any) => void) => {
+  // - onMeta: 可选扩展 meta 事件回调（通用聊天用：命中维度提示气泡、扫榜意图、流水线完成）
+  //          不传则沿用默认行为（向后兼容），不破坏其他4个调用点
+  const consumeSSE = useCallback(async (res: Response, ctrl: AbortController, onCardMeta?: (card: ActionCard, meta: any) => void, onMeta?: (kind: string, info: any) => void) => {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
       throw new Error(err.error || `HTTP ${res.status}`);
@@ -1420,6 +1442,10 @@ export default function ChatPanel() {
         if (evt.kind === 'attempt_reset' && evt.info) {
           const why = evt.info.reason ? `：${evt.info.reason}` : '';
           pushNote(`> 🔄 第${evt.info.attempt}/${evt.info.max_attempts || '?'}次尝试${why}\n\n`, true);
+        }
+        // 【扩展钩子】如果传了 onMeta，把 meta 事件也转交外部处理（命中维度气泡/扫榜意图/流水线）
+        if (typeof onMeta === 'function') {
+          try { onMeta(evt.kind || '', evt.info || null); } catch {}
         }
       } else if (evt.type === 'delta') {
         gotPayload = true;
@@ -2162,12 +2188,76 @@ export default function ChatPanel() {
   // 发送按钮是否可用
   const canSend = (() => {
     if (streaming || !input.trim()) return false;
+    if (activeTab === 'general') return true;
     if (activeTab === 'setting') return !!selectedDim;
     return false;
   })();
 
-  // 通用聊天：自由讨论，关键词触发填入维度
+  // ---------- 通用对话顶层Tab：调用 chatGeneralStream（SSE）+ 命中维度气泡 + 扫榜意图自动开流水线 ----------
+  const handleGeneralTabSend = useCallback(async () => {
+    const text = input.trim();
+    if (!text || streaming) return;
+    setInput('');
+    setStreamError('');
+    streamBufferRef.current = '';
+    appendUserAi(text);
+    setStreaming(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    // 插入命中气泡：在用户消息之后（msg_index = 最后一条用户消息）
+    const insertedPopupIndex = { idx: -1 };
+    setMessages(prev => { insertedPopupIndex.idx = prev.length - 2; return prev; });
+    try {
+      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: undefined }, ctrl.signal);
+      let receivedSessionId2: string | null = null;
+      await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
+        // meta 分发：命中维度提示气泡
+        if (kind === 'hit_suggestions' && Array.isArray(info?.suggestions) && info.suggestions.length > 0) {
+          const popId = 'hit-' + Math.random().toString(36).slice(2, 9);
+          setHitSuggestionPopups(prev => [...prev, { id: popId, msg_index: insertedPopupIndex.idx, suggestions: info.suggestions }]);
+        }
+        // meta 分发：命中"扫榜"意图 → 自动打开爆款流水线浮层，预填题材
+        if (kind === 'scan_intent' && info?.detected) {
+          setShowPipelineWizard(true);
+          setPipelineStep(1);
+          const autoTopic = (() => {
+            const t = text;
+            const rules = [
+              /都市异能|都市高武|系统文|玄幻高武|仙侠|修仙|历史脑洞|种田|宫斗|科幻末世|悬疑推理|恐怖灵异|言情甜宠|同人|军事|游戏/
+            ];
+            for (const r of rules) { const m = t.match(r); if (m) return m[0]; }
+            return '';
+          })();
+          if (autoTopic) setPipelineTopic(autoTopic);
+        }
+      });
+      // 如果流水线浮层没开，但用户消息里明确要扫榜，也打开（兜底）
+      if (!showPipelineWizard) {
+        const scanKeys = ['扫榜', '现在什么火', '什么书火', '番茄小说', '起点中文网', '七猫', '爆款', '热榜'];
+        if (scanKeys.some(k => text.includes(k))) {
+          setShowPipelineWizard(true);
+          setPipelineStep(1);
+        }
+      }
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setStreamError(e.message || '通用聊天失败');
+        removeEmptyAi();
+      }
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
+    }
+  }, [input, streaming, bookId, sessionId, appendUserAi, removeEmptyAi, consumeSSE, showPipelineWizard]);
+
+  // 通用聊天（设定Tab里的"通用"子模式=老逻辑）+ 顶层"通用对话"Tab = 新逻辑分流
   const handleGeneral = useCallback(async () => {
+    // 顶层通用Tab：走新增的 chatGeneralStream（支持全局闲聊+命中气泡+扫榜意图）
+    if (activeTab === 'general') {
+      await handleGeneralTabSend();
+      return;
+    }
+    // 原有设定Tab内的"通用"子模式：保持旧行为不动
     const text = input.trim();
     if (!bookId || !text || streaming) return;
     setInput('');
@@ -2187,13 +2277,13 @@ export default function ChatPanel() {
       if (e.name !== 'AbortError') {
         setStreamError(e.message || '通用聊天失败');
         removeEmptyAi();
-        refreshHistory(); // 断流后刷新会话历史（后端已抢救保存部分内容，可从历史找回）
+        refreshHistory();
       }
     } finally {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [input, bookId, streaming, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
+  }, [activeTab, handleGeneralTabSend, input, bookId, streaming, settingPacks, sessionId, appendUserAi, removeEmptyAi, consumeSSE, refreshProgress, refreshHistory]);
 
   // 主发送动作（设定Tab：通用走general，维度已有内容走dim-edit，否则走suggest）
   const handleMainSend = useCallback(() => {
@@ -2253,6 +2343,11 @@ export default function ChatPanel() {
   const onInputKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      // 顶层"通用对话"Tab：直接发
+      if (activeTab === 'general') {
+        handleGeneral();
+        return;
+      }
       if (activeTab === 'setting' && selectedDim && suggestions.length === 0) {
         handleMainSend();
       }
@@ -2260,6 +2355,7 @@ export default function ChatPanel() {
   };
 
   const TABS: Array<{ key: SmartTab; label: string; icon: string }> = [
+    { key: 'general', label: '通用对话', icon: '💬' },
     { key: 'setting', label: '设定', icon: '⚙️' },
     { key: 'chapter', label: '正文', icon: '✍️' },
     { key: 'deai', label: '去AI', icon: '🧹' },
@@ -2333,6 +2429,74 @@ export default function ChatPanel() {
 
             {/* Tab 工具区（根据当前Tab显示不同工具） */}
             <div className="smart-toolbar">
+              {activeTab === 'general' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 10px', background: 'linear-gradient(135deg,#f8fbff 0%,#f5f3ff 100%)', borderRadius: 8, border: '1px solid #e0e7ff' }}>
+                  {/* 命中维度气泡提示 */}
+                  {hitSuggestionPopups.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {hitSuggestionPopups.map(pop => (
+                        <div key={pop.id} className="auto-context-notice" style={{ borderRadius: 8, margin: 0 }} onClick={() => setHitSuggestionPopups(prev => prev.filter(x => x.id !== pop.id))}>
+                          <span className="acn-icon">💡</span>
+                          <span className="acn-text">
+                            <strong>这段内容可能落入：</strong>
+                            {pop.suggestions.map((s: HitSuggestion, i: number) => (
+                              <span key={s.dim + i} style={{ marginLeft: 8, background: '#fff7ed', color: '#c2410c', padding: '2px 8px', borderRadius: 999, fontSize: 12 }}>
+                                {s.label}（{Math.round(s.confidence * 100)}%）
+                              </span>
+                            ))}
+                            <span className="acn-sub"> · 点击气泡忽略；或点下方按钮直接转成落地卡片入库</span>
+                          </span>
+                          <span className="acn-close" style={{ marginLeft: 8, padding: '0 8px', fontSize: 12 }}>×</span>
+                        </div>
+                      ))}
+                      {/* 一键落卡按钮（把命中的内容直接合成Action Card落库） */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {hitSuggestionPopups.flatMap(pop => pop.suggestions.map((s: HitSuggestion) => (
+                          <button
+                            key={pop.id + '-' + s.dim}
+                            className="btn-sm"
+                            style={{ fontSize: 12 }}
+                            onClick={() => {
+                              // 合成一张卡片并推给AI消息气泡最后一条（若没有AI消息则append一条空AI占位）
+                              const cardId = 'gen-' + Math.random().toString(36).slice(2, 8);
+                              const fakeCard: any = {
+                                id: cardId, type: s.card_type, title: s.suggested_title,
+                                content: input, target: s.label, status: 'pending',
+                              };
+                              setMessages(prev => {
+                                const next = [...prev];
+                                // 找到pop.msg_index对应的用户消息，后面的AI消息上挂卡片；没有就补一条
+                                const afterIndex = pop.msg_index + 1;
+                                if (next[afterIndex]?.role === 'assistant') {
+                                  next[afterIndex] = { ...next[afterIndex], cards: [...(next[afterIndex].cards || []), fakeCard] };
+                                } else {
+                                  next.splice(afterIndex, 0, { role: 'assistant', content: '', cards: [fakeCard] });
+                                }
+                                return next;
+                              });
+                              setHitSuggestionPopups(prev => prev.filter(x => x.id !== pop.id));
+                            }}
+                          >一键以「{s.label}」卡片入库（带输入内容）</button>
+                        )))}
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#3730a3' }}>🔥 爆款3步流水线</span>
+                    <button
+                      className="btn-sm primary"
+                      style={{ background: 'linear-gradient(90deg,#4f46e5 0%,#7c3aed 100%)', color: '#fff', border: 'none' }}
+                      onClick={() => { setShowPipelineWizard(true); setPipelineStep(0); setPipelineSelectedPlan(null); setPipelineTrendReport(null); }}
+                    >
+                      🚀 打开
+                    </button>
+                    <span style={{ fontSize: 12, color: '#6b7280' }}>
+                      Step1 扫榜 → Step2 5方案 → Step3 世界观构建 · 全自动产出落地卡片
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'setting' && (
                 <>
                   {/* 维度子按钮栏：两行（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔） */}
@@ -3113,7 +3277,34 @@ export default function ChatPanel() {
               </div>
             )}
 
-            {activeTab !== 'setting' && (
+            {/* 通用对话Tab输入区：textarea+发送，复用chat-input-area样式 */}
+            {activeTab === 'general' && (
+              <div className="chat-input-area">
+                <div className="chat-input-row">
+                  <textarea
+                    ref={inputRef}
+                    className="chat-input"
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={onInputKeyDown}
+                    placeholder={inputPlaceholder}
+                    rows={1}
+                    disabled={streaming}
+                  />
+                  {streaming ? (
+                    <button className="chat-send stop" onClick={stopStream}>停止</button>
+                  ) : (
+                    <button
+                      className="chat-send"
+                      onClick={handleGeneral}
+                      disabled={!canSend}
+                    >发送</button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab !== 'setting' && activeTab !== 'general' && (
               <div className="chat-input-area">
                 <div className="chat-input-row">
                   <input
@@ -3165,6 +3356,243 @@ export default function ChatPanel() {
                   <span className="smart-tab-label">{t.label}</span>
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 爆款3步流水线浮层 */}
+      {showPipelineWizard && (
+        <div className="skill-editor-overlay" onClick={() => !streaming && setShowPipelineWizard(false)}>
+          <div className="skill-editor-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 900, width: '92vw', maxHeight: '88vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div className="skill-editor-header" style={{ flexShrink: 0 }}>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 22 }}>🔥</span>
+                <span>爆款3步流水线</span>
+                <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 400 }}>实时扫榜 → 5个方案 → 世界观/角色/9级修炼</span>
+              </h3>
+              <button className="btn-icon" onClick={() => !streaming && setShowPipelineWizard(false)} disabled={streaming}>✕</button>
+            </div>
+            <div style={{ padding: '10px 16px', display: 'flex', gap: 6, borderBottom: '1px solid #eee', flexShrink: 0, flexWrap: 'wrap' }}>
+              {[
+                { step: 1, label: 'Step 1 实时扫榜', icon: '🔍' },
+                { step: 2, label: 'Step 2 5个方案', icon: '💡' },
+                { step: 3, label: 'Step 3 世界观构建', icon: '🏗️' },
+              ].map(it => (
+                <span key={it.step} style={{
+                  padding: '4px 12px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                  background: pipelineStep >= it.step ? 'linear-gradient(90deg,#4f46e5,#7c3aed)' : '#f3f4f6',
+                  color: pipelineStep >= it.step ? '#fff' : '#6b7280',
+                }}>{it.icon} {it.label}{pipelineStep > it.step ? ' ✅' : ''}</span>
+              ))}
+            </div>
+            <div style={{ padding: 16, overflowY: 'auto', flex: 1 }}>
+
+              {/* Step 1 实时扫榜 */}
+              {pipelineStep === 1 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <label style={{ fontSize: 14, fontWeight: 600 }}>📚 指定题材（必填）</label>
+                  <input
+                    className="form-input"
+                    placeholder="例如：都市高武 / 系统文 / 异能 / 仙侠 / 历史脑洞 / 悬疑推理…"
+                    value={pipelineTopic}
+                    onChange={e => setPipelineTopic(e.target.value)}
+                    style={{ padding: 10, fontSize: 14 }}
+                  />
+                  <label style={{ fontSize: 14, fontWeight: 600, marginTop: 4 }}>📖 可选参考书名（用逗号或换行分隔，3-5本）</label>
+                  <textarea
+                    className="form-input"
+                    rows={3}
+                    placeholder="例如：凡人修仙传,诡秘之主,斗破苍穹"
+                    value={pipelineReferenceBooks}
+                    onChange={e => setPipelineReferenceBooks(e.target.value)}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6, flexShrink: 0 }}>
+                    <button className="btn-sm" onClick={() => setShowPipelineWizard(false)} disabled={streaming}>取消</button>
+                    <button
+                      className="btn-sm primary"
+                      disabled={!pipelineTopic.trim() || streaming}
+                      onClick={async () => {
+                        streamBufferRef.current = '';
+                        const refs = pipelineReferenceBooks.split(/[,，\n]+/).map(s => s.trim()).filter(Boolean);
+                        const ctrl = new AbortController();
+                        abortRef.current = ctrl;
+                        setStreaming(true);
+                        let collectedTrend: any = null;
+                        try {
+                          const res = await api.pipelineStep1Scan(pipelineTopic.trim(), refs.length ? refs : undefined, ctrl.signal);
+                          await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
+                            if (kind === 'pipeline_trend_report' && info?.report) {
+                              collectedTrend = info.report;
+                            }
+                          });
+                          if (collectedTrend) setPipelineTrendReport(collectedTrend);
+                          else {
+                            // 兜底：streamBufferRef里存了流式正文，尝试解析
+                            setPipelineTrendReport({ raw_fallback: streamBufferRef.current });
+                          }
+                          setPipelineStep(2);
+                          appendAiNotice('【Step1 实时扫榜】趋势方向已产出，可进入 Step2 生成5个方案。');
+                        } catch (e: any) {
+                          if (e.name !== 'AbortError') setStreamError(e.message || 'Step1 扫榜失败');
+                        } finally {
+                          setStreaming(false);
+                          abortRef.current = null;
+                        }
+                      }}
+                    >
+                      {streaming ? '扫榜中（联网搜索+LLM归纳）…' : '🚀 Step1：实时扫榜（联网）'}
+                    </button>
+                  </div>
+                  {streaming && streamBufferRef.current && (
+                    <div style={{ whiteSpace: 'pre-wrap', border: '1px dashed #c7d2fe', borderRadius: 8, padding: 12, background: '#eef2ff', color: '#1e1b4b', fontSize: 13 }}>
+                      {streamBufferRef.current}
+                    </div>
+                  )}
+                  {pipelineTrendReport && !streaming && (
+                    <details open style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10, marginTop: 4 }}>
+                      <summary style={{ cursor: 'pointer', fontWeight: 600 }}>📊 趋势方向报告（点击折叠/展开）</summary>
+                      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 13, marginTop: 8 }}>
+                        {typeof pipelineTrendReport === 'string' ? pipelineTrendReport : (pipelineTrendReport.markdown || JSON.stringify(pipelineTrendReport, null, 2))}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              )}
+
+              {/* Step 2 5个方案 */}
+              {pipelineStep === 2 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ fontSize: 13, color: '#6b7280' }}>
+                    题材：<strong style={{ color: '#111' }}>{pipelineTopic}</strong>
+                    {pipelineReferenceBooks.trim() && <> · 参考书名：<em>{pipelineReferenceBooks.trim()}</em></>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0 }}>
+                    <button className="btn-sm" onClick={() => setPipelineStep(1)} disabled={streaming}>← 返回Step1</button>
+                    <button
+                      className="btn-sm primary"
+                      disabled={streaming}
+                      onClick={async () => {
+                        streamBufferRef.current = '';
+                        const ctrl = new AbortController();
+                        abortRef.current = ctrl;
+                        setStreaming(true);
+                        let collected: any = null;
+                        try {
+                          const res = await api.pipelineStep2Plans(pipelineTopic.trim(), pipelineTrendReport, pipelineReferenceBooks ? pipelineReferenceBooks.split(/[,，\n]+/).map(s => s.trim()).filter(Boolean) : undefined, ctrl.signal);
+                          await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
+                            if (kind === 'pipeline_plans' && info?.plans) collected = info.plans;
+                          });
+                          if (collected) setPipelinePlans(collected);
+                          appendAiNotice('【Step2 方案生成】5个方案已产出，请选择一个后进入 Step3。');
+                        } catch (e: any) {
+                          if (e.name !== 'AbortError') setStreamError(e.message || 'Step2 方案生成失败');
+                        } finally {
+                          setStreaming(false);
+                          abortRef.current = null;
+                        }
+                      }}
+                    >{streaming ? '生成方案中…' : '💡 Step2：生成5个方案'}</button>
+                  </div>
+                  {streaming && streamBufferRef.current && (
+                    <div style={{ whiteSpace: 'pre-wrap', border: '1px dashed #c7d2fe', borderRadius: 8, padding: 12, background: '#eef2ff', fontSize: 13 }}>{streamBufferRef.current}</div>
+                  )}
+                  {pipelinePlans && !streaming && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      {(Array.isArray(pipelinePlans) ? pipelinePlans : []).map((plan: any, i: number) => {
+                        const isSel = pipelineSelectedPlan?.__idx === i;
+                        return (
+                          <div
+                            key={i}
+                            onClick={() => setPipelineSelectedPlan({ ...plan, __idx: i })}
+                            style={{
+                              padding: 12, borderRadius: 8, cursor: 'pointer', fontSize: 13,
+                              border: isSel ? '2px solid #4f46e5' : '1px solid #e5e7eb',
+                              background: isSel ? '#eef2ff' : '#fff',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <strong style={{ fontSize: 14 }}>【方案{i + 1}】{plan.title || plan.书名 || plan.name}</strong>
+                              <span style={{
+                                fontSize: 11, padding: '2px 8px', borderRadius: 999,
+                                background: (plan.direction || plan.方向) === '趋势跟随' ? '#dbeafe' :
+                                  (plan.direction || plan.方向) === '差异化' ? '#ede9fe' : '#fff1f2',
+                                color: (plan.direction || plan.方向) === '趋势跟随' ? '#1d4ed8' :
+                                  (plan.direction || plan.方向) === '差异化' ? '#6d28d9' : '#be123c',
+                              }}>{plan.direction || plan.方向 || '趋势跟随'}</span>
+                            </div>
+                            <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', color: '#374151' }}>
+                              {plan.markdown || plan.summary || (() => {
+                                const entries = Object.entries(plan).filter(([k]) => k !== '__idx');
+                                return entries.slice(0, 10).map(([k, v]) => `${k}：${v}`).join('\n');
+                              })()}
+                            </div>
+                            {isSel && <div style={{ marginTop: 6, fontSize: 12, color: '#4f46e5', fontWeight: 600 }}>✅ 已选，可点下方 Step3</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
+                    <button
+                      className="btn-sm primary"
+                      disabled={!pipelineSelectedPlan || streaming}
+                      onClick={() => setPipelineStep(3)}
+                    >下一步 → Step3 世界观构建</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3 世界观构建 */}
+              {pipelineStep === 3 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ fontSize: 13, color: '#374151' }}>
+                    已选方案：<strong style={{ color: '#111' }}>{pipelineSelectedPlan?.title || pipelineSelectedPlan?.书名 || pipelineSelectedPlan?.name || `方案${(pipelineSelectedPlan?.__idx ?? -1) + 1}`}</strong>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0 }}>
+                    <button className="btn-sm" onClick={() => setPipelineStep(2)} disabled={streaming}>← 返回Step2</button>
+                    <button
+                      className="btn-sm primary"
+                      disabled={!pipelineSelectedPlan || streaming}
+                      onClick={async () => {
+                        streamBufferRef.current = '';
+                        const ctrl = new AbortController();
+                        abortRef.current = ctrl;
+                        setStreaming(true);
+                        let collected: any = null;
+                        try {
+                          const res = await api.pipelineStep3Worldbuild(pipelineSelectedPlan!, ctrl.signal);
+                          await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
+                            if (kind === 'pipeline_worldbuild' && info?.worldbuild) collected = info.worldbuild;
+                          });
+                          setPipelineWorldbuild(collected || { raw_fallback: streamBufferRef.current });
+                          appendAiNotice('【Step3 世界观构建】已完成。可在设定Tab中找到对应「世界观/人物/大纲」落地卡片进行后续调整。');
+                        } catch (e: any) {
+                          if (e.name !== 'AbortError') setStreamError(e.message || 'Step3 世界观构建失败');
+                        } finally {
+                          setStreaming(false);
+                          abortRef.current = null;
+                        }
+                      }}
+                    >{streaming ? '构建中…' : '🏗️ Step3：世界观+9级修炼+角色+金手指'}</button>
+                  </div>
+                  {streaming && streamBufferRef.current && (
+                    <div style={{ whiteSpace: 'pre-wrap', border: '1px dashed #c7d2fe', borderRadius: 8, padding: 12, background: '#eef2ff', fontSize: 13 }}>{streamBufferRef.current}</div>
+                  )}
+                  {pipelineWorldbuild && !streaming && (
+                    <details open style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 10 }}>
+                      <summary style={{ cursor: 'pointer', fontWeight: 600 }}>🌍 世界观构建结果</summary>
+                      <pre style={{ whiteSpace: 'pre-wrap', fontSize: 13, marginTop: 8 }}>
+                        {typeof pipelineWorldbuild === 'string' ? pipelineWorldbuild : (pipelineWorldbuild.markdown || JSON.stringify(pipelineWorldbuild, null, 2))}
+                      </pre>
+                    </details>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
+                    <button className="btn-sm primary" disabled={!pipelineWorldbuild || streaming} onClick={() => setShowPipelineWizard(false)}>🎉 完成流水线</button>
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
         </div>
