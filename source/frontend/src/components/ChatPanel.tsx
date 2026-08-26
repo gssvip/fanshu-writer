@@ -1047,6 +1047,8 @@ export default function ChatPanel() {
   // Q2 合并：事件日志重算（原先在工具栏浮层，现在合并进「校审」Tab 子面板）
   // 扫榜→构思流水线缓存：Step1产出的trend_report存state，Step2直接用（解决Step2报"缺少trend_report需先Step1"）
   const [lastStep1Report, setLastStep1Report] = useState<any>(null);
+  // 扫榜→构思→设定流水线缓存：Step2产出的5方案list存state，Step3用户说「按方案X出设定」直接读方案X完整字段落卡，不再让用户重发方案内容
+  const [lastStep2Plans, setLastStep2Plans] = useState<any[] | null>(null);
   const [showBackfill, setShowBackfill] = useState(false);
   const [backfillLLM, setBackfillLLM] = useState<'auto' | 'always' | 'never'>('auto');
   const [backfillRunning, setBackfillRunning] = useState(false);
@@ -2254,10 +2256,119 @@ export default function ChatPanel() {
       abortRef.current = ctrl2;
       try {
         const res = await api.pipelineStep2Plans(planTopic, lastStep1Report || {}, undefined, ctrl2.signal);
-        await consumeSSE(res, ctrl2, undefined, undefined, true); // ignoreCards=true：构思方案是中间结果，先不入库，确认后再出设定
+        await consumeSSE(res, ctrl2, undefined, (kind: string, info: any) => {
+          // Step2完成后把方案存state：支持 pipeline_step2_done(含plans字段) / pipeline_plans(直接是plans list)
+          if (kind === 'pipeline_step2_done' && info) {
+            if (Array.isArray(info?.plans) && info.plans.length >= 1) setLastStep2Plans(info.plans);
+            else if (Array.isArray(info)) setLastStep2Plans(info);
+          } else if (kind === 'pipeline_plans') {
+            if (Array.isArray(info) && info.length >= 1) setLastStep2Plans(info);
+            else if (Array.isArray(info?.plans) && info.plans.length >= 1) setLastStep2Plans(info.plans);
+          }
+        }, true); // ignoreCards=true：构思方案是中间结果，先不入库，确认后再出设定
         appendAiNotice('✅ 构思方案生成完成。你可以说「按方案X出设定」继续落地，或先提修改意见。');
       } catch (e: any) {
         if (e.name !== 'AbortError') setStreamError(e.message || '构思方案生成失败');
+      } finally {
+        setStreaming(false);
+        abortRef.current = null;
+      }
+      return;
+    }
+    // ====== Step 3 设定落地前置：命中「按方案X出设定/方案X设定/方案X落设定」 → 直接读lastStep2Plans缓存，不再让用户重发方案内容 ======
+    const step3PlanMatch = text.match(/按方案\s*([1-5])|方案\s*([1-5]).*(设定|世界观|落卡|落地|做设定|生成设定|出卡)|方案\s*([1-5])\s*设定/);
+    const step3PlanIdx = (() => {
+      if (!step3PlanMatch) return -1;
+      const raw = step3PlanMatch[1] || step3PlanMatch[2] || step3PlanMatch[4];
+      const n = parseInt(raw, 10);
+      return isNaN(n) ? -1 : n - 1; // 转 0-index
+    })();
+    if (step3PlanIdx >= 0) {
+      appendUserAi(text);
+      setStreaming(true);
+      const ctrl3 = new AbortController();
+      abortRef.current = ctrl3;
+      try {
+        const plans = Array.isArray(lastStep2Plans) ? lastStep2Plans : [];
+        const plan = plans[step3PlanIdx];
+        if (!plan) {
+          appendAiNotice('⚠️ 未找到方案' + (step3PlanIdx+1) + '的完整内容（可能构思方案生成太久已过期、或刚刷新页面缓存丢失）。请先重新出5个构思方案，或把方案' + (step3PlanIdx+1) + '的具体内容粘贴过来，我再给你整理成完整设定。');
+        } else {
+          // 有方案：把方案所有字段渲染成AI气泡的完整设定草稿，同时弹命中气泡一键📦入库（维度=设定/世界观）
+          const title = String(plan.title || '《未命名》').replace(/[《》]/g, '');
+          const one_liner = plan.one_liner || plan.one_liner || plan.core_hook || '';
+          const golden_finger = plan.golden_finger || plan.core_golden_finger || '';
+          const identity_conflict = plan.identity_conflict || plan.identity || '';
+          const pleasure_core = plan.pleasure_core || plan.pleasure || '';
+          const world_shell = plan.world_shell || plan.world || plan.worldview || '';
+          const diff_anchor = plan.diff_anchor || plan.differentiation || '';
+          const trend_basis = plan.trend_basis || plan.basis || '';
+          const estimated_size = plan.estimated_size || plan.size || '';
+          // 先决定落卡维度（命中"世界观"关键词就落worldview，否则落setting）
+          const suggestionDim = /世界观/.test(text) ? 'worldview' : 'setting';
+          const suggestionDimLabel = suggestionDim === 'worldview' ? '世界观' : '设定';
+          const rendered = [
+            `# 📌 已读取方案${step3PlanIdx+1}完整内容（读取前面构思方案的缓存，无需你重发）`,
+            '',
+            `## 书名：《${title}》`,
+            `**一句话梗**：${one_liner || '—'}`,
+            '',
+            `### 🔑 核心金手指 / 奇遇（含代价，不是纯白嫖）`,
+            `> ${golden_finger || '—'}`,
+            '',
+            `### 🧑 身份矛盾（主角表面身份 vs 真实身份 vs 社会定位）`,
+            `> ${identity_conflict || '—'}`,
+            '',
+            `### 🔥 爽点内核（即时爽/延迟爽，节奏匹配扫榜结果）`,
+            `> ${pleasure_core || '—'}`,
+            '',
+            `### 🌐 世界观壳（30字以内一句话壳）`,
+            `> ${world_shell || '—'}`,
+            '',
+            `### 🎯 差异化锚点（读者凭什么选你不是其他同类）`,
+            `> ${diff_anchor || '—'}`,
+            '',
+            `### 📐 趋势依据 + 预估规模`,
+            `> 趋势依据：${trend_basis || '—'}  |  字数规模：${estimated_size || '—'}`,
+            '',
+            `---`,
+            `👉 正在按方案${step3PlanIdx+1}生成完整${suggestionDimLabel} → 点击下方命中气泡的「📦以${suggestionDimLabel}入库」直接落卡到【${suggestionDimLabel}】维度`,
+          ].join('\n');
+          // 直接追加静态AI气泡（方案X的完整设定草稿）
+          setMessages(prev => [...prev, { role: 'assistant', content: rendered, cards: [] }]);
+          const popId = 'hit-step3-' + Math.random().toString(36).slice(2, 9);
+          const insertedPopupIndex = { idx: -1 };
+          setMessages(prev => { insertedPopupIndex.idx = prev.length - 2; return prev; });
+          const quickFillValue = [
+            `书名：《${title}》`,
+            `一句话梗：${one_liner}`,
+            `核心金手指/奇遇（含代价）：${golden_finger}`,
+            `身份矛盾：${identity_conflict}`,
+            `爽点内核：${pleasure_core}`,
+            `世界观壳：${world_shell}`,
+            `差异化锚点：${diff_anchor}`,
+            `趋势依据：${trend_basis}`,
+            `预估规模：${estimated_size}`,
+          ].join('\n');
+          setTimeout(() => {
+            setHitSuggestionPopups(prev => [...prev, {
+              id: popId,
+              msg_index: insertedPopupIndex.idx >= 0 ? insertedPopupIndex.idx : Math.max(0, hitSuggestionPopups.length),
+              suggestions: [{
+                id: 'step3-plan' + (step3PlanIdx+1) + '-' + Date.now(),
+                dim: suggestionDim,
+                label: suggestionDimLabel,
+                card_type: suggestionDim === 'worldview' ? 'worldview' : 'setting',
+                confidence: 0.95,
+                hits: [`方案${step3PlanIdx+1}完整字段（书名/一句话梗/金手指/身份/爽点/世界观/差异化）`],
+                suggested_title: `方案${step3PlanIdx+1}《${title}》${suggestionDimLabel}落卡`,
+                quick_fill: quickFillValue,
+              } as HitSuggestion],
+            }]);
+          }, 60);
+        }
+      } catch (e: any) {
+        if (e.name !== 'AbortError') setStreamError(e.message || '方案设定落卡失败');
       } finally {
         setStreaming(false);
         abortRef.current = null;
