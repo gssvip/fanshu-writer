@@ -508,6 +508,7 @@ def _auto_sync_params_from_user_message(book, bb, message: str):
 # 卡片类型 → 目标维度字段 + 落地方式（append 覆盖/追加, character 走独立表, chapter 走章节表）
 CARD_REGISTRY = {
     'SAVE_WORLDSETTING': {'field': 'worldbuilding', 'mode': 'append', 'label': '世界观'},
+    'SAVE_SETTING':      {'field': 'concept',        'mode': 'append', 'label': '设定'},
     'SAVE_CHARACTER':    {'field': 'character_profiles', 'mode': 'character', 'label': '人物'},
     'SAVE_FORESHADOW':   {'field': 'foreshadowing', 'mode': 'append', 'label': '伏笔'},
     'SAVE_OUTLINE_NODE': {'field': 'plot_design', 'mode': 'append', 'label': '大纲'},
@@ -1226,8 +1227,14 @@ def apply_card():
     # 落地后要回写的卡片状态（采纳=adopted，编辑后落地=edited）
     new_card_status = 'edited' if is_edit_overwrite else 'adopted'
 
-    if ctype not in CARD_REGISTRY or not content:
-        return jsonify({'error': '无效的卡片或内容为空'}), 400
+    # ====== 空判断/ctype校验 拆成独立分支，报错更精确，避免一刀切"无效的卡片或内容为空"排查困难 ======
+    if not ctype:
+        return jsonify({'error': '无效的卡片：缺少卡片类型(type)字段。请检查前端传入的 action card 结构。'}), 400
+    if ctype not in CARD_REGISTRY:
+        _valid = ', '.join(sorted(CARD_REGISTRY.keys()))
+        return jsonify({'error': f'无效的卡片类型"{ctype}"（不在系统CARD_REGISTRY白名单）。有效类型：{_valid}。'}), 400
+    if not content:
+        return jsonify({'error': '卡片内容为空(quick_fill未传递或解析失败)：命中气泡的方案内容未正确填充到card.content，后端无法落地。'}), 400
 
     spec = CARD_REGISTRY[ctype]
 
