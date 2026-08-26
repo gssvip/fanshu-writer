@@ -1047,11 +1047,12 @@ export default function ChatPanel() {
   // 爆款3步流水线浮层
   const [showPipelineWizard, setShowPipelineWizard] = useState(false);
   const [pipelineTopic, setPipelineTopic] = useState('');
-  const [pipelineRefs, setPipelineRefs] = useState<string[]>([]);
-  const [pipelineStep, setPipelineStep] = useState<0 | 1 | 2 | 3>(0); // 0=未开始, 1=扫榜, 2=方案, 3=世界观
+  const [pipelineReferenceBooks, setPipelineReferenceBooks] = useState(''); // 参考书名输入框（逗号/换行分隔字符串）
+  const [pipelineStep, setPipelineStep] = useState<0 | 1 | 2 | 3>(1); // 1=扫榜, 2=方案, 3=世界观
   const [pipelineTrendReport, setPipelineTrendReport] = useState<any>(null);
+  const [pipelinePlans, setPipelinePlans] = useState<any[] | null>(null);
   const [pipelineSelectedPlan, setPipelineSelectedPlan] = useState<any>(null);
-  const [pipelineWorking, setPipelineWorking] = useState(false);
+  const [pipelineWorldbuild, setPipelineWorldbuild] = useState<any>(null);
 
   // Q2 合并：事件日志重算（原先在工具栏浮层，现在合并进「校审」Tab 子面板）
   const [showBackfill, setShowBackfill] = useState(false);
@@ -1353,6 +1354,14 @@ export default function ChatPanel() {
   // 切换 Tab 时清空选中章节（各Tab独立）；切到正文Tab时填入默认写作要求
   const switchTab = useCallback((tab: SmartTab) => {
     setActiveTab(tab);
+    // 切到「通用对话」顶层Tab：清空消息+命中气泡（独立会话池，视觉上明显切走，用户能立即感知"界面变了"）
+    if (tab === 'general') {
+      setMessages([]);
+      setHitSuggestionPopups([]);
+      setAutoContextNotice(null);
+      setFixTasks([]);
+      setStreamError('');
+    }
     // 离开正文Tab 时清掉"待修改"状态，避免 armed 泄漏到其他 Tab
     if (tab !== 'chapter') setChapterEditArmed(false);
     setInput(prev => {
@@ -1374,11 +1383,12 @@ export default function ChatPanel() {
   const toggleSkillPack = useCallback((tab: SmartTab, id: string) => {
     const setter = tab === 'setting' ? setSettingPacks
       : tab === 'chapter' ? setChapterPacks
-      : setDeaiPacksSelected;  // 'deai' | 'review'
+      : setDeaiPacksSelected;  // 'deai' | 'review' | 'general'（通用对话Tab没有skill包概念，不改任何字段）
     setter(prev => {
       const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
-      if (bookId) {
-        const fieldMap: Record<SmartTab, 'master_skill_ids' | 'style_skill_ids' | 'review_skill_ids'> = {
+      if (bookId && tab !== 'general') {
+        // 注意：SmartTab多了一个general，但通用对话不绑任何持久化skill包，直接跳过updateBook
+        const fieldMap: Record<Exclude<SmartTab, 'general'>, 'master_skill_ids' | 'style_skill_ids' | 'review_skill_ids'> = {
           setting: 'master_skill_ids',
           chapter: 'style_skill_ids',
           deai: 'review_skill_ids',
@@ -2209,7 +2219,6 @@ export default function ChatPanel() {
     setMessages(prev => { insertedPopupIndex.idx = prev.length - 2; return prev; });
     try {
       const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: undefined }, ctrl.signal);
-      let receivedSessionId2: string | null = null;
       await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
         // meta 分发：命中维度提示气泡
         if (kind === 'hit_suggestions' && Array.isArray(info?.suggestions) && info.suggestions.length > 0) {
@@ -3160,7 +3169,15 @@ export default function ChatPanel() {
               {messages.length === 0 && !loadingSuggest && (
                 <div className="chat-empty">
                   <div className="chat-empty-icon"><CarLogo size={56} /></div>
-                  <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
+                  {activeTab === 'general' ? (
+                    <div style={{ textAlign: 'center' }}>
+                      <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b' }}>💬 通用对话模式 · 想聊啥就聊啥</p>
+                      <p style={{ fontSize: 13, color: '#6b7280', margin: '6px 0 0' }}>闲聊、问问题、讨论创作构思/人物/剧情/世界观都行。</p>
+                      <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>命中创作关键词会自动提示一键入库📦，说「扫榜/爆款」自动打开3步流水线🔥。</p>
+                    </div>
+                  ) : (
+                    <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
+                  )}
                 </div>
               )}
               {loadingSuggest && (
@@ -3414,7 +3431,7 @@ export default function ChatPanel() {
                       disabled={!pipelineTopic.trim() || streaming}
                       onClick={async () => {
                         streamBufferRef.current = '';
-                        const refs = pipelineReferenceBooks.split(/[,，\n]+/).map(s => s.trim()).filter(Boolean);
+                        const refs = pipelineReferenceBooks.split(/[,，\n]+/).map((s: string) => s.trim()).filter(Boolean);
                         const ctrl = new AbortController();
                         abortRef.current = ctrl;
                         setStreaming(true);
@@ -3422,9 +3439,9 @@ export default function ChatPanel() {
                         try {
                           const res = await api.pipelineStep1Scan(pipelineTopic.trim(), refs.length ? refs : undefined, ctrl.signal);
                           await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
-                            if (kind === 'pipeline_trend_report' && info?.report) {
-                              collectedTrend = info.report;
-                            }
+                            // 兼容两种写法：新后端kind=pipeline_step1_done，旧命名pipeline_trend_report
+                            if (kind === 'pipeline_trend_report' && info?.report) collectedTrend = info.report;
+                            else if (kind === 'pipeline_step1_done') collectedTrend = info;
                           });
                           if (collectedTrend) setPipelineTrendReport(collectedTrend);
                           else {
@@ -3479,9 +3496,15 @@ export default function ChatPanel() {
                         setStreaming(true);
                         let collected: any = null;
                         try {
-                          const res = await api.pipelineStep2Plans(pipelineTopic.trim(), pipelineTrendReport, pipelineReferenceBooks ? pipelineReferenceBooks.split(/[,，\n]+/).map(s => s.trim()).filter(Boolean) : undefined, ctrl.signal);
+                          const res = await api.pipelineStep2Plans(pipelineTopic.trim(), pipelineTrendReport, pipelineReferenceBooks ? pipelineReferenceBooks.split(/[,，\n]+/).map((s: string) => s.trim()).filter(Boolean) : undefined, ctrl.signal);
                           await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
-                            if (kind === 'pipeline_plans' && info?.plans) collected = info.plans;
+                            if (kind === 'pipeline_plans' && Array.isArray(info?.plans)) collected = info.plans;
+                            // 后端pipeline_step2_done：info可能是{plans:[...]}也可能直接就是数组
+                            else if (kind === 'pipeline_step2_done') {
+                              if (Array.isArray(info)) collected = info;
+                              else if (Array.isArray(info?.plans)) collected = info.plans;
+                              else if (Array.isArray(info?.data)) collected = info.data;
+                            }
                           });
                           if (collected) setPipelinePlans(collected);
                           appendAiNotice('【Step2 方案生成】5个方案已产出，请选择一个后进入 Step3。');
@@ -3561,9 +3584,17 @@ export default function ChatPanel() {
                         setStreaming(true);
                         let collected: any = null;
                         try {
-                          const res = await api.pipelineStep3Worldbuild(pipelineSelectedPlan!, ctrl.signal);
+                          const res = await api.pipelineStep3Worldbuild(pipelineSelectedPlan!, undefined, ctrl.signal);
                           await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
                             if (kind === 'pipeline_worldbuild' && info?.worldbuild) collected = info.worldbuild;
+                            else if (kind === 'pipeline_step3_done') {
+                              // info里可能带了前缀字段，去下划线过滤后就是worldbuild结果
+                              const stripped: any = {};
+                              for (const [k, v] of Object.entries(info || {})) {
+                                if (!k.startsWith('_')) stripped[k] = v;
+                              }
+                              collected = Object.keys(stripped).length > 0 ? stripped : info;
+                            }
                           });
                           setPipelineWorldbuild(collected || { raw_fallback: streamBufferRef.current });
                           appendAiNotice('【Step3 世界观构建】已完成。可在设定Tab中找到对应「世界观/人物/大纲」落地卡片进行后续调整。');
