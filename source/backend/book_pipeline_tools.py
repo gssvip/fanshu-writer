@@ -22,20 +22,43 @@ from typing import Any, Callable, Optional
 # 小说网站热榜抓取入口（WebFetch 格式 + 可回退启发式关键词提取）
 # ============================================================================
 SITE_SPECS: dict[str, dict[str, Any]] = {
+    # ===== 第一优先级：真实小说榜单源（用户指定的3个权威网站，抓真实书名/作者/热度）=====
+    'shuhuangdian': {
+        'name': '书荒典·热点小说+番茄在读榜+起点万订',
+        'search_url_tpl': 'https://www.shuhuangdian.com/mobile/attention',
+        'topic_search_tpl': 'https://www.shuhuangdian.com/',
+        'priority': 1,
+    },
+    'wangwendashuju': {
+        'name': '网文大数据·番茄首秀榜/起点月票榜/抖音漫剧红果短剧',
+        'search_url_tpl': 'https://www.wangwendashuju.com/home',
+        'topic_search_tpl': 'https://www.wangwendashuju.com/',
+        'priority': 1,
+    },
+    'fanqiehub': {
+        'name': '番茄Hub·上升最快/新书榜晋升阅读榜',
+        'search_url_tpl': 'https://www.fanqiehub.com/',
+        'topic_search_tpl': 'https://www.fanqiehub.com/#content-anchor',
+        'priority': 1,
+    },
+    # ===== 第二优先级：按题材搜索（保留作为 fallback）=====
     'fanqie': {
         'name': '番茄小说',
         'search_url_tpl': 'https://www.baidu.com/s?wd={q}+番茄小说+排行榜+热门',
         'topic_search_tpl': 'https://www.baidu.com/s?wd=番茄小说+{t}+热门+推荐+前十',
+        'priority': 2,
     },
     'qidian': {
         'name': '起点中文网',
         'search_url_tpl': 'https://www.baidu.com/s?wd={q}+起点中文网+排行榜+热门推荐',
         'topic_search_tpl': 'https://www.baidu.com/s?wd=起点中文网+{t}+热门+前十+完本',
+        'priority': 2,
     },
     'qimao': {
         'name': '七猫小说',
         'search_url_tpl': 'https://www.baidu.com/s?wd={q}+七猫小说+排行榜+热门',
         'topic_search_tpl': 'https://www.baidu.com/s?wd=七猫小说+{t}+热门+推荐',
+        'priority': 2,
     },
 }
 
@@ -114,9 +137,196 @@ def _encode_full_url(url: str) -> str:
     """
     if not isinstance(url, str):
         return str(url)
-    # quote(safe='/:?=&%#+.') 既保证分隔符不被编码，也保留已 percent 编码的 %XX 不会被再转成 %25XX
-    # 但「#」在 path/fragment 分隔时需保留，safe 里要含
     return urllib.parse.quote(url, safe=r"/:?=&%#+.@-_,~()*!$'")
+
+
+# ============================================================================
+# 真实榜单解析：从 shuhuangdian / wangwendashuju / fanqiehub 抓取的 HTML/Markdown
+# 中提取真实书名（解决"过来过去都是那几本知识库固定书"的假扫榜问题）
+# ============================================================================
+
+# 高频"金手指/爽点/题材"关键词词典（从真实榜源的书名里高频计数反推当前火什么）
+_TREND_HINTS = {
+    'golden_finger': [
+        '系统', '签到', '面板', '悟性', '返利', '模拟器', '多子多福', '抽奖', '兑换',
+        '随身', '空间', '无限', '异能', '灵根', '血脉', '神魂', '召唤', '分身', '金乌', '悟性',
+    ],
+    'pleasure': [
+        '重生', '穿越', '开局', '全民', '诡异', '恐怖', '高武', '修仙', '长生', '苟道',
+        '无敌', '反杀', '打脸', '种田', '赘婿', '战神', '校花', '学霸', '末世', '科举', '四合院',
+    ],
+}
+
+
+def _extract_real_books_from_html(html: str) -> list[str]:
+    """从任意榜单网站返回的HTML/Markdown中提取真实书名（支持3个权威站+兼容未来扩展）。
+
+    去重后返回 list[str]，每本不包《》号，长度范围2-30字。
+    """
+    if not html or not isinstance(html, str):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def _add(raw: str):
+        if not raw:
+            return
+        s = raw.strip().strip('《》「」""\'[]()（）').strip()
+        # 清掉开头数字排名："1绝区零…"→"绝区零…" / "1捞尸人…"→"捞尸人…"
+        s = re.sub(r'^\d+\s*', '', s)
+        # 清掉 Markdown 排名粗体尾 ** 或星星 ★
+        s = re.sub(r'[\*★]+.*$', '', s).strip()
+        # 清掉 HTML tag 残留/URL 分隔符
+        s = re.sub(r'<[^>]+>', '', s).strip()
+        if not s or len(s) < 2 or len(s) > 40:
+            return
+        if s in seen:
+            return
+        # 过滤纯 URL / 导航文案
+        if any(k in s for k in ['https://', 'http://', '更多', '查看更多', '完整榜单', '立即开通']):
+            return
+        seen.add(s)
+        out.append(s)
+
+    # ---------- Pattern 1：Markdown 排名标题（书荒典用）----------
+    # ###? [书名](url)  或 ### 书名（没有链接）
+    for m in re.finditer(r'#{2,4}\s*\[([^\]\n]{2,50})\]\s*\(', html):
+        _add(m.group(1))
+    for m in re.finditer(r'#{2,4}\s*([^\[\]\n]{2,50}?)(?:\s*$|\s*【)', html):
+        _add(m.group(1))
+    # 书荒典"起点万订小说大全"格式（###? \d+\s*书名）
+    for m in re.finditer(r'(?:^|\n)\s*\d+\s*\n\s*#{2,4}\s*([^\n#]{2,50})', html):
+        _add(m.group(1))
+
+    # ---------- Pattern 2：网文大数据 Top5 链接格式 ----------
+    # 1. [1绝区零：我的数值凌驾于一切之上**2.9万在读**](...)
+    # 1. [1捞尸人**7.1万月票**](...)
+    for m in re.finditer(r'\[\s*\d+\s*\*?\*?(.{2,60}?)\s*\*', html):
+        _add(m.group(1))
+    # 兼容无粗体：[1绝区零：我的数值凌驾于一切之上](...)
+    for m in re.finditer(r'\[\s*\d+\s*(.{2,60}?)\]\s*\(', html):
+        _add(m.group(1))
+
+    # ---------- Pattern 3：番茄Hub表格列 ----------
+    # | **1** | 盗墓：从档案馆开始人见人爱 | 海楼的猫 | ↑22 | 2.8万 |
+    # 或者非粗体排名：| 1 | 封印神源百万年，悟性每天翻倍 | 爱吃辣的鱼 | 10.5万 |
+    for m in re.finditer(
+        r'\|\s*\*{0,2}\d+\*{0,2}\s*\|\s*([^|\n]{2,60}?)\s*\|\s*[^|\n]{2,40}?\s*\|',
+        html,
+    ):
+        _add(m.group(1))
+
+    # ---------- Pattern 4：通用兜底（从 Markdown 加粗/链接 中文书名长度2-30字抽取）----------
+    for m in re.finditer(r'《([^《》\n]{2,30})》', html):
+        _add(m.group(1))
+
+    return out
+
+
+def _infer_trending_from_real_books(books: list[str]) -> dict:
+    """从真实书名的词频反推：金手指方向、爽点类型、开篇套路、人设高频标签、雷区。
+    解决"每次扫榜知识库那几本固定书"→真实榜源抓到书名后，用高频词直接反推趋势，
+    不再用 fallback KNOWLEDGE_BASE_FALLBACK 的固定方向。
+    """
+    books = [b for b in books if isinstance(b, str) and 2 <= len(b) <= 40]
+    if not books:
+        return {}
+
+    # 1. 金手指词频计数
+    gf_counts: dict[str, int] = {}
+    for w in _TREND_HINTS['golden_finger']:
+        c = sum(1 for b in books if w in b)
+        if c > 0:
+            gf_counts[w] = c
+    gf_top = sorted(gf_counts.items(), key=lambda x: -x[1])[:4]
+
+    # 2. 爽点/题材词频计数
+    pl_counts: dict[str, int] = {}
+    for w in _TREND_HINTS['pleasure']:
+        c = sum(1 for b in books if w in b)
+        if c > 0:
+            pl_counts[w] = c
+    pl_top = sorted(pl_counts.items(), key=lambda x: -x[1])[:4]
+
+    # 3. 书名里出现"XX+我+XX" / "开局XX" / "从XX开始" → 反推开篇套路
+    opening_tags: list[str] = []
+    has_start = any('开局' in b for b in books)
+    has_from = any('从' in b and ('开始' in b or '做起' in b or '当' in b) for b in books)
+    has_reborn = any('重生' in b for b in books)
+    has_cross = any('穿越' in b or '穿成' in b for b in books)
+    if has_start:
+        opening_tags.append('开局事件即核心冲突（触发系统/穿越/觉醒）')
+    if has_from:
+        opening_tags.append('"从X开始"微视角切入（底层小角色→大佬）')
+    if has_reborn:
+        opening_tags.append('重生先知+前世遗憾弥补线')
+    if has_cross:
+        opening_tags.append('穿越附体弱少爷/宗门弃徒+金手指')
+    if not opening_tags:
+        opening_tags.append('开篇第一事件即强冲突（打脸/觉醒/绑架/退婚）')
+
+    # 4. 人设标签：从书名第一/第二个词猜
+    character_tags = []
+    if any('我' in b[:4] for b in books):
+        character_tags.append('第一人称"我"自述式（爽感代入强）')
+    if any(any(k in b for k in ['大佬', '暴君', '神', '皇', '仙', '宗主']) for b in books):
+        character_tags.append('身份反差（底层→高位）+ 狠人主角')
+    if any(any(k in b for k in ['师姐', '师尊', '老婆', '师娘', '娇妻', '女主']) for b in books):
+        character_tags.append('多女主/师徒/甜宠反差')
+    if any(any(k in b for k in ['猎魔', '诡异', '鬼', '邪神', '精神病院', '十日终焉']) for b in books):
+        character_tags.append('规则怪谈/中式怪诞/黑暗高武')
+    if not character_tags:
+        character_tags.append('主角接地气（日常职业/学生/社畜+外挂反差）')
+
+    # 5. 节奏：从真实书名判断多为"小爽每3章+大爽每12章"，如果"开局"书多则节奏更快
+    small_every = 2 if has_start else 3
+    big_every = 10 if (has_reborn or has_cross) else 12
+
+    # 6. 文风风向：真实榜多短句口语化（番茄/起点男频均值）
+    # 从书名高频词猜（系统/签到/高武/修仙 → 对话占比高）
+    dialog_ratio = 34 if any(any(k in b for k in ['都市', '重生', '开局', '穿越']) for b in books) else 28
+    sent_tendency = '短句+口语化（一句一层意思）' if any(
+        any(k in b for k in ['开局', '我', '全民', '系统']) for b in books
+    ) else '长短句混合'
+    colloquial = ['卧槽', '好家伙', '搞钱', '摊牌了', '不装了'] if any(
+        '都市' in b for b in books
+    ) else ['系统', '叮！', '触发', '恭喜宿主']
+
+    # 7. 同质化雷区：关键词出现最多的→就是大家都在写的
+    fatigue = []
+    if gf_top and gf_top[0][1] >= max(3, len(books) // 3):
+        fatigue.append(f'【{gf_top[0][0]}】泛滥（{gf_top[0][1]}本真实榜单在用），建议换差异化变体')
+    if pl_top and pl_top[0][1] >= max(3, len(books) // 3):
+        fatigue.append(f'【{pl_top[0][0]}】题材扎堆（{pl_top[0][1]}本真实榜单在用），建议加反套路钩子')
+    if not fatigue:
+        fatigue.append('同质化不明显（真实榜单分布均匀），可用"冷门世界观+热门爽点"组合差异化')
+    diff_opport = []
+    if gf_top:
+        diff_opport.append(f'热门金手指"{gf_top[0][0]}"+冷门世界观（非都市/非玄幻）')
+    if pl_top:
+        diff_opport.append(f'热门爽点"{pl_top[0][0]}"+情绪代价/规则限制（不是纯爽无脑）')
+    if not diff_opport:
+        diff_opport.append('细分身份反差（如：反派视角/配角逆袭/女帝师娘倒追）')
+
+    result = {
+        'current_trending': {
+            'golden_finger_directions': [f'{w}（真实榜单{c}本在用）' for w, c in gf_top] if gf_top else ['系统面板/签到流（知识库兜底）'],
+            'pleasure_types': [f'{w}（真实榜单{c}本在用）' for w, c in pl_top] if pl_top else ['越级反杀/身份反差（知识库兜底）'],
+            'opening_tropes': '、'.join(opening_tags[:3])[:60],
+            'character_tags': character_tags[:4] or ['主角接地气（知识库兜底）'],
+            'rhythm': {'small_pleasure_every_N_chapters': small_every, 'big_pleasure_every_N_chapters': big_every},
+        },
+        'style_wind': {
+            'dialog_ratio_mean_percent': dialog_ratio,
+            'sentence_tendency': sent_tendency,
+            'active_colloquial_words': colloquial[:3],
+        },
+        'cliche_landmines': {
+            'fatigue_tropes': fatigue,
+            'diff_opportunities': diff_opport,
+        },
+    }
+    return result
 
 
 # ============================================================================
@@ -156,24 +366,36 @@ def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
         if forced:
             force_sites = forced
 
-    # 抓取原始文本
+    # 抓取原始文本（按priority升序：先抓3个真实榜源priority=1，失败时再抓百度搜索兜底priority=2）
     scraped_pages: list[str] = []
     used_web = False
     per_site_bytes: dict[str, int] = {}
+    real_books: list[str] = []
     if web_fetch_fn:
-        sites = list(SITE_SPECS.items())
+        sites = sorted(list(SITE_SPECS.items()), key=lambda kv: int(kv[1].get('priority', 99)))
         if force_sites:
             sites = [(k, v) for k, v in sites if k in force_sites]
         for site_key, spec in sites:
             try:
-                url_raw = spec['topic_search_tpl'].format(t=urllib.parse.quote(topic))
+                # 真实榜源（priority=1）：URL 不依赖 topic，直接抓固定聚合榜单首页即可
+                if int(spec.get('priority', 99)) == 1:
+                    url_raw = spec.get('search_url_tpl') or spec.get('topic_search_tpl')
+                else:
+                    url_raw = spec['topic_search_tpl'].format(t=urllib.parse.quote(topic))
                 url = _encode_full_url(url_raw)
                 html = web_fetch_fn(url) or ''
                 n = len(html) if isinstance(html, str) else 0
                 per_site_bytes[site_key] = n
                 fetch_errors.setdefault(site_key, '')
                 if n > 500:
-                    scraped_pages.append(f'==== {spec["name"]} 搜索页 ====\n{html[:12000]}')
+                    # 逐页提取真实书名（真实榜源首页会有几十本榜单作品）
+                    page_books = _extract_real_books_from_html(html)
+                    if page_books:
+                        for b in page_books:
+                            if b not in real_books:
+                                real_books.append(b)
+                        fetch_errors[site_key] = ''  # 成功：清掉之前可能残留的错误
+                    scraped_pages.append(f'==== {spec["name"]} ==== [提取{len(page_books)}本真实书名]\n{html[:25000]}')
                     used_web = True
                 elif n == 0 and not fetch_errors.get(site_key):
                     fetch_errors[site_key] = '返回空内容（可能被反爬或页面结构变化）'
@@ -195,12 +417,38 @@ def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
     if structured is None:
         structured = _heuristic_scan_summary(topic, refs, scraped_concat, fallback)
 
+    # ==== 关键修复：真实榜源优先级最高！====
+    # 只要从真实榜源（shuhuangdian/wangwendashuju/fanqiehub）抓到 ≥ 5 本真实书名，就强制：
+    # 1. 用书名高频词反推趋势（覆盖 LLM 归纳/知识库 fallback 的旧方向）
+    # 2. sample_books_used 完全换成真实榜单书名（解决"过来过去都是那几本固定知识库"）
+    if len(real_books) >= 5:
+        inferred = _infer_trending_from_real_books(real_books)
+        if inferred:
+            # 逐字段 merge：inferred 非空才覆盖（保留 LLM 已有的好结论）
+            for k, v in inferred.items():
+                if isinstance(v, dict) and isinstance(structured.get(k), dict):
+                    structured[k].update(v)
+                elif v:
+                    structured[k] = v
+        # sample_books_used 强制用真实榜单（前 25 本，避免太长）
+        structured['sample_books_used'] = list(real_books)[:25]
+
+    # 真实书名为空时，用 fallback 里的 sample_books（保持兼容）
+    if not structured.get('sample_books_used'):
+        structured['sample_books_used'] = list(fallback.get('sample_books', []))[:12]
+
     structured['_meta'] = {
         'topic': topic,
         'reference_books': refs,
         'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
-        'source': '基于联网抓取+LLM归纳' if (used_web and scraped_concat) else '基于知识库，非实时数据',
+        'source': (
+            '基于真实榜单源（书荒典/网文大数据/番茄Hub）+{}本真实书名归纳'.format(len(real_books))
+            if len(real_books) >= 5
+            else ('基于联网抓取+LLM归纳' if (used_web and scraped_concat) else '基于知识库，非实时数据')
+        ),
         'used_web_fetch': used_web and bool(scraped_concat),
+        'real_books_count': len(real_books),
+        'real_books_preview': real_books[:12],  # 调试/前端验证用
         'latency_ms': int((time.time() - t0) * 1000),
         'sample_books_count': len(structured.get('sample_books_used', [])),
         'per_site_bytes': per_site_bytes,
@@ -320,7 +568,20 @@ def render_step1_text(r: dict) -> str:
         status_lines.append(f'  📌 汇总：真联网，成功站点 {n_success}/{len(all_site_keys)}，seed={seed}')
     else:
         status_lines.append(f'  📌 汇总：❌ 未联网（全部站点失败/环境无外网出口），使用知识库Fallback（非实时，内容固定），seed={seed}')
-    status_lines.append('')
+    # ===== 第二块：真实榜单书目预览（抓到≥5本就强制显示，用户一眼验证不是知识库固定几本）=====
+    real_books_preview = meta.get('real_books_preview') or []
+    real_books_count = int(meta.get('real_books_count') or 0)
+    if real_books_count >= 5:
+        status_lines.append(f'📚 真实榜单书目预览（共{real_books_count}本，前12本）：')
+        preview = real_books_preview[:12]
+        # 每行显示 3 本（对齐好看）
+        for i in range(0, len(preview), 3):
+            chunk = preview[i:i+3]
+            line_items = []
+            for j, b in enumerate(chunk):
+                line_items.append(f'{i+j+1}. {b}')
+            status_lines.append('  ' + '  |  '.join(line_items))
+        status_lines.append('')
 
     source_tag = '' if used_web else '（⚠️ ' + str(meta.get('source', '基于知识库，非实时数据')) + '）'
     sb = r.get('sample_books_used', [])
@@ -370,7 +631,7 @@ def run_step2_plans(topic: str, trend_report: dict,
     trend_json = json.dumps(trend_report, ensure_ascii=False)[:8000]
 
     if llm_fn:
-        prompt = _build_step2_prompt(topic, refs, trend_json)
+        prompt = _build_step2_prompt(topic, refs, trend_json, trend_report)
         try:
             out = llm_fn(prompt) or ''
             plans = _extract_json_block(out)
@@ -381,14 +642,29 @@ def run_step2_plans(topic: str, trend_report: dict,
     return _finalize_step2(topic, _heuristic_step2_plans(topic, refs, trend_report), trend_report)
 
 
-def _build_step2_prompt(topic, refs, trend_json) -> str:
+def _build_step2_prompt(topic, refs, trend_json, trend_report=None) -> str:
     ref_str = ('用户额外提供的参考书名（仅作灵感来源，不要照搬原书内容）：\n' +
                '\n'.join(f'- {r}' for r in refs) + '\n\n') if refs else ''
+    # 新增：真实榜单对标书目（从3个权威榜源抓到的真实书名，解决"假扫榜→知识库固定书"→方案也假）
+    real_books_preview = []
+    if isinstance(trend_report, dict):
+        meta = trend_report.get('_meta', {}) if isinstance(trend_report.get('_meta'), dict) else {}
+        real_books_preview = list(meta.get('real_books_preview') or [])[:15]
+        if not real_books_preview:
+            sb = trend_report.get('sample_books_used')
+            if isinstance(sb, list):
+                real_books_preview = list(sb)[:15]
+    real_books_str = ''
+    if real_books_preview:
+        real_books_str = (
+            '真实榜单对标书目（从 书荒典/网文大数据/番茄Hub 抓取，非固定知识库）—— 仅作题材和爽点风格参考，严禁照搬内容：\n' +
+            '\n'.join(f'- {b}' for b in real_books_preview) + '\n\n'
+        )
     return f'''你是网文爆款方案策划。基于如下Step1的"趋势方向"JSON和题材【{topic}】，
 生成5个小说方案（方案1-2趋势跟随、3-4差异化、5大胆尝试），每个方案严格按要求8项字段，
 且最后都要有"验证"4项：自洽✅/❌、爽点续航(≥100章)✅/❌、角色弧光✅/❌、差异化✅/❌（不得全❌）。
 
-{ref_str}Step1趋势JSON：
+{real_books_str}{ref_str}Step1趋势JSON：
 {trend_json}
 
 请只输出一个合法JSON对象（可包裹在```json里），格式：
