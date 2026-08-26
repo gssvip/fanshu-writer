@@ -2438,15 +2438,6 @@ export default function ChatPanel() {
 
               {activeTab === 'setting' && (
                 <>
-                  {/* 【设定】Tab内「通用」子维度：界面级两行完整提示（不是placeholder） */}
-                  {selectedDim === 'general' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px' }}>
-                      <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.6 }}>
-                        任意话题闲聊、问问题、讨论构思/人物/剧情/世界观。<br />
-                        命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动开始3步流水线 🔥。
-                      </div>
-                    </div>
-                  )}
                   {selectedDim === 'general' && hitSuggestionPopups.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px' }}>
                       {hitSuggestionPopups.map(pop => (
@@ -2503,7 +2494,7 @@ export default function ChatPanel() {
                           setMessages([]); setHitSuggestionPopups([]); setAutoContextNotice(null); setFixTasks([]); setStreamError('');
                         }}
                         disabled={streaming || loadingSuggest}
-                        title="通用聊天：自由讨论任何话题，命中创作关键词提示一键入库，说「扫榜/爆款」自动打开3步流水线"
+                        title="通用聊天：自由讨论任何话题，命中创作关键词提示一键入库，说「扫榜/爆款」自动开始3步流水线"
                       >💬 通用</button>
                       {dimensions.filter(d => ['concept', 'key_rules', 'worldbuilding'].includes(d.key)).map(d => (
                         <button
@@ -3161,7 +3152,7 @@ export default function ChatPanel() {
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b' }}>💬 通用聊天模式 · 想聊啥就聊啥</p>
                       <p style={{ fontSize: 13, color: '#6b7280', margin: '6px 0 0' }}>任意话题闲聊、问问题、讨论构思/人物/剧情/世界观。</p>
-                      <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动打开3步流水线 🔥。</p>
+                      <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动开始3步流水线 🔥。</p>
                     </div>
                   ) : (
                     <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
