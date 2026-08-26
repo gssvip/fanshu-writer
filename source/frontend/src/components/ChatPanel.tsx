@@ -2238,22 +2238,54 @@ export default function ChatPanel() {
         // 扫榜结束只追加一条简短提示，继续等用户说"出构思方案"或提意见
         appendAiNotice('✅ 扫榜完成。你可以说「按这个出构思方案」继续下一步，或先提调整意见。');
       } catch (e: any) {
-        if (e.name !== 'AbortError') setStreamError(e.message || '扫榜失败');
+        if (e.name !== 'AbortError') {
+          const msg = (e?.message || e?.error || '扫榜失败').trim() || '扫榜失败';
+          const hint = [
+            '❌ Step1扫榜出错：' + msg,
+            '',
+            '常见原因&解决：',
+            '1) LLM上游503/限流 → 等30秒后重试「扫榜XX题材」',
+            '2) 无外网/榜单站反爬 → 改说「扫榜XX题材(知识库模式)」直接用 heuristic 出5方案',
+            '3) 想快速出结果 → 直接说「出5个XX题材构思方案」跳过扫榜第一步',
+          ].join('\n');
+          appendAiNotice(hint);
+          setStreamError('');
+        }
       } finally {
         setStreaming(false);
         abortRef.current = null;
       }
       return;
     }
-    // ====== Step 2 生成构思方案前置：命中「出构思方案/出N个方案/出方案 + 题材」 → 直接 Step2Plans 流式到气泡 ======
-    const planKeysHit = /构思方案|出方案|出.*个方案|出五个方案|5个方案|方案设计|卖点方案/.test(text);
+    // ====== Step 2 生成构思方案前置：命中「出构思方案/出N个方案/出方案 + 题材/代词(按这/按这个/下一步)」 → 直接 Step2Plans 流式到气泡 ======
+    const planKeysHit = /构思方案|出方案|出.*个方案|出五个方案|5个方案|5方案|方案设计|卖点方案|生成.*方案|继续下一步|接着出方案|按这个出|按这出/.test(text);
+    // 代词命中：说明用户在指代上一步扫榜结果（"按这个出构思方案"=按刚才扫榜的结果出5方案）
+    const pronominalRefHit = /按\s*(这个|这|刚才|刚刚)|接着\s*(刚才|扫榜|之前)|继续\s*(下一步|刚才)|就\s*按\s*(这个|这)/.test(text);
     const planTopic = (() => {
       const rules = [/都市异能|都市高武|系统文|玄幻高武|仙侠|修仙|修真|历史脑洞|种田|宫斗|科幻末世|末世|悬疑推理|恐怖灵异|言情|甜宠|同人|军事|游戏|无限流|赘婿|重生|穿越|豪门|科幻/];
       for (const r of rules) { const m = text.match(r); if (m) return m[0]; }
-      const after = text.split(/构思方案|出方案|出.*个方案|出五个方案|5个方案|方案设计|卖点方案|给我|帮我|一下|的|题材|小说|书|方向|设计|做|写/g).filter(Boolean).join('').trim();
-      return after.slice(0, 20);
+      const after = text.split(/构思方案|出方案|出.*个方案|出五个方案|5个方案|5方案|方案设计|卖点方案|生成.*方案|继续下一步|接着出方案|按这个出|按这出|给我|帮我|一下|的|题材|小说|书|方向|设计|做|写|按|这个|这|刚才|刚刚|接着|继续|下一步/g).filter(Boolean).join('').trim();
+      if (after && after.length >= 2) return after.slice(0, 30);
+      // 用户没写具体题材但用了代词=指代上一步扫榜结果，从 lastStep1Report 取题材
+      if (pronominalRefHit && lastStep1Report) {
+        const r = lastStep1Report;
+        if (typeof r === 'object' && r !== null) {
+          const candidates = [r.topic, r.genre, r.trending_topics?.[0], r.hot_topics?.[0], r.primary_genre, r.scanned_topic];
+          for (const c of candidates) {
+            if (typeof c === 'string' && c.trim().length >= 2) return c.trim().slice(0, 30);
+          }
+          const keys = Object.keys(r);
+          for (const k of keys) {
+            const v = (r as any)[k];
+            if (typeof v === 'string' && /题材|方向|类型|genre|topic|热榜|扫描|扫榜|trend/i.test(k) && v.trim().length >= 2) return v.trim().slice(0, 30);
+          }
+        }
+      }
+      // 最后兜底：空字符串（后端 Step2 有 heuristic fallback 不会崩）
+      return '';
     })();
-    if (planKeysHit && planTopic) {
+    // 命中条件：只要出现关键词，且【有题材 OR 有代词指代上一步 OR 有Step1扫榜报告】就放行，不再卡死 planTopic 非空
+    if (planKeysHit && (planTopic || pronominalRefHit || (lastStep1Report && Object.keys(lastStep1Report).length > 1))) {
       appendUserAi(text);
       setStreaming(true);
       const ctrl2 = new AbortController();
@@ -2272,7 +2304,19 @@ export default function ChatPanel() {
         }, true); // ignoreCards=true：构思方案是中间结果，先不入库，确认后再出设定
         appendAiNotice('✅ 构思方案生成完成。你可以说「按方案X出设定」继续落地，或先提修改意见。');
       } catch (e: any) {
-        if (e.name !== 'AbortError') setStreamError(e.message || '构思方案生成失败');
+        if (e.name !== 'AbortError') {
+          const msg = (e?.message || e?.error || '构思方案生成失败').trim() || '构思方案生成失败';
+          const hint = [
+            '❌ Step2构思方案出错：' + msg,
+            '',
+            '常见原因&解决：',
+            '1) LLM上游503/限流 → 等30秒后重试，或改说「重新生成5个构思方案」',
+            '2) planTopic空但lastStep1Report已过期 → 先重新发「扫榜XX题材」再出方案',
+            '3) 想快速看效果 → 直接说「出5个XX题材构思方案」带明确题材',
+          ].join('\n');
+          appendAiNotice(hint);
+          setStreamError(''); // 清除浮层红卡（错误已在聊天气泡中完整展示）
+        }
       } finally {
         setStreaming(false);
         abortRef.current = null;
@@ -2455,7 +2499,17 @@ export default function ChatPanel() {
       });
     } catch (e: any) {
       if (e.name !== 'AbortError') {
-        setStreamError(e.message || '聊天失败');
+        const msg = (e?.message || e?.error || '聊天失败').trim() || '聊天失败';
+        const hint = [
+          '❌ 通用聊天出错：' + msg,
+          '',
+          '常见原因&解决：',
+          '1) LLM上游503/限流 → 等30秒后重发',
+          '2) 想走3步流水线 → 直接发「扫榜XX题材」或「出5个XX题材方案」',
+          '3) 想把聊天内容落卡 → 先发一次命中创作关键词的内容（如"帮我构思一个主角"），再点📦入库气泡',
+        ].join('\n');
+        appendAiNotice(hint);
+        setStreamError(''); // 错误已在聊天气泡中完整提示，清除浮动红卡
         removeEmptyAi();
       }
     } finally {
