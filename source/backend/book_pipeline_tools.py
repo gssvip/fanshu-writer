@@ -626,9 +626,16 @@ PLAN_DIRECTION_LABELS = {
 def run_step2_plans(topic: str, trend_report: dict,
                     reference_books: Optional[list[str]] = None,
                     llm_fn: Optional[Callable[[str], str]] = None) -> dict:
-    """Step2 生成5个方案。JSON结构与用户需求格式一致。"""
+    """Step2 生成5个方案。JSON结构与用户需求格式一致。入口topic永久非空兜底。"""
+    # 最后一道兜底：任何调用方（前端漏传/测试/直接import调用）topic 空字符串/None → 默认"热门都市异能高武"，绝不崩
+    topic_default = '热门都市异能高武'
+    try:
+        t = (topic or '').strip()
+        topic = t if len(t) >= 2 else topic_default
+    except Exception:
+        topic = topic_default
     refs = [r.strip() for r in (reference_books or []) if r and r.strip()]
-    trend_json = json.dumps(trend_report, ensure_ascii=False)[:8000]
+    trend_json = json.dumps(trend_report or {}, ensure_ascii=False)[:8000]
 
     if llm_fn:
         prompt = _build_step2_prompt(topic, refs, trend_json, trend_report)

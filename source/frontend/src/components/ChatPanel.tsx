@@ -2291,7 +2291,35 @@ export default function ChatPanel() {
       const ctrl2 = new AbortController();
       abortRef.current = ctrl2;
       try {
-        const res = await api.pipelineStep2Plans(planTopic, lastStep1Report || {}, undefined, ctrl2.signal);
+        // ====== 前端最后一道兜底 finalTopic：planTopic空→report取→最终\"都市异能高武\"，绝对不传空字符串触发后端空校验 ======
+        const extractTopic = (r: any): string => {
+          if (!r || typeof r !== 'object') return '';
+          const keys = ['topic','scanned_topic','primary_genre','genre','direction','main_topic','target_genre'];
+          for (const k of keys) {
+            const v = (r as any)[k];
+            if (typeof v === 'string' && v.trim() && v.trim().length >= 2 && v.trim().length <= 30) return v.trim();
+          }
+          for (const k of ['trending_topics','hot_topics','real_topics','top_genres','top_books_genres','book_genre_trends']) {
+            const arr = (r as any)[k];
+            if (Array.isArray(arr) && arr.length > 0) {
+              const first = arr[0];
+              if (typeof first === 'string' && first.trim().length >= 2) return first.trim().slice(0, 40);
+              if (first && typeof first === 'object') {
+                for (const nk of ['topic','genre','name','label','title','category']) {
+                  const v = (first as any)[nk];
+                  if (typeof v === 'string' && v.trim() && v.trim().length >= 2) return v.trim().slice(0, 40);
+                }
+              }
+            }
+          }
+          for (const k of Object.keys(r)) {
+            const v = (r as any)[k];
+            if (typeof v === 'string' && /题材|方向|类型|genre|topic|扫榜|扫描|热榜|trend|榜/i.test(k) && v.trim().length >= 2) return v.trim().slice(0, 40);
+          }
+          return '';
+        };
+        const finalTopic = (planTopic && planTopic.trim()) || extractTopic(lastStep1Report) || '都市异能高武';
+        const res = await api.pipelineStep2Plans(finalTopic, lastStep1Report || {}, undefined, ctrl2.signal);
         await consumeSSE(res, ctrl2, undefined, (kind: string, info: any) => {
           // Step2完成后把方案存state：支持 pipeline_step2_done(含plans字段) / pipeline_plans(直接是plans list)
           if (kind === 'pipeline_step2_done' && info) {

@@ -7393,16 +7393,70 @@ def pipeline_step1_scan():
 
 @chat_collab_bp.route('/api/ai/pipeline/step2-plans', methods=['POST'])
 def pipeline_step2_plans():
-    """Step2 5方案生成。body: {topic, trend_report, reference_books?}。"""
+    """Step2 5方案生成。body: {topic, trend_report, reference_books?}。topic/trend_report允许空，有兜底回填，不再报错。"""
     from book_pipeline_tools import run_step2_plans, render_step2_text
     data = request.json or {}
     topic = (data.get('topic') or '').strip()
-    trend_report = data.get('trend_report') or {}
+    trend_report = data.get('trend_report')
     refs = data.get('reference_books') or []
+    # trend_report 必须是 dict；不是（None/list）强制 {}，避免后续 isinstance 崩
+    if not isinstance(trend_report, dict):
+        trend_report = {}
+
+    # ====== topic 兜底 5 层（彻底消灭前端代词扫榜后报"缺少topic"） ======
+    def _extract_topic_from_report(rp: dict) -> str:
+        if not isinstance(rp, dict) or not rp:
+            return ''
+        # 1) 高优先级直接字段
+        for k in ('topic', 'scanned_topic', 'primary_genre', 'genre', 'direction', 'main_topic', 'target_genre'):
+            v = rp.get(k)
+            if isinstance(v, str) and v.strip() and 2 <= len(v.strip()) <= 30:
+                return v.strip()
+        # 2) 数组类：trending_topics / hot_topics / real_topics / top_books_genres 取第一个
+        for k in ('trending_topics', 'hot_topics', 'real_topics', 'top_genres', 'top_books_genres', 'book_genre_trends'):
+            arr = rp.get(k)
+            if isinstance(arr, list) and len(arr) > 0:
+                first = arr[0]
+                if isinstance(first, str) and first.strip() and 2 <= len(first.strip()) <= 40:
+                    return first.strip()
+                if isinstance(first, dict):
+                    for nk in ('topic', 'genre', 'name', 'label', 'title', 'category'):
+                        v = first.get(nk)
+                        if isinstance(v, str) and v.strip() and 2 <= len(v.strip()) <= 40:
+                            return v.strip()
+        # 3) 键名含 topic/genre/热榜/扫榜/扫描 的字符串值
+        for k, v in rp.items():
+            if not isinstance(k, str):
+                continue
+            if not isinstance(v, str):
+                continue
+            if re.search(r'topic|genre|题材|方向|类型|扫榜|扫描|热榜|trend|榜', k, re.I) and v.strip() and 2 <= len(v.strip()) <= 40:
+                return v.strip()
+        # 4) 字符串值中最长的"XX题材/XX文"词组
+        for v in rp.values():
+            if not isinstance(v, str):
+                continue
+            for m in re.finditer(r'[\u4e00-\u9fa5A-Za-z0-9]{2,15}(?:题材|文|流|小说|高武|异能|脑洞|种田|末世|仙侠|修仙|宫斗|悬疑|灵异|甜宠|游戏|无限|赘婿|重生|穿越)', v):
+                return m.group(0)
+        return ''
+
     if not topic:
-        return jsonify({'error': '缺少 topic'}), 400
-    if not trend_report or not isinstance(trend_report, dict):
-        return jsonify({'error': '缺少 trend_report（需先执行 Step1）'}), 400
+        topic = _extract_topic_from_report(trend_report)
+    if not topic:
+        # 最后一层：内置 12 个热门题材轮转，按 (remote_addr+session_id+今日日期) hash 取模，避免全部用户都拿到同一个默认
+        import hashlib
+        HOT_TOPIC_ROTATION = [
+            '都市异能高武', '仙侠爽文', '历史脑洞种田', '末世囤货基建',
+            '规则怪谈做生意', '悟性溢出修仙', '殡仪馆夜班蓝海', '赘婿重生反杀',
+            '宫斗搞基建权谋', '悬疑推理刑侦', '无限流副本闯关', '悍妇边关养成'
+        ]
+        seed_src = (
+            str(request.remote_addr or '') + '|' +
+            str(data.get('session_id') or '') + '|' +
+            datetime.now().strftime('%Y-%m-%d')
+        )
+        idx = int(hashlib.md5(seed_src.encode('utf-8')).hexdigest()[:8], 16) % len(HOT_TOPIC_ROTATION)
+        topic = HOT_TOPIC_ROTATION[idx]
 
     gw, (ok, msg) = _get_pipeline_llm_gateway()
     if not ok:
