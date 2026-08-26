@@ -2284,94 +2284,110 @@ export default function ChatPanel() {
       return isNaN(n) ? -1 : n - 1; // 转 0-index
     })();
     if (step3PlanIdx >= 0) {
-      appendUserAi(text);
-      setStreaming(true);
-      const ctrl3 = new AbortController();
-      abortRef.current = ctrl3;
-      try {
-        const plans = Array.isArray(lastStep2Plans) ? lastStep2Plans : [];
-        const plan = plans[step3PlanIdx];
+      // 关键点：Step3 不是流式生成，不要用 appendUserAi（会多一条空 AI 占位气泡），手动 push 2 条：[用户消息] + [方案内容 AI 消息]
+      // → 这样命中气泡的 msg_index 能精确钉在方案内容 AI 消息的下方，不会跑到顶部
+      const plans = Array.isArray(lastStep2Plans) ? lastStep2Plans : [];
+      const plan = plans[step3PlanIdx];
+      let planAiMsgIndex = -1;
+      setMessages(prev => {
+        const next = [...prev];
+        next.push({ role: 'user', content: text });
+        // 方案不存在 → AI 提示过期/失效
         if (!plan) {
-          appendAiNotice('⚠️ 未找到方案' + (step3PlanIdx+1) + '的完整内容（可能构思方案生成太久已过期、或刚刷新页面缓存丢失）。请先重新出5个构思方案，或把方案' + (step3PlanIdx+1) + '的具体内容粘贴过来，我再给你整理成完整设定。');
-        } else {
-          // 有方案：把方案所有字段渲染成AI气泡的完整设定草稿，同时弹命中气泡一键📦入库（维度=设定/世界观）
-          const title = String(plan.title || '《未命名》').replace(/[《》]/g, '');
-          const one_liner = plan.one_liner || plan.one_liner || plan.core_hook || '';
-          const golden_finger = plan.golden_finger || plan.core_golden_finger || '';
-          const identity_conflict = plan.identity_conflict || plan.identity || '';
-          const pleasure_core = plan.pleasure_core || plan.pleasure || '';
-          const world_shell = plan.world_shell || plan.world || plan.worldview || '';
-          const diff_anchor = plan.diff_anchor || plan.differentiation || '';
-          const trend_basis = plan.trend_basis || plan.basis || '';
-          const estimated_size = plan.estimated_size || plan.size || '';
-          // 先决定落卡维度（命中"世界观"关键词就落worldview，否则落setting）
-          const suggestionDim = /世界观/.test(text) ? 'worldview' : 'setting';
-          const suggestionDimLabel = suggestionDim === 'worldview' ? '世界观' : '设定';
-          const rendered = [
-            `# 📌 已读取方案${step3PlanIdx+1}完整内容（读取前面构思方案的缓存，无需你重发）`,
-            '',
-            `## 书名：《${title}》`,
-            `**一句话梗**：${one_liner || '—'}`,
-            '',
-            `### 🔑 核心金手指 / 奇遇（含代价，不是纯白嫖）`,
-            `> ${golden_finger || '—'}`,
-            '',
-            `### 🧑 身份矛盾（主角表面身份 vs 真实身份 vs 社会定位）`,
-            `> ${identity_conflict || '—'}`,
-            '',
-            `### 🔥 爽点内核（即时爽/延迟爽，节奏匹配扫榜结果）`,
-            `> ${pleasure_core || '—'}`,
-            '',
-            `### 🌐 世界观壳（30字以内一句话壳）`,
-            `> ${world_shell || '—'}`,
-            '',
-            `### 🎯 差异化锚点（读者凭什么选你不是其他同类）`,
-            `> ${diff_anchor || '—'}`,
-            '',
-            `### 📐 趋势依据 + 预估规模`,
-            `> 趋势依据：${trend_basis || '—'}  |  字数规模：${estimated_size || '—'}`,
-            '',
-            `---`,
-            `👉 正在按方案${step3PlanIdx+1}生成完整${suggestionDimLabel} → 点击下方命中气泡的「📦以${suggestionDimLabel}入库」直接落卡到【${suggestionDimLabel}】维度`,
-          ].join('\n');
-          // 直接追加静态AI气泡（方案X的完整设定草稿）
-          setMessages(prev => [...prev, { role: 'assistant', content: rendered, cards: [] }]);
-          const popId = 'hit-step3-' + Math.random().toString(36).slice(2, 9);
-          const insertedPopupIndex = { idx: -1 };
-          setMessages(prev => { insertedPopupIndex.idx = prev.length - 2; return prev; });
-          const quickFillValue = [
-            `书名：《${title}》`,
-            `一句话梗：${one_liner}`,
-            `核心金手指/奇遇（含代价）：${golden_finger}`,
-            `身份矛盾：${identity_conflict}`,
-            `爽点内核：${pleasure_core}`,
-            `世界观壳：${world_shell}`,
-            `差异化锚点：${diff_anchor}`,
-            `趋势依据：${trend_basis}`,
-            `预估规模：${estimated_size}`,
-          ].join('\n');
-          setTimeout(() => {
-            setHitSuggestionPopups(prev => [...prev, {
-              id: popId,
-              msg_index: insertedPopupIndex.idx >= 0 ? insertedPopupIndex.idx : Math.max(0, hitSuggestionPopups.length),
-              suggestions: [{
-                id: 'step3-plan' + (step3PlanIdx+1) + '-' + Date.now(),
-                dim: suggestionDim,
-                label: suggestionDimLabel,
-                card_type: suggestionDim === 'worldview' ? 'worldview' : 'setting',
-                confidence: 0.95,
-                hits: [`方案${step3PlanIdx+1}完整字段（书名/一句话梗/金手指/身份/爽点/世界观/差异化）`],
-                suggested_title: `方案${step3PlanIdx+1}《${title}》${suggestionDimLabel}落卡`,
-                quick_fill: quickFillValue,
-              } as HitSuggestion],
-            }]);
-          }, 60);
+          next.push({
+            role: 'assistant',
+            cards: [],
+            content: '⚠️ 未找到方案' + (step3PlanIdx+1) + '的完整内容（可能构思方案生成太久已过期、或刚刷新页面缓存丢失）。请先重新出5个构思方案，或把方案' + (step3PlanIdx+1) + '的具体内容粘贴过来，我再给你整理成完整设定。',
+          });
+          planAiMsgIndex = next.length - 1;
+          return next;
         }
-      } catch (e: any) {
-        if (e.name !== 'AbortError') setStreamError(e.message || '方案设定落卡失败');
-      } finally {
-        setStreaming(false);
-        abortRef.current = null;
+        // 方案存在：渲染结构化完整设定草稿
+        const title = String(plan.title || '《未命名》').replace(/[《》]/g, '');
+        const one_liner = plan.one_liner || plan.one_liner || plan.core_hook || '';
+        const golden_finger = plan.golden_finger || plan.core_golden_finger || '';
+        const identity_conflict = plan.identity_conflict || plan.identity || '';
+        const pleasure_core = plan.pleasure_core || plan.pleasure || '';
+        const world_shell = plan.world_shell || plan.world || plan.worldview || '';
+        const diff_anchor = plan.diff_anchor || plan.differentiation || '';
+        const trend_basis = plan.trend_basis || plan.basis || '';
+        const estimated_size = plan.estimated_size || plan.size || '';
+        const suggestionDim = /世界观/.test(text) ? 'worldview' : 'setting';
+        const suggestionDimLabel = suggestionDim === 'worldview' ? '世界观' : '设定';
+        const rendered = [
+          `# 📌 已读取方案${step3PlanIdx+1}完整内容（读取前面构思方案的缓存，无需你重发）`,
+          '',
+          `## 书名：《${title}》`,
+          `**一句话梗**：${one_liner || '—'}`,
+          '',
+          `### 🔑 核心金手指 / 奇遇（含代价，不是纯白嫖）`,
+          `> ${golden_finger || '—'}`,
+          '',
+          `### 🧑 身份矛盾（主角表面身份 vs 真实身份 vs 社会定位）`,
+          `> ${identity_conflict || '—'}`,
+          '',
+          `### 🔥 爽点内核（即时爽/延迟爽，节奏匹配扫榜结果）`,
+          `> ${pleasure_core || '—'}`,
+          '',
+          `### 🌐 世界观壳（30字以内一句话壳）`,
+          `> ${world_shell || '—'}`,
+          '',
+          `### 🎯 差异化锚点（读者凭什么选你不是其他同类）`,
+          `> ${diff_anchor || '—'}`,
+          '',
+          `### 📐 趋势依据 + 预估规模`,
+          `> 趋势依据：${trend_basis || '—'}  |  字数规模：${estimated_size || '—'}`,
+          '',
+          `---`,
+          `👉 正在按方案${step3PlanIdx+1}生成完整${suggestionDimLabel} → 点击下方命中气泡的「📦以${suggestionDimLabel}入库」直接落卡到【${suggestionDimLabel}】维度`,
+        ].join('\n');
+        next.push({ role: 'assistant', content: rendered, cards: [] });
+        planAiMsgIndex = next.length - 1;
+        return next;
+      });
+      // 方案存在：60ms 后弹命中气泡，msg_index 精确钉在刚追加的方案 AI 消息 index 上（就在这条消息正下方，不会跑到顶部）
+      if (plan) {
+        const title = String(plan.title || '《未命名》').replace(/[《》]/g, '');
+        const one_liner = plan.one_liner || plan.one_liner || plan.core_hook || '';
+        const golden_finger = plan.golden_finger || plan.core_golden_finger || '';
+        const identity_conflict = plan.identity_conflict || plan.identity || '';
+        const pleasure_core = plan.pleasure_core || plan.pleasure || '';
+        const world_shell = plan.world_shell || plan.world || plan.worldview || '';
+        const diff_anchor = plan.diff_anchor || plan.differentiation || '';
+        const trend_basis = plan.trend_basis || plan.basis || '';
+        const estimated_size = plan.estimated_size || plan.size || '';
+        const suggestionDim = /世界观/.test(text) ? 'worldview' : 'setting';
+        const suggestionDimLabel = suggestionDim === 'worldview' ? '世界观' : '设定';
+        const quickFillValue = [
+          `书名：《${title}》`,
+          `一句话梗：${one_liner}`,
+          `核心金手指/奇遇（含代价）：${golden_finger}`,
+          `身份矛盾：${identity_conflict}`,
+          `爽点内核：${pleasure_core}`,
+          `世界观壳：${world_shell}`,
+          `差异化锚点：${diff_anchor}`,
+          `趋势依据：${trend_basis}`,
+          `预估规模：${estimated_size}`,
+        ].join('\n');
+        setTimeout(() => {
+          const popId = 'hit-step3-' + Math.random().toString(36).slice(2, 9);
+          // 注意：planAiMsgIndex 是 setMessages 同步赋值的，setTimeout 里读的是闭包值，不会出现异步错位
+          const finalIndex = planAiMsgIndex >= 0 ? planAiMsgIndex : Math.max(0, 0);
+          setHitSuggestionPopups(prev => [...prev, {
+            id: popId,
+            msg_index: finalIndex,
+            suggestions: [{
+              id: 'step3-plan' + (step3PlanIdx+1) + '-' + Date.now(),
+              dim: suggestionDim,
+              label: suggestionDimLabel,
+              card_type: suggestionDim === 'worldview' ? 'worldview' : 'setting',
+              confidence: 0.95,
+              hits: [`方案${step3PlanIdx+1}完整字段（书名/一句话梗/金手指/身份/爽点/世界观/差异化）`],
+              suggested_title: `方案${step3PlanIdx+1}《${title}》${suggestionDimLabel}落卡`,
+              quick_fill: quickFillValue,
+            } as HitSuggestion],
+          }]);
+        }, 60);
       }
       return;
     }
