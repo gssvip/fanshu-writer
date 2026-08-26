@@ -2508,6 +2508,28 @@ export default function ChatPanel() {
 
               {activeTab === 'setting' && (
                 <>
+                  {/* 双保险引导：当用户还在"设定Tab内部旧通用子模式"时，横幅提醒有更好的顶层「💬通用对话」Tab */}
+                  {selectedDim === 'general' && (
+                    <div style={{
+                      margin: '8px 0 12px', padding: '12px 14px', borderRadius: 10,
+                      background: 'linear-gradient(100deg,#fff7ed 0%,#fef3c7 100%)',
+                      border: '1.5px solid #f59e0b', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+                    }}>
+                      <span style={{ fontSize: 18 }}>💡</span>
+                      <div style={{ flex: 1, fontSize: 13, lineHeight: 1.55, minWidth: 240 }}>
+                        <div style={{ fontWeight: 700, color: '#92400e', marginBottom: 3 }}>你当前用的是【设定】Tab 内部的旧「通用」子维度。</div>
+                        <div style={{ color: '#78350f' }}>
+                          更推荐使用 <strong style={{ color: '#c2410c' }}>底部导航栏最左侧的「💬通用对话」新 Tab</strong>：
+                          支持任意话题闲聊、命中创作关键词自动气泡「一键入库」📦、发送「扫榜/爆款」自动打开 3 步流水线（联网扫榜 + 5 方案 + 世界观构建）🔥。
+                        </div>
+                      </div>
+                      <button
+                        className="btn-sm primary"
+                        style={{ background: 'linear-gradient(90deg,#d97706,#ea580c)', color: '#fff', border: 'none', flexShrink: 0 }}
+                        onClick={() => { switchTab('general'); }}
+                      >立即切换「💬通用对话」新 Tab →</button>
+                    </div>
+                  )}
                   {/* 维度子按钮栏：两行（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔） */}
                   <div className="smart-dim-rows">
                     <div className="smart-dim-row">
