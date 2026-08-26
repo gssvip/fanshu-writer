@@ -1578,6 +1578,37 @@ def apply_card():
 
     # 持久化卡片状态（避免重开聊天又提示采纳）
     _persist_card_status(session_id, card_id, new_card_status, content)
+
+    # ====== 新增：落卡成功后写入对应AISession的记忆（system消息），下次聊天LLM知道已落卡 ======
+    # 根因：用户反馈"落卡了但继续聊天，LLM完全不知道我已经落过卡"，
+    # 因为之前 apply-card 只改 bible + 卡片 status，没有把落卡这件事写到 session.messages_history，
+    # 导致 chat_general/chat_smart 下一轮构造 messages 时完全没有「已落卡」这一条关键事实。
+    if session_id:
+        try:
+            sess_obj = AISession.query.get(session_id)
+            if sess_obj:
+                spec_label = spec.get('label') or ctype
+                # 摘要：只取标题+前150字，避免单条记忆塞太长
+                preview = content[:150].replace('\n', ' ')
+                if len(content) > 150:
+                    preview += '…'
+                mem_text = (
+                    f'【系统上下文·落卡成功通知（无需对用户复述，仅作内部记忆参考）】\n'
+                    f'时间：{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}\n'
+                    f'落地维度：{spec_label}（字段={spec.get("field","")}，卡片类型={ctype}）\n'
+                    f'卡片标题：{title or "(未命名卡片)"}\n'
+                    f'落地模式：{"覆盖（编辑后落地）" if is_edit_overwrite else "追加（直接采纳）"}\n'
+                    f'内容摘要：{preview}\n'
+                    f'→ 以后聊到相关内容时，请以此为"智驾已写入"的事实依据，不要重复从零讨论已落过卡的相同话题。'
+                )
+                sess_hist = load_session_messages(sess_obj)
+                sess_hist.append({'role': 'system', 'content': mem_text, '_source': 'card_applied_memory'})
+                _safe_save_session_messages(sess_obj, sess_hist)
+        except Exception as _me:
+            # 记忆写入失败不影响主流程（卡片落地成功才是硬指标），记录但不抛错
+            import traceback as _tb
+            _tb.print_exc()
+
     return jsonify({'ok': True, 'field': spec['field'], 'label': spec['label'],
                     'progress': build_progress_map(bb),
                     **result_extra})
@@ -7204,9 +7235,9 @@ def chat_general():
     system_prompt = build_general_chat_system_prompt()
     enriched = wrap_message_with_context(message, book_title, bb_summary)
     history = load_session_messages(session)
-    # 最大上下文：最近12条（闲聊不塞太长）
-    if len(history) > 12:
-        history = history[-12:]
+    # 最大上下文：最近30条（通用聊天需要更长记忆，避免落卡内容+聊天上下文容易丢）
+    if len(history) > 30:
+        history = history[-30:]
     messages = [{'role': 'system', 'content': system_prompt}]
     for h in history:
         if 'content' in h:

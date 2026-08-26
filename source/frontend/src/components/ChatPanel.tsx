@@ -1053,6 +1053,9 @@ export default function ChatPanel() {
   const [lastStep1Report, setLastStep1Report] = useState<any>(null);
   // 扫榜→构思→设定流水线缓存：Step2产出的5方案list存state，Step3用户说「按方案X出设定」直接读方案X完整字段落卡，不再让用户重发方案内容
   const [lastStep2Plans, setLastStep2Plans] = useState<any[] | null>(null);
+  // 通用聊天专用会话ID（与设定Tab其他维度session隔离，避免串session/记忆丢失）
+  // 根因：原代码传sessionId:undefined→后端每次新建会话→聊天记忆完全丢失；若复用全局sessionId，会跟其他维度（构思/设定/正文创作）会话互相覆盖导致混乱
+  const [chatGeneralSessionId, setChatGeneralSessionId] = useState<string | null>(null);
   const [showBackfill, setShowBackfill] = useState(false);
   const [backfillLLM, setBackfillLLM] = useState<'auto' | 'always' | 'never'>('auto');
   const [backfillRunning, setBackfillRunning] = useState(false);
@@ -1415,7 +1418,8 @@ export default function ChatPanel() {
   // - onMeta: 可选扩展 meta 事件回调（通用聊天用：命中维度提示气泡、扫榜意图、流水线完成）
   //          不传则沿用默认行为（向后兼容），不破坏其他4个调用点
   // - ignoreCards: 可选=true时跳过所有{type:card}帧（用于Step1扫榜/Step2构思等中间结果：只展示内容、不显示采纳卡片、等用户确认后再继续下一步落卡）
-  const consumeSSE = useCallback(async (res: Response, ctrl: AbortController, onCardMeta?: (card: ActionCard, meta: any) => void, onMeta?: (kind: string, info: any) => void, ignoreCards = false) => {
+  // - onSessionId: 可选=传入后，card/done帧的session_id只调此回调（更新调用方自己的会话ID），不再调全局setSessionId，避免不同调用链路之间串session
+  const consumeSSE = useCallback(async (res: Response, ctrl: AbortController, onCardMeta?: (card: ActionCard, meta: any) => void, onMeta?: (kind: string, info: any) => void, ignoreCards = false, onSessionId?: (sid: string) => void) => {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
       throw new Error(err.error || `HTTP ${res.status}`);
@@ -1468,7 +1472,11 @@ export default function ChatPanel() {
         gotPayload = true;
         if (evt.session_id && !receivedSessionId) {
           receivedSessionId = evt.session_id;
-          setSessionId(evt.session_id);
+          if (typeof onSessionId === 'function') {
+            onSessionId(evt.session_id); // 调用方私有sessionId更新（通用聊天），不污染全局
+          } else {
+            setSessionId(evt.session_id); // 原全局逻辑（其他调用点保持不变）
+          }
         }
         if (evt.meta && onCardMeta) {
           onCardMeta({ ...evt.card, status: 'pending' }, evt.meta);
@@ -1488,8 +1496,12 @@ export default function ChatPanel() {
         });
       } else if (evt.type === 'done') {
         if (evt.session_id) {
-          setSessionId(evt.session_id);
           receivedSessionId = evt.session_id;
+          if (typeof onSessionId === 'function') {
+            onSessionId(evt.session_id); // 调用方私有sessionId更新（通用聊天），不污染全局
+          } else {
+            setSessionId(evt.session_id); // 原全局逻辑
+          }
         }
       } else if (evt.type === 'error') {
         gotPayload = true; // 收到 error 帧也算"有响应"，避免被下方空回复兜底覆盖真实错误
@@ -2477,7 +2489,9 @@ export default function ChatPanel() {
     const insertedPopupIndex = { idx: -1 };
     setMessages(prev => { insertedPopupIndex.idx = prev.length - 2; return prev; });
     try {
-      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: undefined }, ctrl.signal);
+      // 修复：传 chatGeneralSessionId（通用聊天专用），不传 undefined → 否则后端每次新建会话=记忆全丢（用户投诉：通用比普通CHATBOX差远了，没记忆没上下文）
+      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined }, ctrl.signal);
+      // consumeSSE 最后1个参数 onSessionId=setChatGeneralSessionId：把card/done帧带回的session_id只写入 chatGeneralSessionId，不污染全局 setSessionId（避免和其他创作维度会话互串）
       await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
         // 命中创作维度 → 气泡提示一键入库
         if (kind === 'hit_suggestions' && Array.isArray(info?.suggestions) && info.suggestions.length > 0) {
@@ -2524,7 +2538,7 @@ export default function ChatPanel() {
           });
           setHitSuggestionPopups(prev => [...prev, { id: popId, msg_index: insertedPopupIndex.idx, suggestions: normalized }]);
         }
-      });
+      }, false, setChatGeneralSessionId);
     } catch (e: any) {
       if (e.name !== 'AbortError') {
         const msg = (e?.message || e?.error || '聊天失败').trim() || '聊天失败';
@@ -2544,7 +2558,7 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [input, bookId, streaming, sessionId, appendUserAi, removeEmptyAi, consumeSSE]);
+  }, [input, bookId, streaming, sessionId, chatGeneralSessionId, appendUserAi, removeEmptyAi, consumeSSE]);
 
   // 主发送动作（设定Tab：通用走general，维度已有内容走dim-edit，否则走suggest）
   const handleMainSend = useCallback(() => {
@@ -2744,7 +2758,10 @@ export default function ChatPanel() {
                                   status: 'adopted',
                                 };
                                 try {
-                                  const r = await api.applyChatCard(bookId, realCard as any, sessionId ?? undefined);
+                                  // 命中气泡落卡：优先用chatGeneralSessionId（通用聊天专用会话，保证落卡记忆写入正确的session，供下一轮LLM"记得已经落过卡"），
+                                  // 否则退化到全局sessionId（其他维度场景兼容）
+                                  const effectiveSessionId = chatGeneralSessionId || sessionId;
+                                  const r = await api.applyChatCard(bookId, realCard as any, effectiveSessionId ?? undefined);
                                   // 成功后刷新维度内容：Bible + 进度地图
                                   try { api.getBible(bookId).then(b => { if (b) setBible(b); }).catch(() => {}); } catch {}
                                   try { api.getProgressMap(bookId).then(p => { if (p) { setProgress(p); setShowProgress(true); setTimeout(() => setShowProgress(false), 2800); } }).catch(() => {}); } catch {}

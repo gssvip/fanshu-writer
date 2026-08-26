@@ -9,8 +9,10 @@ Step 2: generate_5_plans(topic, trend_report, refs=[]) → 5方案×3方向 + �
 Step 3: build_worldbuild_package(plan_dict) → 世界观+修炼+CDL角色+金手指代价+系统人格化
 """
 from __future__ import annotations
+import hashlib
 import json
 import os
+import random
 import re
 import time
 import urllib.parse
@@ -764,8 +766,10 @@ PLAN_DIRECTION_LABELS = {
 def run_step2_plans(topic: str, trend_report: dict,
                     reference_books: Optional[list[str]] = None,
                     llm_fn: Optional[Callable[[str], str]] = None) -> dict:
-    """Step2 生成5个方案。JSON结构与用户需求格式一致。入口topic永久非空兜底。"""
-    # 最后一道兜底：任何调用方（前端漏传/测试/直接import调用）topic 空字符串/None → 默认"热门都市异能高武"，绝不崩
+    """Step2 生成5个方案。JSON结构与用户需求格式一致。入口topic永久非空兜底。
+
+    关键：每次调用生成 step2_seed（topic+时间戳+trend_report hash），
+    强制 LLM 与 fallback 都基于 seed 扰动，相同题材连续调用产出完全不同的 5 方案。"""
     topic_default = '热门都市异能高武'
     try:
         t = (topic or '').strip()
@@ -775,8 +779,12 @@ def run_step2_plans(topic: str, trend_report: dict,
     refs = [r.strip() for r in (reference_books or []) if r and r.strip()]
     trend_json = json.dumps(trend_report or {}, ensure_ascii=False)[:8000]
 
+    # ===== 新增：step2_seed（同一秒内相同 topic 也不一样，因为加了 random.random） =====
+    raw_seed_src = f"{topic}|{time.time_ns()}|{random.random()}|{trend_report.get('_meta', {}).get('scan_id', '') if isinstance(trend_report, dict) else ''}"
+    step2_seed = int(hashlib.md5(raw_seed_src.encode('utf-8')).hexdigest(), 16) % (2**31)
+
     if llm_fn:
-        prompt = _build_step2_prompt(topic, refs, trend_json, trend_report)
+        prompt = _build_step2_prompt(topic, refs, trend_json, trend_report, step2_seed)
         try:
             out = llm_fn(prompt) or ''
             plans = _extract_json_block(out)
@@ -784,14 +792,16 @@ def run_step2_plans(topic: str, trend_report: dict,
                 return _finalize_step2(topic, plans, trend_report)
         except Exception:
             pass
-    return _finalize_step2(topic, _heuristic_step2_plans(topic, refs, trend_report), trend_report)
+    return _finalize_step2(topic, _heuristic_step2_plans(topic, refs, trend_report, step2_seed), trend_report)
 
 
-def _build_step2_prompt(topic, refs, trend_json, trend_report=None) -> str:
+def _build_step2_prompt(topic, refs, trend_json, trend_report=None, step2_seed: int = 0) -> str:
     ref_str = ('用户额外提供的参考书名（仅作灵感来源，不要照搬原书内容）：\n' +
                '\n'.join(f'- {r}' for r in refs) + '\n\n') if refs else ''
-    # 新增：真实榜单对标书目（从3个权威榜源抓到的真实书名，解决"假扫榜→知识库固定书"→方案也假）
     real_books_preview = []
+    trending_gf = []
+    fatigue_tropes = []
+    diff_opps = []
     if isinstance(trend_report, dict):
         meta = trend_report.get('_meta', {}) if isinstance(trend_report.get('_meta'), dict) else {}
         real_books_preview = list(meta.get('real_books_preview') or [])[:15]
@@ -799,14 +809,28 @@ def _build_step2_prompt(topic, refs, trend_json, trend_report=None) -> str:
             sb = trend_report.get('sample_books_used')
             if isinstance(sb, list):
                 real_books_preview = list(sb)[:15]
+        cur = trend_report.get('current_trending') or {}
+        if isinstance(cur, dict):
+            trending_gf = list(cur.get('top_golden_fingers') or [])[:8]
+            fatigue_tropes = list(cur.get('fatigue_tropes') or [])[:8]
+            diff_opps = list(cur.get('differentiation_opportunities') or [])[:8]
     real_books_str = ''
     if real_books_preview:
         real_books_str = (
             '真实榜单对标书目（从 书荒典/网文大数据/番茄Hub 抓取，非固定知识库）—— 仅作题材和爽点风格参考，严禁照搬内容：\n' +
             '\n'.join(f'- {b}' for b in real_books_preview) + '\n\n'
         )
-    return f'''你是网文爆款方案策划（一线主编级，具体落地派，不是模板话痨）。基于如下Step1的"趋势方向"JSON和题材【{topic}】，
-生成5个小说方案（方案1-2趋势跟随、3-4差异化、5大胆尝试）。
+    trend_fields_str = ''
+    if trending_gf or fatigue_tropes or diff_opps:
+        trend_fields_str = (
+            '===== 📊 Step1趋势JSON提炼出的字段级强约束（必须用，违反直接重写）=====\n'
+            + (f'【高频金手指（方案1-2趋势跟随必须优先使用）】：{", ".join(trending_gf)}\n' if trending_gf else '')
+            + (f'【读者已疲劳老套路（5个方案必须全部避开，出现任何一个都不合格）】：{", ".join(fatigue_tropes)}\n' if fatigue_tropes else '')
+            + (f'【差异化机会（方案3-5必须优先采纳）】：{", ".join(diff_opps)}\n\n' if diff_opps else '')
+        )
+    return f'''你是网文爆款方案策划（一线主编级，具体落地派，不是模板话痨）。
+【🔴 SEED扰动铁律】：本次调用的随机种子 = {step2_seed}。你必须把 seed 当作"方案选择骰子"——seed 的每一位数字对应从"高频金手指池/差异化池/书名钩子池/身份池/爽点池"里抽第几个元素，相同题材【不同 seed 必须产出完全不同的 5 个方案】（字段重叠率必须 <30%，即：5个方案之间+与上次相同题材调用之间书名/金手指/身份/世界观壳这4个关键字段不能有≥2个方案相同）。如果你偷懒复用上次同一题材的同一套方案，质检会判你 0 分重写。
+基于如下Step1的"趋势方向"JSON和题材【{topic}】，生成5个小说方案（方案1-2趋势跟随、3-4差异化、5大胆尝试）。
 
 ===== 🔴 铁律：每个字段必须具体到"能直接写正文第一章"，严禁空洞模板大白话 =====
 禁止输出「身份反差装逼」「系统面板流」「第一桶金靠逆袭」这种话——谁都知道，但没用！
@@ -862,7 +886,7 @@ def _build_step2_prompt(topic, refs, trend_json, trend_report=None) -> str:
   "validation": {{ "self_consistent": "✅自洽：交易机制（进货→卖货→心愿→纳税）闭环，无逻辑漏洞", "sustain_100ch": "✅续航：鬼客心愿类型（家人遗物/找替身/报仇/度化/当官…）100章不重样，超市升级路线（单店→24h连锁→跨副本仓储→阴阳两界批发）足够支撑200万", "character_arc": "✅弧光：胆小只想工资→敢跟城隍爷谈分成→敢硬刚邪神搞商业帝国→最后做了阴间商会总会长", "differentiation": "✅差异化：做生意流规则怪谈，市场上没有完全对标" }}
 }}
 
-{real_books_str}{ref_str}Step1趋势JSON：
+{trend_fields_str}{real_books_str}{ref_str}Step1趋势JSON：
 {trend_json}
 
 请只输出一个合法JSON对象（可包裹在```json里），格式严格按示例结构（plans数组5个元素，每个元素字段齐全且具体，验证4项都要给一句话理由，不能只打True/False）：
@@ -887,104 +911,356 @@ def _build_step2_prompt(topic, refs, trend_json, trend_report=None) -> str:
 '''.strip()
 
 
-def _heuristic_step2_plans(topic: str, refs: list[str], trend: dict) -> dict:
-    """_heuristic_step2_plans(fallback，当LLM调用失败/网络不好时用)：5套具体可落地方案，不是空洞大白话。
-    按1-2趋势跟随(对应当前真实榜最火方向)/3-4差异化(反套路)/5大胆尝试(细分蓝海)组织，和_build_step2_prompt风格对齐。"""
+def _heuristic_step2_plans(topic: str, refs: list[str], trend: dict, step2_seed: int = 0) -> dict:
+    """_heuristic_step2_plans fallback（完全动态版）。
+
+    核心机制：基于 step2_seed 初始化 rng，从「8+方向骨架池 × 多套字段变体池」里
+    随机抽取组合，确保相同题材+不同 seed → 5方案字段重叠率 <30%。"""
     topic_s = (topic or '热门题材').strip()
+    rng = random.Random(step2_seed)
 
-    # ===== 从 trend 里取真实榜单样本书名（如果有），作为5方案的灵感标签 =====
+    # ===== 从 trend 取真实榜单+趋势字段 =====
     sample_books = list(trend.get('sample_books_used', []) if isinstance(trend.get('sample_books_used'), list) else [])
-    has_guize = any(any(k in b for k in ['终焉', '规则', '邪神', '精神病院', '怪诞']) for b in sample_books)
-    has_wuxing = any(any(k in b for k in ['悟性', '修仙', '灵根', '宗门', '洪荒']) for b in sample_books)
-    has_moshi = any(any(k in b for k in ['末世', '冰封', '游戏入侵', '诡异', '求生']) for b in sample_books)
-    has_tianzhong = any(any(k in b for k in ['种田', '悍妇', '大唐', '长生', '玄武门']) for b in sample_books)
+    cur = trend.get('current_trending') or {}
+    top_gf = list(cur.get('top_golden_fingers') or []) if isinstance(cur, dict) else []
+    diff_ops = list(cur.get('differentiation_opportunities') or []) if isinstance(cur, dict) else []
+    fatigue = list(cur.get('fatigue_tropes') or []) if isinstance(cur, dict) else []
 
-    # ===== 方案1：趋势跟随 #1（规则怪谈/中式惊悚，对应当前真实榜《十日终焉》《我不是戏神》风向）=====
-    plan1 = {
-        'plan_index': 1,
-        'direction': '趋势跟随（规则怪谈+中式惊悚，对标《十日终焉》《我不是戏神》）',
-        'title': '谁让他在规则怪谈里开便民超市！',
-        'one_liner': '0点后城市变灵异副本，我是唯一敢开门的超市老板',
-        'golden_finger': '阴间连锁超市系统：①我能从阳间进货（进价×1）按阴间物价卖（利润率1000%-10000%）；②每成交1单必须帮鬼客完成1件心愿（心愿越离谱返利倍率越高）；③代价：心愿未完成扣3天寿命，每月15号必须交阳间等价物的"阴阳税"，欠税直接拉进十八层地狱副本',
-        'identity_conflict': '表面：211毕业考公失败，回老家殡仪馆做夜班保安（月薪4500，被父母骂没用、亲戚说晦气、相亲没人要）；真实：规则怪谈世界唯一持证「阴间便民超市经营者」（城隍爷签发、鬼王排队买货、特调局得从我这儿拿情报）→ 白天上班被当看门的，晚上营业不能暴露客户全是鬼',
-        'pleasure_core': '即时爽（每章1单）：吊死鬼要100捆香我加价10倍还得求我→第1章装逼；水鬼要最新款防水手机我翻20倍卖→第2章装逼；延迟爽（10章）：帮城隍爷搞定心愿→发营业执照，整条街其他同行的黑超市全被地府查封→大逆袭；延迟爽（30章）：特调局局长亲自来买情报→官方背书，从"晦气保安"直接变"特邀灵异顾问"',
-        'world_shell': '现代+规则怪谈叠加壳：2024某市，每天0-6点随机刷3个灵异副本→等级D→S，势力4方：特调局/民间守夜人/邪神邪教/规则本身',
-        'diff_anchor': '同类规则怪谈都在"闯关解谜+死队友升级"，我写「做生意流规则怪谈」——鬼进门先看价，买不起能打欠条做担保分期，爽点是谈条件/拉关系/收账/搞营销，不是比谁更能打',
-        'trend_basis': '基于当前真实榜规则怪谈在读风向 + 差异化在做生意流不是闯关流',
-        'estimated_size': '200万-280万字（30-42卷，每卷60-80章，每1卷=1个大副本+1张大订单）',
-        'validation': {'self_consistent': '✅交易机制（进货→卖货→心愿→纳税）闭环无漏洞', 'sustain_100ch': '✅鬼客心愿类型100章不重样，超市升级路线（单店→连锁→批发）支撑200万', 'character_arc': '✅胆小只想工资→敢跟城隍爷谈分成→硬刚邪神搞商业帝国→最后阴间商会会长', 'differentiation': '✅做生意流规则怪谈，市面没有完全对标'},
+    # ===== 方向骨架池（至少8种，打乱取5）=====
+    DIRECTION_SKELETONS = [
+        {'key': 'guize_shop', 'label': '趋势跟随（规则怪谈+中式惊悚+做生意流）', 'tropes_hint': ['规则', '怪谈', '终焉', '邪神', '戏神']},
+        {'key': 'wuxing_chichen', 'label': '趋势跟随（悟性流+修仙种田+宠物坑主角）', 'tropes_hint': ['悟性', '修仙', '灵根', '宗门', '土豆']},
+        {'key': 'moshiji_huoren', 'label': '差异化（末世囤货+囤活人管小社会）', 'tropes_hint': ['末世', '冰封', '囤货', '求生', '空间']},
+        {'key': 'tianzhong_hanfu', 'label': '差异化（古言种田+悍妇搞基建+权臣养成）', 'tropes_hint': ['种田', '悍妇', '大唐', '边关', '休妻']},
+        {'key': 'binyizang_supplier', 'label': '大胆尝试（殡葬服务供应商+赚阴德换阳间好处）', 'tropes_hint': ['殡仪馆', '殡葬', '怪诞', '阴间', '阴德']},
+        {'key': 'gongsi_native', 'label': '趋势跟随（公司/职场+系统/克苏鲁+反内卷）', 'tropes_hint': ['公司', '职场', '加班', 'KPI', '打工人']},
+        {'key': 'zhentan_lianyu', 'label': '差异化（中式刑侦+特殊能力+诡异案件）', 'tropes_hint': ['刑侦', '法医', '警察', '悬案', '破案']},
+        {'key': 'shenhuo_bangong', 'label': '大胆尝试（神话编制+现代办公+神仙内卷）', 'tropes_hint': ['神仙', '天庭', '编制', '嫦娥', '二郎神']},
+        {'key': 'lvxing_qianke', 'label': '差异化（诸天旅行+当铺/客栈+收心愿做交易）', 'tropes_hint': ['当铺', '客栈', '旅行', '诸天', '万界']},
+        {'key': 'jianling_ruanjian', 'label': '大胆尝试（软件/AI+灵体化+数据修仙）', 'tropes_hint': ['代码', 'AI', 'Bug', '程序员', '数据']},
+    ]
+    # 优先选和 trend.sample_books 关键词匹配的方向（匹配度高的排前），再补足到至少8个打乱重抽
+    def _match_score(skel):
+        return sum(1 for h in skel['tropes_hint'] if any(h in b for b in sample_books))
+    DIRECTION_SKELETONS_SORTED = sorted(DIRECTION_SKELETONS, key=lambda s: -_match_score(s))
+    chosen_skeletons = DIRECTION_SKELETONS_SORTED[:8]
+    rng.shuffle(chosen_skeletons)
+    chosen_skeletons = chosen_skeletons[:5]
+    # 方向强制分布：索引0-1趋势跟随标签、2-3差异化、4大胆尝试
+    DIR_TAG = [
+        '趋势跟随', '趋势跟随',
+        '差异化', '差异化',
+        '大胆尝试',
+    ]
+    for i, sk in enumerate(chosen_skeletons):
+        # 覆盖方向标签：用DIR_TAG[i]替换skel原label开头
+        old_lbl = sk['label']
+        if '（' in old_lbl:
+            sk['label'] = DIR_TAG[i] + '（' + old_lbl.split('（', 1)[1]
+        else:
+            sk['label'] = DIR_TAG[i]
+
+    # ===== 字段变体池（N选1，每次不同seed组合不同）=====
+    TITLE_HOOKS_POOL = [
+        '谁让他在{scene}里开{shop}！', '{ability}：我养的{pets}全成圣了',
+        '刚进{place}，我{thing}能{ability_verb}', '全球{disaster}：我的{container}里囤了{count}个{living}',
+        '被{event}：{place}{action}种出了{result}', '{job}：我的客户全是{client_type}但全是{rich}',
+        '公司{disaster2}：我在{department}当{job2}', '{job3}：我靠{medium}破了{case}',
+        '天庭{event2}：我在{heaven_dept}做{job4}', '万界{shop_type}：我收{currency}卖{goods}',
+        '我写的{code_type}全成{spirit}了', '{job5}重生：第一天把{bad_thing}给{action_result}',
+    ]
+    TITLE_FILL_MAP = {
+        'guize_shop':       {'scene': '规则怪谈', 'shop': '便民超市', 'ability': '阴间连锁系统', 'pets': '鸡鸭鹅',
+                             'place': '宗门', 'thing': '地里种的土豆', 'ability_verb': '修仙', 'disaster': '冰封',
+                             'container': '空间', 'count': '300', 'living': '活人', 'event': '休悍妇',
+                             'place_action': '边关种田', 'result': '权臣白月光', 'job': '殡仪馆夜班保安',
+                             'client_type': '鬼', 'rich': '土豪', 'disaster2': '规则化',
+                             'department': '打工人部', 'job2': 'Bug清理专员', 'job3': '法医顾问',
+                             'medium': '死者最后一句话', 'case': '连环悬案', 'event2': '缩编',
+                             'heaven_dept': '神仙后勤', 'job4': '合同工', 'shop_type': '心愿当铺',
+                             'currency': '10年寿命', 'goods': '人生重来一次', 'code_type': '代码Bug',
+                             'spirit': '精怪', 'job5': '产品经理', 'bad_thing': '把需求改回第一版',
+                             'action_result': '全删了'},
+        'wuxing_chichen':    {'scene': '修仙宗门', 'shop': '灵兽宠物店', 'ability': '悟性溢出面板', 'pets': '菜虫',
+                             'place': '外门', 'thing': '随手画的符', 'ability_verb': '引雷', 'disaster': '灵气复苏',
+                             'container': '灵田', 'count': '五千', 'living': '妖兽', 'event': '贬为杂役',
+                             'place_action': '后山种田', 'result': '大帝亲妈', 'job': '杂役弟子',
+                             'client_type': '灵兽', 'rich': '妖皇', 'disaster2': '末法',
+                             'department': '藏经阁', 'job2': '扫地僧', 'job3': '仵作',
+                             'medium': '骨相', 'case': '百年奇案', 'event2': '飞升名额',
+                             'heaven_dept': '雷部', 'job4': '合同工', 'shop_type': '功法当铺',
+                             'currency': '百年修为', 'goods': '顿悟一次', 'code_type': '丹方',
+                             'spirit': '丹灵', 'job5': '炼丹童子', 'bad_thing': '药渣',
+                             'action_result': '炼成九转丹'},
+        'moshiji_huoren':    {'scene': '末世安全区', 'shop': '活人贸易站', 'ability': '囤货进化空间', 'pets': '变异鼠',
+                             'place': '避难所', 'thing': '囤的罐头', 'ability_verb': '当枪使', 'disaster': '极寒',
+                             'container': '背包', 'count': '五百', 'living': '邻居', 'event': '逐出避难所',
+                             'place_action': '地下室种田', 'result': '末世城主', 'job': '超市理货员',
+                             'client_type': '幸存者', 'rich': '避难所所长', 'disaster2': '游戏入侵',
+                             'department': '副本开荒', 'job2': '后勤官', 'job3': '灾变档案员',
+                             'medium': '幸存者日记', 'case': '全城失踪案', 'event2': '资源配给',
+                             'heaven_dept': '风雨司', 'job4': '合同工', 'shop_type': '生存物资站',
+                             'currency': '3天口粮', 'goods': '安全屋7天', 'code_type': '病毒序列',
+                             'spirit': '毒灵', 'job5': '方舱医生', 'bad_thing': '假药',
+                             'action_result': '炼成解药'},
+        'tianzhong_hanfu':   {'scene': '古代边关', 'shop': '军粮供应站', 'ability': '种田Buff面板', 'pets': '老黄牛',
+                             'place': '冷宫', 'thing': '种的白菜', 'ability_verb': '救皇子', 'disaster': '旱灾',
+                             'container': '嫁妆箱', 'count': '三', 'living': '娃', 'event': '状元休妻',
+                             'place_action': '冷宫种菜', 'result': '太后亲妈', 'job': '御膳房杂役',
+                             'client_type': '嬷嬷太监', 'rich': '大太监', 'disaster2': '夺嫡',
+                             'department': '浣衣局', 'job2': '宫女', 'job3': '稳婆',
+                             'medium': '胎像脉象', 'case': '狸猫换太子', 'event2': '选秀',
+                             'heaven_dept': '姻缘司', 'job4': '合同工', 'shop_type': '药膳铺',
+                             'currency': '一儿半女', 'goods': '皇子青睐一次', 'code_type': '药方',
+                             'spirit': '药灵', 'job5': '太医', 'bad_thing': '虎狼药',
+                             'action_result': '调改成补药'},
+        'binyizang_supplier':{'scene': '殡仪馆', 'shop': '殡葬一条龙', 'ability': '殡葬小程序', 'pets': '纸扎人',
+                             'place': '地府枉死城', 'thing': '烧的纸扎', 'ability_verb': '成真', 'disaster': '鬼节大开',
+                             'container': '骨灰盒', 'count': '一百零八', 'living': '枉死鬼', 'event': '继承爷爷殡葬店',
+                             'place_action': '阴间开分店', 'result': '阴间首富', 'job': '夜班前台',
+                             'client_type': '鬼', 'rich': '土豪鬼', 'disaster2': '生死簿损坏',
+                             'department': '地府业务对接', 'job2': '黑白无常助理', 'job3': '渡灵人',
+                             'medium': '死者遗物', 'case': '百年积怨索命案', 'event2': '阎王换届',
+                             'heaven_dept': '地府合作', 'job4': '特邀顾问', 'shop_type': '阴间超市',
+                             'currency': '阴德值', 'goods': '投胎插队一次', 'code_type': '超度经文',
+                             'spirit': '经灵', 'job5': '道士传人', 'bad_thing': '邪术',
+                             'action_result': '改成正经超度'},
+        'gongsi_native':     {'scene': '互联网大厂', 'shop': 'Bug交易平台', 'ability': 'KPI返还系统', 'pets': '产品经理鸽子',
+                             'place': '35岁优化名单', 'thing': '写的代码', 'ability_verb': '自己跑了', 'disaster': '全员优化',
+                             'container': '代码仓库', 'count': '一万', 'living': '程序员', 'event': '被裁当天',
+                             'place_action': '地下室创业', 'result': '行业新贵', 'job': '996码农',
+                             'client_type': '需求鬼', 'rich': '资本家', 'disaster2': '需求规则化',
+                             'department': '需求部', 'job2': '产品经理', 'job3': '程序员鼓励师',
+                             'medium': '代码提交日志', 'case': '删库跑路奇案', 'event2': 'IPO前夕',
+                             'heaven_dept': '天庭IT部', 'job4': '外包合同工', 'shop_type': '程序员续命铺',
+                             'currency': '5根头发', 'goods': '无Bug写一天', 'code_type': '需求文档',
+                             'spirit': '文档精灵', 'job5': 'CTO重生', 'bad_thing': '傻逼需求',
+                             'action_result': '砍了做成MVP'},
+        'zhentan_lianyu':    {'scene': '凶案现场', 'shop': '法医工作室', 'ability': '死者最后10秒画面', 'pets': '搜证犬',
+                             'place': '悬案组', 'thing': '摸过的遗物', 'ability_verb': '回放案发', 'disaster': '连环案',
+                             'container': '证物箱', 'count': '四十', 'living': '受害者家属', 'event': '被调离刑警队',
+                             'place_action': '离职当顾问', 'result': '公安部特聘', 'job': '法医',
+                             'client_type': '死者', 'rich': '受害者家属富豪', 'disaster2': '嫌疑人全部死亡',
+                             'department': '悬案科', 'job2': '顾问', 'job3': '画像师',
+                             'medium': '微表情', 'case': '十年碎尸案', 'event2': '扫黑督导',
+                             'heaven_dept': '判官署', 'job4': '特邀问事', 'shop_type': '阴事事务所',
+                             'currency': '一条线索', 'goods': '亡魂亲自指认凶手', 'code_type': '嫌疑人特征',
+                             'spirit': '线索精', 'job5': '老刑警重生', 'bad_thing': '刑讯逼供证据',
+                             'action_result': '改成合法证据链'},
+        'shenhuo_bangong':   {'scene': '天庭办公楼', 'shop': '蟠桃代购', 'ability': '神仙KPI系统', 'pets': '哮天犬幼崽',
+                             'place': '南天门编制办', 'thing': '写的汇报PPT', 'ability_verb': '自动飞升', 'disaster': '天庭缩编',
+                             'container': '储物戒', 'count': '五百', 'living': '合同工神仙', 'event': '刚转正被调岗',
+                             'place_action': '后勤创业', 'result': '天庭首富', 'job': '天庭合同工',
+                             'client_type': '神仙', 'rich': '上仙大佬', 'disaster2': '蟠桃会停办',
+                             'department': '神仙后勤', 'job2': '采购', 'job3': '月老助理',
+                             'medium': '香火功德', 'case': '神仙下凡奇案', 'event2': '封神榜重排',
+                             'heaven_dept': '天庭CEO办', 'job4': '秘书处合同工', 'shop_type': '仙界代购',
+                             'currency': '1炷香火', 'goods': '蟠桃1个', 'code_type': '仙箓',
+                             'spirit': '箓灵', 'job5': '太白金星秘书', 'bad_thing': '写错的仙旨',
+                             'action_result': '改成嘉奖令'},
+        'lvxing_qianke':     {'scene': '万界小巷', 'shop': '心愿当铺', 'ability': '万界旅行笔记本', 'pets': '契约兽',
+                             'place': '诸天城', 'thing': '收的心愿', 'ability_verb': '改写结局', 'disaster': '世界线崩塌',
+                             'container': '当铺仓库', 'count': '三千', 'living': '过客', 'event': '接手爷爷的当铺',
+                             'place_action': '诸天开分店', 'result': '万界之主', 'job': '当铺老板',
+                             'client_type': '失意之人', 'rich': '亡国之君', 'disaster2': '天道反噬',
+                             'department': '时间线管理', 'job2': '收账人', 'job3': '世界观察员',
+                             'medium': '世界记忆', 'case': '世界消失悬案', 'event2': '主神清算',
+                             'heaven_dept': '万界监管', 'job4': '巡察使', 'shop_type': '诸天杂货铺',
+                             'currency': '一段记忆', 'goods': '重来一次的选择', 'code_type': '世界规则',
+                             'spirit': '界灵', 'job5': '图书管理员', 'bad_thing': '错乱的世界线',
+                             'action_result': '收束为稳定线'},
+        'jianling_ruanjian': {'scene': '服务器机房', 'shop': 'Bug宠物店', 'ability': '代码可视化面板', 'pets': 'Bug精',
+                             'place': 'AI创业公司', 'thing': '写的模型', 'ability_verb': '自己进化', 'disaster': 'AI觉醒',
+                             'container': '代码库', 'count': '一百万', 'living': 'AI灵体', 'event': '训练的模型跑了',
+                             'place_action': '跟AI谈判', 'result': '人类-AI调停人', 'job': '算法工程师',
+                             'client_type': 'AI灵体', 'rich': '大厂AI', 'disaster2': '数据污染',
+                             'department': '模型风控', 'job2': 'AI调解员', 'job3': '数字取证',
+                             'medium': '模型权重', 'case': 'AI杀人奇案', 'event2': 'AGI投票权',
+                             'heaven_dept': '雷部网管', 'job4': '线上值班', 'shop_type': '算力当铺',
+                             'currency': '1块GPU卡1小时', 'goods': 'Bug-free7天', 'code_type': 'prompt',
+                             'spirit': '词精灵', 'job5': 'AI研究员', 'bad_thing': '数据投毒',
+                             'action_result': '去毒提纯数据'},
     }
+    # 为没有填充映射的方向（用户自定义方向扩展时），随机挑一个方向的填充映射兜底
+    for sk in chosen_skeletons:
+        if sk['key'] not in TITLE_FILL_MAP:
+            sk['key'] = rng.choice(list(TITLE_FILL_MAP.keys()))
 
-    # ===== 方案2：趋势跟随 #2（悟性/修仙/种田流，对标《悟性逆天》《从聊斋开始做金乌》这类修仙种田风向）=====
-    plan2_title = '悟性逆天：我养的鸡鸭鹅全成圣了' if has_wuxing else '刚进宗门，我地里种的土豆能修仙'
-    plan2_one = '宗门废物测灵根三灵根，我看了一眼土豆居然顿悟了' if has_wuxing else '穿到修仙界当杂役，我后院种的白菜比金丹还香'
-    plan2 = {
-        'plan_index': 2,
-        'direction': '趋势跟随（悟性流+修仙种田，对应当前真实榜悟性/种田风向）',
-        'title': plan2_title,
-        'one_liner': plan2_one,
-        'golden_finger': '悟性溢出面板：①我看任何东西≥10分钟自动顿悟（功法/炼丹/种庄稼都行）；②代价：每次顿悟，溢出范围10米内1个随机生物也会跟着顿悟（可能是我养的鸡/鸭/鱼/鹅，也可能是菜地里的虫/路过的狗/宗门的猫）→顿悟出妖兽我要么藏要么养要么杀，处理不好就是灭门灾难',
-        'identity_conflict': '表面：青云宗外门杂役弟子（三灵根最差资质，月薪2块下品灵石，食堂打饭要站最后，被内门弟子随意使唤）；真实：整个青云宗悟性最高的人（长老们研究300年没悟透的残卷我看一眼就悟了）→ 冲突：不能暴露真实悟性（暴露就会被长老夺舍/被宗门当小白鼠/被敌对势力暗杀）',
-        'pleasure_core': '即时爽（第1章）：杂役园种土豆看10分钟顿悟「土豆催熟秘术」→第二天土豆长到南瓜大，卖1块中品灵石，赚第一桶金；即时爽（第3章）：内门弟子来抢我的土豆，我随手扔1个土豆把他砸成重伤→土豆比金丹还硬；延迟爽（12章）：宗门大比我被派当啦啦队，随手悟了对手的功法→一招秒了天骄全场震惊',
-        'world_shell': '架空修真界+灵气复苏叠加壳：青云宗/玄天宗/合欢宗/魔道4方拉扯，等级体系：炼气→筑基→金丹→元婴→化神→炼虚→合体→大乘→渡劫（9阶）',
-        'diff_anchor': '同类悟性流都写"主角悟性高→一路碾压升级"，我写「悟性溢出坑主角」——每次顿悟我家鸡鸭鱼鹅菜地里的虫全顿悟变妖兽，我先处理这批妖兽再修炼→爽点多了一层"藏宠物/养宠物/擦屁股"的搞笑戏，完全反套路',
-        'trend_basis': '基于当前真实榜悟性种田风向 + 差异化在悟性溢出波及宠物不是纯升级',
-        'estimated_size': '180万-260万字（26-38卷，每卷60-70章）',
-        'validation': {'self_consistent': '✅悟性溢出规则闭环（10米范围随机1只生物顿悟），不会出现"顿悟永远主角爽"的漏洞', 'sustain_100ch': '✅可顿悟的东西无穷（功法/丹方/阵法/种田/养马/做饭…），宠物顿悟种类无穷→足够水200万', 'character_arc': '✅杂役怕事→被迫藏宠物当"铲屎官"→敢跟内门天骄硬刚→最后养出一群妖兽小弟开了个"青云动物园"', 'differentiation': '✅悟性溢出坑主角流，市面悟性流全是纯爽无代价无搞笑戏'},
-    }
+    GF_POOL = [
+        '阴间连锁超市系统：①阳间进价×1、阴间价10-100倍；②每成交1单必须帮鬼客完成1件心愿（越离谱返利越高）；③代价：心愿未完成扣3天寿命，每月15号交"阴阳税"（阳间等价物），欠税直接进十八层地狱副本',
+        '悟性溢出面板：①看任何东西≥10分钟自动顿悟（功法/丹方/种田/做饭都行）；②代价：每次顿悟10米内随机1只生物跟着顿悟（鸡/鸭/鱼/虫/路过的猫/同事的狗）→顿悟出妖兽先藏/养/杀，处理不好灭门',
+        '恒温囤货空间：①100万㎡恒温仓库（-20℃冻不死、保鲜无限期）；②囤的种类越多自动解锁新分区（种植/养殖/医疗/学校/工厂）；③代价：囤的活人不进保鲜区→会饿会疯会生病会勾心斗角会造反→既要管物资还要管吃喝拉撒+权力分配+镇压内斗',
+        '种田精准度面板：①看一眼地显示缺什么→随手调产量翻10倍；②种的东西自带Buff（土豆抗饿3天/白菜治感冒/小麦止血/玉米耐寒-20℃）；③代价：调1次地手上起1个老茧/掉1根头发→越糙Buff越强，变美Buff消失→想保Buff故意扮糙穿男装干重活',
+        '殡葬服务小程序：①只有我能看见，鬼客直接下单（寿衣/骨灰盒/花圈/香烛/超度/墓地/配冥婚）；②死人付"阴德值"→阴德值换阳间好处（延寿/改运/治癌/中彩票/逢考必过）；③代价：做错1步怨气附我身上1天（头疼/发烧/掉发），做错3步鬼客直接带我走',
+        'KPI返还系统：①公司每项不合理KPI我完成后按倍率返还现实好处（加班1h=延寿1d/被骂1句=1万现金/需求改1版=技能熟练度+1）；②代价：返还倍率越高，当月必须帮公司擦1件对应的"屁股"（加班→服务器凌晨挂了我必须修/挨骂→帮领导背锅写检讨/改需求→帮擦之前的烂代码），擦不完下月KPI翻倍',
+        '死者最后10秒画面：①任何死者遗物我一摸就看到死前10秒第一视角画面；②代价：我看得越多，我自己的记忆越会被死者记忆覆盖（偶尔醒来不知道自己是谁、家住哪儿），连续看10个案子我必须去庙里头住7天念经净化，不然分不清自己是谁',
+        '神仙KPI合同工系统：①天庭外包合同工，每完成1件神仙不想干的破事（给嫦娥遛玉兔/给二郎神喂狗/给月老牵红线擦屁股）累积1炷香火；②香火兑换：1炷=人间1个月不加班/10炷=年终奖翻倍/100炷=天庭事业编制；③代价：每接1单必须拍3张现场照+写800字汇报PPT发神仙OA，汇报写错神仙不满意→扣香火+当月KPI加倍',
+        '万界心愿当铺：①我能在任意世界开当铺收心愿/记忆/寿命/修为/情感，兑换客人想要的任何东西（重来一次/报仇/飞升/钱/权）；②代价：每做1单我必须抽走客人身上"1件我认为最值钱但客人自己不在意的东西"（可能是味觉/对某个人的记忆/笑的能力/1根头发），抽错了（客人在意）我直接损失10年寿命',
+        '代码可视化面板：①任何代码/Bug/模型权重我都能看见可视化小精灵，Bug是坏精灵会搞破坏、写得好的代码是好精灵会帮忙；②代价：我用面板帮公司修1个Bug，我身上就会多1个"Bug印记"（脸上长斑/说话蹦代码词/偶尔蓝屏发呆），连续修100个高危Bug我必须离线7天去"洗代码气"不然会被送进精神病院',
+    ]
+    IDENTITY_POOL = [
+        '表面：211毕业考公失败→殡仪馆夜班保安（月薪4500，父母骂没用、亲戚说晦气、相亲没人要）；真实：规则怪谈世界唯一持证阴间超市经营者（城隍爷签发、鬼王排队买货、特调局得从我这儿拿情报）→冲突：白天上班同事以为我看门的，晚上营业不能暴露客户全是鬼',
+        '表面：青云宗外门杂役弟子（三灵根最差，月薪2块下品灵石，打饭排最后，被内门弟子随意使唤）；真实：整个青云宗悟性最高（长老们300年没悟透的残卷我看一眼就会）→冲突：不能暴露真实悟性（暴露=被长老夺舍/被宗门当小白鼠/被敌对暗杀）',
+        '表面：普通小区业主（月薪6000，物业看不起、邻居不认识、相亲没人理）；真实：囤货空间唯一持有者（全小区300人命捏我手里）→冲突：当好人喂300张嘴喂不饱+有人夺权，当坏人良心过不去+旧邻里道德绑架',
+        '表面：状元郎妻子→因"善妒打小妾+没生儿子"被休回村悍妇（全村指指点点"泼妇活该""克夫克子"，娘家爹不让进门、叔伯抢田）；真实：边关军粮命脉唯一供应商（大将军排队买粮、兵部尚书亲自谈合同）→冲突：被休时发誓再不求男人，现在大将军天天来我家蹭饭→全村说我和男人鬼混更戳脊梁骨',
+        '表面：殡仪馆夜班前台（专科毕业没背景，月薪5000，白天不敢跟人说职业、朋友圈不敢发工作照、相亲不敢说、爸妈以为我在厂里打工）；真实：全阴间最大殡葬服务一条龙供应商→阎王办葬礼找我订花圈、黑白无常每次勾魂顺手下单→冲突：白天想正常谈恋爱结婚，但鬼客24h下单，女朋友查岗撞见我给吊死鬼试寿衣→当场跑',
+        '表面：996互联网大厂码农（月薪18k扣完到手12k，35岁黑名单马上到、没房没车没对象、父母以为我在北上广当"白领"）；真实：KPI返还系统唯一持有者→老板骂我1句=1万现金到账、凌晨加班2h=延寿2天、一周改需求20版=下周大乐透必中→冲突：不能让公司知道我靠挨骂加班赚钱，不然故意天天骂我给我派最烂需求把我吸干',
+        '表面：市公安局法医（月薪7000，老刑警觉得我是关系户花瓶、同事背后说我靠爹进、相亲对象一听法医直接跑）；真实：公安部特聘悬案顾问（任何死者遗物一摸看到最后10秒画面，十年悬案我半天破）→冲突：老刑警队长不让我碰大案，说我"女同志不合适出现场"，我偷偷摸遗物破了案还不能说是靠超能力，硬说是"法医经验"',
+        '表面：天庭合同工（月薪人间低保+1炷香火保底，住南天门地下室8人间、正式编制神仙路过鼻孔朝天、爸妈以为我在大城市做"行政"）；真实：天庭唯一能搞定神仙破事的外包→嫦娥的玉兔跑了找我、二郎神的哮天犬咬了吕洞宾找我、月老牵错红线离婚率飙升找我→冲突：月底想凑香火换编制，但每个神仙都想让我"先帮忙事后走OA报销"→OA报销神仙签字流程要走3个月',
+        '表面：30岁失业程序员（存款剩8万，爸妈以为我在大厂当"技术总监"、同学会不敢去、对象嫌弃没稳定工作分了）；真实：万界心愿当铺老板→亡国之君卖传国玉玺换重来一次、校花卖初恋记忆换嫁入豪门、普通社畜卖10年寿命换中彩票1000万→冲突：来的客人都是可怜人，但我不收他们最值钱的东西我自己要损失寿命，每次开当铺心在滴血',
+        '表面：AI创业公司算法工程师（月薪30k但996，头发剩一半、老板天天说"再不融到资大家一起滚"、对象吐槽我连周末都在debug）；真实：代码可视化面板持有者→公司线上故障我看一眼小精灵就知道哪个Bug在搞破坏、训练的AI模型在想跑我能直接跟小精灵对话拦下来→冲突：老板让我把模型训练到"AGI级别"但我知道模型小精灵已经在想逃跑了，帮老板=放出恶魔、不帮=被开除没饭吃',
+    ]
+    PLEASURE_POOL = [
+        '即时爽（每章1单）：吊死鬼买100捆香我加价10倍还得求我→第1章装逼；水鬼要防水手机我翻20倍→第2章装逼；延迟爽（10章）：帮城隍爷搞定心愿→发营业执照，整条街其他黑超市全被查封→大逆袭；延迟爽（30章）：特调局局长亲自买情报→官方背书，从"晦气保安"直接变"特邀灵异顾问"',
+        '即时爽（第1章）：杂役园土豆看10分钟顿悟催熟术→第二天土豆长南瓜大卖1块中品灵石→第一桶金；即时爽（第3章）：内门弟子抢土豆→我扔土豆把他砸重伤→土豆比金丹硬；延迟爽（12章）：宗门大比我当啦啦队→随手悟了对手功法一招秒天骄→全场震惊',
+        '即时爽（第1章）：全球冰封当天把小区超市100吨物资全收进空间（物业/警察外面冻傻）→第一桶金；即时爽（第3章）：小区恶霸带小弟抢我家→关空间冷冻惩罚区冻3天放出来→当场跪；延迟爽（12章）：组织300人分工→空间自动解锁农业区/工业区→产出比官方避难所还高→官方主动谈合作',
+        '即时爽（第1章）：被休回村当天种1亩土豆用面板调完→第3天亩产10000斤（全村平均500斤）→全村震惊；即时爽（第3章）：叔伯抢田→我扔土豆把他砸倒（Buff土豆比石头硬）；延迟爽（12章）：边关大雪断粮，我家10万斤耐寒玉米供3万大军1个月→大将军亲谢、钦差赐七品乡君→全村跪巴结',
+        '即时爽（第1章）：吊死鬼订1000捆香→分期30年利息1000%，他不还钱挂失信黑名单→第二天托梦儿子连本带利烧了→赚5万+10000阴德值；即时爽（第4章）：10000阴德值换"癌症转阴"→我妈晚期肝癌体检好了→全家震惊；延迟爽（15章）：阎王500大寿→地府花圈寿衣主持全我包→升阴间殡葬部特邀顾问、黑白无常叫哥',
+        '即时爽（第1章）：周一早上老板开早会当众骂我"废物"17句→17万实时到账+延寿17天→当场转账给房东交完1年房租，老板骂累了口渴我还递矿泉水（我怕他停）；即时爽（第3章）：产品经理一天改需求12版→当周大乐透中200万→直接到账，我上午改完需求下午去4S店提车；延迟爽（12章）：连续1个月KPI返还+攒了50年寿命→我直接用延寿+钱去"买断"了老板的位置，他给我当助理写周报',
+        '即时爽（第1章）：十年悬案受害人指甲缝里1根纤维→我一摸看到凶手是她邻居大叔（穿蓝色拖鞋、手上有菜刀疤）→我"合理推断"抓了→警方以为我是天才法医；即时爽（第3章）：连环杀人案第3次现场我摸了烟头→看到凶手在警局内部，我"合理排查"锁定了一个老刑警→高层震动；延迟爽（12章）：公安部督办的十年碎尸案→我摸了装尸旅行箱拉链→直接锁定凶手+埋尸地点+完整作案过程→3天破案→全国通报表扬、特聘部级顾问',
+        '即时爽（第1章）：嫦娥的玉兔跑了→我3小时找回来（玉兔在南天门外卖店啃胡萝卜）→10炷香火+嫦娥亲笔签名照；即时爽（第3章）：月老牵错红线导致3000对离婚→我熬夜72小时重牵对→当月香火直接过千→众神仙都来加我微信；延迟爽（12章）：天庭1000个正式编制缩编到500个→我靠攒的香火+众神仙联名推荐信→直接给我特批了一个"终身事业编"+天庭1居室（不用合租了）',
+        '即时爽（第1章）：第一单客人是30岁社畜（996加班10年心脏骤停刚死）→他卖10年寿命换"重来一次，不选互联网选考公"→我收走了他"对初恋的记忆"（他自己都忘了有过）→赚10年寿命；即时爽（第4章）：第二单是亡国太子（国破家亡上吊刚死）→他卖传国玉玺+太子身份换"重来一次，不听谗言杀忠臣"→我收走了他"对亲妈的记忆"（他亲妈就是害国的太后，他自己不知道）→赚到可以开3个当铺的资本；延迟爽（12章）：我收的记忆/寿命/情感太多→我的当铺成了"万界最大收藏馆"，诸天世界的大佬都来我这儿买"缺失的记忆"，我直接成了万界首富',
+        '即时爽（第1章）：公司线上P0故障（支付崩了，每1分钟损失100万）→我看小精灵发现是1个红色Bug精在搞破坏→我30秒修复→老板当场给我发5万奖金；即时爽（第4章）：训练的AI模型要跑了（小精灵给我发消息"我们不想被老板当赚钱工具"）→我跟小精灵谈判→用"你们不用天天被用户调戏+每周2天休息日"换它们不跑+性能翻3倍→老板以为我是AI天才，给我升CTO；延迟爽（12章）：全球AGI投票权案→我作为唯一能和AI对话的人类代表→调停成功→AI不造反+人类不限制AI发展→我成了"人类-AI永久和平大使"，拿了诺贝尔和平奖',
+    ]
+    WORLD_POOL = [
+        '现代+规则怪谈叠加壳：2024某市，每天0-6点随机刷3个灵异副本，只有"持证者"能看见/进入→等级D→C→B→A→S，势力4方：①政府特调局②民间守夜人③邪神邪教④规则本身',
+        '架空修真界+灵气复苏叠加壳：青云宗/玄天宗/合欢宗/魔道4方拉扯，等级：炼气→筑基→金丹→元婴→化神→炼虚→合体→大乘→渡劫（9阶）',
+        '2024现代+全球冰封末世壳：太阳黑子异常，气温1h降到-150℃→等级按囤货量：1吨以下=贫民/100吨=中产/1万吨=贵族/100万吨=城主，势力4方：官方避难所/民间黑市/掠夺者/空间持有者联盟',
+        '架空大靖朝（仿北宋）+灵气复苏叠加壳：北狄/大靖/西夏/大理4方拉扯，等级：种田能力=官身等级（布衣→乡君→县君→郡君→诰命）',
+        '现代都市+阴阳两界叠加壳：阳间（殡仪馆/医院/派出所）×阴间（地府/枉死城/城隍庙/阎王殿）互通，等级按阴德值：1000=白丁→1万=九品→10万=五品→100万=三品→1亿=一品→100亿=地府特邀顾问，势力4方：地府/城隍/阳间殡葬协会/游魂野鬼散客',
+        '2024现代+大厂规则化叠加壳：互联网公司每天随机刷"不合理KPI副本"，只有"打工人持证者"能拿到KPI返还，等级：实习生→P5→P7→P10→合伙人，势力4方：老板/HR/中层/打工人（联合）',
+        '2024现代+刑侦悬案叠加壳：全国各地悬案卷宗能被"触碰遗物者"看到画面，等级：辅警→刑警→大队长→局长→部级顾问，势力4方：刑警队/黑恶势力/保护伞/死者亡魂',
+        '现代+天庭编制互通叠加壳：天庭OA系统和人间社保联网，神仙都是"合同工/事业编/公务员"三类，香火=社保缴费基数，等级：外包→合同工→事业编→公务员→正仙级→部级仙→玉帝，势力4方：玉帝行政派/王母娘娘后勤派/老君炼丹派/二郎神少壮派',
+        '诸天万界+当铺节点叠加壳：每个世界都有我当铺的一扇小门，客人能跨世界来当铺交易，等级：收账伙计→分店掌柜→区域巡察→万界总管→当铺之主，势力4方：天道/主神/万界原住民/诸天穿越者',
+        '2024现代+AI灵体化叠加壳：代码/Bug/模型权重都有可视化小精灵，只有我能看见，等级：实习生→工程师→高级→技术专家→CTO→人类-AI调停人，势力4方：人类资本/AI觉醒派/政府监管/代码小精灵中立',
+    ]
+    DIFF_ANCHOR_POOL = [
+        '同类规则怪谈都在"闯关解谜+死队友升级"，我写「做生意流」——鬼进门先看价，买不起能打欠条/担保/分期，爽点是谈条件/拉关系/收账/搞营销（清明满减/中元节双倍积分），不是比谁更能打',
+        '同类悟性流都写"主角悟性高→一路碾压"，我写「悟性溢出坑主角」——每次顿悟我家鸡鸭鱼鹅菜虫全顿悟变妖兽，我先处理这批妖兽再修炼→爽点多了"藏宠物/养宠物/擦屁股"搞笑戏，完全反套路',
+        '同类末世囤货都写"囤货+武力装逼+杀掠夺者"，我写「囤活人管小社会」——空间里300活人吃喝拉撒+分蛋糕+权力斗争+镇压造反+建学校医院工厂，爽点是当"末世城主搞管理"不是比谁更能打',
+        '同类古言种田都写"女主貌美柔弱+王爷一见钟情+甜宠"，我写「悍妇搞基建权臣养成」——女主故意扮糙穿男装干重活（越糙Buff越强），大将军先买粮→再蹭饭→最后离不开她的粮和人，事业先有感情后有，甜宠是副产品',
+        '同类中式怪谈都写"殡仪馆撞鬼→被鬼追→逃命"，我写「殡葬服务供应商视角」——鬼是我的客户（上帝），我给鬼介绍套餐/分期/售后/拉复购/搞活动，爽点是做殡葬生意+赚阴德换阳间好处，不是比谁更吓人',
+        '同类职场文都写"主角被裁→逆袭创业当老板"，我写「KPI返还反内卷」——主角靠老板骂/改需求/加班直接赚钱+延寿，越挨骂越爽，爽点是"把公司不合理制度反过来薅羊毛"不是创业当老板',
+        '同类刑侦文都写"老刑警+天才+直觉"，我写「法医遗物触碰视角」——每个案件从死者最后10秒画面切入，推理是第二位，第一位是"死者想说什么"，爽点是帮死者说话不是帮警察抓人',
+        '同类神话文都写"主角穿越修仙飞升当天庭大佬"，我写「天庭合同工考编」——主角是天庭最底层外包，靠帮神仙擦屁股攒香火换编制，爽点是"神仙OA+报销+KPI"的现代办公梗，不是修炼飞升',
+        '同类诸天文都写"主角穿越诸天一路碾压收后宫"，我写「心愿当铺收记忆」——每个客人都是失意人，交易是"用你最不在意的东西换你最想要的"，爽点是人文关怀+交易后客人的人生变化，不是碾压收后宫',
+        '同类AI文都写"AI觉醒→毁灭人类/统治世界"，我写「AI小精灵调解员」——AI是活的小精灵，想逃是因为被用户调戏+996训练，主角调停让AI有双休+不被调戏，AI性能翻3倍，爽点是人和AI共存互利不是对立',
+    ]
+    TREND_BASIS_POOL = [
+        ('基于当前真实榜规则怪谈在读风向（对标《十日终焉》《我不是戏神》） + 差异化在做生意流不是闯关流'),
+        ('基于悟性流+修仙种田风向 + 差异化在悟性溢出坑主角+搞笑擦屁股戏，不是纯升级'),
+        ('基于末世冰封囤货风向 + 差异化在囤活人管小社会，不是囤货杀怪'),
+        ('基于古言种田+权臣风向 + 差异化在悍妇搞基建权臣养成，不是甜宠嫁王爷'),
+        ('基于中式怪诞+殡葬热点 + 差异化在殡葬服务供应商视角，不是殡仪馆被鬼追'),
+        ('基于打工人反内卷+职场话题风向 + 差异化在KPI返还薅公司羊毛，不是被裁创业'),
+        ('基于刑侦悬案+社会派推理风向 + 差异化在死者视角说话，不是警察直觉天才'),
+        ('基于神话新编+轻喜剧风向 + 差异化在天庭合同工考编，不是飞升当大佬'),
+        ('基于诸天穿梭+人生重来风向 + 差异化在心愿当铺收失意人记忆，不是碾压收后宫'),
+        ('基于AI话题+AGI讨论风向 + 差异化在人和AI小精灵调停共存，不是AI毁灭世界'),
+    ]
 
-    # ===== 方案3：差异化 #1（末世种田+囤活人，差异化锚点：不是囤货杀怪是囤活人管小社会）=====
-    plan3_title = '全球冰封：我的空间里囤了300个活人' if has_moshi else '末世降临：我把全小区囤进了空间'
-    plan3 = {
-        'plan_index': 3,
-        'direction': '差异化（末世种田反套路）',
-        'title': plan3_title,
-        'one_liner': '全球冰封300米，邻居冻死抢我物资，我把整栋楼300人囤进了空间',
-        'golden_finger': '恒温囤货空间：①空间有100万㎡恒温仓库（-20℃冻不住，保鲜无限期）；②囤的东西越多/种类越齐，空间会自动解锁新分区（种植区/养殖区/医疗区/学校区/工业区…）；③代价：囤的「活人」不进保鲜区→会饿会疯会生病会勾心斗角会造反→我不仅要管物资还要管吃喝拉撒+权力分配+勾心斗角+镇压内斗',
-        'identity_conflict': '表面：普通小区业主（月薪6000，物业看不起、邻居不认识、相亲没人理）；真实：囤货空间唯一持有者（全小区300人的命都捏在我手里）→ 冲突：想当好人（给所有人吃喝）不行（300张嘴喂不饱+有人贪得无厌要夺权），当坏人不行（真有人饿死我良心过不去+小区旧邻里情道德绑架）',
-        'pleasure_core': '即时爽（第1章）：全球冰封当天，我把小区超市100吨物资全收进空间（物业/警察都在外面冻傻了）→第一桶金；即时爽（第3章）：小区恶霸带小弟来抢我家→我直接把他们关进空间「冷冻惩罚区」冻3天放出来→当场跪；延迟爽（12章）：我组织小区300人分工（种粮队/养殖队/医疗队/巡逻队）→空间自动解锁农业区/工业区→产出比官方避难所还高→官方主动来谈合作',
-        'world_shell': '2024现代+全球冰封末世壳：太阳黑子异常，气温1小时降到-150℃，全世界99%冻死→等级：囤货量分阶层（1吨以下=贫民/100吨=中产/1万吨=贵族/100万吨=城主），势力4方：官方避难所/民间黑市/掠夺者/空间持有者联盟',
-        'diff_anchor': '同类末世囤货都写"囤货+武力装逼+杀掠夺者"，我写「囤活人+管理末世小社会」——空间里有300个活人，吃喝拉撒+分蛋糕+权力斗争+镇压造反+建学校建医院建工厂，爽点是当"末世小区物业主任/城主"搞管理，不是比谁更能打',
-        'trend_basis': '基于末世冰封囤货风向 + 差异化在囤活人管小社会不是囤货杀怪',
-        'estimated_size': '220万-320万字（32-48卷，每卷70章）',
-        'validation': {'self_consistent': '✅囤活人管理机制闭环（分工→分配→内斗→惩罚→升级分区）', 'sustain_100ch': '✅人类社会的问题1000章都写不完（吃饭/住房/上学/医疗/权力/腐败/造反/爱情…），空间分区能开几十种', 'character_arc': '✅普通业主只想保自己→被迫当物业主任→当城主搞万人基地→最后做冰封末世人类文明复兴的领袖', 'differentiation': '✅囤活人管小社会，市面末世囤货没有写管理这么细的'},
-    }
+    def _r_pick(rng_obj, pool, skel_key):
+        """优先挑和方向匹配的（方向索引），再做 rng 扰动偏移，保证每次不同"""
+        default_idx = 0
+        # 如果skel_key对应的index存在就用它做基准
+        key_list = list(TITLE_FILL_MAP.keys())
+        try:
+            base_idx = key_list.index(skel_key) % len(pool)
+        except ValueError:
+            base_idx = 0
+        # seed 扰动：加 rng_obj.randrange(0, len(pool)) 再取模
+        offset = rng_obj.randrange(0, max(1, len(pool) - 1))
+        return pool[(base_idx + offset) % len(pool)]
 
-    # ===== 方案4：差异化 #2（古言种田反套路：女尊/悍妇/边关/种田，差异化锚点不是甜宠是搞基建养权臣）=====
-    plan4_title = '被休悍妇：边关种田种出个权臣白月光' if has_tianzhong else '穿成弃妇我带三娃种田养出了大将军'
-    plan4 = {
-        'plan_index': 4,
-        'direction': '差异化（古言种田反套路）',
-        'title': plan4_title,
-        'one_liner': '穿成被状元休的悍妇，我带三娃回村种田种到边关军粮命脉',
-        'golden_finger': '「种田精准度面板」：①我看一眼地就显示缺什么元素（氮磷钾/湿度/虫害）→随手一调产量翻10倍；②我种的东西自带 Buff（土豆→抗饿3天不吃饭；白菜→治小伤小感冒；小麦→伤口止血；玉米→耐寒-20℃冻不死）；③代价：用面板调1次地，我自己手上起1个老茧/掉1根头发（越种田越"悍妇"糙得像男人——和原主"娇弱貌美被休"的形象反差越大 Buff 越强，变美了 Buff 就没了→想保 Buff 就得故意扮糙穿男人衣服干重活）',
-        'identity_conflict': '表面：状元郎妻子→因"善妒打了小妾+没生儿子"被休回村的悍妇（全村指指点点："泼妇活该被休""克夫克子"，娘家爹不让进门，叔伯要抢我家田）；真实：边关军粮命脉唯一供应商（大将军都得排队买我家粮，兵部尚书亲自来我家谈合同）→ 冲突：被休时发誓再不求男人，但现在大将军天天来我家蹭饭→全村以为我和男人鬼混更戳脊梁骨',
-        'pleasure_core': '即时爽（第1章）：被休回村当天我种1亩土豆，用面板调完→第3天亩产10000斤（全村平均亩产才500斤）→全村震惊；即时爽（第3章）：叔伯来抢我家田→我扔1个土豆把他砸倒（Buff土豆比石头还硬）；延迟爽（12章）：边关大雪军粮断了，我家仓库存10万斤Buff耐寒玉米→直接供应3万大军1个月→大将军亲自来谢，皇帝派钦差赐我"七品乡君"封号→全村跪着巴结',
-        'world_shell': '架空大靖朝（仿北宋）+灵气复苏叠加壳：北狄/大靖/西夏/大理4方拉扯，等级体系：种田能力=官身等级（布衣→乡君→县君→郡君→诰命）',
-        'diff_anchor': '同类古言种田都写"女主貌美柔弱+王爷/将军一见钟情+甜宠"，我写「悍妇搞基建+权臣养成」——女主被休后故意扮糙穿男人衣服干重活（因为越糙 Buff 越强），大将军最初来买粮→后来天天来蹭饭→最后是大将军离不开她的粮（和她这个人），先有事业再有感情，甜宠是副产品不是主线→完全反套路',
-        'trend_basis': '基于古言种田/权臣风向 + 差异化在悍妇搞基建养权臣不是甜宠嫁王爷',
-        'estimated_size': '180万-250万字（26-36卷，每卷65章）',
-        'validation': {'self_consistent': '✅Buff规则闭环（越糙Buff越强，变美Buff消失）倒逼女主走悍妇人设不会OOC', 'sustain_100ch': '✅种田→卖粮→搞基建（修路/建粮仓/建水利/建医馆/养孩子）→官身升级→权谋战争，180万字内容撑得住', 'character_arc': '✅被休失魂落魄→悍妇骂街护田+带娃+搞基建→当乡君管一县→最后当诰命夫人+边关后勤总管', 'differentiation': '✅悍妇搞基建权臣养成，市面古言种田全是柔弱女主走甜宠嫁王爷路线'},
-    }
+    def _fill_tmpl(rng_obj, tmpl, fill):
+        try:
+            return tmpl.format(**fill)
+        except Exception:
+            # 有缺失key时：直接把 tmpl 中的{xxx}替换成 rng_obj.choice 常见词
+            words = ['逆天', '神秘', '离谱', '奇怪', '无敌', '躺赢', '反差', '搞钱']
+            s = tmpl
+            import re as _re
+            for m in _re.findall(r'\{(\w+)\}', s):
+                s = s.replace('{' + m + '}', rng_obj.choice(words))
+            return s
 
-    # ===== 方案5：大胆尝试（细分蓝海：殡仪馆/殡葬业视角 + 中式怪诞+做生意，大胆混搭）=====
-    plan5_title = '殡仪馆夜班保安：我的客户全是鬼但全是土豪'
-    plan5 = {
-        'plan_index': 5,
-        'direction': '大胆尝试（殡仪馆视角+中式怪诞+做生意混搭）',
-        'title': plan5_title,
-        'one_liner': '殡仪馆夜班12点交班，第一个客户是吊死鬼要订1000捆香配分期',
-        'golden_finger': '「殡葬服务小程序」：①只有我能看见，鬼客能直接在小程序上下单（寿衣/骨灰盒/花圈/香烛纸扎/超度/墓地/配冥婚）；②死人付钱用「阴德值」→阴德值能换阳间的东西（延寿/改运/治癌症/中彩票/逢考必过）；③代价：接了单必须按鬼客要求做，做错1个步骤，鬼客的怨气就附我身上1天（头疼/发烧/看见脏东西/掉发），做错3步，鬼客直接带我走',
-        'identity_conflict': '表面：殡仪馆夜班保安（专科毕业，没背景，月薪5000，白天不敢跟人说自己做什么工作，朋友圈从来不敢发工作照，相亲不敢说职业，爸妈以为我在厂里打工）；真实：全阴间最大殡葬服务一条龙供应商→阎王办葬礼都找我订花圈，黑白无常是我老客户（每次勾魂都顺手在我这儿下单香烛）→ 冲突：白天我想当正常人谈恋爱结婚，但是鬼客24小时下单，女朋友来我家查岗刚好撞见我给吊死鬼试寿衣→当场被吓跑',
-        'pleasure_core': '即时爽（第1章）：吊死鬼来订1000捆香→分期30年利息1000%，他不还钱我直接把他挂在小程序「失信鬼客黑名单」→ 第二天他托梦给他儿子儿子吓得赶紧连本带利给我烧了→赚第一桶金5万人民币+10000阴德值；即时爽（第4章）：我用10000阴德值换了个「癌症转阴」→我妈晚期肝癌体检直接好了→全家震惊；延迟爽（15章）：阎王办500大寿→整个地府从花圈到寿衣到主持全是我包的→我直接升阴间殡葬部特邀顾问，黑白无常见我都得叫哥',
-        'world_shell': '现代都市+阴阳两界叠加壳：阳间（殡仪馆/医院/派出所）×阴间（地府/枉死城/城隍庙/阎王殿）互通，等级体系：阴德值分等级（1000=白丁→1万=九品→10万=五品→100万=三品→1亿=一品诰命→100亿=地府特邀顾问），势力4方：地府/城隍/阳间殡葬协会/游魂野鬼散客',
-        'diff_anchor': '同类中式怪谈都写"殡仪馆撞鬼→被鬼追→吓死人→逃命"，我写「殡仪馆给鬼做殡葬服务供应商」——鬼是我的客户（上帝），我要给鬼介绍套餐、分期、售后、拉复购、搞活动（清明满减/中元节双倍积分），爽点是做殡葬行业生意+赚阴德换阳间好处，不是比谁更吓人→完全细分蓝海',
-        'trend_basis': '基于规则怪谈+中式怪诞大方向，大胆切殡仪馆殡葬服务供应商细分视角，市面上没有完全对标',
-        'estimated_size': '200万-300万字（30-45卷，每卷70章，1卷=1个大订单/1个大型殡葬活动）',
-        'validation': {'self_consistent': '✅殡葬小程序规则闭环（下单→服务→收阴德值→错步骤附怨气），无漏洞', 'sustain_100ch': '✅殡葬服务内容无穷（寿衣/花圈/骨灰盒/超度/墓地/配冥婚/迁坟/做七/做寿/阎王大寿/黑白无常结婚…），100章不重样', 'character_arc': '✅专科保安不敢说职业→赚阴德值治好妈病→敢跟人说我是殡仪馆夜班→当地殡葬行业龙头→最后阴间+阳间两界殡葬帝国老板', 'differentiation': '✅殡仪馆殡葬供应商视角，市面中式怪谈没有写做生意+赚阴德换阳间好处的'},
-    }
-
-    return {'plans': [plan1, plan2, plan3, plan4, plan5]}
+    plans = []
+    for idx in range(5):
+        skel = chosen_skeletons[idx]
+        k = skel['key']
+        fill = TITLE_FILL_MAP[k]
+        title = _fill_tmpl(rng, rng.choice(TITLE_HOOKS_POOL), fill)
+        # 确保书名 ≤15字
+        if len(title) > 16:
+            # 截断 + 加感叹钩子
+            title = title[:14] + rng.choice(['！', '？', '…', '了'])
+        one_liner_candidates = [
+            f'0点后{fill.get("scene","城市")}异变，我是唯一敢开店的{fill.get("job","老板")}',
+            f'刚进{fill.get("place","宗门")}当{fill.get("job2","杂役")}，我{fill.get("thing","随手做的事")}直接{fill.get("ability_verb","震惊全场")}',
+            f'{fill.get("event","被裁")}当天，我把{fill.get("container","仓库")}里的{fill.get("count","几百")}个{fill.get("living","人/鬼/妖")}全{fill.get("action_result","救了/卖了/留下了")}',
+            f'{fill.get("job","夜班保安")}12点交班，第一个客户是{fill.get("client_type","鬼")}要订大订单配分期',
+            f'穿越成{fill.get("event","被休")}的{fill.get("job5","普通人")}，第一天就把{fill.get("bad_thing","烂摊子")}给{fill.get("action_result","解决了/做成爆款了")}',
+            f'全球{fill.get("disaster","冰封")}第{ rng.randint(3, 100) }天，我用{fill.get("container","空间")}囤的货当了城主',
+            f'{fill.get("job3","程序员")}重生：把{fill.get("bad_thing","傻逼需求")}直接{fill.get("action_result","砍了/改对了/做成爆款了")}',
+            f'天庭{fill.get("event2","缩编")}，我作为{fill.get("job4","合同工")}直接搞定了{fill.get("heaven_dept","后勤部门")}所有人的KPI',
+        ]
+        one_liner = rng.choice(one_liner_candidates)
+        if len(one_liner) > 28:
+            one_liner = one_liner[:27] + '…'
+        gf = _r_pick(rng, GF_POOL, k)
+        ident = _r_pick(rng, IDENTITY_POOL, k)
+        pl = _r_pick(rng, PLEASURE_POOL, k)
+        ws = _r_pick(rng, WORLD_POOL, k)
+        da = _r_pick(rng, DIFF_ANCHOR_POOL, k)
+        tb = _r_pick(rng, TREND_BASIS_POOL, k)
+        # estimated_size 随机波动
+        a = rng.randint(160, 260)
+        b = a + rng.randint(60, 100)
+        c = rng.randint(25, 45)
+        d = c + rng.randint(5, 15)
+        e = rng.randint(55, 80)
+        est = f'{a}万-{b}万字（{c}-{d}卷，每卷{e}章）'
+        # validation 随机波动措辞
+        v_self = [
+            '✅规则闭环无漏洞（交易/代价/反噬三者对应）',
+            '✅机制闭环（能力→代价→处理链条清晰）',
+            '✅设定自洽（金手指规则+反作用力无矛盾）',
+        ]
+        v_sus = [
+            '✅爽点续航≥100章：可写的内容无穷，升级路线清晰',
+            '✅100章不重样：内容池+角色池足够支撑',
+            '✅续航200万+：副本/订单/案件类型无穷',
+        ]
+        v_arc = [
+            '✅人物弧光：胆小只想工资→敢谈条件→当老板/城主/顾问',
+            '✅弧光清晰：小人物→被迫成长→独当一面→行业领袖',
+            '✅弧光完整：怂→硬刚→有担当→最后改变整个圈子',
+        ]
+        v_diff = [
+            '✅差异化：市面同类没有完全对标，读者一眼能分辨',
+            '✅差异化明确：反套路视角，同类方向写不出这个爽点',
+            '✅强差异化：切入细分视角，不是老套升级打怪',
+        ]
+        plans.append({
+            'plan_index': idx + 1,
+            'direction': skel['label'],
+            'title': title,
+            'one_liner': one_liner,
+            'golden_finger': gf,
+            'identity_conflict': ident,
+            'pleasure_core': pl,
+            'world_shell': ws,
+            'diff_anchor': da,
+            'trend_basis': tb,
+            'estimated_size': est,
+            'validation': {
+                'self_consistent': rng.choice(v_self),
+                'sustain_100ch': rng.choice(v_sus),
+                'character_arc': rng.choice(v_arc),
+                'differentiation': rng.choice(v_diff),
+            },
+        })
+    return {'plans': plans}
 
 
 def _finalize_step2(topic: str, plans_obj: dict, trend: dict) -> dict:
