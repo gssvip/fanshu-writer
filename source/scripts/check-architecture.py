@@ -145,7 +145,11 @@ TOOLSPAGE_BASELINE = 1192
 #   - /pipeline/step3-worldbuild：Step3 世界观构建（9级修炼+CDL角色+金手指代价+系统人格化）（~95行）
 #   - 新路由全部调用独立薄封装模块 general_chat_hitter.py / book_pipeline_tools.py，无业务堆肉，只做参数整形+SSE分发
 #   → 净增 419 行（7115→7534），属用户明确要求P0功能交付（通用对话Tab全局可用+爆款流水线），新路由为薄路由无冗余，不属业务膨胀
-CHAT_COLLAB_BP_BASELINE = 7534
+# 2026-08-26 重校准7（扫榜合理性修复：强制联网状态展示+各站点错误透传+seed扰动）：
+#   - _fetch 升级：从静默失败改为 traceback 错误写回 fetch_errors dict（~15行）
+#   - run_step1_scan 传 fetch_errors + original_query + force_sites 入参（薄壳无业务堆肉）
+#   → 净增 16 行（7534→7550），属P0合理性修复，未新增业务逻辑
+CHAT_COLLAB_BP_BASELINE = 7550
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
