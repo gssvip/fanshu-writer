@@ -149,7 +149,10 @@ TOOLSPAGE_BASELINE = 1192
 #   - _fetch 升级：从静默失败改为 traceback 错误写回 fetch_errors dict（~15行）
 #   - run_step1_scan 传 fetch_errors + original_query + force_sites 入参（薄壳无业务堆肉）
 #   → 净增 16 行（7534→7550），属P0合理性修复，未新增业务逻辑
-CHAT_COLLAB_BP_BASELINE = 7550
+# 2026-08-26 重校准8（UnicodeEncodeError修复 + _fetch二次编码兜底）：
+#   - _fetch 加 import urllib.parse as _up + url入口quote（约4行）
+#   - chat_collab_bp.py 7550→7557（净增7行，纯编码校验无业务堆肉）
+CHAT_COLLAB_BP_BASELINE = 7557
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

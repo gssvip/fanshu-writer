@@ -106,6 +106,19 @@ def _pick_fallback(topic: str) -> dict:
     return _GENERIC_FALLBACK
 
 
+def _encode_full_url(url: str) -> str:
+    """解决 SITE_SPECS.topic_search_tpl 本身含中文（如"番茄小说"）导致 urllib.request.Request 抛 UnicodeEncodeError('ascii')。
+
+    对整个 URL 做「IRI→URI」转换：非 ASCII 字符 percent 编码，保留 %、/、:、?、=、&、# 等已合法字符（避免二次编码已 percent 的部分）。
+    同时把中文空格「+」保留（作为 query word 分隔符，encode 时 safe 已包含）。
+    """
+    if not isinstance(url, str):
+        return str(url)
+    # quote(safe='/:?=&%#+.') 既保证分隔符不被编码，也保留已 percent 编码的 %XX 不会被再转成 %25XX
+    # 但「#」在 path/fragment 分隔时需保留，safe 里要含
+    return urllib.parse.quote(url, safe=r"/:?=&%#+.@-_,~()*!$'")
+
+
 # ============================================================================
 # Step 1: 实时扫榜（网络优先 + 知识库回退）
 # ============================================================================
@@ -153,7 +166,8 @@ def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
             sites = [(k, v) for k, v in sites if k in force_sites]
         for site_key, spec in sites:
             try:
-                url = spec['topic_search_tpl'].format(t=urllib.parse.quote(topic))
+                url_raw = spec['topic_search_tpl'].format(t=urllib.parse.quote(topic))
+                url = _encode_full_url(url_raw)
                 html = web_fetch_fn(url) or ''
                 n = len(html) if isinstance(html, str) else 0
                 per_site_bytes[site_key] = n

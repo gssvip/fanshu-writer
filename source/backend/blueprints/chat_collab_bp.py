@@ -7300,7 +7300,14 @@ def pipeline_step1_scan():
     try:
         import traceback
         import urllib.request
-        def _fetch(url):
+        import urllib.parse as _up
+        def _fetch(url_in):
+            # 入口再次做整个URL的非ASCII编码（防止模板本身含中文：如"番茄小说"、"起点中文网"、"七猫小说"）
+            # 这是兜底防 UnicodeEncodeError('ascii') 的第二道防线，第一道在 run_step1_scan.format 后
+            try:
+                url = _up.quote(str(url_in), safe=r"/:?=&%#+.@-_,~()*!$'")
+            except Exception:
+                url = str(url_in)
             # 从URL里判断对应站点名（返回tuple html, err_msg）；但兼容旧签名只返回str
             site_key = 'fanqie'
             if 'qidian' in url: site_key = 'qidian'

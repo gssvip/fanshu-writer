@@ -2177,7 +2177,7 @@ export default function ChatPanel() {
   const inputPlaceholder = (() => {
     if (activeTab === 'setting') {
       if (!selectedDim) return '请先选择上方维度按钮…';
-      if (selectedDim === 'general') return '任意话题闲聊、问问题、讨论构思/人物/剧情/世界观。\n命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动开始3步流水线 🔥。';
+      if (selectedDim === 'general') return '💬 任意话题/扫榜/构思/设定 回车发送';
       const dimLabel = dimensions.find(d => d.key === selectedDim)?.label || selectedDim;
       if (selectedSuggestion) {
         return `已选「${selectedSuggestion.title}」。可输入修改意见，不填则直接按此方案生成…`;
@@ -2438,6 +2438,15 @@ export default function ChatPanel() {
 
               {activeTab === 'setting' && (
                 <>
+                  {/* 【设定】Tab内「通用」子维度：界面级两行完整提示（不是placeholder） */}
+                  {selectedDim === 'general' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px' }}>
+                      <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.6 }}>
+                        任意话题闲聊、问问题、讨论构思/人物/剧情/世界观。<br />
+                        命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动开始3步流水线 🔥。
+                      </div>
+                    </div>
+                  )}
                   {selectedDim === 'general' && hitSuggestionPopups.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px' }}>
                       {hitSuggestionPopups.map(pop => (
