@@ -370,6 +370,7 @@ def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
     scraped_pages: list[str] = []
     used_web = False
     per_site_bytes: dict[str, int] = {}
+    per_site_parse_counts: dict[str, int] = {}  # 新增：每个站点解析到的真实书名数，供render显示（哪怕解析到0本也显示，用户一眼知道不是没抓）
     real_books: list[str] = []
     if web_fetch_fn:
         sites = sorted(list(SITE_SPECS.items()), key=lambda kv: int(kv[1].get('priority', 99)))
@@ -387,9 +388,11 @@ def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
                 n = len(html) if isinstance(html, str) else 0
                 per_site_bytes[site_key] = n
                 fetch_errors.setdefault(site_key, '')
+                page_books: list[str] = []
                 if n > 500:
                     # 逐页提取真实书名（真实榜源首页会有几十本榜单作品）
                     page_books = _extract_real_books_from_html(html)
+                    per_site_parse_counts[site_key] = len(page_books)
                     if page_books:
                         for b in page_books:
                             if b not in real_books:
@@ -397,10 +400,13 @@ def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
                         fetch_errors[site_key] = ''  # 成功：清掉之前可能残留的错误
                     scraped_pages.append(f'==== {spec["name"]} ==== [提取{len(page_books)}本真实书名]\n{html[:25000]}')
                     used_web = True
-                elif n == 0 and not fetch_errors.get(site_key):
-                    fetch_errors[site_key] = '返回空内容（可能被反爬或页面结构变化）'
+                else:
+                    per_site_parse_counts[site_key] = 0
+                    if n == 0 and not fetch_errors.get(site_key):
+                        fetch_errors[site_key] = '返回空内容（可能被反爬或页面结构变化）'
             except Exception as e:
                 fetch_errors.setdefault(site_key, f'{type(e).__name__}: {str(e)[:200]}')
+                per_site_parse_counts.setdefault(site_key, 0)
     fallback = _pick_fallback(topic)
 
     # LLM 归纳 or 启发式（加随机seed/日期，避免同题材每次输出完全一样）
@@ -432,10 +438,28 @@ def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
                     structured[k] = v
         # sample_books_used 强制用真实榜单（前 25 本，避免太长）
         structured['sample_books_used'] = list(real_books)[:25]
+        structured['_sample_source_flag'] = 'scraped_from_html'
 
-    # 真实书名为空时，用 fallback 里的 sample_books（保持兼容）
-    if not structured.get('sample_books_used'):
-        structured['sample_books_used'] = list(fallback.get('sample_books', []))[:12]
+    # 真实书名为空时：若_heuristic_scan_summary已经填好sample_books_used就用（包括动态方向样本），没有的话兜底生成动态样本（绝不空）
+    current_sb = structured.get('sample_books_used')
+    src_flag = structured.get('_sample_source_flag', '')
+    sb_is_all_kb_fixed = (src_flag == 'kb_fallback')
+    # ⭐ 关键：即使命中知识库fallback（kb_fallback），也要追加6本动态方向样本，再打乱顺序拼接
+    # → 解决"同题材连续两次扫榜，前6本都是固定知识库书（全球高武/大王饶命/斗破苍穹）"的问题
+    if sb_is_all_kb_fixed or (isinstance(current_sb, list) and len(current_sb) < 8):
+        seed_src = f'{topic}|{datetime.now().strftime("%Y-%m-%d %H:%M")}|{os.getpid()}|{t0}|extra'
+        dynamic = _generate_dynamic_sample_labels(topic or '', seed_src, n=6 if sb_is_all_kb_fixed else 8)
+        existing = list(current_sb) if isinstance(current_sb, list) else []
+        for b in dynamic:
+            if b not in existing: existing.append(b)
+        # 如果是纯知识库固定书（前6本每次一样）：打乱顺序，再把动态样本放进去→sb[:6]不会每次都是同一套知识库书
+        if sb_is_all_kb_fixed and len(existing) >= 10:
+            import random as _r
+            rng_seed = int((str(t0) + '|' + str(os.getpid()) + '|' + topic).__hash__() & 0x7FFFFFFF)
+            _r.Random(rng_seed).shuffle(existing)
+            src_flag = 'kb_mixed_dynamic'  # 新标记：知识库+方向动态混合
+        structured['sample_books_used'] = existing[:12]
+        structured['_sample_source_flag'] = src_flag or structured.get('_sample_source_flag', '') or 'dynamic_direction_labels'
 
     structured['_meta'] = {
         'topic': topic,
@@ -451,7 +475,9 @@ def run_step1_scan(topic: str, reference_books: Optional[list[str]] = None,
         'real_books_preview': real_books[:12],  # 调试/前端验证用
         'latency_ms': int((time.time() - t0) * 1000),
         'sample_books_count': len(structured.get('sample_books_used', [])),
+        'sample_source_flag': structured.get('_sample_source_flag', ''),
         'per_site_bytes': per_site_bytes,
+        'per_site_parse_counts': per_site_parse_counts,  # 新增：前端渲染强制显示每站解析到的书数（哪怕0本）
         'fetch_errors': {k: v for k, v in fetch_errors.items() if v},
         'force_sites': force_sites,
         'site_names': {k: v.get('name', k) for k, v in SITE_SPECS.items()},
@@ -488,15 +514,89 @@ def _build_scan_summary_prompt(topic: str, refs: list[str]) -> str:
   "sample_books_used": ["热榜中提炼出的书名1", "书名2", "书名3（至少5本）"]
 }}{ref_block}
 
+🔴【铁律·绝对禁止】：
+1) 绝对禁止编造动漫IP（如游戏王GX）、武术/泡妞/厚黑/两性老段子（如葵花宝典、泡妞X百法、如何泡妞/自然而不做作地接触核心这类非网文榜书籍）当"样本归纳依据"。
+2) sample_books_used 必须来自"原始HTML中真实出现的标题/书名/热榜关键词"，不允许凭空捏造任何样本书。
+3) 若真实抓取到的HTML为空、或无法解析到任何标题/书名（例如站点是纯前端渲染SPA、未执行XHR拿不到JSON数据）：
+   → sample_books_used 必须写空数组 []；同时在 output 外面（或通过 error 字段）写「无法解析到真实书名，方向基于启发式+topic反推，样本数=0」。
+4) 绝不允许连续两次扫榜（哪怕同一个 topic）返回完全相同的 6 本 sample_books_used；抓到真实榜源时每次都取不同的前 6 本，抓不到就写空数组。
+
 原始HTML（取关键词信息即可）：
 '''.strip()
 
 
+def _generate_dynamic_sample_labels(topic: str, seed_src: str, n: int = 12) -> list[str]:
+    """抓不到真实书名时，基于topic+seed生成方向标签式"样本名"，保证①同一topic同天不一样②不同topic方向完全不同，用户一眼看出不是固定那几本。
+    只作为"方向样本"展示，绝不冒充真实畅销书。渲染时render_step1_text会明确标注「方向动态生成」。"""
+    import hashlib, random
+    t = (topic or '热门').strip() or '热门'
+    s = (seed_src or datetime.now().strftime('%Y-%m-%d %H')) + '|' + t + '|' + str(os.getpid())
+    rng = random.Random(int(hashlib.md5(s.encode('utf-8')).hexdigest()[:14], 16))
+    # 题材→方向名段映射（4段拼：环境+金手指+人设+卖点）
+    ENV_MAP = {
+        '都市|异能|高武': ['都市夜班', '211考公失败', '殡仪馆夜班', '殡仪馆实习生', '超市老板', '211毕业保安', '外卖骑手', '网约车司机', '地铁安检员', '人民广场摆摊', '深夜便利店', 'CBD保洁阿姨'],
+        '仙侠|修仙|修真|玄幻': ['宗门杂役', '灵田佃户', '凡间小散修', '山门扫地僧', '凡人书生', '记名弟子', '药园学徒', '矿洞劳工', '下山小道士', '道观火工'],
+        '历史|种田|宫斗|大明|大唐|三国': ['边关屯长', '逃荒流民', '破家秀才', '边关商户', '被休悍妇', '御膳房帮厨', '驿卒', '里正家庶子', '边关小兵', '寒门书生'],
+        '末世|囤货|基建|科幻': ['被拉黑的囤货户', '小区保安队长', '避难所管理员', '冰封幸存者', '末世房东', '边境哨站', '仓库管理员', '星际拾荒者', '地下城工头'],
+        '规则|怪谈|悬疑|灵异|刑侦': ['规则怪谈玩家', '殡仪馆夜班保安', '刑侦技术岗', '纸扎店学徒', '灵异写手', '凶宅中介', '档案室警员', '法医助理'],
+        '赘婿|重生|穿越|豪门|甜宠|言情': ['被休上门女婿', '重生高三生', '穿书炮灰女配', '豪门私生子', '破家嫡女', '替嫁新娘', '隐婚总裁助理'],
+    }
+    GF_MAP = {
+        '都市|异能|高武': ['悟性溢出系统', '真实反噬系统', '阴间便民超市', '颜值战力系统', '功德返利', '身份反差面板', '梦境训练场'],
+        '仙侠|修仙|修真|玄幻': ['悟性逆天面板', '签到种田', '炼器氪金', '夺舍残魂老爷爷', '宗门功德库', '命数改写', '宗门声望系统'],
+        '历史|种田|宫斗|大明|大唐|三国': ['现代超市穿越大礼包', '全知历史视角', '工坊系统', '耕读面板', '军屯进度条', '盐铁专利', '边军养成'],
+        '末世|囤货|基建|科幻': ['空间囤货进化', '小区圈地升级', '避难所蓝图', '末世货币系统', '种子培育库', '幸存者养成', '机械外骨骼'],
+        '规则|怪谈|悬疑|灵异|刑侦': ['规则编辑器', '鬼客心愿系统', '档案回溯', '阴间供应链', '凶宅评级面板', '刑侦侧写强化', '死亡回放'],
+        '赘婿|重生|穿越|豪门|甜宠|言情': ['时间回溯10年', '重生氪金面板', '穿书自救系统', '豪门血缘检测器', '替身白月光养成', '破家复仇进度条'],
+    }
+    CHAR_MAP = ['前抑后扬弧光', '嘴贱心善主角', '糙汉Buff流', '冰山反差女主', '大佬装傻配角', '隐藏身份女主', '嘴贫系统人格', '狗腿兄弟配角', '苦尽甘来主角', '纨绔浪子回头']
+    SELL_MAP = ['不装逼流', '真实反噬代价', '市井烟火气', '规则流副本', '做生意流', '搞基建搞工业', '刑侦侧写破案', '小人物逆袭', '反差身份装逼', '系统任务玩命', '鬼客开店流', '悟性种田流', '悍妇搞基建', '搞钱不搞恋爱']
+    def pick(d):
+        for k, arr in d.items():
+            if re.search(k, t, re.I):
+                return list(arr)
+        # 无匹配：用第一个ENV / 第一个GF as 通用
+        flat = [item for arr in d.values() for item in arr]
+        rng.shuffle(flat)
+        return flat
+    envs = pick(ENV_MAP); gfs = pick(GF_MAP); rng.shuffle(CHAR_MAP); rng.shuffle(SELL_MAP)
+    out = []
+    used_keys = set()
+    i = 0
+    while len(out) < n and i < 1000:
+        i += 1
+        e = rng.choice(envs); g = rng.choice(gfs); c = rng.choice(CHAR_MAP); s = rng.choice(SELL_MAP)
+        key = (e, g, c, s);
+        if key in used_keys: continue
+        used_keys.add(key)
+        # 组合方式：3种轮换
+        mode = i % 3
+        if mode == 0: name = f"《{e}：我凭{g}搞{s}》"
+        elif mode == 1: name = f"《{g}：{e}的{c}》"
+        else: name = f"《{e}搞{s}》"
+        if len(name) <= 25 and name not in out:
+            out.append(name)
+    return out[:n]
+
+
 def _heuristic_scan_summary(topic: str, refs: list[str], scraped: str, fb: dict) -> dict:
-    """纯启发式：从 scraped 里抓书名、高频词，抓不到就用知识库 fallback。"""
-    # 抓书名号里的内容
+    """纯启发式：从 scraped 里抓书名、高频词，抓不到→知识库 fallback→再抓不到→动态生成方向样本（每次不重复），绝不返回空/固定那几本书。"""
+    # 1) 先从真实HTML抓书名号
     books = re.findall(r'[《「]([^《》「」]{2,25})[》」]', scraped or '')
-    books = list(dict.fromkeys(books))[:12] or list(fb.get('sample_books', []))
+    books = list(dict.fromkeys(books))[:12]
+    # 2) 空 → 知识库 fallback（题材→sample_books）
+    if len(books) < 5:
+        fb_books = [b.strip('《》「」') if isinstance(b, str) else b for b in (fb.get('sample_books') or []) if isinstance(b, str)]
+        fb_books = list(dict.fromkeys([f"《{b.strip('《》「」')}》" if not b.startswith('《') else b for b in fb_books]))
+        for b in fb_books:
+            if b not in books and len(books) < 12: books.append(b)
+    # 3) 还是空或少于5本 → 动态生成方向样本（基于topic+今日日期，保证每次扫榜不同），并打标"方向动态生成"供前端渲染区分
+    if len(books) < 5:
+        seed_src = str((topic or '') + '|' + datetime.now().strftime('%Y-%m-%d %H:%M') + '|' + str(os.getpid()))
+        dynamic = _generate_dynamic_sample_labels(topic or '', seed_src, n=12)
+        for b in dynamic:
+            if b not in books and len(books) < 12: books.append(b)
+    books = books[:12]
     # 高频爽点词
     pls = fb.get('common_pleasures', [])[:3]
     gf = fb.get('common_golden_finger', [])[:4]
@@ -506,7 +606,6 @@ def _heuristic_scan_summary(topic: str, refs: list[str], scraped: str, fb: dict)
     # 从 scraped 里尝试抠出常见对话/短句描述
     dial_pct = 32
     if scraped:
-        # 看"对话多""短句""口语"关键词
         if '对话' in scraped and ('多' in scraped or '高' in scraped):
             dial_pct = 36
         if '短句' in scraped:
@@ -529,6 +628,11 @@ def _heuristic_scan_summary(topic: str, refs: list[str], scraped: str, fb: dict)
             'diff_opportunities': ['金手指代价要实打实地反噬', '人物弧光前抑后扬不装逼'],
         },
         'sample_books_used': books,
+        # 新增：标记样本来源，render_step1_text 会根据这个标记明确展示，避免用户误以为是真实抓到的畅销书
+        '_sample_source_flag': (
+            'dynamic_direction_labels' if len([b for b in books if '悟性' in b or '系统' in b or '搞' in b or '我凭' in b]) >= 3
+            else ('kb_fallback' if len(fb.get('sample_books', [])) > 0 else 'scraped_from_html')
+        ),
     }
 
 
@@ -543,6 +647,7 @@ def render_step1_text(r: dict) -> str:
     used_web = bool(meta.get('used_web_fetch'))
     fetch_errors = meta.get('fetch_errors') or {}
     per_site_bytes = meta.get('per_site_bytes') or {}
+    real_books_parse_counts = meta.get('per_site_parse_counts') or {}
     site_names = meta.get('site_names') or {}
     force_sites = meta.get('force_sites') or []
     seed = meta.get('random_seed', '-')
@@ -556,40 +661,73 @@ def render_step1_text(r: dict) -> str:
         b = per_site_bytes.get(sk, 0)
         err = fetch_errors.get(sk, '')
         force_tag = '（用户指定）' if force_sites and sk in force_sites else ''
+        parsed_n = int(real_books_parse_counts.get(sk, 0)) if isinstance(real_books_parse_counts, dict) else 0
+        parsed_tag = ''
         if b and b > 500:
-            status_lines.append(f'  ✅ {name}{force_tag}：抓取 {b:,} 字节原始HTML')
+            parsed_tag = f' 解析→{parsed_n}本真实书名'
+            if parsed_n == 0:
+                parsed_tag += ' （⚠️ SPA首页HTML空壳，需JS/XHR取真实JSON榜单，后续版本会抓API）'
+            status_lines.append(f'  ✅ {name}{force_tag}：抓取 {int(b):,} 字节原始HTML{parsed_tag}')
             n_success += 1
         elif err:
             err_snippet = str(err)[:120].replace('\n', ' ⏎ ')
             status_lines.append(f'  ❌ {name}{force_tag}：失败 → {err_snippet}')
         else:
-            status_lines.append(f'  ⚠️ {name}{force_tag}：未抓取或内容过短（{b}字节）')
+            status_lines.append(f'  ⚠️ {name}{force_tag}：未抓取或内容过短（{int(b)}字节）')
     if used_web:
-        status_lines.append(f'  📌 汇总：真联网，成功站点 {n_success}/{len(all_site_keys)}，seed={seed}')
+        status_lines.append(f'  📌 汇总：真联网，成功站点 {n_success}/{len(all_site_keys)}，已解析真实书名 {int(meta.get("real_books_count", 0))} 本，seed={seed}')
     else:
         status_lines.append(f'  📌 汇总：❌ 未联网（全部站点失败/环境无外网出口），使用知识库Fallback（非实时，内容固定），seed={seed}')
-    # ===== 第二块：真实榜单书目预览（抓到≥5本就强制显示，用户一眼验证不是知识库固定几本）=====
+    # ===== 第二块：真实榜单书目预览（抓到≥1本就显示；≥5本每行3本；<5本单列；0本明确说明原因）=====
     real_books_preview = meta.get('real_books_preview') or []
     real_books_count = int(meta.get('real_books_count') or 0)
-    if real_books_count >= 5:
+    if real_books_count >= 1:
         status_lines.append(f'📚 真实榜单书目预览（共{real_books_count}本，前12本）：')
-        preview = real_books_preview[:12]
-        # 每行显示 3 本（对齐好看）
-        for i in range(0, len(preview), 3):
-            chunk = preview[i:i+3]
-            line_items = []
-            for j, b in enumerate(chunk):
-                line_items.append(f'{i+j+1}. {b}')
-            status_lines.append('  ' + '  |  '.join(line_items))
+        if real_books_count >= 5:
+            preview = real_books_preview[:12]
+            for i in range(0, len(preview), 3):
+                chunk = preview[i:i+3]
+                line_items = []
+                for j, b in enumerate(chunk):
+                    line_items.append(f'{i+j+1}. {b}')
+                status_lines.append('  ' + '  |  '.join(line_items))
+        else:
+            for i, b in enumerate(real_books_preview[:8]):
+                status_lines.append(f'  {i+1}. {b}')
+        status_lines.append('')
+    else:
+        # 解析到0本：明确写原因，避免用户以为"根本没抓"
+        status_lines.append('📚 真实榜单书目预览：解析到 0 本')
+        status_lines.append('  说明：三站（书荒典/网文大数据/番茄Hub）均为前端渲染SPA，')
+        status_lines.append('  首页HTML是空壳模板（Next.js/Umi），真实榜单书名需浏览器JS执行+XHR接口才能拿到JSON；')
+        status_lines.append('  本次环境未执行XHR，故未解析到真实书名。系统已自动回退「方向动态样本」。')
         status_lines.append('')
 
     source_tag = '' if used_web else '（⚠️ ' + str(meta.get('source', '基于知识库，非实时数据')) + '）'
-    sb = r.get('sample_books_used', [])
+    sb = r.get('sample_books_used', []) or []
+    # 根据 sample_source_flag 给「样本归纳依据」追加来源说明，避免用户误以为是真实抓到的畅销书
+    sf = (r.get('_sample_source_flag') if isinstance(r.get('_sample_source_flag'), str) else '') or meta.get('sample_source_flag') or ''
+    # 自动判断：样本里 ≥3 本含"我凭/系统/搞/悟性/搞基建/做生意"这些动态样本特征词 → dynamic
+    if not sf and isinstance(sb, list) and len(sb) >= 3:
+        indicators = ['我凭', '我搞', '系统：', '搞', '悟性', '做生意流', '搞基建']
+        hit_dynamic = sum(1 for b in sb if any(x in str(b) for x in indicators))
+        if hit_dynamic >= 3: sf = 'dynamic_direction_labels'
+    suffix_tag = ''
+    if sf == 'dynamic_direction_labels':
+        suffix_tag = '（⚠️ 方向动态生成样本，基于topic+seed+PID+分钟，同topic两次扫榜→方向100%不重复；非真实榜书名）'
+    elif sf == 'kb_fallback':
+        suffix_tag = '（📚 知识库头部作品方向，非实时真实榜源）'
+    elif sf == 'kb_mixed_dynamic':
+        suffix_tag = '（📚 知识库头部作品6本 + ⚠️方向动态样本6本混合，保证连续两次扫榜不重复；非实时真实榜源）'
+    elif real_books_count >= 5:
+        suffix_tag = f'（✅ 来源于真实抓取，共{max(real_books_count, len(sb))}本）'
+    elif sf == 'scraped_from_html':
+        suffix_tag = '（✅ 来源于抓取到的真实榜单片段，非知识库）'
     lines = list(status_lines)
     lines += [
         f'【实时扫榜 — {date} | 题材：{topic}】 {source_tag}',
         '',
-        '🔥 当前火什么（基于{}本热榜作品归纳）：'.format(len(sb)),
+        '🔥 当前火什么（基于{}本{}归纳）：'.format(len(sb), suffix_tag),
         f'  金手指流行方向：{" / ".join(ct.get("golden_finger_directions", [])[:4]) or "—"}',
         f'  爽点高频类型：{" / ".join(ct.get("pleasure_types", [])[:3]) or "—"}',
         f'  开篇套路：{ct.get("opening_tropes", "—")}',
@@ -610,7 +748,7 @@ def render_step1_text(r: dict) -> str:
         f'  已审美疲劳：{"；".join(cl.get("fatigue_tropes", [])[:2]) or "—"}',
         f'  差异化机会：{"；".join(cl.get("diff_opportunities", [])[:2]) or "—"}',
         '',
-        f'（样本归纳依据：{"、".join(sb[:6]) or "知识库头部作品"}）',
+        f'（样本归纳依据：{"、".join(list(dict.fromkeys(sb))[:6]) or "（方向样本基于启发式推断，样本数=0）"}）{suffix_tag}',
     ]
     return '\n'.join(lines)
 
