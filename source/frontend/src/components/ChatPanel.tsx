@@ -1406,7 +1406,8 @@ export default function ChatPanel() {
   // 公共：消费 SSE 流
   // - onMeta: 可选扩展 meta 事件回调（通用聊天用：命中维度提示气泡、扫榜意图、流水线完成）
   //          不传则沿用默认行为（向后兼容），不破坏其他4个调用点
-  const consumeSSE = useCallback(async (res: Response, ctrl: AbortController, onCardMeta?: (card: ActionCard, meta: any) => void, onMeta?: (kind: string, info: any) => void) => {
+  // - ignoreCards: 可选=true时跳过所有{type:card}帧（用于Step1扫榜/Step2构思等中间结果：只展示内容、不显示采纳卡片、等用户确认后再继续下一步落卡）
+  const consumeSSE = useCallback(async (res: Response, ctrl: AbortController, onCardMeta?: (card: ActionCard, meta: any) => void, onMeta?: (kind: string, info: any) => void, ignoreCards = false) => {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
       throw new Error(err.error || `HTTP ${res.status}`);
@@ -1455,6 +1456,7 @@ export default function ChatPanel() {
         gotPayload = true;
         pushNote(evt.content);
       } else if (evt.type === 'card') {
+        if (ignoreCards) continue; // Step1扫榜/Step2构思等中间结果：不追加card（不落卡采纳，只看内容待确认）
         gotPayload = true;
         if (evt.session_id && !receivedSessionId) {
           receivedSessionId = evt.session_id;
@@ -2173,7 +2175,7 @@ export default function ChatPanel() {
   const inputPlaceholder = (() => {
     if (activeTab === 'setting') {
       if (!selectedDim) return '请先选择上方维度按钮…';
-      if (selectedDim === 'general') return '💬 和智驾聊任何事（构思/人物/剧情/世界观/扫榜都行）。命中关键词自动提示一键入库 📦；说「扫榜/爆款」自动打开3步流水线 🔥';
+      if (selectedDim === 'general') return '命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动开始3步流水线 🔥';
       const dimLabel = dimensions.find(d => d.key === selectedDim)?.label || selectedDim;
       if (selectedSuggestion) {
         return `已选「${selectedSuggestion.title}」。可输入修改意见，不填则直接按此方案生成…`;
@@ -2220,7 +2222,9 @@ export default function ChatPanel() {
       abortRef.current = ctrl;
       try {
         const res = await api.pipelineStep1Scan(scannedTopic, undefined, ctrl.signal);
-        await consumeSSE(res, ctrl);
+        await consumeSSE(res, ctrl, undefined, undefined, true); // ignoreCards=true：只展示扫榜内容，不弹采纳卡片（没扫榜维度会空）
+        // 扫榜结束只追加一条简短提示，继续等用户说"出构思方案"或提意见
+        appendAiNotice('✅ 扫榜完成。你可以说「按这个出构思方案」继续下一步，或先提调整意见。');
       } catch (e: any) {
         if (e.name !== 'AbortError') setStreamError(e.message || '扫榜失败');
       } finally {
@@ -2244,7 +2248,8 @@ export default function ChatPanel() {
       abortRef.current = ctrl2;
       try {
         const res = await api.pipelineStep2Plans(planTopic, {}, undefined, ctrl2.signal);
-        await consumeSSE(res, ctrl2);
+        await consumeSSE(res, ctrl2, undefined, undefined, true); // ignoreCards=true：构思方案是中间结果，先不入库，确认后再出设定
+        appendAiNotice('✅ 构思方案生成完成。你可以说「按方案X出设定」继续落地，或先提修改意见。');
       } catch (e: any) {
         if (e.name !== 'AbortError') setStreamError(e.message || '构思方案生成失败');
       } finally {
@@ -2427,7 +2432,15 @@ export default function ChatPanel() {
 
               {activeTab === 'setting' && (
                 <>
-                  {/* 【设定】Tab内「通用」子维度：只保留命中气泡入库（一键📦落卡），无多余按钮 */}
+                  {/* 【设定】Tab内「通用」子维度：两行固定小提示（不堆按钮）+ 命中气泡入库（一键📦落卡） */}
+                  {selectedDim === 'general' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px' }}>
+                      <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5 }}>
+                        · 命中创作关键词自动提示一键入库 📦<br />
+                        · 说「扫榜XX题材」自动开始3步流水线 🔥
+                      </div>
+                    </div>
+                  )}
                   {selectedDim === 'general' && hitSuggestionPopups.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px' }}>
                       {hitSuggestionPopups.map(pop => (
