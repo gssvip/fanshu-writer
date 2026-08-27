@@ -24,7 +24,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 import requests
 
@@ -51,6 +51,33 @@ _RETRYABLE = {FailureClass.TIMEOUT, FailureClass.UNAVAILABLE, FailureClass.EMPTY
 # chat_stream(yield_reasoning_heartbeat=True) 时，thinking 帧到达即 yield 此哨兵，
 # 上层据此向客户端发 SSE 注释心跳帧（': ping'），防止推理期间代理层 30s idle 掐断连接。
 REASONING_HB = "\x00\x00reasoning-heartbeat\x00\x00"
+
+# 中流续连事件哨兵（P0-6）：chat_stream 在已吐出部分正文后断流、自动续连前，
+# yield 此哨兵通知上层（格式 \x00\x00stream-retry|{JSON}\x00\x00，JSON 含
+# attempt/reason/continued_chars），上层转成 SSE meta 帧提示前端"正在续连"。
+# 消费端见 sse_keepalive.gw_stream_with_hb / parse_stream_retry_event。
+STREAM_RETRY_PREFIX = "\x00\x00stream-retry|"
+STREAM_RETRY_SUFFIX = "\x00\x00"
+
+
+def parse_stream_retry_event(chunk):
+    """解析中流续连哨兵事件（P0-6），供 SSE 保活层消费。
+
+    chunk 若为 \x00\x00stream-retry|{JSON}\x00\x00 哨兵 → 返回解析出的 dict
+    （attempt/reason/continued_chars 等）；正常正文 chunk 或 JSON 解析失败 →
+    返回 None（调用方原样透传，绝不抛错——保活链路宁缺毋滥）。
+    """
+    if not isinstance(chunk, str):
+        return None
+    if not (chunk.startswith(STREAM_RETRY_PREFIX) and chunk.endswith(STREAM_RETRY_SUFFIX)
+            and len(chunk) > len(STREAM_RETRY_PREFIX) + len(STREAM_RETRY_SUFFIX)):
+        return None
+    raw = chunk[len(STREAM_RETRY_PREFIX): -len(STREAM_RETRY_SUFFIX)]
+    try:
+        info = json.loads(raw)
+        return info if isinstance(info, dict) else None
+    except Exception:
+        return None
 
 
 def build_auth_headers(api_key: str, content_type: bool = True) -> dict:

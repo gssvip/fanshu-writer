@@ -315,6 +315,34 @@ class TestGwStreamWithHb:
         with pytest.raises(RuntimeError, match="LLM 炸了"):
             list(gw_stream_with_hb(_FailGW(), []))
 
+    def test_parse_stream_retry_event_contract(self):
+        """P0-6 哨兵解析契约：\x00\x00stream-retry|JSON\x00\x00 → dict；正文/坏JSON → None。
+
+        回归：sse_keepalive 引用 parse_stream_retry_event 但 llm_gateway 未实现
+        → 线上通用聊天 500（cannot import name）。
+        """
+        import json as _json
+        from llm_gateway import (REASONING_HB, STREAM_RETRY_PREFIX,
+                                 STREAM_RETRY_SUFFIX, parse_stream_retry_event)
+
+        # 1) 合法哨兵 → 解析出 dict
+        ev = (STREAM_RETRY_PREFIX
+              + _json.dumps({"attempt": 1, "reason": "timeout", "continued_chars": 120})
+              + STREAM_RETRY_SUFFIX)
+        assert parse_stream_retry_event(ev) == {
+            "attempt": 1, "reason": "timeout", "continued_chars": 120}
+
+        # 2) 正常正文 / 思考心跳哨兵 / 非 str → None（原样透传，绝不误伤）
+        assert parse_stream_retry_event("主角推门而入，看到了桌上那封信。") is None
+        assert parse_stream_retry_event(REASONING_HB) is None
+        assert parse_stream_retry_event(None) is None
+        assert parse_stream_retry_event(123) is None
+
+        # 3) 坏 JSON / 空体 / 非对象 JSON → None（绝不抛错——保活链路宁缺毋滥）
+        assert parse_stream_retry_event(STREAM_RETRY_PREFIX + "{broken" + STREAM_RETRY_SUFFIX) is None
+        assert parse_stream_retry_event(STREAM_RETRY_PREFIX + STREAM_RETRY_SUFFIX) is None
+        assert parse_stream_retry_event(STREAM_RETRY_PREFIX + '"数组"' + STREAM_RETRY_SUFFIX) is None
+
 
 class TestSavePartialOnDisconnect:
     """SSE 客户端断开（GeneratorExit）时的部分内容抢救回归测试。
