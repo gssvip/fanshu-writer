@@ -1140,16 +1140,30 @@ export default function ChatPanel() {
 
   useEffect(() => {
     if (!showModelPicker) return;
-    function handler() { setShowModelPicker(false); }
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
+    function handler(e: Event) {
+      // Chip onClick / picker 浮层 onClick 里 stopPropagation 后 e.target 仍存在，
+      // 用 composedPath 判断点击源是否来自"开关Chip本身"或"浮层内部"，来源则不关（兼容 capture 阶段）
+      const path = e.composedPath ? e.composedPath() : [e.target as any];
+      const within = (s: string) =>
+        Array.from(document.querySelectorAll<HTMLElement>(s)).some(el => path.includes(el));
+      if (within('[data-gt-model-chip]') || within('[data-gt-model-popover]')) return;
+      setShowModelPicker(false);
+    }
+    document.addEventListener('click', handler, true);
+    return () => document.removeEventListener('click', handler, true);
   }, [showModelPicker]);
 
   useEffect(() => {
     if (!showRolePicker) return;
-    function handler() { setShowRolePicker(false); }
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
+    function handler(e: Event) {
+      const path = e.composedPath ? e.composedPath() : [e.target as any];
+      const within = (s: string) =>
+        Array.from(document.querySelectorAll<HTMLElement>(s)).some(el => path.includes(el));
+      if (within('[data-gt-role-chip]') || within('[data-gt-role-popover]')) return;
+      setShowRolePicker(false);
+    }
+    document.addEventListener('click', handler, true);
+    return () => document.removeEventListener('click', handler, true);
   }, [showRolePicker]);
 
   // 自动滚动
@@ -3594,8 +3608,7 @@ export default function ChatPanel() {
                   {activeTab === 'setting' && selectedDim === 'general' ? (
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b' }}>💬 通用聊天模式 · 想聊啥就聊啥</p>
-                      <p style={{ fontSize: 13, color: '#6b7280', margin: '6px 0 0' }}>任意话题闲聊、问问题、讨论构思/人物/剧情/世界观。</p>
-                      <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动开始3步流水线 🔥。</p>
+                      <p style={{ fontSize: 13, color: '#6b7280', margin: '8px 0 0' }}>命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动开始3步流水线 🔥。</p>
                     </div>
                   ) : (
                     <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
@@ -3709,61 +3722,186 @@ export default function ChatPanel() {
                     boxSizing: 'border-box',
                   };
                   return (
-                    <div
-                      style={{
-                        position: 'relative',
-                        padding: '3px 10px 4px 10px',
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        flexWrap: 'nowrap',   // 桌面端：一排不折
-                        overflowX: 'auto',     // 窄屏/手机端：横向轻滑不折行
-                        scrollbarWidth: 'none',
-                      }}
-                    >
-                      <style>{`
-                        .general-toolbar-row::-webkit-scrollbar { display: none; }
-                        @media (max-width: 640px) {
-                          .general-toolbar-row { flex-wrap: nowrap; }
-                          .gt-model-text { display: none; }     /* 手机端模型Chip隐藏长文本 */
-                          .gt-model-dot { display: none; }
-                          .gt-import-text { display: none; }    /* 手机端导入卡按钮只留图标 */
-                        }
-                      `}</style>
-                      <div className="general-toolbar-row" style={{
-                        display: 'flex', alignItems: 'center', gap: 8,
-                        flexWrap: 'nowrap', flexShrink: 0,
-                      }}>
-
-                        {/* ── 🤖 模型 Chip ── */}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); if (_ready) setShowModelPicker(s => !s); }}
-                          title={_ready
-                            ? `会话级切换模型（当前：${_chosen?.name || '默认模型'} · ${_chosen?.model || ''}）`
-                            : '先发送任意一条消息建立会话，之后才能为这个会话单独选模型'}
+                    <>
+                      {/* ── ① 外层 position:relative + overflow:visible：浮层的定位参照物，绝对不能加任何 overflow:hidden/auto ── */}
+                      <div
+                        style={{
+                          position: 'relative',
+                          overflow: 'visible',   /* 🔴 核心：横滑/裁剪与此层彻底无关 */
+                          padding: '3px 10px 4px 10px',
+                        }}
+                      >
+                        {/* ── ② 内层横滑容器：display:flex + overflowX:auto，与浮层解耦，不影响absolute定位 */}
+                        <div
+                          className="general-toolbar-row"
                           style={{
-                            ..._chipBase,
-                            border: '1px solid #d6d6e0',
-                            background: _ready ? '#fafafa' : '#f4f4f5',
-                            cursor: _ready ? 'pointer' : 'not-allowed',
-                            opacity: _ready ? 1 : 0.55,
-                            color: '#333',
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            flexWrap: 'nowrap', overflowX: 'auto',
+                            scrollbarWidth: 'none',
                           }}
                         >
-                          🤖{' '}
-                          <span className="gt-model-text" style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>
-                            {_ready ? (_chosen?.name || '默认模型') : '发送第一条后可选模型'}
-                          </span>
-                          {_ready && (
-                            <>
-                              <span className="gt-model-dot" style={{ color: '#888' }}>·</span>
-                              <span className="gt-model-text" style={{ color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>
-                                {_chosen?.model || ''}
-                              </span>
-                              <span style={{ color: '#aaa' }}>{showModelPicker ? '▲' : '▼'}</span>
-                            </>
+                          <style>{`
+                            .general-toolbar-row::-webkit-scrollbar { display: none; }
+                            @media (max-width: 640px) {
+                              .gt-model-text { display: none; }
+                              .gt-model-dot { display: none; }
+                              .gt-import-text { display: none; }
+                            }
+                          `}</style>
+
+                          {/* ── 🤖 模型 Chip ── */}
+                          <button
+                            data-gt-model-chip
+                            onClick={(e) => { e.stopPropagation(); if (_ready) setShowModelPicker(s => !s); }}
+                            title={_ready
+                              ? `会话级切换模型（当前：${_chosen?.name || '默认模型'} · ${_chosen?.model || ''}）`
+                              : '先发送任意一条消息建立会话，之后才能为这个会话单独选模型'}
+                            style={{
+                              ..._chipBase, flexShrink: 0,
+                              border: '1px solid #d6d6e0',
+                              background: _ready ? '#fafafa' : '#f4f4f5',
+                              cursor: _ready ? 'pointer' : 'not-allowed',
+                              opacity: _ready ? 1 : 0.55,
+                              color: '#333',
+                            }}
+                          >
+                            🤖{' '}
+                            <span className="gt-model-text" style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>
+                              {_ready ? (_chosen?.name || '默认模型') : '发送第一条后可选模型'}
+                            </span>
+                            {_ready && (
+                              <>
+                                <span className="gt-model-dot" style={{ color: '#888' }}>·</span>
+                                <span className="gt-model-text" style={{ color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>
+                                  {_chosen?.model || ''}
+                                </span>
+                                <span style={{ color: '#aaa' }}>{showModelPicker ? '▲' : '▼'}</span>
+                              </>
+                            )}
+                          </button>
+
+                          {/* ── 🎭 角色 Chip ── */}
+                          <button
+                            data-gt-role-chip
+                            onClick={(e) => { e.stopPropagation(); if (__ready) setShowRolePicker(s => !s); }}
+                            title={__ready
+                              ? `当前角色「${__role.name}」：${__role.brief}。点击切换7款内置角色。`
+                              : '先发送任意一条消息建立会话，之后才能切换角色模式'}
+                            style={{
+                              ..._chipBase, flexShrink: 0,
+                              border: '1px solid #ffe7c2',
+                              background: __ready ? '#fffaf1' : '#fff9ee',
+                              cursor: __ready ? 'pointer' : 'not-allowed',
+                              opacity: __ready ? 1 : 0.6,
+                              color: '#333',
+                            }}
+                          >
+                            <span>{__role.emoji}</span>
+                            <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 82 }}>{__role.name}</span>
+                            {__ready && <span style={{ color: '#bbb' }}>{showRolePicker ? '▲' : '▼'}</span>}
+                          </button>
+
+                          {/* ── 📥 导入角色卡按钮 + 隐藏 file input ── */}
+                          <input
+                            ref={stCharCardRef}
+                            type="file"
+                            accept="application/json,.json"
+                            style={{ display: 'none' }}
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              e.target.value = '';
+                              if (!f) return;
+                              try {
+                                const text = await f.text();
+                                const raw = JSON.parse(text);
+                                const firstStr = (v: any) => Array.isArray(v) ? String(v[0] || '') : String(v || '');
+                                const name = firstStr(raw.name || raw.data?.name) || '未命名角色';
+                                const description = firstStr(raw.description || raw.data?.description);
+                                const personality = firstStr(raw.personality || raw.data?.personality);
+                                const scenario = firstStr(raw.scenario || raw.data?.scenario);
+                                const first_mes = firstStr(raw.first_mes || raw.data?.first_mes);
+                                const mes_example = firstStr(raw.mes_example || raw.data?.mes_example || raw.example_dialogue || raw.data?.example_dialogue);
+                                const creator = firstStr(raw.creator || raw.data?.creator || raw.creator_notes || raw.data?.creator_notes);
+                                const sections: string[] = [`【角色名】${name}`];
+                                if (personality) sections.push(`【性格/人格】\n${personality.trim()}`);
+                                if (description) sections.push(`【外貌/背景描述】\n${description.trim()}`);
+                                if (scenario) sections.push(`【所处剧情场景/当前局面】\n${scenario.trim()}`);
+                                if (mes_example) sections.push(`【对白示例】\n${mes_example.trim()}`);
+                                if (first_mes) sections.push(`【角色开场第一句话/动作】\n${first_mes.trim()}`);
+                                if (creator) sections.push(`【创作者备注】\n${creator.trim()}`);
+                                sections.push(`【Silly Tavern 角色卡源文件名】${f.name}`);
+                                const draft = sections.join('\n\n').slice(0, 6000);
+                                const suggestion: any = {
+                                  id: 'import_' + Math.random().toString(36).slice(2, 10),
+                                  dim: 'character_profiles',
+                                  label: `导入角色：${name}`,
+                                  preview: draft,
+                                  _full_content: draft,
+                                  _from_user: true,
+                                  card_type: 'SAVE_CHARACTER',
+                                  card_title: `🧙‍人物 · ${name}（Silly Tavern导入）`,
+                                };
+                                streamBufferRef.current = '';
+                                setMessages((prev) => {
+                                  const next = [...prev];
+                                  next.push({ role: 'user', content: `【导入Silly Tavern角色卡】${f.name}` });
+                                  next.push({ role: 'assistant', content: '', cards: [] });
+                                  return next;
+                                });
+                                queueMicrotask(() => {
+                                  setMessages((prev) => {
+                                    const next = [...prev];
+                                    const last = next[next.length - 1];
+                                    if (last && last.role === 'assistant') {
+                                      next[next.length - 1] = {
+                                        ...last,
+                                        cards: [...(last.cards || []), {
+                                          id: suggestion.id,
+                                          type: 'SAVE_CHARACTER',
+                                          title: suggestion.card_title,
+                                          content: draft,
+                                          target: '人物',
+                                          status: 'pending',
+                                        }],
+                                        content: `✨ 已从 Silly Tavern 角色卡 **${f.name}** 解析出人物草稿。下方卡片确认无误后，点「采纳落地」即入库到智驾的【人物】维度。\n\n预览：\n\n${draft.slice(0, 260)}${draft.length>260?'…':''}`,
+                                      };
+                                    }
+                                    return next;
+                                  });
+                                });
+                                setStImportMsg(`✅ 已解析角色卡：${name}，请确认并落地。`);
+                              } catch (err: any) {
+                                setStImportMsg(`❌ 解析失败：${err?.message || String(err)}（请检查是否为标准Silly Tavern JSON角色卡）`);
+                              }
+                              setTimeout(() => setStImportMsg(''), 6000);
+                            }}
+                          />
+                          <button
+                            onClick={(e) => { e.stopPropagation(); stCharCardRef.current?.click(); }}
+                            style={{
+                              ..._chipBase, flexShrink: 0, marginLeft: 'auto',
+                              border: '1px solid #cfd8ff',
+                              background: '#f4f6ff', cursor: 'pointer', color: '#2f4fcf',
+                            }}
+                            title="导入 Silly Tavern V2/V3 格式的 JSON 角色卡（非多模态），自动生成人物草稿并一键入库到【人物】维度"
+                          >
+                            📥<span className="gt-import-text">导入角色卡</span>
+                          </button>
+                          {stImportMsg && (
+                            <span style={{
+                              fontSize: 12,
+                              color: stImportMsg.startsWith('✅') ? '#288f2b' : '#c32e2e',
+                              flexShrink: 0,
+                            }}>
+                              {stImportMsg}
+                            </span>
                           )}
-                        </button>
+                        </div>
+
+                        {/* ── 模型下拉浮层：挂在外层 overflow:visible 的 relative 容器下，不会被父容器 clip ── */}
                         {showModelPicker && _ready && (
                           <div
+                            data-gt-model-popover
                             onClick={e => e.stopPropagation()}
                             style={{
                               position: 'absolute', left: 6, bottom: '100%', marginBottom: 4, zIndex: 100,
@@ -3804,27 +3942,10 @@ export default function ChatPanel() {
                           </div>
                         )}
 
-                        {/* ── 🎭 角色 Chip ── */}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); if (__ready) setShowRolePicker(s => !s); }}
-                          title={__ready
-                            ? `当前角色「${__role.name}」：${__role.brief}。点击切换7款内置角色。`
-                            : '先发送任意一条消息建立会话，之后才能切换角色模式'}
-                          style={{
-                            ..._chipBase,
-                            border: '1px solid #ffe7c2',
-                            background: __ready ? '#fffaf1' : '#fff9ee',
-                            cursor: __ready ? 'pointer' : 'not-allowed',
-                            opacity: __ready ? 1 : 0.6,
-                            color: '#333',
-                          }}
-                        >
-                          <span>{__role.emoji}</span>
-                          <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 82 }}>{__role.name}</span>
-                          {__ready && <span style={{ color: '#bbb' }}>{showRolePicker ? '▲' : '▼'}</span>}
-                        </button>
+                        {/* ── 角色下拉浮层：同外层，保证不被横滑裁剪 ── */}
                         {showRolePicker && __ready && (
                           <div
+                            data-gt-role-popover
                             onClick={e => e.stopPropagation()}
                             style={{
                               position: 'absolute', right: 6, bottom: '100%', marginBottom: 4, zIndex: 101,
@@ -3859,107 +3980,8 @@ export default function ChatPanel() {
                             })}
                           </div>
                         )}
-
-                        {/* ── 📥 导入角色卡按钮 + 隐藏 file input ── */}
-                        <input
-                          ref={stCharCardRef}
-                          type="file"
-                          accept="application/json,.json"
-                          style={{ display: 'none' }}
-                          onChange={async (e) => {
-                            const f = e.target.files?.[0];
-                            e.target.value = '';
-                            if (!f) return;
-                            try {
-                              const text = await f.text();
-                              const raw = JSON.parse(text);
-                              const firstStr = (v: any) => Array.isArray(v) ? String(v[0] || '') : String(v || '');
-                              const name = firstStr(raw.name || raw.data?.name) || '未命名角色';
-                              const description = firstStr(raw.description || raw.data?.description);
-                              const personality = firstStr(raw.personality || raw.data?.personality);
-                              const scenario = firstStr(raw.scenario || raw.data?.scenario);
-                              const first_mes = firstStr(raw.first_mes || raw.data?.first_mes);
-                              const mes_example = firstStr(raw.mes_example || raw.data?.mes_example || raw.example_dialogue || raw.data?.example_dialogue);
-                              const creator = firstStr(raw.creator || raw.data?.creator || raw.creator_notes || raw.data?.creator_notes);
-                              const sections: string[] = [`【角色名】${name}`];
-                              if (personality) sections.push(`【性格/人格】\n${personality.trim()}`);
-                              if (description) sections.push(`【外貌/背景描述】\n${description.trim()}`);
-                              if (scenario) sections.push(`【所处剧情场景/当前局面】\n${scenario.trim()}`);
-                              if (mes_example) sections.push(`【对白示例】\n${mes_example.trim()}`);
-                              if (first_mes) sections.push(`【角色开场第一句话/动作】\n${first_mes.trim()}`);
-                              if (creator) sections.push(`【创作者备注】\n${creator.trim()}`);
-                              sections.push(`【Silly Tavern 角色卡源文件名】${f.name}`);
-                              const draft = sections.join('\n\n').slice(0, 6000);
-                              const suggestion: any = {
-                                id: 'import_' + Math.random().toString(36).slice(2, 10),
-                                dim: 'character_profiles',
-                                label: `导入角色：${name}`,
-                                preview: draft,
-                                _full_content: draft,
-                                _from_user: true,
-                                card_type: 'SAVE_CHARACTER',
-                                card_title: `🧙‍人物 · ${name}（Silly Tavern导入）`,
-                              };
-                              streamBufferRef.current = '';
-                              setMessages((prev) => {
-                                const next = [...prev];
-                                next.push({ role: 'user', content: `【导入Silly Tavern角色卡】${f.name}` });
-                                next.push({ role: 'assistant', content: '', cards: [] });
-                                return next;
-                              });
-                              queueMicrotask(() => {
-                                setMessages((prev) => {
-                                  const next = [...prev];
-                                  const last = next[next.length - 1];
-                                  if (last && last.role === 'assistant') {
-                                    next[next.length - 1] = {
-                                      ...last,
-                                      cards: [...(last.cards || []), {
-                                        id: suggestion.id,
-                                        type: 'SAVE_CHARACTER',
-                                        title: suggestion.card_title,
-                                        content: draft,
-                                        target: '人物',
-                                        status: 'pending',
-                                      }],
-                                      content: `✨ 已从 Silly Tavern 角色卡 **${f.name}** 解析出人物草稿。下方卡片确认无误后，点「采纳落地」即入库到智驾的【人物】维度。\n\n预览：\n\n${draft.slice(0, 260)}${draft.length>260?'…':''}`,
-                                    };
-                                  }
-                                  return next;
-                                });
-                              });
-                              setStImportMsg(`✅ 已解析角色卡：${name}，请确认并落地。`);
-                            } catch (err: any) {
-                              setStImportMsg(`❌ 解析失败：${err?.message || String(err)}（请检查是否为标准Silly Tavern JSON角色卡）`);
-                            }
-                            setTimeout(() => setStImportMsg(''), 6000);
-                          }}
-                        />
-                        <button
-                          onClick={(e) => { e.stopPropagation(); stCharCardRef.current?.click(); }}
-                          style={{
-                            ..._chipBase,
-                            border: '1px solid #cfd8ff',
-                            background: '#f4f6ff',
-                            cursor: 'pointer',
-                            color: '#2f4fcf',
-                            marginLeft: 'auto',   // 贴右对齐，跟模型/角色分开不挤
-                          }}
-                          title="导入 Silly Tavern V2/V3 格式的 JSON 角色卡（非多模态），自动生成人物草稿并一键入库到【人物】维度"
-                        >
-                          📥<span className="gt-import-text">导入角色卡</span>
-                        </button>
-                        {stImportMsg && (
-                          <span style={{
-                            fontSize: 12,
-                            color: stImportMsg.startsWith('✅') ? '#288f2b' : '#c32e2e',
-                            flexShrink: 0,
-                          }}>
-                            {stImportMsg}
-                          </span>
-                        )}
                       </div>
-                    </div>
+                    </>
                   );
                 })()}
                 <div className="chat-input-row">
