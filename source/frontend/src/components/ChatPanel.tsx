@@ -1552,6 +1552,24 @@ export default function ChatPanel() {
           const chars = Number(evt.info.continued_chars) || 0;
           pushNote(`\n\n> 🔄 已自动续连（第${attempt}次 · 原因：${reason} · 已保存${chars}字，无缝续写中…）\n\n`);
         }
+        // 【真联网搜索】后端触发搜索时先显示"搜索中"，完成后显示引擎+命中条数
+        if (evt.kind === 'web_search_started' && evt.info) {
+          const q = String(evt.info.query || '').slice(0, 80);
+          pushNote(`\n\n> 🔍 正在联网搜索：${q}${q.length >= 80 ? '…' : ''}\n\n`);
+        }
+        if (evt.kind === 'web_search_done' && evt.info) {
+          const ok = !!evt.info.ok;
+          const engine = String(evt.info.engine || '').toUpperCase();
+          const count = Number(evt.info.count) || 0;
+          const ms = Number(evt.info.latency_ms) || 0;
+          const err = String(evt.info.error || '');
+          if (ok) {
+            pushNote(`\n\n> ✅ 联网搜索完成（${engine || '未知引擎'} · ${count}条 · ${ms}ms）\n\n`);
+          } else {
+            const hint = err ? `：${err.slice(0, 60)}` : '（使用本地知识库兜底）';
+            pushNote(`\n\n> ⚠ 联网搜索未命中${hint}\n\n`);
+          }
+        }
         // 【扩展钩子】如果传了 onMeta，把 meta 事件也转交外部处理（命中维度气泡）
         if (typeof onMeta === 'function') {
           try { onMeta(evt.kind || '', evt.info || null); } catch {}

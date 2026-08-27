@@ -145,7 +145,10 @@ TOOLSPAGE_BASELINE = 1192
 # 2026-08-28 重校准（删除扫榜3步流水线全部残余）：
 #   - 删除 /pipeline/step1-scan / step2-plans / step3-worldbuild 三条路由及 _get_pipeline_llm_gateway 工具函数
 #   → 净减 350+ 行，彻底清理扫榜3步流沉余
-CHAT_COLLAB_BP_BASELINE = 7770
+# 2026-08-28 重校准（通用聊天真联网搜索接入）：
+#   - chat_general 接入 web_search_bridge：启发式判定+搜索中/完成meta帧+结果注入+智谱原生web_search
+#   → 净增 57 行（7770→7827），用户明确要求P0补漏（之前接了搜索模块但没接到路由）
+CHAT_COLLAB_BP_BASELINE = 7827
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

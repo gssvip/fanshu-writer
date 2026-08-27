@@ -7320,6 +7320,21 @@ def chat_general():
         detect_dimension_hits = None
         build_general_chat_system_prompt = lambda: '你是智驾创作助手，可以聊任何话题。'
         wrap_message_with_context = lambda msg, bt, bb: msg
+    # P0 真联网搜索：多引擎调度桥（Tavily/Exa/Brave/DuckDuckGo兜底 + 智谱原生web_search）
+    try:
+        from web_search_bridge import (should_use_web_search, run_web_search,
+                                       format_search_context_for_llm, get_native_websearch_params)
+        _search_available = True
+    except Exception:
+        _search_available = False
+        def should_use_web_search(*a, **k): return False
+        def run_web_search(*a, **k):
+            from dataclasses import dataclass
+            @dataclass
+            class _SR: ok=False; engine=''; hits=[]; error='import failed'; latency_ms=0
+            return _SR()
+        def format_search_context_for_llm(sr): return ''
+        def get_native_websearch_params(*a, **k): return None
 
     data = request.json or {}
     book_id = data.get('book_id')
@@ -7730,6 +7745,48 @@ def chat_general():
             if mcp_tools:
                 yield f'data: {json.dumps({"type": "meta", "kind": "mcp_tools", "info": {"count": len(mcp_tools)}}, ensure_ascii=False)}\n\n'
                 _mcp_native_kwargs['tools'] = mcp_tools
+
+            # ============== P0 真联网搜索接入 ==============
+            # 1) 启发式判断是否需要搜（创作话题不搜；硬事实/明确说"搜一下"才搜）
+            _need_search = _search_available and should_use_web_search(message, trimmed)
+            _search_ctx = ''
+            if _need_search:
+                try:
+                    # 2) 先推"🔍联网搜索中…" meta 帧，前端马上给用户反馈
+                    yield f'data: {json.dumps({"type": "meta", "kind": "web_search_started", "info": {"query": message[:200]}}, ensure_ascii=False)}\n\n'
+                    # 3) 同步执行搜索：Tavily/Exa/Brave（有 Key 时）→ DuckDuckGo HTML 兜底
+                    _sr = run_web_search(message, num_results=5, timeout_per_engine=6.0)
+                    yield f'data: {json.dumps({"type": "meta", "kind": "web_search_done", "info": _sr.to_dict() if hasattr(_sr, "to_dict") else {"ok": False, "engine": getattr(_sr, "engine", ""), "count": 0, "error": getattr(_sr, "error", "")}}, ensure_ascii=False)}\n\n'
+                    # 4) 把搜索结果格式化成 Markdown 列表，追加到用户消息末尾注入给 LLM
+                    try:
+                        _search_ctx = format_search_context_for_llm(_sr)
+                    except Exception:
+                        _search_ctx = ''
+                except Exception as _se:
+                    # 搜索失败绝对不打断主聊天链路
+                    yield f'data: {json.dumps({"type": "meta", "kind": "web_search_done", "info": {"ok": False, "engine": "", "count": 0, "error": str(_se)[:300]}}, ensure_ascii=False)}\n\n'
+                    _search_ctx = ''
+            # 5) 如果搜到资料，追加到本轮 user message 末尾（放在最后，LLM 注意力最高）
+            if _search_ctx:
+                # messages 是外层变量引用，修改会生效到 gw_stream_with_hb
+                if messages and messages[-1].get('role') == 'user':
+                    messages[-1]['content'] = (str(messages[-1].get('content', '')) + '\n\n' + _search_ctx)[:12000]
+            # 6) 模型原生联网参数（智谱 GLM 开原生 web_search 工具，质量比独立搜索更高；不消耗第三方 Key）
+            try:
+                _native_p = get_native_websearch_params(_mg, _bg, enabled=_need_search or (scan_intent and _search_available))
+                if _native_p and isinstance(_native_p, dict):
+                    # deep-merge 到 _mcp_native_kwargs（tools 数组保留，extra_body 解包）
+                    if 'extra_body' in _native_p and isinstance(_native_p['extra_body'], dict):
+                        _ex = _mcp_native_kwargs.setdefault('extra_body', {})
+                        for _kk, _vv in _native_p['extra_body'].items():
+                            if _kk == 'tools' and isinstance(_vv, list):
+                                _ex['tools'] = list(_ex.get('tools') or []) + list(_vv)
+                            else:
+                                _ex[_kk] = _vv
+                    elif 'tools' in _native_p and isinstance(_native_p['tools'], list):
+                        _mcp_native_kwargs['tools'] = list(_mcp_native_kwargs.get('tools') or []) + list(_native_p['tools'])
+            except Exception:
+                _native_p = None
 
             for chunk in gw_stream_with_hb(gw, messages, temperature=0.7, max_tokens=4096, **_mcp_native_kwargs):
                 if chunk is HEARTBEAT:
