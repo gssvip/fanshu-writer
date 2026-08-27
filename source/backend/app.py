@@ -1885,13 +1885,15 @@ def create_template():
 # ==== AI API ====
 # 注：/api/ai/config GET/PUT 已迁移至 blueprints/ai_config_bp.py（多配置支持）
 
-def _do_fetch_models(base_url, api_key):
-    """实际拉取模型列表的内部函数，供多个接口复用"""
+def _do_fetch_models(base_url, api_key, model=None):
+    """实际拉取模型列表的内部函数，供多个接口复用。
+
+    【智谱 GLM 404 修复】不再无条件补 /v1：走 provider 感知归一化。
+    智谱 GLM 的 /models 也在 v4 下（/api/paas/v4/models），若按老逻辑补 /v1 → /v4/v1/models → 404。
+    """
+    from llm_gateway import _normalize_llm_base_url
     import requests as req
-    base = base_url.rstrip('/')
-    # 如果地址已经以 /v1 结尾就不重复添加
-    if not base.endswith('/v1'):
-        base += '/v1'
+    base = _normalize_llm_base_url(base_url, model)
     resp = req.get(
         f"{base}/models",
         headers=build_auth_headers(api_key, content_type=False),
@@ -1912,11 +1914,14 @@ def _do_fetch_models(base_url, api_key):
     return models, None, 200
 
 def _do_test_connection(base_url, api_key, model):
-    """实际测试连接的内部函数，供多个接口复用"""
+    """实际测试连接的内部函数，供多个接口复用。
+
+    【智谱 GLM 404 修复】删除老代码"非 /v1 结尾就补 /v1"。
+    用户点"测试连接"按钮看到的 "HTTP 404 path=/v4/v1/chat/completions" 就是这里产生的。
+    """
+    from llm_gateway import _normalize_llm_base_url
     import requests as req
-    base = base_url.rstrip('/')
-    if not base.endswith('/v1'):
-        base += '/v1'
+    base = _normalize_llm_base_url(base_url, model)
     resp = req.post(
         f"{base}/chat/completions",
         headers=build_auth_headers(api_key),
@@ -1955,6 +1960,7 @@ def fetch_ai_models():
     data = request.json or {}
     base_url = (data.get('base_url') or '').strip()
     api_key = (data.get('api_key') or '').strip()
+    model = (data.get('model') or '').strip()
 
     # 如果 api_key 是掩码或为空，尝试使用已保存的配置
     if api_key == '***' or not api_key:
@@ -1963,6 +1969,8 @@ def fetch_ai_models():
             api_key = cfg.api_key
             if not base_url:
                 base_url = cfg.base_url or ''
+            if not model:
+                model = cfg.model or ''
         else:
             return jsonify({'error': '请先填写 API Key 或保存配置'}), 400
 
@@ -1970,7 +1978,7 @@ def fetch_ai_models():
         return jsonify({'error': '请填写 API 地址'}), 400
 
     try:
-        models, err, code = _do_fetch_models(base_url, api_key)
+        models, err, code = _do_fetch_models(base_url, api_key, model)
         if err:
             return jsonify({'error': err}), code
         return jsonify({'models': models})

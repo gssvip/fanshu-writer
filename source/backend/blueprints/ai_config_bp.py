@@ -31,14 +31,25 @@ def update_ai_config():
     """更新当前激活配置（兼容旧接口）。
 
     api_key 为 '***' 或空时保留原值，避免掩码覆盖真实密钥。
+    【智谱 GLM 404 修复】落库前先把 base_url 归一化（智谱 v4 不补/v1等），
+    这样 DB 存的就是正确干净的，即使有别的路径绕过 get_llm_config 也不容易坏。
     """
     from app import db, AIConfig
+    from llm_gateway import _normalize_llm_base_url
     data = request.json or {}
     cfg = AIConfig.get_active()
-    for field in ['name', 'provider', 'model', 'recognition_model',
-                  'base_url', 'temperature', 'max_tokens']:
+    for field in ['name', 'provider', 'recognition_model',
+                  'temperature', 'max_tokens']:
         if field in data:
             setattr(cfg, field, data[field])
+    # model 参与 base_url 归一化识别（智谱 glm* → v4 分支），先取出来
+    new_model = data.get('model', cfg.model)
+    if 'model' in data:
+        cfg.model = data['model']
+    if 'base_url' in data:
+        raw = data['base_url'] or ''
+        # 存 DB 时就存归一化后的正确路径，避免 DB 残留坏值 /v4/v1
+        cfg.base_url = _normalize_llm_base_url(raw, new_model)
     if 'api_key' in data and data['api_key'] and data['api_key'] != '***':
         cfg.api_key = data['api_key']
     db.session.commit()
@@ -59,18 +70,24 @@ def list_ai_configs():
 
 @ai_config_bp.route('/api/ai/configs', methods=['POST'])
 def create_ai_config():
-    """新增一个配置（最多 MAX_CONFIGS 个）。新增的配置自动激活。"""
+    """新增一个配置（最多 MAX_CONFIGS 个）。新增的配置自动激活。
+
+    【智谱 GLM 404 修复】落库前 base_url 归一化。
+    """
     from app import db, AIConfig
+    from llm_gateway import _normalize_llm_base_url
     if AIConfig.query.count() >= MAX_CONFIGS:
         return jsonify({'error': f'最多 {MAX_CONFIGS} 个配置，请先删除一个'}), 400
     data = request.json or {}
+    model = data.get('model', '')
+    raw_base = data.get('base_url', '') or ''
     cfg = AIConfig(
         name=data.get('name') or f'配置 {AIConfig.query.count() + 1}',
         provider=data.get('provider', 'custom'),
-        model=data.get('model', ''),
+        model=model,
         recognition_model=data.get('recognition_model', ''),
         api_key=data.get('api_key', ''),
-        base_url=data.get('base_url', ''),
+        base_url=_normalize_llm_base_url(raw_base, model),
         temperature=data.get('temperature', 0.7),
         max_tokens=data.get('max_tokens', 4096),
         is_active=True,
