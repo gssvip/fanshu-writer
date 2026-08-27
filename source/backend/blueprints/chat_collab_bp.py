@@ -751,24 +751,30 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
     # 注入 bible 维度（完整注入，不截断，避免信息缺失导致错乱）
     if bb:
         dims = [
-            ('核心构思', 'concept'),
-            ('世界观', 'worldbuilding'),
-            ('核心规则', 'key_rules'),
-            ('人物档案', 'character_profiles'),
-            ('大纲', 'plot_design'),
-            ('剧情时间线', 'timeline'),
-            ('伏笔', 'foreshadowing'),
-            ('地点', 'locations'),
-            ('文风指南', 'style_guide'),
+            ('核心构思', 'concept', 2600),
+            ('世界观', 'worldbuilding', 2600),
+            ('核心规则', 'key_rules', 1600),
+            ('人物档案', 'character_profiles', 3200),
+            ('大纲', 'plot_design', 2600),
+            ('剧情时间线', 'timeline', 1800),
+            ('伏笔', 'foreshadowing', 1200),
+            ('地点', 'locations', 1000),
+            ('文风指南', 'style_guide', 1000),
         ]
         filled = []
         empty = []
-        for label, field in dims:
+        for label, field, cap in dims:
             val = (getattr(bb, field, '') or '').strip()
             if val:
                 # 人物维度：JSON 数组转自然语言，避免 AI 模仿 JSON 格式
                 if field == 'character_profiles' and val.startswith('['):
                     val = _character_profiles_to_text(val)
+                # 系统 prompt 9 维度注入字符硬上限（避免单维度 10K+ 导致 3 轮对话就撞 LLM ctx 上限）
+                if len(val) > cap:
+                    # 先在语义分界处（双换行/句号）截断，不破坏结构
+                    cut = val[:cap]
+                    last_break = max(cut.rfind('\n\n'), cut.rfind('。'), cut.rfind('\n'))
+                    val = (cut[:last_break] if last_break > cap // 2 else cut) + f'\n…（已截前{cap}字，完整落地维度请查创作界面，或引用前言精准索取）'
                 parts.append(f'\n【已设定·{label}】\n{val}')
                 filled.append(label)
             else:
@@ -7488,10 +7494,9 @@ def chat_general():
         system_prompt = system_prompt.rstrip() + "\n\n【当前人格角色】用户已为本次会话切换到「" + _role_name + "」模式。严格按以下身份说明输出：\n" + _role_extra + "\n\n" + _var_intro
     else:
         system_prompt = system_prompt.rstrip() + "\n\n" + _var_intro
-    # ============== 用户消息前置"引用前言"：命中写作相关时，再附加一份"当前落地资料精要"==============
-    # 原有 wrap_message_with_context(message, book_title, bb_summary) 只给标签，LLM 根本读不到人物细节
-    # → 修复：命中 WRITING_TOTAL_HINTS 时，把实际落地内容（9维度字段 + 最近章节 + TOC 摘要）完整附到用户消息前面
-    #    这样用户说"姜离是主角吗" LLM 就能直接从引用前言里查到姜离 = 主角，不会回答错。
+    # ============== 用户消息前置"引用前言"：命中写作相关时，只附加 system_prompt 里没给、但对本轮对话必须精准的资料 ============
+    # 原则：system_prompt 里已经有完整 bible(9维度/TOC/最近章标题)，引用前言不重复；
+    #       这里只补三样：① 本轮问题命中的"章节正文摘要"（这是 system_prompt 故意没给的，避免塞爆）② 人名速查表 ③ 若还缺具体维度再根据命中关键词补
     try:
         from general_chat_hitter import WRITING_TOTAL_HINTS as _WTH
     except Exception:
@@ -7499,59 +7504,114 @@ def chat_general():
     _talking_creation = bool(_WTH) and any(h in message for h in _WTH)
     _lead_ref = ''
     if book_id and _talking_creation and bb:
+        from app import Chapter, parse_chapter_number
+        import re as _re
         lead_parts: list[str] = []
-        lead_parts.append('（以下为系统引用：作者当前作品《' + (book_title or '未命名') + '》已经落地采纳的资料，回答创作相关问题时先以引用里的内容为准，不确定再问作者。）')
-        lead_parts.append('【已填充维度】：' + (bb_summary or '暂无已填充维度'))
-        # 9 维度内容（与 build_chat_system_prompt 的 9 维度一致）精简引用（不重复 system_prompt 里的大段，但保证用户问"姜离是谁"时引用里能定位到姓名）
-        dim_ref = [
-            ('核心构思', 'concept', 1800),
-            ('人物档案', 'character_profiles', 2800),   # 人物给更多空间（最容易问的就是主角/反派名字）
-            ('世界观', 'worldbuilding', 1800),
-            ('核心规则', 'key_rules', 1400),
-            ('大纲', 'plot_design', 1800),
-            ('剧情线', 'timeline', 1200),
-            ('伏笔', 'foreshadowing', 1000),
-            ('地点', 'locations', 800),
-            ('文风指南', 'style_guide', 800),
-        ]
-        for label, field, cap in dim_ref:
-            v = (getattr(bb, field, '') or '').strip()
-            if not v:
-                continue
-            # 人物 JSON 数组：折叠姓名行保留到引用前言里就行，让LLM立刻看到姓名映射
-            if field == 'character_profiles' and v.startswith('['):
-                try:
-                    arr = json.loads(v)
-                    if isinstance(arr, list):
-                        # 只把 name/role/identity 三列取出来列成姓名一览表（省token还能精确定位）
-                        quick = []
-                        for item in arr:
-                            if isinstance(item, dict):
-                                nm = str(item.get('name') or '').strip()
-                                if not nm:
-                                    continue
-                                _r = str(item.get('role') or '').strip()
-                                _id = str(item.get('identity') or '').strip()
-                                line = f"- {nm}"
-                                if _r:
-                                    line += f"（角色定位：{_r}）"
-                                if _id:
-                                    line += f" 身份/职业：{_id}"
-                                quick.append(line)
-                        if quick:
-                            lead_parts.append(f'\n【{label}·人名一览表（落地）】\n' + '\n'.join(quick[:30]) + (f'\n（共{len(arr)}人，完整档案见 system bible）' if len(arr) > 30 else ''))
-                            continue
-                except Exception:
-                    pass
-            # 其他维度：按 cap 字符数裁剪引用（system_prompt 里还有完整版，不会丢）
-            snippet = v if len(v) <= cap else (v[:cap] + '\n…（完整内容已在 system prompt 中注入）')
-            lead_parts.append(f'\n【{label}·落地摘要】\n{snippet}')
-        if recent_chapters:
-            lines = []
-            for ch in recent_chapters:
-                lines.append(f"- {ch.get('title') or '未命名章'}（{ch.get('word_count', 0)}字）")
-            lead_parts.append('\n【最近5章】\n' + '\n'.join(lines))
-        _lead_ref = '\n'.join(lead_parts) + '\n————————引用结束————————\n【作者原话】\n'
+        lead_parts.append('（以下为系统引用：作者本轮问题要用到的精准资料。回答创作相关问题时**先看引用，再结合 system_prompt 里的完整维度**。）')
+        # ==== A. 章节号提取 + 对应章节正文摘要注入 ====
+        # 解析"第1章/第一章/改第03章/第 8 章/卷一第3章/这一章/本章"
+        _msg_low = message
+        _ch_num: int | None = None
+        # 数字形式：第\s*(\d+)\s*章
+        m1 = _re.search(r'第\s*([0-9零一二三四五六七八九十百千万两贰叁肆伍陆柒捌玖拾]+)\s*章', _msg_low)
+        if m1:
+            raw = m1.group(1).strip()
+            try:
+                _ch_num = parse_chapter_number(f'第{raw}章')
+            except Exception:
+                _ch_num = None
+        # 汉字常见单独写法兜底
+        if _ch_num is None:
+            cn_map = {'零':0,'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10,'百':100,'千':1000,
+                      '壹':1,'贰':2,'叁':3,'肆':4,'伍':5,'陆':6,'柒':7,'捌':8,'玖':9,'拾':10,'佰':100,'仟':1000,'万':10000}
+            m2 = _re.search(r'第\s*([零一二三四五六七八九十百千万两贰叁肆伍陆柒捌玖拾佰仟万]+)\s*章', _msg_low)
+            if m2:
+                raw = m2.group(1).strip()
+                val = 0; cur = 0; unit = 1
+                for ch in raw:
+                    if ch in cn_map and cn_map[ch] >= 10:
+                        u = cn_map[ch]
+                        if cur == 0: cur = 1
+                        val += cur * u
+                        cur = 0; unit = u
+                    elif ch in cn_map and 1 <= cn_map[ch] <= 9:
+                        cur = cn_map[ch]
+                    else:
+                        break
+                if cur:
+                    val += cur if val and unit == 1 else cur
+                if val and 1 <= val <= 9999:
+                    _ch_num = val
+        # 兜底：用户说"这一章/本章/第一章/最后一章/刚写的"→ 取最近章节号 next_chapter_num-1
+        if _ch_num is None:
+            recent_aliases = ('这一章', '本章', '第一章', '最后一章', '刚写的', '刚改的', '现在写的这章', '你刚才写的', '你上条生成的', '这篇')
+            if any(a in _msg_low for a in recent_aliases) and isinstance(next_chapter_num, int) and next_chapter_num > 1:
+                _ch_num = next_chapter_num - 1
+        _chapter_body_snippet = ''
+        _chapter_title = ''
+        if isinstance(_ch_num, int) and _ch_num >= 1:
+            try:
+                all_ch = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+                found = None
+                # 优先按 parse_chapter_number 匹配
+                for c in all_ch:
+                    if parse_chapter_number(c.title or '') == _ch_num:
+                        found = c; break
+                # 兜底按 order_index == _ch_num 匹配（没写章号的草稿章通常 order_index = 章号）
+                if not found:
+                    for c in all_ch:
+                        if int(getattr(c, 'order_index', 0) or 0) == _ch_num:
+                            found = c; break
+                if found:
+                    _chapter_title = found.title or f'第{_ch_num}章'
+                    body = (found.content or '').strip()
+                    if body:
+                        MAX_PREVIEW = 3800  # 单章正文引用硬上限（避免一章6000字+就撞截断）
+                        if len(body) <= MAX_PREVIEW:
+                            _chapter_body_snippet = body
+                        else:
+                            # 前 800 字（首钩子/出场）+ 后 2800 字（结尾/冲突点），中间提示省略（LLM最需要的是首尾两段）
+                            head = body[:800]
+                            tail = body[-2800:]
+                            skip_cnt = len(body) - 800 - 2800
+                            _chapter_body_snippet = (
+                                head
+                                + f'\n\n……【中间{skip_cnt}字已省略，仅保留首段钩子+末段高潮】……\n\n'
+                                + tail
+                                + f'\n（共{len(body)}字，截前800+后2800注入引用）'
+                            )
+            except Exception:
+                _chapter_body_snippet = ''
+                _chapter_title = ''
+        if isinstance(_ch_num, int) and _ch_num >= 1:
+            if _chapter_body_snippet:
+                lead_parts.append(f'\n【引用：第{_ch_num}章正文】（标题：{_chapter_title}，共{len(_chapter_body_snippet)}字预览）\n{_chapter_body_snippet}')
+            else:
+                lead_parts.append(f'\n【引用：未找到第{_ch_num}章的正文原文】。请直接把该章原文贴到聊天里，或从【正文Tab→章节号{_ch_num}→复制正文后粘贴】。我拿到全文后再改。')
+        # ==== B. 人物 JSON → 人名速查表（不重复 system_prompt 的长档案，只给 name + role + identity，LLM 定位人名快 10 倍）====
+        _cp = (getattr(bb, 'character_profiles', '') or '').strip()
+        if _cp.startswith('['):
+            try:
+                arr = json.loads(_cp)
+                if isinstance(arr, list) and len(arr) > 0:
+                    quick: list[str] = []
+                    for item in arr:
+                        if isinstance(item, dict):
+                            nm = str(item.get('name') or '').strip()
+                            if not nm:
+                                continue
+                            _r = str(item.get('role') or '').strip()
+                            _id = str(item.get('identity') or '').strip()
+                            line = f"- {nm}"
+                            if _r: line += f"（{_r}）"
+                            if _id: line += f" · {_id}"
+                            quick.append(line)
+                    if quick:
+                        lead_parts.append(f'\n【引用：人名速查表】（落地{len(arr)}人）\n' + '\n'.join(quick[:40]) + (f'\n（省略{len(quick)-40}人）' if len(quick) > 40 else ''))
+            except Exception:
+                pass
+        if len(lead_parts) > 1:
+            _lead_ref = '\n'.join(lead_parts) + '\n————————引用结束————————\n【作者原话】\n'
     elif _talking_creation:
         # 纯闲聊命中创作关键词但没绑定作品 → 走 general_chat_hitter 原版前言（提示作品未绑定）
         _lead_ref = None
@@ -7563,14 +7623,33 @@ def chat_general():
     history = load_session_messages(session)
     # 【P1-3 meta】把当前角色以 SSE meta 回传前端，便于右上角 chip UI 同步（保证刷新后 UI 显示的角色跟后端真正用到的一致）
     _p13_meta = {'role_id': chosen_role_id, 'role_name': _role_name, 'vars': _var_ctx}
-    # 最大上下文：最近30条（通用聊天需要更长记忆，避免落卡内容+聊天上下文容易丢）
-    if len(history) > 30:
-        history = history[-30:]
+    # 最大上下文：最近15条 + 首条保留（保留模型/角色/话题起始意图），避免三轮对话就因为每条内容过长而撞截断
+    #   - 首条保留的原因：如果首条是"我要写都市异能/毒舌读者模式开始/切换模型"，后面聊到一半丢了，LLM 会不知道自己该用啥角色/啥题材。
+    #   - 最近15条 ≈ 7 轮半 user+assistant。
+    #   - 单条正文>1500字：截尾部1500（最后一段才是本轮讨论的重点，截头部会把重要讨论信息丢了）。
+    trimmed: list[dict] = []
+    if isinstance(history, list):
+        keep_head = history[:1] if len(history) > 0 else []
+        keep_tail = history[-15:] if len(history) > 15 else history
+        candidates = keep_head + [m for m in keep_tail if not (keep_head and keep_head[0] is m)]
+        # 去重（避免首条同时出现在 keep_head 和 keep_tail 里导致重复）
+        seen_ids: set[int] = set()
+        for m in candidates:
+            if not isinstance(m, dict):
+                continue
+            if 'content' not in m:
+                continue
+            h_id = id(m)
+            if h_id in seen_ids:
+                continue
+            seen_ids.add(h_id)
+            c = m.get('content')
+            if isinstance(c, str) and len(c) > 1500:
+                # 取尾部 1500 字（最后一段才是用户本轮之前的意图/对话），并标注已截尾
+                c = '…（会话历史超长已截断，取尾部关键内容）\n' + c[-1500:]
+            trimmed.append({'role': m.get('role') or 'user', 'content': c})
     messages = [{'role': 'system', 'content': system_prompt}]
-    for h in history:
-        if 'content' in h:
-            msg_entry = {'role': h['role'], 'content': h['content'][:4000]}
-            messages.append(msg_entry)
+    messages.extend(trimmed)
     messages.append({'role': 'user', 'content': enriched[:8000]})
 
     # P1-1 会话级切模型：优先级 req_ai_config_id > session.meta_json.ai_config_id > 全局激活
