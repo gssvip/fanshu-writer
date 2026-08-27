@@ -138,21 +138,14 @@ TOOLSPAGE_BASELINE = 1192
 #   - _validate_chapter_post_write 新增：被字句>1→critical（约3行）
 #   - ai_patterns.yaml：新增人物出场禁排比regex 2条，禁令0阈值注释4→2（约6行）
 #   → 净增 4 行（7111→7115），属去AI味P0修复后置校验硬卡，不属业务膨胀
-# 2026-08-25 重校准11（通用聊天·命中维度气泡 + 3步爆款流水线薄路由）：
+# 2026-08-25 重校准11（通用聊天·命中维度气泡）：
 #   - /chat/general：通用聊天模式（CHATBOX式·任意话题），命中维度提示落库（~80行）
-#   - /pipeline/step1-scan：Step1 实时扫榜（联网+LLM归纳趋势方向）（~85行）
-#   - /pipeline/step2-plans：Step2 生成5个方案（趋势跟随2 + 差异化2 + 大胆尝试1）（~95行）
-#   - /pipeline/step3-worldbuild：Step3 世界观构建（9级修炼+CDL角色+金手指代价+系统人格化）（~95行）
-#   - 新路由全部调用独立薄封装模块 general_chat_hitter.py / book_pipeline_tools.py，无业务堆肉，只做参数整形+SSE分发
-#   → 净增 419 行（7115→7534），属用户明确要求P0功能交付（通用对话Tab全局可用+爆款流水线），新路由为薄路由无冗余，不属业务膨胀
-# 2026-08-26 重校准7（扫榜合理性修复：强制联网状态展示+各站点错误透传+seed扰动）：
-#   - _fetch 升级：从静默失败改为 traceback 错误写回 fetch_errors dict（~15行）
-#   - run_step1_scan 传 fetch_errors + original_query + force_sites 入参（薄壳无业务堆肉）
-#   → 净增 16 行（7534→7550），属P0合理性修复，未新增业务逻辑
-# 2026-08-26 重校准8（UnicodeEncodeError修复 + _fetch二次编码兜底）：
-#   - _fetch 加 import urllib.parse as _up + url入口quote（约4行）
-#   - chat_collab_bp.py 7550→7557（净增7行，纯编码校验无业务堆肉）
-CHAT_COLLAB_BP_BASELINE = 7557
+#   - 新路由调用独立薄封装模块 general_chat_hitter.py，无业务堆肉，只做参数整形+SSE分发
+#   → 净增 145 行（7115→7260），属用户明确要求P0功能交付（通用对话Tab全局可用），新路由为薄路由无冗余，不属业务膨胀
+# 2026-08-28 重校准（删除扫榜3步流水线全部残余）：
+#   - 删除 /pipeline/step1-scan / step2-plans / step3-worldbuild 三条路由及 _get_pipeline_llm_gateway 工具函数
+#   → 净减 350+ 行，彻底清理扫榜3步流沉余
+CHAT_COLLAB_BP_BASELINE = 7770
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

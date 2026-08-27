@@ -1096,43 +1096,4 @@ export const api = {
     if (signal) cfg.signal = signal;
     return fetchStream(`${getApiBaseUrl()}/ai/chat/general`, cfg, signal);
   },
-
-  // Step1 实时扫榜（SSE）：番茄/起点/七猫趋势方向 + 样本归纳
-  pipelineStep1Scan: (topic: string, referenceBooks?: string[], signal?: AbortSignal) => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const token = getToken();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const cfg: RequestInit = {
-      method: 'POST', headers,
-      body: JSON.stringify({ topic, reference_books: referenceBooks || [] }),
-    };
-    if (signal) cfg.signal = signal;
-    return fetchStream(`${getApiBaseUrl()}/ai/pipeline/step1-scan`, cfg, signal);
-  },
-
-  // Step2 5方案生成（SSE）：5×3方向（趋势跟随2/差异化2/大胆尝试1）
-  pipelineStep2Plans: (topic: string, trendReport: Record<string, any>, referenceBooks?: string[], signal?: AbortSignal) => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const token = getToken();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const cfg: RequestInit = {
-      method: 'POST', headers,
-      body: JSON.stringify({ topic, trend_report: trendReport, reference_books: referenceBooks || [] }),
-    };
-    if (signal) cfg.signal = signal;
-    return fetchStream(`${getApiBaseUrl()}/ai/pipeline/step2-plans`, cfg, signal);
-  },
-
-  // Step3 世界观+9级修炼+CDL角色+金手指代价+系统人格化构建（SSE）：拆10张落地卡片
-  pipelineStep3Worldbuild: (selectedPlan: Record<string, any>, opts?: { topic?: string }, signal?: AbortSignal) => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const token = getToken();
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const cfg: RequestInit = {
-      method: 'POST', headers,
-      body: JSON.stringify({ selected_plan: selectedPlan, topic: opts?.topic || '' }),
-    };
-    if (signal) cfg.signal = signal;
-    return fetchStream(`${getApiBaseUrl()}/ai/pipeline/step3-worldbuild`, cfg, signal);
-  },
 };

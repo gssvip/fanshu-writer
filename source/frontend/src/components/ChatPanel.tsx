@@ -28,7 +28,7 @@ const __BUILD_TAG__ = 'v3-0814';
 
 type SmartTab = 'setting' | 'chapter' | 'deai' | 'review';
 
-// 命中维度提示（通用聊天模式）+ 爆款流水线类型定义
+// 命中维度提示（通用聊天模式）类型定义
 interface HitSuggestion {
   id?: string;
   dim: string; label: string; card_type: string; confidence: number;
@@ -1074,7 +1074,7 @@ export default function ChatPanel() {
   // 系统学习面板折叠（默认收起 → 只占一行高度）
   const [showOptReport, setShowOptReport] = useState(false);
 
-  // ──────── 通用对话Tab专属state（命中维度气泡 + 3步爆款流水线） ────────
+  // ──────── 通用对话Tab专属state（命中维度气泡） ────────
   // 命中维度提示气泡：接收到 hit_suggestions meta 时弹出
   const [hitSuggestionPopups, setHitSuggestionPopups] = useState<Array<{
     id: string; msg_index: number; suggestions: HitSuggestion[];
@@ -1082,12 +1082,6 @@ export default function ChatPanel() {
   // 命中气泡「📦入库」按钮落卡loading：key=popId+dim，避免重复点/多按钮同时落卡
   const [applyingHitKey, setApplyingHitKey] = useState<string | null>(null);
   // Q2 合并：事件日志重算（原先在工具栏浮层，现在合并进「校审」Tab 子面板）
-  // [2026-08-27 扫榜3步流水线已整体删除] 以下 lastStep1Report / lastStep2Plans 两个 state 保留（避免未来如果要恢复流水线时大改接口），但不再参与通用聊天交互链路
-  // 用 void 赋值显式声明"有意未使用"，规避 TS6133 noUnusedLocals
-  const [lastStep1Report, setLastStep1Report] = useState<any>(null);
-  void lastStep1Report; void setLastStep1Report;
-  const [lastStep2Plans, setLastStep2Plans] = useState<any[] | null>(null);
-  void lastStep2Plans; void setLastStep2Plans;
   // 通用聊天专用会话ID（与设定Tab其他维度session隔离，避免串session/记忆丢失）
   // 根因：原代码传sessionId:undefined→后端每次新建会话→聊天记忆完全丢失；若复用全局sessionId，会跟其他维度（构思/设定/正文创作）会话互相覆盖导致混乱
   const [chatGeneralSessionId, setChatGeneralSessionId] = useState<string | null>(null);
@@ -1506,9 +1500,9 @@ export default function ChatPanel() {
   }, [chatPanelOpen]);
 
   // 公共：消费 SSE 流
-  // - onMeta: 可选扩展 meta 事件回调（通用聊天用：命中维度提示气泡、扫榜意图、流水线完成）
+  // - onMeta: 可选扩展 meta 事件回调（通用聊天用：命中维度提示气泡）
   //          不传则沿用默认行为（向后兼容），不破坏其他4个调用点
-  // - ignoreCards: 可选=true时跳过所有{type:card}帧（用于Step1扫榜/Step2构思等中间结果：只展示内容、不显示采纳卡片、等用户确认后再继续下一步落卡）
+  // - ignoreCards: 可选=true时跳过所有{type:card}帧（只展示内容、不显示采纳卡片）
   // - onSessionId: 可选=传入后，card/done帧的session_id只调此回调（更新调用方自己的会话ID），不再调全局setSessionId，避免不同调用链路之间串session
   const consumeSSE = useCallback(async (res: Response, ctrl: AbortController, onCardMeta?: (card: ActionCard, meta: any) => void, onMeta?: (kind: string, info: any) => void, ignoreCards = false, onSessionId?: (sid: string) => void) => {
     if (!res.ok) {
@@ -1558,7 +1552,7 @@ export default function ChatPanel() {
           const chars = Number(evt.info.continued_chars) || 0;
           pushNote(`\n\n> 🔄 已自动续连（第${attempt}次 · 原因：${reason} · 已保存${chars}字，无缝续写中…）\n\n`);
         }
-        // 【扩展钩子】如果传了 onMeta，把 meta 事件也转交外部处理（命中维度气泡/扫榜意图/流水线）
+        // 【扩展钩子】如果传了 onMeta，把 meta 事件也转交外部处理（命中维度气泡）
         if (typeof onMeta === 'function') {
           try { onMeta(evt.kind || '', evt.info || null); } catch {}
         }
@@ -1566,7 +1560,7 @@ export default function ChatPanel() {
         gotPayload = true;
         pushNote(evt.content);
       } else if (evt.type === 'card') {
-        if (ignoreCards) continue; // Step1扫榜/Step2构思等中间结果：不追加card（不落卡采纳，只看内容待确认）
+        if (ignoreCards) continue;
         gotPayload = true;
         if (evt.session_id && !receivedSessionId) {
           receivedSessionId = evt.session_id;
@@ -2317,7 +2311,7 @@ export default function ChatPanel() {
   })();
 
   // 【设定】Tab内「通用」子维度（整合版）：调用 chatGeneralStream（任意话题+命中气泡入库）
-  // 原3步流水线（扫榜→构思方案→设定）入口已按用户要求整体移除，直接让用户用自然语言聊天生成；命中创作维度自动气泡落卡
+  // 创作辅助入口已合并，直接让用户用自然语言聊天生成；命中创作维度自动气泡落卡
   const handleGeneral = useCallback(async () => {
     const text = input.trim();
     if (!bookId || !text || streaming) return;
