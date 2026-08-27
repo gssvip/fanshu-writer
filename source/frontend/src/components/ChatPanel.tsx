@@ -2587,7 +2587,12 @@ export default function ChatPanel() {
     try {
       // 修复：传 chatGeneralSessionId（通用聊天专用），不传 undefined → 否则后端每次新建会话=记忆全丢（用户投诉：通用比普通CHATBOX差远了，没记忆没上下文）
       // P1-1 会话级切模型 + P1-3 内置角色 persona → 一并传通用聊天
-      const _sid = chatGeneralSessionId || '';
+      // 【先发消息再切 → 允许打开页面就切】：用一个固定的"通用预会话key"作为占位，
+      //   只要 chatGeneralSessionId 还没生成（还没发过任何消息），选择的模型/角色全部记到这个占位 key 下；
+      //   等第一条消息发送完毕、chatGeneralSessionId 更新后，把占位里的记录迁移到真实 sessionId 下。
+      const _PREKEY = '__general_pending_session__';
+      const _sidReal = chatGeneralSessionId || '';
+      const _sid = _sidReal || _PREKEY;
       const _cfgId = sessionModelMap[_sid] || undefined;
       const _roleId = sessionRoleMap[_sid] || 'default';
       const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId, roleId: _roleId }, ctrl.signal);
@@ -2651,7 +2656,26 @@ export default function ChatPanel() {
           });
           setHitSuggestionPopups(prev => [...prev, { id: popId, msg_index: insertedPopupIndex.idx, suggestions: normalized }]);
         }
-      }, false, setChatGeneralSessionId);
+      }, false, (freshSid: string) => {
+        // 新建会话 → 把预会话里的模型/角色迁移到真实sid下，然后清除预会话占位
+        if (freshSid && freshSid !== chatGeneralSessionId) {
+          setSessionModelMap(prev => {
+            const v = prev[_PREKEY];
+            if (v === undefined) return prev;
+            const { [_PREKEY]: _drop, ...rest } = prev;
+            void _drop;
+            return { ...rest, [freshSid]: v };
+          });
+          setSessionRoleMap(prev => {
+            const v = prev[_PREKEY];
+            if (v === undefined) return prev;
+            const { [_PREKEY]: _drop, ...rest } = prev;
+            void _drop;
+            return { ...rest, [freshSid]: v };
+          });
+        }
+        setChatGeneralSessionId(freshSid);
+      });
     } catch (e: any) {
       if (e.name !== 'AbortError') {
         const msg = (e?.message || e?.error || '聊天失败').trim() || '聊天失败';
@@ -3702,106 +3726,111 @@ export default function ChatPanel() {
               <div className="chat-input-area">
                 {/* ── 通用Tab工具栏：🤖模型/🎭角色/📥导入卡 三个放同一排，手机端自动紧凑不占高 ── */}
                 {selectedDim === 'general' && (() => {
-                  const _sid = chatGeneralSessionId || '';
+                  // 【先发消息再切 → 打开页面就能切】
+                  //   有真实会话用真实 chatGeneralSessionId；没建立会话 → 统一预会话 key，先把选择记住
+                  //   等第一条消息发送完毕后，consumeSSE onSessionId 会自动把预会话迁移到真实 sid
+                  const _PREKEY = '__general_pending_session__';
+                  const _sidReal = chatGeneralSessionId || '';
+                  const _sid = _sidReal || _PREKEY;
                   // ============== 🤖 模型 ==============
                   const _chosenId = sessionModelMap[_sid];
                   const _chosen = aiConfigList.length > 0
                     ? (aiConfigList.find(c => c.id === _chosenId) || aiConfigList.find(c => c.is_active) || aiConfigList[0])
                     : undefined;
-                  const _ready = !!_sid;
                   // ============== 🎭 角色 ==============
                   const __rid = sessionRoleMap[_sid] || 'default';
                   const __role = BUILTIN_ROLES.find(r => r.id === __rid) || BUILTIN_ROLES[0];
-                  const __ready = !!_sid;
 
-                  // 通用样式：缩小padding/高度，确保一排放得下
+                  // 按钮高度/基础样式：统一 height 28px，三按钮宽度等分 justify-content:space-between
                   const _chipBase: React.CSSProperties = {
-                    padding: '3px 9px', height: 26, lineHeight: '20px',
+                    padding: '4px 10px',
+                    height: 28, lineHeight: '20px',
                     borderRadius: 999, fontSize: 12, display: 'inline-flex',
-                    alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
+                    alignItems: 'center', justifyContent: 'center', gap: 4,
+                    whiteSpace: 'nowrap',
                     boxSizing: 'border-box',
+                    overflow: 'hidden',
                   };
                   return (
                     <>
-                      {/* ── ① 外层 position:relative + overflow:visible：浮层的定位参照物，绝对不能加任何 overflow:hidden/auto ── */}
+                      {/* ── ① 外层：浮层定位参照物，overflow:visible 保证浮层不被 clip ── */}
                       <div
                         style={{
-                          position: 'relative',
-                          overflow: 'visible',   /* 🔴 核心：横滑/裁剪与此层彻底无关 */
+                          position: 'relative', overflow: 'visible',
                           padding: '3px 10px 4px 10px',
                         }}
                       >
-                        {/* ── ② 内层横滑容器：display:flex + overflowX:auto，与浮层解耦，不影响absolute定位 */}
+                        {/* ── ② 按钮等分容器：三按钮各占 1/3（减去 8px*2 的间隙），桌面/手机都是一排不折 ── */}
                         <div
                           className="general-toolbar-row"
                           style={{
-                            display: 'flex', alignItems: 'center', gap: 8,
-                            flexWrap: 'nowrap', overflowX: 'auto',
-                            scrollbarWidth: 'none',
+                            display: 'flex', alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                            flexWrap: 'nowrap',
                           }}
                         >
                           <style>{`
-                            .general-toolbar-row::-webkit-scrollbar { display: none; }
+                            .general-toolbar-row .gt-3cell { width: calc((100% - 16px) / 3); }
                             @media (max-width: 640px) {
-                              .gt-model-text { display: none; }
-                              .gt-model-dot { display: none; }
-                              .gt-import-text { display: none; }
+                              .general-toolbar-row .gt-3cell { width: calc((100% - 16px) / 3); }
+                              .general-toolbar-row .gt-model-text { display: none; }
+                              .general-toolbar-row .gt-model-dot { display: none; }
+                              .general-toolbar-row .gt-import-text { display: none; }
                             }
                           `}</style>
 
-                          {/* ── 🤖 模型 Chip ── */}
+                          {/* ── 🤖 模型 Button：占 1/3 ── */}
                           <button
+                            className="gt-3cell"
                             data-gt-model-chip
-                            onClick={(e) => { e.stopPropagation(); if (_ready) setShowModelPicker(s => !s); }}
-                            title={_ready
-                              ? `会话级切换模型（当前：${_chosen?.name || '默认模型'} · ${_chosen?.model || ''}）`
-                              : '先发送任意一条消息建立会话，之后才能为这个会话单独选模型'}
+                            onClick={(e) => { e.stopPropagation(); setShowModelPicker(s => !s); }}
+                            title={`会话级切换模型（当前：${_chosen?.name || '默认模型'} · ${_chosen?.model || ''}）`}
                             style={{
-                              ..._chipBase, flexShrink: 0,
+                              ..._chipBase,
                               border: '1px solid #d6d6e0',
-                              background: _ready ? '#fafafa' : '#f4f4f5',
-                              cursor: _ready ? 'pointer' : 'not-allowed',
-                              opacity: _ready ? 1 : 0.55,
+                              background: '#fafafa',
+                              cursor: 'pointer',
                               color: '#333',
                             }}
                           >
                             🤖{' '}
-                            <span className="gt-model-text" style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>
-                              {_ready ? (_chosen?.name || '默认模型') : '发送第一条后可选模型'}
+                            <span className="gt-model-text" style={{
+                              fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100,
+                            }}>
+                              {_chosen?.name || '默认模型'}
                             </span>
-                            {_ready && (
-                              <>
-                                <span className="gt-model-dot" style={{ color: '#888' }}>·</span>
-                                <span className="gt-model-text" style={{ color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>
-                                  {_chosen?.model || ''}
-                                </span>
-                                <span style={{ color: '#aaa' }}>{showModelPicker ? '▲' : '▼'}</span>
-                              </>
-                            )}
+                            <span className="gt-model-dot" style={{ color: '#888' }}>·</span>
+                            <span className="gt-model-text" style={{
+                              color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110,
+                            }}>
+                              {_chosen?.model || ''}
+                            </span>
+                            <span style={{ color: '#aaa' }}>{showModelPicker ? '▲' : '▼'}</span>
                           </button>
 
-                          {/* ── 🎭 角色 Chip ── */}
+                          {/* ── 🎭 角色 Button：占 1/3 ── */}
                           <button
+                            className="gt-3cell"
                             data-gt-role-chip
-                            onClick={(e) => { e.stopPropagation(); if (__ready) setShowRolePicker(s => !s); }}
-                            title={__ready
-                              ? `当前角色「${__role.name}」：${__role.brief}。点击切换7款内置角色。`
-                              : '先发送任意一条消息建立会话，之后才能切换角色模式'}
+                            onClick={(e) => { e.stopPropagation(); setShowRolePicker(s => !s); }}
+                            title={`当前角色「${__role.name}」：${__role.brief}。点击切换7款内置角色。`}
                             style={{
-                              ..._chipBase, flexShrink: 0,
+                              ..._chipBase,
                               border: '1px solid #ffe7c2',
-                              background: __ready ? '#fffaf1' : '#fff9ee',
-                              cursor: __ready ? 'pointer' : 'not-allowed',
-                              opacity: __ready ? 1 : 0.6,
+                              background: '#fffaf1',
+                              cursor: 'pointer',
                               color: '#333',
                             }}
                           >
                             <span>{__role.emoji}</span>
-                            <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 82 }}>{__role.name}</span>
-                            {__ready && <span style={{ color: '#bbb' }}>{showRolePicker ? '▲' : '▼'}</span>}
+                            <span style={{
+                              fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110,
+                            }}>{__role.name}</span>
+                            <span style={{ color: '#bbb' }}>{showRolePicker ? '▲' : '▼'}</span>
                           </button>
 
-                          {/* ── 📥 导入角色卡按钮 + 隐藏 file input ── */}
+                          {/* ── 📥 导入角色卡 Button：占 1/3 ── */}
                           <input
                             ref={stCharCardRef}
                             type="file"
@@ -3877,34 +3906,39 @@ export default function ChatPanel() {
                             }}
                           />
                           <button
+                            className="gt-3cell"
                             onClick={(e) => { e.stopPropagation(); stCharCardRef.current?.click(); }}
                             style={{
-                              ..._chipBase, flexShrink: 0, marginLeft: 'auto',
+                              ..._chipBase,
                               border: '1px solid #cfd8ff',
-                              background: '#f4f6ff', cursor: 'pointer', color: '#2f4fcf',
+                              background: '#f4f6ff',
+                              cursor: 'pointer',
+                              color: '#2f4fcf',
                             }}
                             title="导入 Silly Tavern V2/V3 格式的 JSON 角色卡（非多模态），自动生成人物草稿并一键入库到【人物】维度"
                           >
                             📥<span className="gt-import-text">导入角色卡</span>
                           </button>
-                          {stImportMsg && (
+                        </div>
+
+                        {/* 导入角色卡结果提示（贴在按钮行下方，长度不足时也显示一行小字） */}
+                        {stImportMsg && (
+                          <div style={{ fontSize: 12, padding: '2px 2px 0 2px' }}>
                             <span style={{
-                              fontSize: 12,
                               color: stImportMsg.startsWith('✅') ? '#288f2b' : '#c32e2e',
-                              flexShrink: 0,
                             }}>
                               {stImportMsg}
                             </span>
-                          )}
-                        </div>
+                          </div>
+                        )}
 
-                        {/* ── 模型下拉浮层：挂在外层 overflow:visible 的 relative 容器下，不会被父容器 clip ── */}
-                        {showModelPicker && _ready && (
+                        {/* ── 模型下拉浮层：挂外层 overflow:visible，不被横滑裁剪 ── */}
+                        {showModelPicker && (
                           <div
                             data-gt-model-popover
                             onClick={e => e.stopPropagation()}
                             style={{
-                              position: 'absolute', left: 6, bottom: '100%', marginBottom: 4, zIndex: 100,
+                              position: 'absolute', left: 10, bottom: '100%', marginBottom: 4, zIndex: 100,
                               minWidth: 260, maxHeight: 320, overflowY: 'auto', padding: 6,
                               background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
                               boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
@@ -3942,13 +3976,13 @@ export default function ChatPanel() {
                           </div>
                         )}
 
-                        {/* ── 角色下拉浮层：同外层，保证不被横滑裁剪 ── */}
-                        {showRolePicker && __ready && (
+                        {/* ── 角色下拉浮层：挂外层 overflow:visible，不被横滑裁剪 ── */}
+                        {showRolePicker && (
                           <div
                             data-gt-role-popover
                             onClick={e => e.stopPropagation()}
                             style={{
-                              position: 'absolute', right: 6, bottom: '100%', marginBottom: 4, zIndex: 101,
+                              position: 'absolute', right: 10, bottom: '100%', marginBottom: 4, zIndex: 101,
                               minWidth: 280, maxHeight: 360, overflowY: 'auto', padding: 6,
                               background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
                               boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
