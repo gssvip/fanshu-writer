@@ -1722,24 +1722,32 @@ def _parse_character_card(title, content):
       1) 姓名|身份|性格|动机|背景|关系|能力|物品  （| 分隔）
       2) 姓名：xxx\\n身份：xxx\\n...  （字段名引导）
       3) 【姓名】xxx\\n【身份】xxx\\n...
-      4) 纯文本：首行/标题为姓名，其余为性格
+      4) 【Silly Tavern 角色卡导入】标准套版：
+         【角色名】 / 【性格/人格】 / 【外貌/背景描述】 / 【所处剧情场景/当前局面】 /
+         【对白示例】 / 【角色开场第一句话/动作】 / 【创作者备注】
+      5) 纯文本：首行/标题为姓名，其余为性格
     """
     fields = ['name', 'identity', 'personality', 'motivation', 'background', 'relationships', 'abilities', 'items']
-    # 字段关键词映射（支持中文标签）
+    # 字段关键词映射（支持中文标签 + Silly Tavern 导入专用标签）
     key_map = {
-        'name': ['姓名', '名字', '名称'],
-        'role': ['角色', '定位'],
-        'identity': ['身份', '职业'],
-        'personality': ['性格', '个性'],
-        'motivation': ['动机', '目的'],
-        'background': ['背景', '来历'],
-        'relationships': ['关系', '人际关系'],
-        'abilities': ['能力', '技能', '金手指'],
-        'items': ['物品', '装备'],
+        'name':        ['姓名', '名字', '名称', '角色名'],
+        'role':        ['角色', '定位', '角色定位'],
+        'identity':    ['身份', '职业'],
+        'personality': ['性格', '个性', '人格'],
+        'motivation':  ['动机', '目的'],
+        'background':  ['背景', '来历', '外貌', '外貌/背景描述', '背景描述', '外貌描述'],
+        'relationships': ['关系', '人际关系', '所处剧情场景', '当前局面', '所处剧情场景/当前局面'],
+        'abilities':   ['能力', '技能', '金手指', '对白示例', '说话风格', '对白风格'],
+        'items':       ['物品', '装备', '持有物'],
+        # 额外字段（用 result_extra 承载，不与标准 8 字段混用，避免覆盖）
+        '__extra_first_line': ['角色开场第一句话', '角色开场第一句话/动作', '开场第一句'],
+        '__extra_notes':      ['创作者备注', '备注', '作者备注'],
+        '__extra_source_fn':  ['Silly Tavern 角色卡源文件名', '源文件名'],
     }
     result = {f: '' for f in fields}
     result['name'] = title or '未命名'
     result['role'] = ''
+    result_extra: dict = {}
 
     text = content.strip()
     # 策略1：| 分隔
@@ -1755,21 +1763,79 @@ def _parse_character_card(title, content):
     # 策略2/3：按行解析，匹配字段关键词
     lines = [l.strip() for l in text.split('\n') if l.strip()]
     matched_any = False
+    # 当前收集目标字段（用于多行值，遇到下一行引导行则结束）
+    cur_field: str | None = None
+    cur_buf: list[str] = []
+    def _flush():
+        nonlocal cur_field, cur_buf
+        if cur_field and cur_buf:
+            v = '\n'.join(cur_buf).strip()
+            if not v:
+                pass
+            elif cur_field.startswith('__extra_'):
+                # 额外字段 → 存到 result_extra
+                result_extra[cur_field] = (result_extra.get(cur_field) or '') + v
+            else:
+                prev = (result.get(cur_field) or '').strip()
+                result[cur_field] = (prev + '\n' + v).strip() if prev else v
+        cur_field = None
+        cur_buf = []
+    all_labels = [label for labels in key_map.values() for label in labels]
+    lead_re = re.compile(
+        r'^(?:【|\[)?(' + '|'.join(re.escape(x) for x in sorted(all_labels, key=len, reverse=True)) +
+        r')(?:】|\])?[:：]?\s*(.*)$'
+    )
     for line in lines:
-        m = re.match(r'^(?:【|\[)?(姓名|名字|名称|角色|定位|身份|职业|性格|个性|动机|目的|背景|来历|关系|人际关系|能力|技能|金手指|物品|装备)(?:】|\])?[:：]\s*(.+)$', line)
+        m = lead_re.match(line)
         if m:
+            _flush()
             matched_any = True
             label = m.group(1)
             value = m.group(2).strip()
-            for f, keys in key_map.items():
-                if label in keys:
-                    result[f] = value
+            # 找出归属字段（先取命中的字段key）
+            target = None
+            for f, labels in key_map.items():
+                if label in labels:
+                    target = f
                     break
+            if target is None:
+                # 兜底：标准字段直接按原行识别
+                cur_field = None
+            else:
+                cur_field = target
+                if value:
+                    cur_buf = [value]
+                else:
+                    cur_buf = []
+        else:
+            if cur_field:
+                cur_buf.append(line)
+            else:
+                # 未在任何引导字段下：当做 personality 的补充文本（常见纯文本场景）
+                cur_field = 'personality'
+                cur_buf = [line]
+    _flush()
     if matched_any:
         if title and not result['name']:
             result['name'] = title
         elif not result['name'] or result['name'] == '未命名':
             result['name'] = title or lines[0][:20]
+        # 把额外字段（开场/对白示例风格/备注/源文件）合并到标准字段，避免写 DB 时丢失：
+        #   abilities 字段追加 对白示例+说话风格
+        if result_extra.get('__extra_first_line'):
+            # 开场第一句 → 塞到 background 末尾（便于人物出场直接引用）
+            add = f"【出场第一句话/动作】{result_extra['__extra_first_line']}"
+            result['background'] = (result['background'] + '\n' + add).strip() if result['background'] else add
+        if result_extra.get('__extra_notes'):
+            add = f"【创作者备注】{result_extra['__extra_notes']}"
+            # 备注 → 塞到 background + personality 末尾（避免丢）
+            for slot in ('background', 'personality'):
+                prev = (result.get(slot) or '').strip()
+                result[slot] = (prev + '\n' + add).strip() if prev else add
+        if result_extra.get('__extra_source_fn'):
+            add = f"【来源】Silly Tavern 角色卡：{result_extra['__extra_source_fn']}"
+            prev = (result.get('background') or '').strip()
+            result['background'] = (prev + '\n' + add).strip() if prev else add
         return result
 
     # 策略4：纯文本兜底
@@ -7262,28 +7328,69 @@ def chat_general():
     req_role_id = (data.get('role_id') or '').strip() or None
     if not message:
         return jsonify({'error': '缺少 message'}), 400
-
     # book_id 为空 = 纯闲聊会话（scope=general_global）
     scope = 'general_global' if not book_id else 'general_per_book'
     book_title = ''
     bb_summary = ''
+    book = None
+    bb = None
+    base_system = ''
+    # 最近章节 + 下一章号（与 chat_smart 统一口径，避免通用聊"姜离是主角吗"回答错——因为没读到人物采纳资料）
+    recent_chapters: list = []
+    next_chapter_num: int | None = None
+    toc_block = ''
     if book_id:
         book = Book.query.get(book_id)
         if not book:
             return jsonify({'error': '书籍不存在'}), 404
         book_title = book.title or ''
         bb = BookBible.query.filter_by(book_id=book_id).first()
-        if bb:
-            non_empty_fields = [f for f in [
-                ('concept', '核心构思'), ('worldbuilding', '世界观'),
-                ('character_profiles', '人物'), ('plot_design', '大纲'),
-                ('timeline', '剧情线'), ('style_guide', '文风'),
-            ] if getattr(bb, f[0], None) and str(getattr(bb, f[0])).strip()]
-            bb_summary = '、'.join(nf[1] for nf in non_empty_fields) if non_empty_fields else '暂无已填充维度'
-    else:
-        book = None
-        bb = None
-
+        # ===== 关键修复：通用聊天读取"当前作品已采纳各维度内容"（人物/设定/世界观/大纲…）=====
+        # 之前 chat_general 只用了 bb_summary = "已填充维度摘要：人物、世界观" → 纯标签，没有真正把人物内容喂给LLM
+        # → 用户截图里说"姜离是主角你怎么忘了"就是因为没注入已采纳的 character_profiles/concept 等内容
+        # 改法：直接复用 chat_smart 链路的 build_chat_system_prompt（完整注入9个维度字段 + TOC + 最近章节 + 章节号铁律）
+        from app import Chapter, parse_chapter_number
+        try:
+            ch_info = _get_latest_chapter_info(book_id)
+            next_chapter_num = ch_info['next_num']
+            recent_raw = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+            def _ck(c):
+                n = parse_chapter_number(c.title or '')
+                return n if isinstance(n, int) and n > 0 else (99999 + int(c.order_index or 0))
+            recent_sorted = sorted(recent_raw, key=_ck)
+            recent_chapters = [
+                {
+                    'title': ch.title or f'第{ch.order_index or 0}章',
+                    'word_count': getattr(ch, 'word_count', 0) or 0,
+                    'order_index': int(ch.order_index or 0),
+                } for ch in recent_sorted[-5:]
+            ]
+        except Exception:
+            recent_chapters = []
+            next_chapter_num = None
+        try:
+            toc_block = _build_toc_block(book_id)
+        except Exception:
+            toc_block = ''
+        # 复用 chat_smart 的维度感知 system_prompt（完整注入构思/人物/世界观/核心规则/大纲/剧情线/伏笔/地点/文风 + 最近章节 + TOC + 章节号铁律）
+        # 用 PromptContextCache 命中，减少 DB → LLM 的 token 浪费（与正文创作链路统一）
+        try:
+            from prompt_context_cache import PromptContextCache
+            _cache = PromptContextCache.get_instance()
+            _cache_key = f'general_chat_system:{book_id}'
+            def _builder():
+                return build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block)
+            base_system = _cache.get_or_build(_cache_key, _builder, ttl_sec=900)
+        except Exception:
+            base_system = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block)
+        # bb_summary 升级成非空的"维度摘要"（命中创作关键词的引用前言要用）：维度名+是否填充，不再是大白话标签
+        non_empty_fields = [f for f in [
+            ('concept', '核心构思'), ('worldbuilding', '世界观'), ('key_rules', '核心规则'),
+            ('character_profiles', '人物'), ('plot_design', '大纲'),
+            ('timeline', '剧情线'), ('foreshadowing', '伏笔'),
+            ('locations', '地点'), ('style_guide', '文风'),
+        ] if getattr(bb, f[0], None) and str(getattr(bb, f[0])).strip()]
+        bb_summary = '、'.join(nf[1] for nf in non_empty_fields) if non_empty_fields else '暂无已填充维度'
     # 命中维度检测（零LLM快路径）
     hit_suggestions = detect_dimension_hits(message) if detect_dimension_hits else []
 
@@ -7353,15 +7460,106 @@ def chat_general():
         for k, v in _var_ctx.items():
             s = s.replace('{' + k + '}', str(v))
         return s
-    system_prompt = build_general_chat_system_prompt()
+    # ============== system_prompt 合成：==============
+    #   · 纯闲聊（无book_id）：沿用 build_general_chat_system_prompt 的自由聊天规则
+    #   · 绑定作品（有book_id）：核心部分复用 build_chat_system_prompt（已完整注入构思/人物/世界观/核心规则/大纲/剧情线/伏笔/地点/文风 + TOC + 最近章节 + 章节号铁律）
+    #       再叠加通用聊天专属规则（命中创作关键词→气泡+落卡、不要瞎编榜单、扫榜走Step1工具）
+    _general_only = build_general_chat_system_prompt()
+    if book_id and base_system:
+        # 把通用聊天的"闲聊自由/命中创作话题时的行为/扫榜禁令"取出来，拼到 base_system 末尾（避免 base_system 的写作协作口吻覆盖掉闲聊自由）
+        _extra_rule_lines = []
+        _capture = False
+        for _ln in _general_only.splitlines():
+            if _ln.startswith('二、命中创作话题时的行为'):
+                _capture = True
+            if _capture:
+                _extra_rule_lines.append(_ln)
+        _extra_rules = '\n'.join(_extra_rule_lines).strip()
+        system_prompt = base_system.rstrip() + "\n\n================================\n【通用聊天模式补充说明】\n"
+        system_prompt += "- 在【设定/通用】里：作者既可讨论创作，也可能问无关创作的闲聊问题（编程/科普/生活…）。只要不是创作话题，就不要把话题往创作上扯，直接聊对应的话题内容，简洁有人情味。\n"
+        system_prompt += f"- 当前作品《{book_title}》已填充维度库：{bb_summary or '暂无已填充维度'}。上述 bible 资料是作者已采纳落地的内容，回答任何创作相关问题时**以落地资料为准，不反着已采纳内容瞎编**（例如：落地资料里主角是姜离，就不要把林玄当主角）。\n"
+        if _extra_rules:
+            system_prompt += "\n" + _extra_rules + "\n"
+    else:
+        system_prompt = _general_only
     # 把当前 persona + 上下文变量 注入到 system_prompt 末尾（prepend 变量说明）
     _var_intro = f"【运行时上下文变量，可在回答中按需引用】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
     if _role_extra:
         system_prompt = system_prompt.rstrip() + "\n\n【当前人格角色】用户已为本次会话切换到「" + _role_name + "」模式。严格按以下身份说明输出：\n" + _role_extra + "\n\n" + _var_intro
     else:
         system_prompt = system_prompt.rstrip() + "\n\n" + _var_intro
-    # 用户 message 里的 {变量} 也顺手替换（方便用户直接写"按{date}今天的榜单分析"）
-    enriched = _var_replace(wrap_message_with_context(message, book_title, bb_summary))
+    # ============== 用户消息前置"引用前言"：命中写作相关时，再附加一份"当前落地资料精要"==============
+    # 原有 wrap_message_with_context(message, book_title, bb_summary) 只给标签，LLM 根本读不到人物细节
+    # → 修复：命中 WRITING_TOTAL_HINTS 时，把实际落地内容（9维度字段 + 最近章节 + TOC 摘要）完整附到用户消息前面
+    #    这样用户说"姜离是主角吗" LLM 就能直接从引用前言里查到姜离 = 主角，不会回答错。
+    try:
+        from general_chat_hitter import WRITING_TOTAL_HINTS as _WTH
+    except Exception:
+        _WTH = []
+    _talking_creation = bool(_WTH) and any(h in message for h in _WTH)
+    _lead_ref = ''
+    if book_id and _talking_creation and bb:
+        lead_parts: list[str] = []
+        lead_parts.append('（以下为系统引用：作者当前作品《' + (book_title or '未命名') + '》已经落地采纳的资料，回答创作相关问题时先以引用里的内容为准，不确定再问作者。）')
+        lead_parts.append('【已填充维度】：' + (bb_summary or '暂无已填充维度'))
+        # 9 维度内容（与 build_chat_system_prompt 的 9 维度一致）精简引用（不重复 system_prompt 里的大段，但保证用户问"姜离是谁"时引用里能定位到姓名）
+        dim_ref = [
+            ('核心构思', 'concept', 1800),
+            ('人物档案', 'character_profiles', 2800),   # 人物给更多空间（最容易问的就是主角/反派名字）
+            ('世界观', 'worldbuilding', 1800),
+            ('核心规则', 'key_rules', 1400),
+            ('大纲', 'plot_design', 1800),
+            ('剧情线', 'timeline', 1200),
+            ('伏笔', 'foreshadowing', 1000),
+            ('地点', 'locations', 800),
+            ('文风指南', 'style_guide', 800),
+        ]
+        for label, field, cap in dim_ref:
+            v = (getattr(bb, field, '') or '').strip()
+            if not v:
+                continue
+            # 人物 JSON 数组：折叠姓名行保留到引用前言里就行，让LLM立刻看到姓名映射
+            if field == 'character_profiles' and v.startswith('['):
+                try:
+                    arr = json.loads(v)
+                    if isinstance(arr, list):
+                        # 只把 name/role/identity 三列取出来列成姓名一览表（省token还能精确定位）
+                        quick = []
+                        for item in arr:
+                            if isinstance(item, dict):
+                                nm = str(item.get('name') or '').strip()
+                                if not nm:
+                                    continue
+                                _r = str(item.get('role') or '').strip()
+                                _id = str(item.get('identity') or '').strip()
+                                line = f"- {nm}"
+                                if _r:
+                                    line += f"（角色定位：{_r}）"
+                                if _id:
+                                    line += f" 身份/职业：{_id}"
+                                quick.append(line)
+                        if quick:
+                            lead_parts.append(f'\n【{label}·人名一览表（落地）】\n' + '\n'.join(quick[:30]) + (f'\n（共{len(arr)}人，完整档案见 system bible）' if len(arr) > 30 else ''))
+                            continue
+                except Exception:
+                    pass
+            # 其他维度：按 cap 字符数裁剪引用（system_prompt 里还有完整版，不会丢）
+            snippet = v if len(v) <= cap else (v[:cap] + '\n…（完整内容已在 system prompt 中注入）')
+            lead_parts.append(f'\n【{label}·落地摘要】\n{snippet}')
+        if recent_chapters:
+            lines = []
+            for ch in recent_chapters:
+                lines.append(f"- {ch.get('title') or '未命名章'}（{ch.get('word_count', 0)}字）")
+            lead_parts.append('\n【最近5章】\n' + '\n'.join(lines))
+        _lead_ref = '\n'.join(lead_parts) + '\n————————引用结束————————\n【作者原话】\n'
+    elif _talking_creation:
+        # 纯闲聊命中创作关键词但没绑定作品 → 走 general_chat_hitter 原版前言（提示作品未绑定）
+        _lead_ref = None
+    if _lead_ref:
+        user_with_ref = _lead_ref + message
+    else:
+        user_with_ref = wrap_message_with_context(message, book_title, bb_summary)
+    enriched = _var_replace(user_with_ref)
     history = load_session_messages(session)
     # 【P1-3 meta】把当前角色以 SSE meta 回传前端，便于右上角 chip UI 同步（保证刷新后 UI 显示的角色跟后端真正用到的一致）
     _p13_meta = {'role_id': chosen_role_id, 'role_name': _role_name, 'vars': _var_ctx}
