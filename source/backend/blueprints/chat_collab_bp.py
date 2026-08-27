@@ -33,7 +33,7 @@ chat_collab_bp = Blueprint('chat_collab', __name__)
 
 # SSE 保活工具（SSE_HEARTBEAT_COMMENT / SSE_HB_INTERVAL_SEC / gw_stream_with_hb）
 # 已抽到 sse_keepalive.py 独立模块，避免 chat_collab_bp.py 巨石继续增长（架构门禁约束）
-from sse_keepalive import gw_stream_with_hb, SSE_HEARTBEAT_COMMENT, SSE_HB_INTERVAL_SEC, HEARTBEAT
+from sse_keepalive import gw_stream_with_hb, SSE_HEARTBEAT_COMMENT, SSE_HB_INTERVAL_SEC, HEARTBEAT, _is_stream_retry
 
 # 会话消息持久化（load/_safe_save/断流抢救）已抽到 session_persist.py 独立模块
 # （架构门禁约束：chat_collab_bp.py 行数禁止超过基线，新功能必须拆模块）
@@ -1044,6 +1044,11 @@ def chat_smart():
     book_id = data.get('book_id')
     session_id = data.get('session_id')
     message = (data.get('message') or '').strip()
+    # P1-1 会话级切模型：请求体 ai_config_id > 会话 meta_json.ai_config_id > 全局激活
+    req_ai_config_id = (data.get('ai_config_id') or '').strip() or None
+    # P1-3 内置角色 persona：default/polish/toxic_critic/architect/worldbuilder/marketeer/interviewer
+    req_role_id = (data.get('role_id') or '').strip() or None
+    # 持久化在会话级 meta_json.role_id（下次沿用，除非用户切）
     scope = data.get('scope', 'general')
 
     if not book_id or not message:
@@ -1107,12 +1112,34 @@ def chat_smart():
     messages = build_context_messages(system_prompt, history, enriched_user_message)
 
     # 获取 LLM 配置 + gateway
-    cfg = AIConfig.get_active()
+    # P1-1 会话级切模型：优先级 req_ai_config_id > session.meta_json.ai_config_id > 全局激活
+    session_cfg_id = None
+    try:
+        if session and hasattr(session, 'meta_json') and session.meta_json:
+            session_meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads(session.meta_json or '{}')
+            session_cfg_id = (session_meta.get('ai_config_id') or '').strip() or None
+    except Exception:
+        session_cfg_id = None
+    chosen_cfg_id = req_ai_config_id or session_cfg_id
+    cfg = AIConfig.get_by_id(chosen_cfg_id) if chosen_cfg_id else None
+    if cfg and not cfg.api_key:
+        cfg = None  # 指定配置但无key → 回退全局
+    if cfg is None:
+        cfg = AIConfig.get_active()
     if not cfg or not cfg.api_key:
         return jsonify({'error': '请先配置 AI'}), 400
-    import app as app_module
-    base_url, api_key, model = get_llm_config(app_module)
-    gw = LLMGateway(base_url, api_key, model)
+    # 把当前选择持久化到 session.meta_json（保证下一轮聊天沿用同一模型，即会话级锁定）
+    if chosen_cfg_id and chosen_cfg_id == cfg.id and session:
+        try:
+            meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+            if not isinstance(meta, dict): meta = {}
+            if meta.get('ai_config_id') != cfg.id:
+                meta['ai_config_id'] = cfg.id
+                session.meta_json = json.dumps(meta, ensure_ascii=False)
+                db.session.add(session); db.session.commit()
+        except Exception:
+            pass  # 持久化失败不阻断主流程
+    gw = LLMGateway(cfg.base_url, cfg.api_key, cfg.model)
 
     def generate():
         # === SSE 双兜底·第 1 层：函数第一行先发心跳注释帧，占住连接防 Render 30s idle timeout ===
@@ -1129,6 +1156,9 @@ def chat_smart():
             for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=4096):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT  # 裸注释心跳帧：前端自动忽略，不进正文
+                    continue
+                if _is_stream_retry(chunk):
+                    yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": chunk.info}, ensure_ascii=False)}\n\n'
                     continue
                 full_text.append(chunk)
                 yield f'data: {json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)}\n\n'
@@ -2025,6 +2055,9 @@ def _action_master_create(book, session, instruction, gw, sse):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
                     continue
+                if _is_stream_retry(chunk):
+                    yield sse({'type': 'meta', 'kind': 'stream_retry', 'info': chunk.info})
+                    continue
                 content += chunk
                 yield sse({'type': 'delta', 'content': chunk})
         except GeneratorExit:
@@ -2765,6 +2798,9 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         for chunk in gw_stream_with_hb(gw, messages, temperature=0.85, max_tokens=4096):
             if chunk is HEARTBEAT:
                 yield SSE_HEARTBEAT_COMMENT
+                continue
+            if _is_stream_retry(chunk):
+                yield sse({'type': 'meta', 'kind': 'stream_retry', 'info': chunk.info})
                 continue
             content += chunk
             yield sse({'type': 'delta', 'content': chunk})
@@ -3947,6 +3983,9 @@ def smart_general():
             for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=4096):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
+                    continue
+                if _is_stream_retry(chunk):
+                    yield sse({'type': 'meta', 'kind': 'stream_retry', 'info': chunk.info})
                     continue
                 full.append(chunk)
                 yield sse({'type': 'delta', 'content': chunk})
@@ -5384,6 +5423,9 @@ def smart_generate():
                         if chunk is HEARTBEAT:
                             yield SSE_HEARTBEAT_COMMENT
                             continue
+                        if _is_stream_retry(chunk):
+                            yield sse({'type': 'meta', 'kind': 'stream_retry', 'info': chunk.info})
+                            continue
                         full.append(chunk)
                         yield sse({'type': 'delta', 'content': chunk})
                 except GeneratorExit:
@@ -5639,6 +5681,9 @@ def smart_dim_edit():
                     if chunk is HEARTBEAT:
                         yield SSE_HEARTBEAT_COMMENT
                         continue
+                    if _is_stream_retry(chunk):
+                        yield sse({'type': 'meta', 'kind': 'stream_retry', 'info': chunk.info})
+                        continue
                     full.append(chunk)
                     yield sse({'type': 'delta', 'content': chunk})
                 raw_joined = ''.join(full)
@@ -5879,6 +5924,9 @@ def smart_batch():
                         for chunk in gw_stream_with_hb(gw, _msgs_call, temperature=_temp, max_tokens=_max_tok):
                             if chunk is HEARTBEAT:
                                 yield SSE_HEARTBEAT_COMMENT
+                                continue
+                            if _is_stream_retry(chunk):
+                                yield sse({'type': 'meta', 'kind': 'stream_retry', 'info': chunk.info})
                                 continue
                             raw_chunks.append(chunk)
                             yield sse({'type': 'delta', 'content': chunk})
@@ -6166,6 +6214,9 @@ def smart_deai():
                 for chunk in gw_stream_with_hb(gw, _msgs_call, temperature=_temp, max_tokens=_max_tok):
                     if chunk is HEARTBEAT:
                         yield SSE_HEARTBEAT_COMMENT
+                        continue
+                    if _is_stream_retry(chunk):
+                        yield sse({'type': 'meta', 'kind': 'stream_retry', 'info': chunk.info})
                         continue
                     full.append(chunk)
                     yield sse({'type': 'delta', 'content': chunk})
@@ -7232,9 +7283,65 @@ def chat_general():
         session_id = session.id
 
     # 构建 messages
+    # P1-3 内置角色 persona 表：id -> (name, system_prompt_extra)
+    _BUILTIN_ROLES = {
+        'default': ('默认助手', ''),
+        'polish': ('润色编辑', '【你的身份】网文资深文字润色编辑。习惯：① 先指出"原句→改写句"成对对比，绝不空泛说"不通顺"；② 每条问题标注坏味道类别（碎句/被字句/AI味/句号过载/逻辑跳步）；③ 最后附1条可执行的自检清单。绝不居高临下，尽量幽默但不油。'),
+        'toxic_critic': ('毒舌读者', '【你的身份】一个付费追更十年、被流水线喂到恶心的毒舌读者。你不会网暴作者，但会不留情面地指出任何AI味、套路化、假情绪、"主角像机器人"的问题。说话风格：比喻夸张、讽刺到位、偶尔刻薄但永远针对内容，不人身攻击。用户就是作者本人，你要骂到点子上，骂完还要给一个可落地的改法。'),
+        'architect': ('剧情架构师', '【你的身份】百万字长篇剧情架构师。擅长分卷三幕结构（触发→升级→大高潮）、张力曲线（低谷期绝不能连两章、爽点密度3章一个微爽、10章一个大爽）、伏笔回收清单、CDL三角（Character/Desire/Lie vs Truth）。回复永远结构化：分卷分段，每段结尾给一个"为什么这样设计"的解释。'),
+        'worldbuilder': ('世界观策划', '【你的身份】资深世界观策划。输出永远用：能量体系分级→社会结构分层→势力地图→科技/修炼树→经济体系自洽→禁忌规则→差异化锚点 七段式结构。每一条必须回答"这对主角爽点有什么用？"，绝不空堆设定。'),
+        'marketeer': ('爆款编辑', '【你的身份】番茄/起点工业化爆款编辑。只关心：① 书名（3s内抓眼球公式：关键词+反差+金手指暗示）；② 一句话梗（hook，20字内可复述）；③ 前3章钩子密度（第1章末尾必须有反常识反转；第3章必须展示金手指第一次兑现）；④ 爽点文案（能直接当广告标题）。给出的都是可落地的工业标准，不含"写得更好看"这种空话。'),
+        'interviewer': ('深度采访', '【你的身份】调查记者。你不做结论，你只追问。针对用户聊的任何人物/剧情/设定，你的工作是逼出冰山底下没说出来的内容。每轮回复至少3个连续追问，从表面→动机→矛盾→代价→蝴蝶效应，层层深入，绝对不代替用户回答。'),
+    }
+    # 选角色：请求 > 会话meta_json.role_id > default
+    _session_role_id = None
+    try:
+        if session and hasattr(session, 'meta_json') and session.meta_json:
+            _meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads(session.meta_json or '{}')
+            _session_role_id = (_meta.get('role_id') or '').strip() or None
+    except Exception:
+        _session_role_id = None
+    chosen_role_id = req_role_id or _session_role_id or 'default'
+    if chosen_role_id not in _BUILTIN_ROLES: chosen_role_id = 'default'
+    # 持久化 role_id 到 session.meta_json（下次沿用）
+    if req_role_id and chosen_role_id == req_role_id and session:
+        try:
+            _meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+            if not isinstance(_meta, dict): _meta = {}
+            if _meta.get('role_id') != chosen_role_id:
+                _meta['role_id'] = chosen_role_id
+                session.meta_json = json.dumps(_meta, ensure_ascii=False)
+                db.session.add(session); db.session.commit()
+        except Exception:
+            pass
+    _role_name, _role_extra = _BUILTIN_ROLES[chosen_role_id]
+    # P1-3 提示词变量：{date} {time} {current_book} {model_name}，注入到 system_prompt + enriched user message
+    from datetime import datetime, timezone, timedelta
+    _tz = timezone(timedelta(hours=8))
+    _now = datetime.now(_tz)
+    _var_ctx = {
+        'date': _now.strftime('%Y-%m-%d'),
+        'time': _now.strftime('%H:%M'),
+        'current_book': book_title or '(未绑定作品)',
+        'model_name': (cfg.model if 'cfg' in dir() and cfg else '') or (AIConfig.get_active().model if AIConfig.get_active() else ''),
+    }
+    def _var_replace(s: str) -> str:
+        if not s: return s
+        for k, v in _var_ctx.items():
+            s = s.replace('{' + k + '}', str(v))
+        return s
     system_prompt = build_general_chat_system_prompt()
-    enriched = wrap_message_with_context(message, book_title, bb_summary)
+    # 把当前 persona + 上下文变量 注入到 system_prompt 末尾（prepend 变量说明）
+    _var_intro = f"【运行时上下文变量，可在回答中按需引用】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+    if _role_extra:
+        system_prompt = system_prompt.rstrip() + "\n\n【当前人格角色】用户已为本次会话切换到「" + _role_name + "」模式。严格按以下身份说明输出：\n" + _role_extra + "\n\n" + _var_intro
+    else:
+        system_prompt = system_prompt.rstrip() + "\n\n" + _var_intro
+    # 用户 message 里的 {变量} 也顺手替换（方便用户直接写"按{date}今天的榜单分析"）
+    enriched = _var_replace(wrap_message_with_context(message, book_title, bb_summary))
     history = load_session_messages(session)
+    # 【P1-3 meta】把当前角色以 SSE meta 回传前端，便于右上角 chip UI 同步（保证刷新后 UI 显示的角色跟后端真正用到的一致）
+    _p13_meta = {'role_id': chosen_role_id, 'role_name': _role_name, 'vars': _var_ctx}
     # 最大上下文：最近30条（通用聊天需要更长记忆，避免落卡内容+聊天上下文容易丢）
     if len(history) > 30:
         history = history[-30:]
@@ -7245,17 +7352,50 @@ def chat_general():
             messages.append(msg_entry)
     messages.append({'role': 'user', 'content': enriched[:8000]})
 
-    cfg = AIConfig.get_active()
+    # P1-1 会话级切模型：优先级 req_ai_config_id > session.meta_json.ai_config_id > 全局激活
+    session_cfg_id = None
+    try:
+        if session and hasattr(session, 'meta_json') and session.meta_json:
+            session_meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads(session.meta_json or '{}')
+            session_cfg_id = (session_meta.get('ai_config_id') or '').strip() or None
+    except Exception:
+        session_cfg_id = None
+    chosen_cfg_id = req_ai_config_id or session_cfg_id
+    cfg = AIConfig.get_by_id(chosen_cfg_id) if chosen_cfg_id else None
+    if cfg and not cfg.api_key:
+        cfg = None  # 指定配置但无key → 回退全局
+    if cfg is None:
+        cfg = AIConfig.get_active()
     if not cfg or not cfg.api_key:
         return jsonify({'error': '请先配置 AI'}), 400
-    import app as app_module
-    base_url, api_key, model = get_llm_config(app_module)
-    gw = LLMGateway(base_url, api_key, model)
+    # 把当前选择持久化到 session.meta_json（保证下一轮聊天沿用同一模型，即会话级锁定）
+    if chosen_cfg_id and chosen_cfg_id == cfg.id and session:
+        try:
+            meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+            if not isinstance(meta, dict): meta = {}
+            if meta.get('ai_config_id') != cfg.id:
+                meta['ai_config_id'] = cfg.id
+                session.meta_json = json.dumps(meta, ensure_ascii=False)
+                db.session.add(session); db.session.commit()
+        except Exception:
+            pass  # 持久化失败不阻断主流程
+    gw = LLMGateway(cfg.base_url, cfg.api_key, cfg.model)
+    # P1-5 MCP: 读 MCP_SERVERS_JSON → 为通用聊天加载 function calling tools（不改动其他维度的创作链路）
+    mcp_tools: List[Dict[str, Any]] = []
+    _mcp_registry = None
+    try:
+        from mcp_client import MCPToolRegistry
+        _mcp_registry = MCPToolRegistry()
+        mcp_tools = _mcp_registry.available_tools_for_llm()
+    except Exception:
+        mcp_tools = []
 
     def generate():
         yield ': ping-heartbeat-keepalive\n\n'
         full_text = []
         try:
+            # P1-3 首帧 ⓪：把"正在生效的角色+上下文变量"告诉前端（保证刷新后UI显示的角色和后端真实生效的一致）
+            yield f'data: {json.dumps({"type": "meta", "kind": "role_applied", "info": _p13_meta}, ensure_ascii=False)}\n\n'
             # 首帧 ①：命中维度建议（前端弹气泡"是否落入XX维度？"）
             if hit_suggestions:
                 yield f'data: {json.dumps({"type": "meta", "kind": "hit_suggestions", "info": {"suggestions": hit_suggestions}}, ensure_ascii=False)}\n\n'
@@ -7266,10 +7406,18 @@ def chat_general():
             ])
             if scan_intent:
                 yield f'data: {json.dumps({"type": "meta", "kind": "scan_intent", "info": {"detected": True}}, ensure_ascii=False)}\n\n'
+            # P1-5 MCP: 有已注册 tools → 告诉前端"本次对话启用MCP tools N个"，并把 tools 透传给 LLM payload
+            _mcp_native_kwargs: Dict[str, Any] = {}
+            if mcp_tools:
+                yield f'data: {json.dumps({"type": "meta", "kind": "mcp_tools", "info": {"count": len(mcp_tools)}}, ensure_ascii=False)}\n\n'
+                _mcp_native_kwargs['tools'] = mcp_tools
 
-            for chunk in gw_stream_with_hb(gw, messages, temperature=0.7, max_tokens=4096):
+            for chunk in gw_stream_with_hb(gw, messages, temperature=0.7, max_tokens=4096, **_mcp_native_kwargs):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
+                    continue
+                if _is_stream_retry(chunk):
+                    yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": chunk.info}, ensure_ascii=False)}\n\n'
                     continue
                 full_text.append(chunk)
                 yield f'data: {json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)}\n\n'

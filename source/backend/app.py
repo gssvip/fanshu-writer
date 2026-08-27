@@ -548,6 +548,17 @@ class AIConfig(db.Model):
         db.session.commit()
         return cfg
 
+
+    @classmethod
+    def get_by_id(cls, cfg_id):
+        """P1-1 会话级切模型：按ID取指定配置（找不到返回None），绝不修改全局激活。"""
+        if not cfg_id: return None
+        try:
+            return cls.query.filter_by(id=str(cfg_id)).first()
+        except Exception:
+            return None
+
+
 class AppPreference(db.Model):
     __tablename__ = 'app_preferences'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

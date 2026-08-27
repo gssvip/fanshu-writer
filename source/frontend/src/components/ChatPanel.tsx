@@ -1,10 +1,22 @@
 import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import rehypeHighlight from 'rehype-highlight';
 import { useStore } from '../store';
 import { api } from '../api';
-import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible } from '../types';
+import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible, AIConfig } from '../types';
 import CarLogo from './CarLogo';
 // Q1：直接复用现有实体管理弹窗（跨维度重命名/合并），不再在 ChatPanel 里重复造"动作影响预览"轮子
 import EntityRegistryModal from '../pages/EntityRegistryModal';
+// P1-2 Markdown 增强：CDN 注入 KaTeX/Highlight.js 样式（避免 Vite 静态 import 缺失导致部署白屏）
+(() => {
+  if (typeof document === 'undefined') return;
+  const K = 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css';
+  const H = 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css';
+  [K, H].forEach(href => { if (!document.querySelector(`link[href="${href}"]`)) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); } });
+})();
 
 const __BUILD_TAG__ = 'v3-0814';
 
@@ -857,10 +869,27 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
           </div>
         ) : message.content ? (
           <div
-            className={`chat-msg-text ${showCollapsed ? 'chat-msg-collapsed' : ''}`}
+            className={`chat-msg-text chat-msg-markdown ${showCollapsed ? 'chat-msg-collapsed' : ''}`}
             onClick={() => { if (isLong && !streaming) setCollapsed(c => !c); }}
           >
-            {message.content}{streaming && <span className="chat-cursor">▋</span>}
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+              components={{
+                a: (p: any) => <a {...p} target="_blank" rel="noopener noreferrer" />,
+                img: (p: any) => <img {...p} loading="lazy" style={{ maxWidth: '100%', borderRadius: 8 }} />,
+                table: (p: any) => <div style={{ overflowX: 'auto' }}><table {...p} /></div>,
+                pre: (p: any) => <pre style={{ background: '#f6f7fb', padding: 10, borderRadius: 8, overflowX: 'auto', fontSize: 13, fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }} {...p} />,
+                code: (p: any) => {
+                  const { className, inline, children, ...rest } = p || ({} as any);
+                  if (inline) return <code style={{ background: '#eef0f6', padding: '1px 5px', borderRadius: 4, fontSize: 13, fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }} className={className} {...rest}>{children}</code>;
+                  return <code className={className} {...rest}>{children}</code>;
+                },
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+            {streaming && <span className="chat-cursor">▋</span>}
           </div>
         ) : streaming ? (
           <div className="chat-msg-text"><span className="chat-cursor">▋</span></div>
@@ -1060,6 +1089,27 @@ export default function ChatPanel() {
   // 通用聊天专用会话ID（与设定Tab其他维度session隔离，避免串session/记忆丢失）
   // 根因：原代码传sessionId:undefined→后端每次新建会话→聊天记忆完全丢失；若复用全局sessionId，会跟其他维度（构思/设定/正文创作）会话互相覆盖导致混乱
   const [chatGeneralSessionId, setChatGeneralSessionId] = useState<string | null>(null);
+  // P1-1 会话级切模型：从「我的」复用AIConfig列表，点选后仅对当前通用会话生效（不改全局激活）
+  const [aiConfigList, setAiConfigList] = useState<AIConfig[]>([]);
+  // 每个会话独立记忆上次选的模型：sessionId -> aiConfigId
+  const [sessionModelMap, setSessionModelMap] = useState<Record<string, string>>({});
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  // P1-3 内置角色 persona：6款常用人格（仅通用聊天生效），选中后发送给后端作为system persona前缀
+  const BUILTIN_ROLES = [
+    { id: 'default',    name: '默认助手', emoji: '🧠', brief: '正常智驾回答，不附加人格' },
+    { id: 'polish',     name: '润色编辑', emoji: '✍️', brief: '擅长文字润色，指出语病、节奏、结构问题，给出具体改写对比' },
+    { id: 'toxic_critic', name: '毒舌读者', emoji: '🔥', brief: '极度挑剔的读者视角，不留情面，专挑AI味和套路化' },
+    { id: 'architect',  name: '剧情架构师', emoji: '🧱', brief: '擅长分卷结构、张力曲线、伏笔回收、CDL角色三角' },
+    { id: 'worldbuilder', name: '世界观策划', emoji: '🗺️', brief: '擅长能量体系、势力地图、科技树/修炼树、经济体系自洽' },
+    { id: 'marketeer',  name: '爆款编辑', emoji: '📈', brief: '从书名/一句话梗/前3章钩子的工业化爆款视角把关' },
+    { id: 'interviewer', name: '深度采访', emoji: '🎙️', brief: '连续追问直到挖透设定矛盾和人物动机，擅长逼出冰山' },
+  ] as const;
+  // 通用聊天每个会话独立记住上次选的角色：sessionId -> roleId
+  const [sessionRoleMap, setSessionRoleMap] = useState<Record<string, string>>({});
+  const [showRolePicker, setShowRolePicker] = useState(false);
+  // P1-4 Silly Tavern 角色卡导入：隐藏的 file input ref + 解析工具
+  const stCharCardRef = useRef<HTMLInputElement | null>(null);
+  const [stImportMsg, setStImportMsg] = useState<string>('');  // 导入完成后的提示文本
   const [showBackfill, setShowBackfill] = useState(false);
   const [backfillLLM, setBackfillLLM] = useState<'auto' | 'always' | 'never'>('auto');
   const [backfillRunning, setBackfillRunning] = useState(false);
@@ -1080,6 +1130,27 @@ export default function ChatPanel() {
   const fixingDimKeyRef = useRef<string | null>(null);
 
   const bookId = chatPanelBookId;
+
+  // P1-1 会话级切模型：加载AIConfig列表（供模型chip下拉用）
+  useEffect(() => {
+    api.listAIConfigs().then((res) => {
+      if (res && Array.isArray(res.configs)) setAiConfigList(res.configs);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!showModelPicker) return;
+    function handler() { setShowModelPicker(false); }
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [showModelPicker]);
+
+  useEffect(() => {
+    if (!showRolePicker) return;
+    function handler() { setShowRolePicker(false); }
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [showRolePicker]);
 
   // 自动滚动
   useEffect(() => {
@@ -1463,6 +1534,13 @@ export default function ChatPanel() {
         if (evt.kind === 'attempt_reset' && evt.info) {
           const why = evt.info.reason ? `：${evt.info.reason}` : '';
           pushNote(`> 🔄 第${evt.info.attempt}/${evt.info.max_attempts || '?'}次尝试${why}\n\n`, true);
+        }
+        // 【P0-6 SSE中流续连】后端遇到503/断流后自动续接，前端显示"已续连N次"提示
+        if (evt.kind === 'stream_retry' && evt.info) {
+          const attempt = Number(evt.info.attempt) || 1;
+          const reason = String(evt.info.reason || '断流');
+          const chars = Number(evt.info.continued_chars) || 0;
+          pushNote(`\n\n> 🔄 已自动续连（第${attempt}次 · 原因：${reason} · 已保存${chars}字，无缝续写中…）\n\n`);
         }
         // 【扩展钩子】如果传了 onMeta，把 meta 事件也转交外部处理（命中维度气泡/扫榜意图/流水线）
         if (typeof onMeta === 'function') {
@@ -2494,7 +2572,11 @@ export default function ChatPanel() {
     setMessages(prev => { insertedPopupIndex.idx = prev.length - 2; return prev; });
     try {
       // 修复：传 chatGeneralSessionId（通用聊天专用），不传 undefined → 否则后端每次新建会话=记忆全丢（用户投诉：通用比普通CHATBOX差远了，没记忆没上下文）
-      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined }, ctrl.signal);
+      // P1-1 会话级切模型 + P1-3 内置角色 persona → 一并传通用聊天
+      const _sid = chatGeneralSessionId || '';
+      const _cfgId = sessionModelMap[_sid] || undefined;
+      const _roleId = sessionRoleMap[_sid] || 'default';
+      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId, roleId: _roleId }, ctrl.signal);
       // consumeSSE 最后1个参数 onSessionId=setChatGeneralSessionId：把card/done帧带回的session_id只写入 chatGeneralSessionId，不污染全局 setSessionId（避免和其他创作维度会话互串）
       await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
         // 命中创作维度 → 气泡提示一键入库
@@ -3592,6 +3674,231 @@ export default function ChatPanel() {
             {/* 输入区（设定Tab可输入；正文Tab修改模式可输入） */}
             {activeTab === 'setting' && (
               <div className="chat-input-area">
+                {/* P1-1 会话级切模型：仅在「通用」子维度显示Chip（其他维度走全局激活模型，避免维度生成链路串配置） */}
+                {selectedDim === 'general' && aiConfigList.length > 0 && (() => {
+                  const _sid = chatGeneralSessionId || '';
+                  const _chosenId = sessionModelMap[_sid];
+                  const _chosen = aiConfigList.find(c => c.id === _chosenId) || aiConfigList.find(c => c.is_active) || aiConfigList[0];
+                  return (
+                    <div style={{ position: 'relative', padding: '4px 8px 6px 8px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        className="role-chip"
+                        onClick={() => setShowModelPicker(s => !s)}
+                        style={{
+                          padding: '4px 10px', borderRadius: 999, border: '1px solid #d6d6e0',
+                          background: '#fafafa', cursor: 'pointer', fontSize: 12, display: 'inline-flex',
+                          alignItems: 'center', gap: 6, color: '#333',
+                        }}
+                        title="会话级切换模型（仅对当前通用聊天生效，不改变全局激活的默认模型）"
+                      >
+                        🤖 <span style={{ fontWeight: 600 }}>{_chosen?.name || '默认模型'}</span>
+                        <span style={{ color: '#888' }}>·</span>
+                        <span style={{ color: '#666' }}>{_chosen?.model || ''}</span>
+                        <span style={{ color: '#aaa' }}>{showModelPicker ? ' ▲' : ' ▼'}</span>
+                      </button>
+                      {showModelPicker && (
+                        <div
+                          onClick={e => e.stopPropagation()}
+                          style={{
+                            position: 'absolute', left: 6, bottom: '100%', marginBottom: 6, zIndex: 100,
+                            minWidth: 260, maxHeight: 320, overflowY: 'auto', padding: 6,
+                            background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
+                            boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
+                          }}
+                        >
+                          {aiConfigList.map(c => {
+                            const active = c.id === _chosen?.id;
+                            return (
+                              <div
+                                key={c.id}
+                                onClick={() => {
+                                  if (!_sid) return;  // 会话未建立时点选无意义：发送第一条后再选
+                                  setSessionModelMap(m => ({ ...m, [_sid]: c.id }));
+                                  setShowModelPicker(false);
+                                }}
+                                style={{
+                                  padding: '8px 10px', borderRadius: 8, cursor: _sid ? 'pointer' : 'not-allowed',
+                                  display: 'flex', flexDirection: 'column', gap: 2,
+                                  background: active ? '#eef3ff' : 'transparent',
+                                  border: active ? '1px solid #829cff' : '1px solid transparent',
+                                  opacity: c.has_key ? 1 : 0.55,
+                                }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontWeight: 600, fontSize: 13, color: '#222' }}>
+                                    {c.name || '未命名配置'}{c.is_active ? ' 🌐' : ''}
+                                  </span>
+                                  {active && <span style={{ color: '#36f', fontSize: 12 }}>当前</span>}
+                                  {!c.has_key && <span style={{ color: '#e24', fontSize: 11 }}>未填Key</span>}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#777' }}>{c.provider} · {c.model}</div>
+                              </div>
+                            );
+                          })}
+                          {!_sid && (
+                            <div style={{ fontSize: 11, color: '#999', padding: '6px 8px', borderTop: '1px dashed #eee', marginTop: 4 }}>
+                              💡 先发送第一条消息建立会话后，即可为该会话单独选模型
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+                {/* P1-3 内置角色 persona：仅通用Tab显示，与会话绑定记忆 */}
+                {(() => {
+                  const __sid = chatGeneralSessionId || '';
+                  const __rid = sessionRoleMap[__sid] || 'default';
+                  const __role = BUILTIN_ROLES.find(r => r.id === __rid) || BUILTIN_ROLES[0];
+                  return (
+                    <>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setShowRolePicker(s => !s); }}
+                        style={{
+                          padding: '4px 10px', borderRadius: 999, border: '1px solid #ffe7c2',
+                          background: '#fffaf1', cursor: 'pointer', fontSize: 12, display: 'inline-flex',
+                          alignItems: 'center', gap: 6, color: '#333',
+                        }}
+                        title={`当前角色：${__role.brief}`}
+                      >
+                        <span>{__role.emoji}</span><span style={{ fontWeight: 600 }}>{__role.name}</span>
+                        <span style={{ color: '#bbb' }}>{showRolePicker ? ' ▲' : ' ▼'}</span>
+                      </button>
+                      {showRolePicker && (
+                        <div
+                          onClick={e => e.stopPropagation()}
+                          style={{
+                            position: 'absolute', right: 6, bottom: '100%', marginBottom: 6, zIndex: 101,
+                            minWidth: 280, maxHeight: 360, overflowY: 'auto', padding: 6,
+                            background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
+                            boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
+                          }}
+                        >
+                          {BUILTIN_ROLES.map(r => {
+                            const active = r.id === __rid;
+                            return (
+                              <div
+                                key={r.id}
+                                onClick={() => {
+                                  if (__sid) setSessionRoleMap(m => ({ ...m, [__sid]: r.id }));
+                                  setShowRolePicker(false);
+                                }}
+                                style={{
+                                  padding: '8px 10px', borderRadius: 8, cursor: 'pointer', marginBottom: 4,
+                                  display: 'flex', flexDirection: 'column', gap: 3,
+                                  background: active ? '#fff3e0' : 'transparent',
+                                  border: active ? '1px solid #ffb75d' : '1px solid transparent',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <span style={{ fontWeight: 600, fontSize: 13 }}>{r.emoji} {r.name}</span>
+                                  {active && <span style={{ color: '#e97b00', fontSize: 12 }}>当前</span>}
+                                </div>
+                                <div style={{ fontSize: 11, color: '#777', lineHeight: 1.5 }}>{r.brief}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+                {/* P1-4 Silly Tavern 角色卡导入：隐藏file input + 触发按钮 */}
+                <input
+                  ref={stCharCardRef}
+                  type="file"
+                  accept="application/json,.json"
+                  style={{ display: 'none' }}
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!f) return;
+                    try {
+                      const text = await f.text();
+                      const raw = JSON.parse(text);
+                      // ========== Silly Tavern 标准字段（V2/V3 兼容）解析 ==========
+                      const firstStr = (v: any) => Array.isArray(v) ? String(v[0] || '') : String(v || '');
+                      const name = firstStr(raw.name || raw.data?.name) || '未命名角色';
+                      const description = firstStr(raw.description || raw.data?.description);
+                      const personality = firstStr(raw.personality || raw.data?.personality);
+                      const scenario = firstStr(raw.scenario || raw.data?.scenario);
+                      const first_mes = firstStr(raw.first_mes || raw.data?.first_mes);
+                      const mes_example = firstStr(raw.mes_example || raw.data?.mes_example || raw.example_dialogue || raw.data?.example_dialogue);
+                      const creator = firstStr(raw.creator || raw.data?.creator || raw.creator_notes || raw.data?.creator_notes);
+                      // 结构化输出成"人物草稿"文本（纯文本，命中气泡会弹SAVE_CHARACTER）
+                      const sections: string[] = [`【角色名】${name}`];
+                      if (personality) sections.push(`【性格/人格】\n${personality.trim()}`);
+                      if (description) sections.push(`【外貌/背景描述】\n${description.trim()}`);
+                      if (scenario) sections.push(`【所处剧情场景/当前局面】\n${scenario.trim()}`);
+                      if (mes_example) sections.push(`【对白示例】\n${mes_example.trim()}`);
+                      if (first_mes) sections.push(`【角色开场第一句话/动作】\n${first_mes.trim()}`);
+                      if (creator) sections.push(`【创作者备注】\n${creator.trim()}`);
+                      sections.push(`【Silly Tavern 角色卡源文件名】${f.name}`);
+                      const draft = sections.join('\n\n').slice(0, 6000);
+                      // 通过 onMeta 注入一条伪造的 hit_suggestions: SAVE_CHARACTER，让前端弹落卡气泡
+                      const suggestion: any = {
+                        id: 'import_' + Math.random().toString(36).slice(2, 10),
+                        dim: 'character_profiles',
+                        label: `导入角色：${name}`,
+                        preview: draft,
+                        _full_content: draft,
+                        _from_user: true,
+                        card_type: 'SAVE_CHARACTER',
+                        card_title: `🧙‍人物 · ${name}（Silly Tavern导入）`,
+                      };
+                      streamBufferRef.current = '';
+                      setMessages((prev) => {
+                        const next = [...prev];
+                        next.push({ role: 'user', content: `【导入Silly Tavern角色卡】${f.name}` });
+                        next.push({ role: 'assistant', content: '', cards: [] });
+                        return next;
+                      });
+                      // React 18 批处理：用 queueMicrotask 替代 setImmediate 保证浏览器兼容性
+                      queueMicrotask(() => {
+                        // 下一个tick：把命中气泡挂载到最新的assistant气泡
+                        setMessages((prev) => {
+                          const next = [...prev];
+                          const last = next[next.length - 1];
+                          if (last && last.role === 'assistant') {
+                            next[next.length - 1] = {
+                              ...last,
+                              cards: [...(last.cards || []), {
+                                id: suggestion.id,
+                                type: 'SAVE_CHARACTER',
+                                title: suggestion.card_title,
+                                content: draft,
+                                target: '人物',
+                                status: 'pending',
+                              }],
+                              content: `✨ 已从 Silly Tavern 角色卡 **${f.name}** 解析出人物草稿。下方卡片确认无误后，点「采纳落地」即入库到智驾的【人物】维度。\n\n预览：\n\n${draft.slice(0, 260)}${draft.length>260?'…':''}`,
+                            };
+                          }
+                          return next;
+                        });
+                      });
+                      setStImportMsg(`✅ 已解析角色卡：${name}，请确认并落地。`);
+                    } catch (err: any) {
+                      setStImportMsg(`❌ 解析失败：${err?.message || String(err)}（请检查是否为标准Silly Tavern JSON角色卡）`);
+                    }
+                    setTimeout(() => setStImportMsg(''), 6000);
+                  }}
+                />
+                <button
+                  onClick={() => stCharCardRef.current?.click()}
+                  style={{
+                    padding: '4px 10px', borderRadius: 999, border: '1px solid #cfd8ff',
+                    background: '#f4f6ff', cursor: 'pointer', fontSize: 12, display: 'inline-flex',
+                    alignItems: 'center', gap: 6, color: '#2f4fcf',
+                  }}
+                  title="导入 Silly Tavern V2/V3 格式的 JSON 角色卡（非多模态），自动生成人物草稿并一键入库到【人物】维度"
+                >
+                  📥 导入角色卡
+                </button>
+                {stImportMsg && (
+                  <span style={{ fontSize: 12, color: stImportMsg.startsWith('✅') ? '#288f2b' : '#c32e2e' }}>
+                    {stImportMsg}
+                  </span>
+                )}
                 <div className="chat-input-row">
                   <textarea
                     ref={inputRef}
