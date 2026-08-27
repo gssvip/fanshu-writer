@@ -3687,252 +3687,281 @@ export default function ChatPanel() {
             {/* 输入区（设定Tab可输入；正文Tab修改模式可输入） */}
             {activeTab === 'setting' && (
               <div className="chat-input-area">
-                {/* P1-1 会话级切模型：仅在「通用」子维度显示Chip（其他维度走全局激活模型，避免维度生成链路串配置） */}
+                {/* ── 通用Tab工具栏：🤖模型/🎭角色/📥导入卡 三个放同一排，手机端自动紧凑不占高 ── */}
                 {selectedDim === 'general' && (() => {
                   const _sid = chatGeneralSessionId || '';
+                  // ============== 🤖 模型 ==============
                   const _chosenId = sessionModelMap[_sid];
                   const _chosen = aiConfigList.length > 0
                     ? (aiConfigList.find(c => c.id === _chosenId) || aiConfigList.find(c => c.is_active) || aiConfigList[0])
                     : undefined;
-                  // 没建立会话前，Chip显示"待发送建立会话"，点击不弹下拉（避免选了也没用）
                   const _ready = !!_sid;
+                  // ============== 🎭 角色 ==============
+                  const __rid = sessionRoleMap[_sid] || 'default';
+                  const __role = BUILTIN_ROLES.find(r => r.id === __rid) || BUILTIN_ROLES[0];
+                  const __ready = !!_sid;
+
+                  // 通用样式：缩小padding/高度，确保一排放得下
+                  const _chipBase: React.CSSProperties = {
+                    padding: '3px 9px', height: 26, lineHeight: '20px',
+                    borderRadius: 999, fontSize: 12, display: 'inline-flex',
+                    alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
+                    boxSizing: 'border-box',
+                  };
                   return (
-                    <div style={{ position: 'relative', padding: '4px 8px 6px 8px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <button
-                        className="role-chip"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!_ready) return;
-                          setShowModelPicker(s => !s);
-                        }}
-                        title={_ready
-                          ? `会话级切换模型（当前：${_chosen?.name || '默认模型'} · ${_chosen?.model || ''}）`
-                          : '先发送任意一条消息建立会话，之后才能为这个会话单独选模型'}
-                        style={{
-                          padding: '4px 10px', borderRadius: 999, border: '1px solid #d6d6e0',
-                          background: _ready ? '#fafafa' : '#f4f4f5',
-                          cursor: _ready ? 'pointer' : 'not-allowed',
-                          opacity: _ready ? 1 : 0.55,
-                          fontSize: 12, display: 'inline-flex',
-                          alignItems: 'center', gap: 6, color: '#333',
-                        }}
-                      >
-                        🤖 <span style={{ fontWeight: 600 }}>{_ready ? (_chosen?.name || '默认模型') : '发送第一条后可选模型'}</span>
-                        {_ready && (
-                          <>
-                            <span style={{ color: '#888' }}>·</span>
-                            <span style={{ color: '#666' }}>{_chosen?.model || ''}</span>
-                            <span style={{ color: '#aaa' }}>{showModelPicker ? ' ▲' : ' ▼'}</span>
-                          </>
-                        )}
-                      </button>
-                      {showModelPicker && _ready && (
-                        <div
-                          onClick={e => e.stopPropagation()}
+                    <div
+                      style={{
+                        position: 'relative',
+                        padding: '3px 10px 4px 10px',
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        flexWrap: 'nowrap',   // 桌面端：一排不折
+                        overflowX: 'auto',     // 窄屏/手机端：横向轻滑不折行
+                        scrollbarWidth: 'none',
+                      }}
+                    >
+                      <style>{`
+                        .general-toolbar-row::-webkit-scrollbar { display: none; }
+                        @media (max-width: 640px) {
+                          .general-toolbar-row { flex-wrap: nowrap; }
+                          .gt-model-text { display: none; }     /* 手机端模型Chip隐藏长文本 */
+                          .gt-model-dot { display: none; }
+                          .gt-import-text { display: none; }    /* 手机端导入卡按钮只留图标 */
+                        }
+                      `}</style>
+                      <div className="general-toolbar-row" style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        flexWrap: 'nowrap', flexShrink: 0,
+                      }}>
+
+                        {/* ── 🤖 模型 Chip ── */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); if (_ready) setShowModelPicker(s => !s); }}
+                          title={_ready
+                            ? `会话级切换模型（当前：${_chosen?.name || '默认模型'} · ${_chosen?.model || ''}）`
+                            : '先发送任意一条消息建立会话，之后才能为这个会话单独选模型'}
                           style={{
-                            position: 'absolute', left: 6, bottom: '100%', marginBottom: 6, zIndex: 100,
-                            minWidth: 260, maxHeight: 320, overflowY: 'auto', padding: 6,
-                            background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
-                            boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
+                            ..._chipBase,
+                            border: '1px solid #d6d6e0',
+                            background: _ready ? '#fafafa' : '#f4f4f5',
+                            cursor: _ready ? 'pointer' : 'not-allowed',
+                            opacity: _ready ? 1 : 0.55,
+                            color: '#333',
                           }}
                         >
-                          {aiConfigList.map(c => {
-                            const active = c.id === _chosen?.id;
-                            return (
-                              <div
-                                key={c.id}
-                                onClick={() => {
-                                  setSessionModelMap(m => ({ ...m, [_sid]: c.id }));
-                                  setShowModelPicker(false);
-                                }}
-                                style={{
-                                  padding: '8px 10px', borderRadius: 8, cursor: c.has_key ? 'pointer' : 'not-allowed',
-                                  display: 'flex', flexDirection: 'column', gap: 2,
-                                  background: active ? '#eef3ff' : 'transparent',
-                                  border: active ? '1px solid #829cff' : '1px solid transparent',
-                                  opacity: c.has_key ? 1 : 0.55,
-                                }}
-                              >
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <span style={{ fontWeight: 600, fontSize: 13, color: '#222' }}>
-                                    {c.name || '未命名配置'}{c.is_active ? ' 🌐' : ''}
-                                  </span>
-                                  {active && <span style={{ color: '#36f', fontSize: 12 }}>当前</span>}
-                                  {!c.has_key && <span style={{ color: '#e24', fontSize: 11 }}>未填Key</span>}
+                          🤖{' '}
+                          <span className="gt-model-text" style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>
+                            {_ready ? (_chosen?.name || '默认模型') : '发送第一条后可选模型'}
+                          </span>
+                          {_ready && (
+                            <>
+                              <span className="gt-model-dot" style={{ color: '#888' }}>·</span>
+                              <span className="gt-model-text" style={{ color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110 }}>
+                                {_chosen?.model || ''}
+                              </span>
+                              <span style={{ color: '#aaa' }}>{showModelPicker ? '▲' : '▼'}</span>
+                            </>
+                          )}
+                        </button>
+                        {showModelPicker && _ready && (
+                          <div
+                            onClick={e => e.stopPropagation()}
+                            style={{
+                              position: 'absolute', left: 6, bottom: '100%', marginBottom: 4, zIndex: 100,
+                              minWidth: 260, maxHeight: 320, overflowY: 'auto', padding: 6,
+                              background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
+                              boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
+                            }}
+                          >
+                            {aiConfigList.map(c => {
+                              const active = c.id === _chosen?.id;
+                              return (
+                                <div
+                                  key={c.id}
+                                  onClick={() => {
+                                    setSessionModelMap(m => ({ ...m, [_sid]: c.id }));
+                                    setShowModelPicker(false);
+                                  }}
+                                  style={{
+                                    padding: '8px 10px', borderRadius: 8,
+                                    cursor: c.has_key ? 'pointer' : 'not-allowed',
+                                    display: 'flex', flexDirection: 'column', gap: 2,
+                                    background: active ? '#eef3ff' : 'transparent',
+                                    border: active ? '1px solid #829cff' : '1px solid transparent',
+                                    opacity: c.has_key ? 1 : 0.55,
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontWeight: 600, fontSize: 13, color: '#222' }}>
+                                      {c.name || '未命名配置'}{c.is_active ? ' 🌐' : ''}
+                                    </span>
+                                    {active && <span style={{ color: '#36f', fontSize: 12 }}>当前</span>}
+                                    {!c.has_key && <span style={{ color: '#e24', fontSize: 11 }}>未填Key</span>}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: '#777' }}>{c.provider} · {c.model}</div>
                                 </div>
-                                <div style={{ fontSize: 11, color: '#777' }}>{c.provider} · {c.model}</div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* ── 🎭 角色 Chip ── */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); if (__ready) setShowRolePicker(s => !s); }}
+                          title={__ready
+                            ? `当前角色「${__role.name}」：${__role.brief}。点击切换7款内置角色。`
+                            : '先发送任意一条消息建立会话，之后才能切换角色模式'}
+                          style={{
+                            ..._chipBase,
+                            border: '1px solid #ffe7c2',
+                            background: __ready ? '#fffaf1' : '#fff9ee',
+                            cursor: __ready ? 'pointer' : 'not-allowed',
+                            opacity: __ready ? 1 : 0.6,
+                            color: '#333',
+                          }}
+                        >
+                          <span>{__role.emoji}</span>
+                          <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 82 }}>{__role.name}</span>
+                          {__ready && <span style={{ color: '#bbb' }}>{showRolePicker ? '▲' : '▼'}</span>}
+                        </button>
+                        {showRolePicker && __ready && (
+                          <div
+                            onClick={e => e.stopPropagation()}
+                            style={{
+                              position: 'absolute', right: 6, bottom: '100%', marginBottom: 4, zIndex: 101,
+                              minWidth: 280, maxHeight: 360, overflowY: 'auto', padding: 6,
+                              background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
+                              boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
+                            }}
+                          >
+                            {BUILTIN_ROLES.map(r => {
+                              const active = r.id === __rid;
+                              return (
+                                <div
+                                  key={r.id}
+                                  onClick={() => {
+                                    setSessionRoleMap(m => ({ ...m, [_sid]: r.id }));
+                                    setShowRolePicker(false);
+                                  }}
+                                  style={{
+                                    padding: '8px 10px', borderRadius: 8, cursor: 'pointer', marginBottom: 4,
+                                    display: 'flex', flexDirection: 'column', gap: 3,
+                                    background: active ? '#fff3e0' : 'transparent',
+                                    border: active ? '1px solid #ffb75d' : '1px solid transparent',
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <span style={{ fontWeight: 600, fontSize: 13 }}>{r.emoji} {r.name}</span>
+                                    {active && <span style={{ color: '#e97b00', fontSize: 12 }}>当前</span>}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: '#777', lineHeight: 1.5 }}>{r.brief}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* ── 📥 导入角色卡按钮 + 隐藏 file input ── */}
+                        <input
+                          ref={stCharCardRef}
+                          type="file"
+                          accept="application/json,.json"
+                          style={{ display: 'none' }}
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            e.target.value = '';
+                            if (!f) return;
+                            try {
+                              const text = await f.text();
+                              const raw = JSON.parse(text);
+                              const firstStr = (v: any) => Array.isArray(v) ? String(v[0] || '') : String(v || '');
+                              const name = firstStr(raw.name || raw.data?.name) || '未命名角色';
+                              const description = firstStr(raw.description || raw.data?.description);
+                              const personality = firstStr(raw.personality || raw.data?.personality);
+                              const scenario = firstStr(raw.scenario || raw.data?.scenario);
+                              const first_mes = firstStr(raw.first_mes || raw.data?.first_mes);
+                              const mes_example = firstStr(raw.mes_example || raw.data?.mes_example || raw.example_dialogue || raw.data?.example_dialogue);
+                              const creator = firstStr(raw.creator || raw.data?.creator || raw.creator_notes || raw.data?.creator_notes);
+                              const sections: string[] = [`【角色名】${name}`];
+                              if (personality) sections.push(`【性格/人格】\n${personality.trim()}`);
+                              if (description) sections.push(`【外貌/背景描述】\n${description.trim()}`);
+                              if (scenario) sections.push(`【所处剧情场景/当前局面】\n${scenario.trim()}`);
+                              if (mes_example) sections.push(`【对白示例】\n${mes_example.trim()}`);
+                              if (first_mes) sections.push(`【角色开场第一句话/动作】\n${first_mes.trim()}`);
+                              if (creator) sections.push(`【创作者备注】\n${creator.trim()}`);
+                              sections.push(`【Silly Tavern 角色卡源文件名】${f.name}`);
+                              const draft = sections.join('\n\n').slice(0, 6000);
+                              const suggestion: any = {
+                                id: 'import_' + Math.random().toString(36).slice(2, 10),
+                                dim: 'character_profiles',
+                                label: `导入角色：${name}`,
+                                preview: draft,
+                                _full_content: draft,
+                                _from_user: true,
+                                card_type: 'SAVE_CHARACTER',
+                                card_title: `🧙‍人物 · ${name}（Silly Tavern导入）`,
+                              };
+                              streamBufferRef.current = '';
+                              setMessages((prev) => {
+                                const next = [...prev];
+                                next.push({ role: 'user', content: `【导入Silly Tavern角色卡】${f.name}` });
+                                next.push({ role: 'assistant', content: '', cards: [] });
+                                return next;
+                              });
+                              queueMicrotask(() => {
+                                setMessages((prev) => {
+                                  const next = [...prev];
+                                  const last = next[next.length - 1];
+                                  if (last && last.role === 'assistant') {
+                                    next[next.length - 1] = {
+                                      ...last,
+                                      cards: [...(last.cards || []), {
+                                        id: suggestion.id,
+                                        type: 'SAVE_CHARACTER',
+                                        title: suggestion.card_title,
+                                        content: draft,
+                                        target: '人物',
+                                        status: 'pending',
+                                      }],
+                                      content: `✨ 已从 Silly Tavern 角色卡 **${f.name}** 解析出人物草稿。下方卡片确认无误后，点「采纳落地」即入库到智驾的【人物】维度。\n\n预览：\n\n${draft.slice(0, 260)}${draft.length>260?'…':''}`,
+                                    };
+                                  }
+                                  return next;
+                                });
+                              });
+                              setStImportMsg(`✅ 已解析角色卡：${name}，请确认并落地。`);
+                            } catch (err: any) {
+                              setStImportMsg(`❌ 解析失败：${err?.message || String(err)}（请检查是否为标准Silly Tavern JSON角色卡）`);
+                            }
+                            setTimeout(() => setStImportMsg(''), 6000);
+                          }}
+                        />
+                        <button
+                          onClick={(e) => { e.stopPropagation(); stCharCardRef.current?.click(); }}
+                          style={{
+                            ..._chipBase,
+                            border: '1px solid #cfd8ff',
+                            background: '#f4f6ff',
+                            cursor: 'pointer',
+                            color: '#2f4fcf',
+                            marginLeft: 'auto',   // 贴右对齐，跟模型/角色分开不挤
+                          }}
+                          title="导入 Silly Tavern V2/V3 格式的 JSON 角色卡（非多模态），自动生成人物草稿并一键入库到【人物】维度"
+                        >
+                          📥<span className="gt-import-text">导入角色卡</span>
+                        </button>
+                        {stImportMsg && (
+                          <span style={{
+                            fontSize: 12,
+                            color: stImportMsg.startsWith('✅') ? '#288f2b' : '#c32e2e',
+                            flexShrink: 0,
+                          }}>
+                            {stImportMsg}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   );
                 })()}
-                {/* P1-3 内置角色 persona：仅通用Tab显示，与会话绑定记忆 */}
-                {selectedDim === 'general' && (() => {
-                  const __sid = chatGeneralSessionId || '';
-                  const __rid = sessionRoleMap[__sid] || 'default';
-                  const __role = BUILTIN_ROLES.find(r => r.id === __rid) || BUILTIN_ROLES[0];
-                  const __ready = !!__sid;
-                  return (
-                    <>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (!__ready) return;
-                          setShowRolePicker(s => !s);
-                        }}
-                        title={__ready
-                          ? `当前角色「${__role.name}」：${__role.brief}。点击切换。`
-                          : '先发送任意一条消息建立会话，之后才能切换角色模式'}
-                        style={{
-                          padding: '4px 10px', borderRadius: 999, border: '1px solid #ffe7c2',
-                          background: __ready ? '#fffaf1' : '#fff9ee',
-                          cursor: __ready ? 'pointer' : 'not-allowed',
-                          opacity: __ready ? 1 : 0.6,
-                          fontSize: 12, display: 'inline-flex',
-                          alignItems: 'center', gap: 6, color: '#333',
-                        }}
-                      >
-                        <span>{__role.emoji}</span><span style={{ fontWeight: 600 }}>{__role.name}</span>
-                        {__ready && <span style={{ color: '#bbb' }}>{showRolePicker ? ' ▲' : ' ▼'}</span>}
-                      </button>
-                      {showRolePicker && __ready && (
-                        <div
-                          onClick={e => e.stopPropagation()}
-                          style={{
-                            position: 'absolute', right: 6, bottom: '100%', marginBottom: 6, zIndex: 101,
-                            minWidth: 280, maxHeight: 360, overflowY: 'auto', padding: 6,
-                            background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
-                            boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
-                          }}
-                        >
-                          {BUILTIN_ROLES.map(r => {
-                            const active = r.id === __rid;
-                            return (
-                              <div
-                                key={r.id}
-                                onClick={() => {
-                                  setSessionRoleMap(m => ({ ...m, [__sid]: r.id }));
-                                  setShowRolePicker(false);
-                                }}
-                                style={{
-                                  padding: '8px 10px', borderRadius: 8, cursor: 'pointer', marginBottom: 4,
-                                  display: 'flex', flexDirection: 'column', gap: 3,
-                                  background: active ? '#fff3e0' : 'transparent',
-                                  border: active ? '1px solid #ffb75d' : '1px solid transparent',
-                                }}
-                              >
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                  <span style={{ fontWeight: 600, fontSize: 13 }}>{r.emoji} {r.name}</span>
-                                  {active && <span style={{ color: '#e97b00', fontSize: 12 }}>当前</span>}
-                                </div>
-                                <div style={{ fontSize: 11, color: '#777', lineHeight: 1.5 }}>{r.brief}</div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-                {/* P1-4 Silly Tavern 角色卡导入：隐藏file input + 触发按钮 */}
-                <input
-                  ref={stCharCardRef}
-                  type="file"
-                  accept="application/json,.json"
-                  style={{ display: 'none' }}
-                  onChange={async (e) => {
-                    const f = e.target.files?.[0];
-                    e.target.value = '';
-                    if (!f) return;
-                    try {
-                      const text = await f.text();
-                      const raw = JSON.parse(text);
-                      // ========== Silly Tavern 标准字段（V2/V3 兼容）解析 ==========
-                      const firstStr = (v: any) => Array.isArray(v) ? String(v[0] || '') : String(v || '');
-                      const name = firstStr(raw.name || raw.data?.name) || '未命名角色';
-                      const description = firstStr(raw.description || raw.data?.description);
-                      const personality = firstStr(raw.personality || raw.data?.personality);
-                      const scenario = firstStr(raw.scenario || raw.data?.scenario);
-                      const first_mes = firstStr(raw.first_mes || raw.data?.first_mes);
-                      const mes_example = firstStr(raw.mes_example || raw.data?.mes_example || raw.example_dialogue || raw.data?.example_dialogue);
-                      const creator = firstStr(raw.creator || raw.data?.creator || raw.creator_notes || raw.data?.creator_notes);
-                      // 结构化输出成"人物草稿"文本（纯文本，命中气泡会弹SAVE_CHARACTER）
-                      const sections: string[] = [`【角色名】${name}`];
-                      if (personality) sections.push(`【性格/人格】\n${personality.trim()}`);
-                      if (description) sections.push(`【外貌/背景描述】\n${description.trim()}`);
-                      if (scenario) sections.push(`【所处剧情场景/当前局面】\n${scenario.trim()}`);
-                      if (mes_example) sections.push(`【对白示例】\n${mes_example.trim()}`);
-                      if (first_mes) sections.push(`【角色开场第一句话/动作】\n${first_mes.trim()}`);
-                      if (creator) sections.push(`【创作者备注】\n${creator.trim()}`);
-                      sections.push(`【Silly Tavern 角色卡源文件名】${f.name}`);
-                      const draft = sections.join('\n\n').slice(0, 6000);
-                      // 通过 onMeta 注入一条伪造的 hit_suggestions: SAVE_CHARACTER，让前端弹落卡气泡
-                      const suggestion: any = {
-                        id: 'import_' + Math.random().toString(36).slice(2, 10),
-                        dim: 'character_profiles',
-                        label: `导入角色：${name}`,
-                        preview: draft,
-                        _full_content: draft,
-                        _from_user: true,
-                        card_type: 'SAVE_CHARACTER',
-                        card_title: `🧙‍人物 · ${name}（Silly Tavern导入）`,
-                      };
-                      streamBufferRef.current = '';
-                      setMessages((prev) => {
-                        const next = [...prev];
-                        next.push({ role: 'user', content: `【导入Silly Tavern角色卡】${f.name}` });
-                        next.push({ role: 'assistant', content: '', cards: [] });
-                        return next;
-                      });
-                      // React 18 批处理：用 queueMicrotask 替代 setImmediate 保证浏览器兼容性
-                      queueMicrotask(() => {
-                        // 下一个tick：把命中气泡挂载到最新的assistant气泡
-                        setMessages((prev) => {
-                          const next = [...prev];
-                          const last = next[next.length - 1];
-                          if (last && last.role === 'assistant') {
-                            next[next.length - 1] = {
-                              ...last,
-                              cards: [...(last.cards || []), {
-                                id: suggestion.id,
-                                type: 'SAVE_CHARACTER',
-                                title: suggestion.card_title,
-                                content: draft,
-                                target: '人物',
-                                status: 'pending',
-                              }],
-                              content: `✨ 已从 Silly Tavern 角色卡 **${f.name}** 解析出人物草稿。下方卡片确认无误后，点「采纳落地」即入库到智驾的【人物】维度。\n\n预览：\n\n${draft.slice(0, 260)}${draft.length>260?'…':''}`,
-                            };
-                          }
-                          return next;
-                        });
-                      });
-                      setStImportMsg(`✅ 已解析角色卡：${name}，请确认并落地。`);
-                    } catch (err: any) {
-                      setStImportMsg(`❌ 解析失败：${err?.message || String(err)}（请检查是否为标准Silly Tavern JSON角色卡）`);
-                    }
-                    setTimeout(() => setStImportMsg(''), 6000);
-                  }}
-                />
-                <button
-                  onClick={() => stCharCardRef.current?.click()}
-                  style={{
-                    padding: '4px 10px', borderRadius: 999, border: '1px solid #cfd8ff',
-                    background: '#f4f6ff', cursor: 'pointer', fontSize: 12, display: 'inline-flex',
-                    alignItems: 'center', gap: 6, color: '#2f4fcf',
-                  }}
-                  title="导入 Silly Tavern V2/V3 格式的 JSON 角色卡（非多模态），自动生成人物草稿并一键入库到【人物】维度"
-                >
-                  📥 导入角色卡
-                </button>
-                {stImportMsg && (
-                  <span style={{ fontSize: 12, color: stImportMsg.startsWith('✅') ? '#288f2b' : '#c32e2e' }}>
-                    {stImportMsg}
-                  </span>
-                )}
                 <div className="chat-input-row">
                   <textarea
                     ref={inputRef}
