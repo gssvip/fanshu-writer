@@ -1082,10 +1082,12 @@ export default function ChatPanel() {
   // 命中气泡「📦入库」按钮落卡loading：key=popId+dim，避免重复点/多按钮同时落卡
   const [applyingHitKey, setApplyingHitKey] = useState<string | null>(null);
   // Q2 合并：事件日志重算（原先在工具栏浮层，现在合并进「校审」Tab 子面板）
-  // 扫榜→构思流水线缓存：Step1产出的trend_report存state，Step2直接用（解决Step2报"缺少trend_report需先Step1"）
+  // [2026-08-27 扫榜3步流水线已整体删除] 以下 lastStep1Report / lastStep2Plans 两个 state 保留（避免未来如果要恢复流水线时大改接口），但不再参与通用聊天交互链路
+  // 用 void 赋值显式声明"有意未使用"，规避 TS6133 noUnusedLocals
   const [lastStep1Report, setLastStep1Report] = useState<any>(null);
-  // 扫榜→构思→设定流水线缓存：Step2产出的5方案list存state，Step3用户说「按方案X出设定」直接读方案X完整字段落卡，不再让用户重发方案内容
+  void lastStep1Report; void setLastStep1Report;
   const [lastStep2Plans, setLastStep2Plans] = useState<any[] | null>(null);
+  void lastStep2Plans; void setLastStep2Plans;
   // 通用聊天专用会话ID（与设定Tab其他维度session隔离，避免串session/记忆丢失）
   // 根因：原代码传sessionId:undefined→后端每次新建会话→聊天记忆完全丢失；若复用全局sessionId，会跟其他维度（构思/设定/正文创作）会话互相覆盖导致混乱
   const [chatGeneralSessionId, setChatGeneralSessionId] = useState<string | null>(null);
@@ -2291,7 +2293,7 @@ export default function ChatPanel() {
   const inputPlaceholder = (() => {
     if (activeTab === 'setting') {
       if (!selectedDim) return '请先选择上方维度按钮…';
-      if (selectedDim === 'general') return '💬 任意话题/扫榜/构思/设定 回车发送';
+      if (selectedDim === 'general') return '💬 任意话题/构思/设定 回车发送';
       const dimLabel = dimensions.find(d => d.key === selectedDim)?.label || selectedDim;
       if (selectedSuggestion) {
         return `已选「${selectedSuggestion.title}」。可输入修改意见，不填则直接按此方案生成…`;
@@ -2314,8 +2316,8 @@ export default function ChatPanel() {
     return false;
   })();
 
-  // 【设定】Tab内「通用」子维度（整合版）：调用 chatGeneralStream（任意话题+命中气泡+扫榜直接气泡流式）
-  // 3步流水线：扫榜 → 生成构思方案 → 设定（全部在对话气泡内流式输出，不弹浮层）
+  // 【设定】Tab内「通用」子维度（整合版）：调用 chatGeneralStream（任意话题+命中气泡入库）
+  // 原3步流水线（扫榜→构思方案→设定）入口已按用户要求整体移除，直接让用户用自然语言聊天生成；命中创作维度自动气泡落卡
   const handleGeneral = useCallback(async () => {
     const text = input.trim();
     if (!bookId || !text || streaming) return;
@@ -2323,260 +2325,7 @@ export default function ChatPanel() {
     setStreamError('');
     setAutoContextNotice(null);
     streamBufferRef.current = '';
-    // ====== Step 1 扫榜前置：命中「扫榜/爆款/热榜」且提取出题材 → 直接流式 Step1Scan 到气泡（不弹窗） ======
-    const scanKeysHit = /扫榜|热榜|爆款|番茄小说|起点|七猫|现在什么火|什么最火|什么书火|学爆款/.test(text);
-    const scannedTopic = (() => {
-      const rules = [/都市异能|都市高武|系统文|玄幻高武|仙侠|修仙|修真|历史脑洞|种田|宫斗|科幻末世|末世|悬疑推理|恐怖灵异|言情|甜宠|同人|军事|游戏|无限流|赘婿|重生|穿越|豪门|科幻/];
-      for (const r of rules) { const m = text.match(r); if (m) return m[0]; }
-      const after = text.split(/扫榜|热榜|爆款|番茄小说|起点|七猫|现在什么火|什么最火|什么书火|学爆款|题材|小说|书|方向|内容|最近|当前|现在|帮我|一下|的|看看/g).filter(Boolean).join('').trim();
-      return after.slice(0, 20);
-    })();
-    if (scanKeysHit && scannedTopic) {
-      appendUserAi(text);
-      setStreaming(true);
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      try {
-        const res = await api.pipelineStep1Scan(scannedTopic, undefined, ctrl.signal);
-        await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
-          // 存Step1的结构化报告（带原始抓取/错误信息），给Step2构思方案当trend_report入参
-          if (kind === 'pipeline_step1_done' && info) setLastStep1Report(info);
-          else if (kind === 'pipeline_trend_report' && info?.report) setLastStep1Report(info.report);
-        }, true);
-        // 扫榜结束只追加一条简短提示，继续等用户说"出构思方案"或提意见
-        appendAiNotice('✅ 扫榜完成。你可以说「按这个出构思方案」继续下一步，或先提调整意见。');
-      } catch (e: any) {
-        if (e.name !== 'AbortError') {
-          const msg = (e?.message || e?.error || '扫榜失败').trim() || '扫榜失败';
-          const hint = [
-            '❌ Step1扫榜出错：' + msg,
-            '',
-            '常见原因&解决：',
-            '1) LLM上游503/限流 → 等30秒后重试「扫榜XX题材」',
-            '2) 无外网/榜单站反爬 → 改说「扫榜XX题材(知识库模式)」直接用 heuristic 出5方案',
-            '3) 想快速出结果 → 直接说「出5个XX题材构思方案」跳过扫榜第一步',
-          ].join('\n');
-          appendAiNotice(hint);
-          setStreamError('');
-        }
-      } finally {
-        setStreaming(false);
-        abortRef.current = null;
-      }
-      return;
-    }
-    // ====== Step 2 生成构思方案前置：命中「出构思方案/出N个方案/出方案 + 题材/代词(按这/按这个/下一步)」 → 直接 Step2Plans 流式到气泡 ======
-    const planKeysHit = /构思方案|出方案|出.*个方案|出五个方案|5个方案|5方案|方案设计|卖点方案|生成.*方案|继续下一步|接着出方案|按这个出|按这出/.test(text);
-    // 代词命中：说明用户在指代上一步扫榜结果（"按这个出构思方案"=按刚才扫榜的结果出5方案）
-    const pronominalRefHit = /按\s*(这个|这|刚才|刚刚)|接着\s*(刚才|扫榜|之前)|继续\s*(下一步|刚才)|就\s*按\s*(这个|这)/.test(text);
-    const planTopic = (() => {
-      const rules = [/都市异能|都市高武|系统文|玄幻高武|仙侠|修仙|修真|历史脑洞|种田|宫斗|科幻末世|末世|悬疑推理|恐怖灵异|言情|甜宠|同人|军事|游戏|无限流|赘婿|重生|穿越|豪门|科幻/];
-      for (const r of rules) { const m = text.match(r); if (m) return m[0]; }
-      const after = text.split(/构思方案|出方案|出.*个方案|出五个方案|5个方案|5方案|方案设计|卖点方案|生成.*方案|继续下一步|接着出方案|按这个出|按这出|给我|帮我|一下|的|题材|小说|书|方向|设计|做|写|按|这个|这|刚才|刚刚|接着|继续|下一步/g).filter(Boolean).join('').trim();
-      if (after && after.length >= 2) return after.slice(0, 30);
-      // 用户没写具体题材但用了代词=指代上一步扫榜结果，从 lastStep1Report 取题材
-      if (pronominalRefHit && lastStep1Report) {
-        const r = lastStep1Report;
-        if (typeof r === 'object' && r !== null) {
-          const candidates = [r.topic, r.genre, r.trending_topics?.[0], r.hot_topics?.[0], r.primary_genre, r.scanned_topic];
-          for (const c of candidates) {
-            if (typeof c === 'string' && c.trim().length >= 2) return c.trim().slice(0, 30);
-          }
-          const keys = Object.keys(r);
-          for (const k of keys) {
-            const v = (r as any)[k];
-            if (typeof v === 'string' && /题材|方向|类型|genre|topic|热榜|扫描|扫榜|trend/i.test(k) && v.trim().length >= 2) return v.trim().slice(0, 30);
-          }
-        }
-      }
-      // 最后兜底：空字符串（后端 Step2 有 heuristic fallback 不会崩）
-      return '';
-    })();
-    // 命中条件：只要出现关键词，且【有题材 OR 有代词指代上一步 OR 有Step1扫榜报告】就放行，不再卡死 planTopic 非空
-    if (planKeysHit && (planTopic || pronominalRefHit || (lastStep1Report && Object.keys(lastStep1Report).length > 1))) {
-      appendUserAi(text);
-      setStreaming(true);
-      const ctrl2 = new AbortController();
-      abortRef.current = ctrl2;
-      try {
-        // ====== 前端最后一道兜底 finalTopic：planTopic空→report取→最终\"都市异能高武\"，绝对不传空字符串触发后端空校验 ======
-        const extractTopic = (r: any): string => {
-          if (!r || typeof r !== 'object') return '';
-          const keys = ['topic','scanned_topic','primary_genre','genre','direction','main_topic','target_genre'];
-          for (const k of keys) {
-            const v = (r as any)[k];
-            if (typeof v === 'string' && v.trim() && v.trim().length >= 2 && v.trim().length <= 30) return v.trim();
-          }
-          for (const k of ['trending_topics','hot_topics','real_topics','top_genres','top_books_genres','book_genre_trends']) {
-            const arr = (r as any)[k];
-            if (Array.isArray(arr) && arr.length > 0) {
-              const first = arr[0];
-              if (typeof first === 'string' && first.trim().length >= 2) return first.trim().slice(0, 40);
-              if (first && typeof first === 'object') {
-                for (const nk of ['topic','genre','name','label','title','category']) {
-                  const v = (first as any)[nk];
-                  if (typeof v === 'string' && v.trim() && v.trim().length >= 2) return v.trim().slice(0, 40);
-                }
-              }
-            }
-          }
-          for (const k of Object.keys(r)) {
-            const v = (r as any)[k];
-            if (typeof v === 'string' && /题材|方向|类型|genre|topic|扫榜|扫描|热榜|trend|榜/i.test(k) && v.trim().length >= 2) return v.trim().slice(0, 40);
-          }
-          return '';
-        };
-        const finalTopic = (planTopic && planTopic.trim()) || extractTopic(lastStep1Report) || '都市异能高武';
-        const res = await api.pipelineStep2Plans(finalTopic, lastStep1Report || {}, undefined, ctrl2.signal);
-        await consumeSSE(res, ctrl2, undefined, (kind: string, info: any) => {
-          // Step2完成后把方案存state：支持 pipeline_step2_done(含plans字段) / pipeline_plans(直接是plans list)
-          if (kind === 'pipeline_step2_done' && info) {
-            if (Array.isArray(info?.plans) && info.plans.length >= 1) setLastStep2Plans(info.plans);
-            else if (Array.isArray(info)) setLastStep2Plans(info);
-          } else if (kind === 'pipeline_plans') {
-            if (Array.isArray(info) && info.length >= 1) setLastStep2Plans(info);
-            else if (Array.isArray(info?.plans) && info.plans.length >= 1) setLastStep2Plans(info.plans);
-          }
-        }, true); // ignoreCards=true：构思方案是中间结果，先不入库，确认后再出设定
-        appendAiNotice('✅ 构思方案生成完成。你可以说「按方案X出设定」继续落地，或先提修改意见。');
-      } catch (e: any) {
-        if (e.name !== 'AbortError') {
-          const msg = (e?.message || e?.error || '构思方案生成失败').trim() || '构思方案生成失败';
-          const hint = [
-            '❌ Step2构思方案出错：' + msg,
-            '',
-            '常见原因&解决：',
-            '1) LLM上游503/限流 → 等30秒后重试，或改说「重新生成5个构思方案」',
-            '2) planTopic空但lastStep1Report已过期 → 先重新发「扫榜XX题材」再出方案',
-            '3) 想快速看效果 → 直接说「出5个XX题材构思方案」带明确题材',
-          ].join('\n');
-          appendAiNotice(hint);
-          setStreamError(''); // 清除浮层红卡（错误已在聊天气泡中完整展示）
-        }
-      } finally {
-        setStreaming(false);
-        abortRef.current = null;
-      }
-      return;
-    }
-    // ====== Step 3 设定落地前置：命中「按方案X出设定/方案X设定/方案X落设定」 → 直接读lastStep2Plans缓存，不再让用户重发方案内容 ======
-    const step3PlanMatch = text.match(/按方案\s*([1-5])|方案\s*([1-5]).*(设定|世界观|落卡|落地|做设定|生成设定|出卡)|方案\s*([1-5])\s*设定/);
-    const step3PlanIdx = (() => {
-      if (!step3PlanMatch) return -1;
-      const raw = step3PlanMatch[1] || step3PlanMatch[2] || step3PlanMatch[4];
-      const n = parseInt(raw, 10);
-      return isNaN(n) ? -1 : n - 1; // 转 0-index
-    })();
-    if (step3PlanIdx >= 0) {
-      // 关键点：Step3 不是流式生成，不要用 appendUserAi（会多一条空 AI 占位气泡），手动 push 2 条：[用户消息] + [方案内容 AI 消息]
-      // → 这样命中气泡的 msg_index 能精确钉在方案内容 AI 消息的下方，不会跑到顶部
-      const plans = Array.isArray(lastStep2Plans) ? lastStep2Plans : [];
-      const plan = plans[step3PlanIdx];
-      let planAiMsgIndex = -1;
-      setMessages(prev => {
-        const next = [...prev];
-        next.push({ role: 'user', content: text });
-        // 方案不存在 → AI 提示过期/失效
-        if (!plan) {
-          next.push({
-            role: 'assistant',
-            cards: [],
-            content: '⚠️ 未找到方案' + (step3PlanIdx+1) + '的完整内容（可能构思方案生成太久已过期、或刚刷新页面缓存丢失）。请先重新出5个构思方案，或把方案' + (step3PlanIdx+1) + '的具体内容粘贴过来，我再给你整理成完整设定。',
-          });
-          planAiMsgIndex = next.length - 1;
-          return next;
-        }
-        // 方案存在：渲染结构化完整设定草稿
-        const title = String(plan.title || '《未命名》').replace(/[《》]/g, '');
-        const one_liner = plan.one_liner || plan.one_liner || plan.core_hook || '';
-        const golden_finger = plan.golden_finger || plan.core_golden_finger || '';
-        const identity_conflict = plan.identity_conflict || plan.identity || '';
-        const pleasure_core = plan.pleasure_core || plan.pleasure || '';
-        const world_shell = plan.world_shell || plan.world || plan.worldview || '';
-        const diff_anchor = plan.diff_anchor || plan.differentiation || '';
-        const trend_basis = plan.trend_basis || plan.basis || '';
-        const estimated_size = plan.estimated_size || plan.size || '';
-        const suggestionDim = /世界观/.test(text) ? 'worldview' : 'setting';
-        const suggestionDimLabel = suggestionDim === 'worldview' ? '世界观' : '设定';
-        const rendered = [
-          `# 📌 已读取方案${step3PlanIdx+1}完整内容（读取前面构思方案的缓存，无需你重发）`,
-          '',
-          `## 书名：《${title}》`,
-          `**一句话梗**：${one_liner || '—'}`,
-          '',
-          `### 🔑 核心金手指 / 奇遇（含代价，不是纯白嫖）`,
-          `> ${golden_finger || '—'}`,
-          '',
-          `### 🧑 身份矛盾（主角表面身份 vs 真实身份 vs 社会定位）`,
-          `> ${identity_conflict || '—'}`,
-          '',
-          `### 🔥 爽点内核（即时爽/延迟爽，节奏匹配扫榜结果）`,
-          `> ${pleasure_core || '—'}`,
-          '',
-          `### 🌐 世界观壳（30字以内一句话壳）`,
-          `> ${world_shell || '—'}`,
-          '',
-          `### 🎯 差异化锚点（读者凭什么选你不是其他同类）`,
-          `> ${diff_anchor || '—'}`,
-          '',
-          `### 📐 趋势依据 + 预估规模`,
-          `> 趋势依据：${trend_basis || '—'}  |  字数规模：${estimated_size || '—'}`,
-          '',
-          `---`,
-          `👉 正在按方案${step3PlanIdx+1}生成完整${suggestionDimLabel} → 点击下方命中气泡的「📦以${suggestionDimLabel}入库」直接落卡到【${suggestionDimLabel}】维度`,
-        ].join('\n');
-        next.push({ role: 'assistant', content: rendered, cards: [] });
-        planAiMsgIndex = next.length - 1;
-        return next;
-      });
-      // 方案存在：60ms 后弹命中气泡，msg_index 精确钉在刚追加的方案 AI 消息 index 上（就在这条消息正下方，不会跑到顶部）
-      if (plan) {
-        const title = String(plan.title || '《未命名》').replace(/[《》]/g, '');
-        const one_liner = plan.one_liner || plan.one_liner || plan.core_hook || '';
-        const golden_finger = plan.golden_finger || plan.core_golden_finger || '';
-        const identity_conflict = plan.identity_conflict || plan.identity || '';
-        const pleasure_core = plan.pleasure_core || plan.pleasure || '';
-        const world_shell = plan.world_shell || plan.world || plan.worldview || '';
-        const diff_anchor = plan.diff_anchor || plan.differentiation || '';
-        const trend_basis = plan.trend_basis || plan.basis || '';
-        const estimated_size = plan.estimated_size || plan.size || '';
-        const suggestionDim = /世界观/.test(text) ? 'worldview' : 'setting';
-        const suggestionDimLabel = suggestionDim === 'worldview' ? '世界观' : '设定';
-        const suggestionCardType = suggestionDim === 'worldview' ? 'SAVE_WORLDSETTING' : 'SAVE_SETTING';
-        const quickFillValue = [
-          `书名：《${title}》`,
-          `一句话梗：${one_liner}`,
-          `核心金手指/奇遇（含代价）：${golden_finger}`,
-          `身份矛盾：${identity_conflict}`,
-          `爽点内核：${pleasure_core}`,
-          `世界观壳：${world_shell}`,
-          `差异化锚点：${diff_anchor}`,
-          `趋势依据：${trend_basis}`,
-          `预估规模：${estimated_size}`,
-        ].join('\n');
-        setTimeout(() => {
-          const popId = 'hit-step3-' + Math.random().toString(36).slice(2, 9);
-          // 注意：planAiMsgIndex 是 setMessages 同步赋值的，setTimeout 里读的是闭包值，不会出现异步错位
-          const finalIndex = planAiMsgIndex >= 0 ? planAiMsgIndex : Math.max(0, 0);
-          setHitSuggestionPopups(prev => [...prev, {
-            id: popId,
-            msg_index: finalIndex,
-            suggestions: [{
-              id: 'step3-plan' + (step3PlanIdx+1) + '-' + Date.now(),
-              dim: suggestionDim,
-              label: suggestionDimLabel,
-              card_type: suggestionCardType, // 关键：用CARD_REGISTRY合法ctype，不是'setting'/'worldview'
-              confidence: 0.95,
-              hits: [`方案${step3PlanIdx+1}完整字段（书名/一句话梗/金手指/身份/爽点/世界观/差异化）`],
-              suggested_title: `方案${step3PlanIdx+1}《${title}》${suggestionDimLabel}落卡`,
-              quick_fill: quickFillValue,
-            } as HitSuggestion],
-          }]);
-        }, 60);
-      }
-      return;
-    }
-    // ====== 其他：普通通用聊天（命中创作维度→气泡入库提示） ======
+    // ====== 所有消息统一走普通通用聊天（命中创作维度→气泡入库提示） ======
     appendUserAi(text);
     setStreaming(true);
     const ctrl = new AbortController();
@@ -2684,8 +2433,8 @@ export default function ChatPanel() {
           '',
           '常见原因&解决：',
           '1) LLM上游503/限流 → 等30秒后重发',
-          '2) 想走3步流水线 → 直接发「扫榜XX题材」或「出5个XX题材方案」',
-          '3) 想把聊天内容落卡 → 先发一次命中创作关键词的内容（如"帮我构思一个主角"），再点📦入库气泡',
+          '2) 想让聊天内容落卡 → 先聊创作相关内容（如"帮我构思一个主角"），命中后再点📦入库气泡',
+          '3) 想快速出结果 → 直接自然语言说需求（例如："给我出5个都市异能高武题材的书名和金手指组合"）',
         ].join('\n');
         appendAiNotice(hint);
         setStreamError(''); // 错误已在聊天气泡中完整提示，清除浮动红卡
@@ -2975,7 +2724,7 @@ export default function ChatPanel() {
                           setMessages([]); setHitSuggestionPopups([]); setAutoContextNotice(null); setFixTasks([]); setStreamError('');
                         }}
                         disabled={streaming || loadingSuggest}
-                        title="通用聊天：自由讨论任何话题，命中创作关键词提示一键入库，说「扫榜/爆款」自动开始3步流水线"
+                        title="通用聊天：自由讨论任何话题，命中创作关键词自动提示一键入库。自然语言直接说需求即可。"
                       >💬 通用</button>
                       {dimensions.filter(d => ['concept', 'key_rules', 'worldbuilding'].includes(d.key)).map(d => (
                         <button
@@ -3632,7 +3381,7 @@ export default function ChatPanel() {
                   {activeTab === 'setting' && selectedDim === 'general' ? (
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b' }}>💬 通用聊天模式 · 想聊啥就聊啥</p>
-                      <p style={{ fontSize: 13, color: '#6b7280', margin: '8px 0 0' }}>命中创作关键词自动提示一键入库 📦；说「扫榜XX题材」自动开始3步流水线 🔥。</p>
+                      <p style={{ fontSize: 13, color: '#6b7280', margin: '8px 0 0' }}>命中创作关键词自动提示一键入库 📦。自然语言聊天，直接说需求即可。</p>
                     </div>
                   ) : (
                     <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
