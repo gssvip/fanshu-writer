@@ -1126,6 +1126,7 @@ def chat_smart():
         cfg = None  # 指定配置但无key → 回退全局
     if cfg is None:
         cfg = AIConfig.get_active()
+    # chat_smart（维度感知聊天链路）：归一化URL（防智谱GLM 404/HTTP 500）
     if not cfg or not cfg.api_key:
         return jsonify({'error': '请先配置 AI'}), 400
     # 把当前选择持久化到 session.meta_json（保证下一轮聊天沿用同一模型，即会话级锁定）
@@ -1139,7 +1140,25 @@ def chat_smart():
                 db.session.add(session); db.session.commit()
         except Exception:
             pass  # 持久化失败不阻断主流程
-    gw = LLMGateway(cfg.base_url, cfg.api_key, cfg.model)
+    # chat_smart 统一过 URL 归一化（智谱/v4必须走 _normalize_llm_base_url，否则会撞 /v4/v1）
+    import os as _os_cs1
+    from llm_gateway import _normalize_llm_base_url as _nl1
+    import app as _mod1
+    try:
+        _act1 = _mod1.AIConfig.get_active()
+        _act1_id = getattr(_act1, 'id', None) if _act1 else None
+    except Exception:
+        _act1_id = None
+    _is_act1 = (_act1_id and chosen_cfg_id and _act1_id == chosen_cfg_id) or (not chosen_cfg_id)
+    if _is_act1:
+        _b1, _k1, _m1 = get_llm_config(_mod1)
+        if cfg.model and cfg.model != _m1:
+            _m1 = cfg.model
+    else:
+        _b1 = _nl1(cfg.base_url or _os_cs1.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1'), cfg.model)
+        _k1 = cfg.api_key or _os_cs1.environ.get('USER_LLM_API_KEY', '')
+        _m1 = cfg.model or _os_cs1.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+    gw = LLMGateway(_b1, _k1, _m1)
 
     def generate():
         # === SSE 双兜底·第 1 层：函数第一行先发心跳注释帧，占住连接防 Render 30s idle timeout ===
@@ -7237,6 +7256,10 @@ def chat_general():
     book_id = data.get('book_id')
     session_id = data.get('session_id')
     message = (data.get('message') or '').strip()
+    # P1-1 会话级切模型：请求体 ai_config_id > 会话 meta_json.ai_config_id > 全局激活
+    req_ai_config_id = (data.get('ai_config_id') or '').strip() or None
+    # P1-3 内置角色 persona：default/polish/toxic_critic/architect/worldbuilder/marketeer/interviewer
+    req_role_id = (data.get('role_id') or '').strip() or None
     if not message:
         return jsonify({'error': '缺少 message'}), 400
 
@@ -7366,6 +7389,7 @@ def chat_general():
         cfg = None  # 指定配置但无key → 回退全局
     if cfg is None:
         cfg = AIConfig.get_active()
+    # chat_general 通用闲聊链路：强制 _normalize_llm_base_url（HTTP 500的真凶）
     if not cfg or not cfg.api_key:
         return jsonify({'error': '请先配置 AI'}), 400
     # 把当前选择持久化到 session.meta_json（保证下一轮聊天沿用同一模型，即会话级锁定）
@@ -7379,7 +7403,28 @@ def chat_general():
                 db.session.add(session); db.session.commit()
         except Exception:
             pass  # 持久化失败不阻断主流程
-    gw = LLMGateway(cfg.base_url, cfg.api_key, cfg.model)
+    # 关键修复：之前直接 LLMGateway(cfg.base_url, cfg.api_key, cfg.model) 把 _normalize_llm_base_url 绕过了
+    # 导致智谱GLM /v4 被强制拼 /v1 -> /v4/v1/chat/completions 404 -> Flask转成HTTP 500抛给前端
+    import os as _os_g
+    from llm_gateway import _normalize_llm_base_url as _nlg
+    import app as _modg
+    try:
+        _actg = _modg.AIConfig.get_active()
+        _actg_id = getattr(_actg, 'id', None) if _actg else None
+    except Exception:
+        _actg_id = None
+    _is_act_g = (_actg_id and chosen_cfg_id and _actg_id == chosen_cfg_id) or (not chosen_cfg_id)
+    if _is_act_g:
+        _bg, _kg, _mg = get_llm_config(_modg)
+        if cfg.model and cfg.model != _mg:
+            _mg = cfg.model
+    else:
+        _bg = _nlg(cfg.base_url or _os_g.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1'), cfg.model)
+        _kg = cfg.api_key or _os_g.environ.get('USER_LLM_API_KEY', '')
+        _mg = cfg.model or _os_g.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+    # 把 model_name 变量同步为真实值，避免 system_prompt 末尾写"当前模型：(空)"
+    _var_ctx['model_name'] = _mg
+    gw = LLMGateway(_bg, _kg, _mg)
     # P1-5 MCP: 读 MCP_SERVERS_JSON → 为通用聊天加载 function calling tools（不改动其他维度的创作链路）
     mcp_tools: List[Dict[str, Any]] = []
     _mcp_registry = None

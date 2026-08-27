@@ -2579,6 +2579,19 @@ export default function ChatPanel() {
       const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId, roleId: _roleId }, ctrl.signal);
       // consumeSSE 最后1个参数 onSessionId=setChatGeneralSessionId：把card/done帧带回的session_id只写入 chatGeneralSessionId，不污染全局 setSessionId（避免和其他创作维度会话互串）
       await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
+        // 【P1-3 角色同步】后端把真实生效的角色 + 上下文变量通过 kind=role_applied meta帧回传
+        // 前端把 sessionRoleMap 跟后端对齐，避免出现"用户选了毒舌读者但chip显示的是默认助手"（尤其刷新后）
+        if (kind === 'role_applied' && info && typeof info === 'object') {
+          const _sid = chatGeneralSessionId || '';
+          if (_sid) {
+            const _backRole = String(info.role_id || 'default').trim() || 'default';
+            setSessionRoleMap(m => (m[_sid] === _backRole ? m : { ...m, [_sid]: _backRole }));
+            // 后端 meta_json 首次写入时也会写入 ai_config_id：若前端没记模型，一并对齐
+            if (info.vars?.model_name) {
+              // (只在未记录时做轻量提示：实际模型以 sessionModelMap 为主，避免覆盖用户未持久化的选择)
+            }
+          }
+        }
         // 命中创作维度 → 气泡提示一键入库
         if (kind === 'hit_suggestions' && Array.isArray(info?.suggestions) && info.suggestions.length > 0) {
           const popId = 'hit-' + Math.random().toString(36).slice(2, 9);
@@ -3675,28 +3688,45 @@ export default function ChatPanel() {
             {activeTab === 'setting' && (
               <div className="chat-input-area">
                 {/* P1-1 会话级切模型：仅在「通用」子维度显示Chip（其他维度走全局激活模型，避免维度生成链路串配置） */}
-                {selectedDim === 'general' && aiConfigList.length > 0 && (() => {
+                {selectedDim === 'general' && (() => {
                   const _sid = chatGeneralSessionId || '';
                   const _chosenId = sessionModelMap[_sid];
-                  const _chosen = aiConfigList.find(c => c.id === _chosenId) || aiConfigList.find(c => c.is_active) || aiConfigList[0];
+                  const _chosen = aiConfigList.length > 0
+                    ? (aiConfigList.find(c => c.id === _chosenId) || aiConfigList.find(c => c.is_active) || aiConfigList[0])
+                    : undefined;
+                  // 没建立会话前，Chip显示"待发送建立会话"，点击不弹下拉（避免选了也没用）
+                  const _ready = !!_sid;
                   return (
                     <div style={{ position: 'relative', padding: '4px 8px 6px 8px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <button
                         className="role-chip"
-                        onClick={() => setShowModelPicker(s => !s)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!_ready) return;
+                          setShowModelPicker(s => !s);
+                        }}
+                        title={_ready
+                          ? `会话级切换模型（当前：${_chosen?.name || '默认模型'} · ${_chosen?.model || ''}）`
+                          : '先发送任意一条消息建立会话，之后才能为这个会话单独选模型'}
                         style={{
                           padding: '4px 10px', borderRadius: 999, border: '1px solid #d6d6e0',
-                          background: '#fafafa', cursor: 'pointer', fontSize: 12, display: 'inline-flex',
+                          background: _ready ? '#fafafa' : '#f4f4f5',
+                          cursor: _ready ? 'pointer' : 'not-allowed',
+                          opacity: _ready ? 1 : 0.55,
+                          fontSize: 12, display: 'inline-flex',
                           alignItems: 'center', gap: 6, color: '#333',
                         }}
-                        title="会话级切换模型（仅对当前通用聊天生效，不改变全局激活的默认模型）"
                       >
-                        🤖 <span style={{ fontWeight: 600 }}>{_chosen?.name || '默认模型'}</span>
-                        <span style={{ color: '#888' }}>·</span>
-                        <span style={{ color: '#666' }}>{_chosen?.model || ''}</span>
-                        <span style={{ color: '#aaa' }}>{showModelPicker ? ' ▲' : ' ▼'}</span>
+                        🤖 <span style={{ fontWeight: 600 }}>{_ready ? (_chosen?.name || '默认模型') : '发送第一条后可选模型'}</span>
+                        {_ready && (
+                          <>
+                            <span style={{ color: '#888' }}>·</span>
+                            <span style={{ color: '#666' }}>{_chosen?.model || ''}</span>
+                            <span style={{ color: '#aaa' }}>{showModelPicker ? ' ▲' : ' ▼'}</span>
+                          </>
+                        )}
                       </button>
-                      {showModelPicker && (
+                      {showModelPicker && _ready && (
                         <div
                           onClick={e => e.stopPropagation()}
                           style={{
@@ -3712,12 +3742,11 @@ export default function ChatPanel() {
                               <div
                                 key={c.id}
                                 onClick={() => {
-                                  if (!_sid) return;  // 会话未建立时点选无意义：发送第一条后再选
                                   setSessionModelMap(m => ({ ...m, [_sid]: c.id }));
                                   setShowModelPicker(false);
                                 }}
                                 style={{
-                                  padding: '8px 10px', borderRadius: 8, cursor: _sid ? 'pointer' : 'not-allowed',
+                                  padding: '8px 10px', borderRadius: 8, cursor: c.has_key ? 'pointer' : 'not-allowed',
                                   display: 'flex', flexDirection: 'column', gap: 2,
                                   background: active ? '#eef3ff' : 'transparent',
                                   border: active ? '1px solid #829cff' : '1px solid transparent',
@@ -3735,36 +3764,41 @@ export default function ChatPanel() {
                               </div>
                             );
                           })}
-                          {!_sid && (
-                            <div style={{ fontSize: 11, color: '#999', padding: '6px 8px', borderTop: '1px dashed #eee', marginTop: 4 }}>
-                              💡 先发送第一条消息建立会话后，即可为该会话单独选模型
-                            </div>
-                          )}
                         </div>
                       )}
                     </div>
                   );
                 })()}
                 {/* P1-3 内置角色 persona：仅通用Tab显示，与会话绑定记忆 */}
-                {(() => {
+                {selectedDim === 'general' && (() => {
                   const __sid = chatGeneralSessionId || '';
                   const __rid = sessionRoleMap[__sid] || 'default';
                   const __role = BUILTIN_ROLES.find(r => r.id === __rid) || BUILTIN_ROLES[0];
+                  const __ready = !!__sid;
                   return (
                     <>
                       <button
-                        onClick={(e) => { e.stopPropagation(); setShowRolePicker(s => !s); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!__ready) return;
+                          setShowRolePicker(s => !s);
+                        }}
+                        title={__ready
+                          ? `当前角色「${__role.name}」：${__role.brief}。点击切换。`
+                          : '先发送任意一条消息建立会话，之后才能切换角色模式'}
                         style={{
                           padding: '4px 10px', borderRadius: 999, border: '1px solid #ffe7c2',
-                          background: '#fffaf1', cursor: 'pointer', fontSize: 12, display: 'inline-flex',
+                          background: __ready ? '#fffaf1' : '#fff9ee',
+                          cursor: __ready ? 'pointer' : 'not-allowed',
+                          opacity: __ready ? 1 : 0.6,
+                          fontSize: 12, display: 'inline-flex',
                           alignItems: 'center', gap: 6, color: '#333',
                         }}
-                        title={`当前角色：${__role.brief}`}
                       >
                         <span>{__role.emoji}</span><span style={{ fontWeight: 600 }}>{__role.name}</span>
-                        <span style={{ color: '#bbb' }}>{showRolePicker ? ' ▲' : ' ▼'}</span>
+                        {__ready && <span style={{ color: '#bbb' }}>{showRolePicker ? ' ▲' : ' ▼'}</span>}
                       </button>
-                      {showRolePicker && (
+                      {showRolePicker && __ready && (
                         <div
                           onClick={e => e.stopPropagation()}
                           style={{
@@ -3780,7 +3814,7 @@ export default function ChatPanel() {
                               <div
                                 key={r.id}
                                 onClick={() => {
-                                  if (__sid) setSessionRoleMap(m => ({ ...m, [__sid]: r.id }));
+                                  setSessionRoleMap(m => ({ ...m, [__sid]: r.id }));
                                   setShowRolePicker(false);
                                 }}
                                 style={{
