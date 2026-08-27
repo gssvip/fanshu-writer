@@ -107,7 +107,8 @@ def run_review_cycle_with_bible(polished_content, bb, post_validate, book_id, ch
     from datetime import datetime, timezone
     from post_write_validator import validate_chapter, validate_chapter_with_bible
     from revise import route_revision, build_spot_fix_prompt, apply_spot_fix_patches
-    from llm_gateway import build_auth_headers, get_output_limit
+    from llm_gateway import build_auth_headers, get_output_limit, _normalize_llm_base_url
+    base_url = _normalize_llm_base_url(base_url, model)
 
     review_cycle_result = None
     if not (post_validate and post_validate.get('issues') and bb):

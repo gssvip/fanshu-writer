@@ -334,6 +334,66 @@ def _error_text(resp) -> str:
         return ""
 
 
+def _normalize_llm_base_url(base_url: str, model: Optional[str] = None) -> str:
+    """LLM base_url 归一化（修复智谱 GLM 404 等典型配置错误）。
+
+    根因：get_llm_config 之前对所有 provider 无条件补 "/v1"，
+    但智谱 GLM 走 v4 接口（https://open.bigmodel.cn/api/paas/v4/chat/completions），
+    若前端填 https://open.bigmodel.cn/api/paas/v4 → 被补 /v1 → /v4/v1 → 404。
+
+    策略（参考经验 193681 / 1136664）：
+    1) 先做脏清洗：去掉结尾 /chat/completions /embeddings /v1/chat/completions、去尾部斜杠
+    2) 识别"智谱 GLM provider"：model 含 glm/zhipu 或 base_url 含 bigmodel.cn
+       → 导向 v4，绝不加 /v1
+    3) 其他默认 OpenAI 兼容（deepseek/qwen/yi/本地 Ollama 等）：确保结尾是 /v1
+    """
+    if not base_url:
+        return "https://api.deepseek.com/v1"
+    s = base_url.strip().rstrip("/")
+
+    # === 1) 脏清洗：裁掉用户手贱填的完整接口路径，避免重复拼接 ===
+    dirty_suffixes = [
+        '/v1/chat/completions', '/v4/chat/completions', '/chat/completions',
+        '/v1/embeddings', '/v4/embeddings', '/embeddings',
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for suf in dirty_suffixes:
+            if s.endswith(suf):
+                s = s[: -len(suf)].rstrip("/")
+                changed = True
+
+    # 去重复段：比如 .../v4/v1 中，智谱场景下 /v1 是误加的（先去掉）
+    model_l = (model or '').lower()
+    is_zhipu = ('glm' in model_l) or ('zhipu' in model_l) or ('bigmodel.cn' in s) or ('/api/paas' in s)
+
+    if is_zhipu:
+        # === 智谱 GLM：导向 /api/paas/v4，绝不加 /v1 ===
+        # 先摘掉可能误加的 /v1（来自 get_llm_config 历史逻辑重复拼接）
+        if s.endswith('/v4/v1'):
+            s = s[:-3]  # 留 /v4
+        elif s.endswith('/v1') and '/v4' in s:
+            # 已经有 v4 情况下再挂一个 /v1 是错的（.../api/paas/v4/v1 → 摘）
+            s = s[:-3].rstrip('/')
+        # 补全：如果只填了域名 没填 /api/paas/v4，自动补齐官方默认
+        if 'bigmodel.cn' in s and '/api/paas' not in s:
+            s = s.rstrip('/') + '/api/paas/v4'
+        elif 'bigmodel.cn' in s and '/api/paas/v4' not in s and s.endswith('/api/paas'):
+            s = s + '/v4'
+        # 其他情况（比如用户填了自研网关转发智谱 v4）：保持原样不强行补/v1
+    else:
+        # === 默认 OpenAI 兼容（deepseek/qwen/yi/ollama 等）：确保 /v1 ===
+        # 如果路径有别的版本（比如 /v3）就不强行改，除非完全没有版本段
+        has_v1 = s.endswith('/v1')
+        if not has_v1:
+            # 如果已经有别的具体版本段（/v2/v3/v4…）就不加/v1（用户可能故意用非默认版本网关）
+            import re as _re
+            if not _re.search(r'/v\d+$', s):
+                s = s.rstrip('/') + '/v1'
+    return s.rstrip('/')
+
+
 class LLMGateway:
     """统一 LLM 调用网关。
 
@@ -342,12 +402,9 @@ class LLMGateway:
 
     def __init__(self, base_url: str, api_key: str, model: str,
                  timeout: int = 180, max_retries: int = 2):
-        self.base_url = (base_url or "").rstrip("/")
-        # 兼容 base_url 不带 /v1 的情况
-        if not self.base_url.endswith("/v1"):
-            # 如果已经是 .../v1 就不加；如果是 .../chat/completions 的根就加
-            # 实际调用时拼 /chat/completions，所以 base_url 应是 .../v1
-            pass
+        # 过一遍归一化：防止外部（如chapter_review_cycle.py/直调LLMGateway）不走get_llm_config时，
+        # 仍能兜住智谱 /v4/v1 重复拼接类404
+        self.base_url = _normalize_llm_base_url(base_url, model)
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
@@ -652,9 +709,9 @@ def get_llm_config(app_module=None):
         api_key = config.api_key if config and config.api_key else os.environ.get("USER_LLM_API_KEY", "")
         base_url = config.base_url if config else os.environ.get("USER_LLM_BASE_URL", "https://api.deepseek.com/v1")
         model = config.model if config else os.environ.get("USER_LLM_MODEL", "deepseek-chat")
-        # 确保 base_url 以 /v1 结尾
-        if not base_url.rstrip("/").endswith("/v1"):
-            base_url = base_url.rstrip("/") + "/v1"
+        # 【智谱 GLM 404 修复】不再无条件补 /v1，走 provider 感知的归一化：
+        # 智谱→导向v4不补/v1；其他OpenAI兼容→确保/v1但已有其他版本段不强行补。
+        base_url = _normalize_llm_base_url(base_url, model)
         return base_url, api_key, model
 
 
