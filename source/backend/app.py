@@ -9404,7 +9404,7 @@ def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation',
         try:
             resp = requests.post(f'{base}/chat/completions',
                 headers=build_auth_headers(cfg.api_key),
-                json=payload, timeout=180)
+                json=payload, timeout=300)
 
             # 检查 HTTP 状态：5xx 可重试，4xx 为客户端错误不重试
             if resp.status_code >= 500:
@@ -10215,8 +10215,10 @@ def ai_outline_volume(book_id):
         main_events_block = '\n'.join(_me_lines) if _me_lines else '（本卷尚未按新结构生成主要剧情事件，将基于旧的关键事件设计子节点）'
 
         system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
-任务：基于第 {volume_index} 卷“{volume_title}”已有的主要剧情事件（main_events），**按每个主要剧情事件分别拆成 5-10 个子节点事件（nodes）**。
-子节点事件总数 ≈ 主要剧情事件数 × 平均 7-8 个子节点 ≈ 足以覆盖本卷 {chapters_per_volume} 章 × 2400字/章 ≈ {chapters_per_volume * 2400} 字正文。
+任务：基于第 {volume_index} 卷“{volume_title}”已有的主要剧情事件（main_events），**按每个主要剧情事件分别拆成子节点事件（nodes）**。
+- 主要事件 ≤ 6 个 → 每个拆 5-10 个
+- 主要事件 ≥ 7 个 → 每个拆 4-8 个
+子节点事件总数 ≈ 足以覆盖本卷 {chapters_per_volume} 章 × 2400字/章 ≈ {chapters_per_volume * 2400} 字正文。
 
 【本卷 6 要素锚（所有子节点都要在这个大框架内推进，不能超界）】
   · 核心人物：{vol_characters}
@@ -10235,7 +10237,7 @@ def ai_outline_volume(book_id):
 
 【两层对应铁律·升级（事件→子节点 + 精确章节分派）】
   · 输入 main_events 共 {len(existing_main_events)} 个事件
-  · 每个 main_event → 展开 5-10 个 nodes 子节点事件
+  · 每个 main_event → 展开 {4 if len(existing_main_events) >= 7 else 5}-{8 if len(existing_main_events) >= 7 else 10} 个 nodes 子节点事件
   · 每个子节点必须标注：它从属于哪个主要剧情事件（main_event_index = main_event.index）
   · 子节点覆盖总章数必须刚好等于本卷 {chapters_per_volume} 章（从第 {_evt_start} 章到第 {_evt_end} 章）
   · 关键：每个 main_event 被分派的章节区间如下，归属该事件的所有子节点的 chapters 加起来必须**精确**等于这个区间，连续不重叠不缺口：
@@ -10292,7 +10294,7 @@ def ai_outline_volume(book_id):
 
 【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
 【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（1-2章一个子节点，正好可直接写正文）
-本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），拆 {len(existing_main_events)} 个主要剧情事件 × 5-10 个子节点事件。
+本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），拆 {len(existing_main_events)} 个主要剧情事件 × {4 if len(existing_main_events) >= 7 else 5}-{8 if len(existing_main_events) >= 7 else 10} 个子节点事件。
 节点 chapters 必须从 {_evt_start} 开始连续递增，合计到第 {_evt_end} 章，不能超出本卷边界；同一 main_event 内的子节点 chapters 加起来精确等于分派的区间。
 【节点容量铁律】每个子节点 summary 必须足够支撑其 chapters 范围的字数容量（按每章2400字估算），不得简略。
 【节点连贯铁律】各节点 summary 末尾必须自然过渡到下一节点开头；本卷最后一个节点必须埋下并承接本卷 ending_hook：{existing_ending[:120]}
@@ -10412,9 +10414,10 @@ def ai_outline_volume(book_id):
 请为第 {volume_index} 卷生成详细大纲。"""
 
     # 节点设计需要大量输出：每卷约50章 × 每个子节点约200字 ≈ 10000+ tokens，设置充足上限
+    # temperature 调低到 0.65 减少发散，加快响应速度，降低超时概率
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=16384, temperature=0.7
+        max_tokens=16384, temperature=0.65, retry_count=3
     )
     if err:
         return jsonify({'error': err}), 500
