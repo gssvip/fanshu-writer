@@ -2642,16 +2642,6 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .smart-main-action:disabled { opacity: 0.5; cursor: not-allowed; }
 .smart-main-hint { font-size: 11px; color: var(--text-muted); }
 
-/* 通用助手快捷操作芯片 */
-.quick-action-chip {
-  padding: 6px 14px; border: 1px solid var(--border-color); border-radius: 16px;
-  background: var(--bg-primary); color: var(--text-primary); font-size: 13px;
-  cursor: pointer; transition: all 0.15s; touch-action: manipulation;
-  white-space: nowrap;
-}
-.quick-action-chip:hover:not(:disabled) { background: var(--accent); color: #fff; border-color: var(--accent); }
-.quick-action-chip:disabled { opacity: 0.5; cursor: not-allowed; }
-
 /* 输入区提示 */
 .chat-input-hint {
   font-size: 11px; color: var(--text-muted); padding: 0 4px;

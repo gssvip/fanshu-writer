@@ -1285,6 +1285,7 @@ export default function ChatPanel() {
     { id: 'polish',     name: '润色编辑', emoji: '✍️', brief: '擅长文字润色，指出语病、节奏、结构问题，给出具体改写对比' },
     { id: 'toxic_critic', name: '毒舌读者', emoji: '🔥', brief: '极度挑剔的读者视角，不留情面，专挑AI味和套路化' },
     { id: 'architect',  name: '剧情架构师', emoji: '🧱', brief: '擅长分卷结构、张力曲线、伏笔回收、CDL角色三角' },
+    { id: 'node_designer', name: '节点设计师', emoji: '🎯', brief: '按卷生成情节节点（main_event→子节点+章节分配+精确埋收），结果可采纳落入剧情线' },
     { id: 'worldbuilder', name: '世界观策划', emoji: '🗺️', brief: '擅长能量体系、势力地图、科技树/修炼树、经济体系自洽' },
     { id: 'marketeer',  name: '爆款编辑', emoji: '📈', brief: '从书名/一句话梗/前3章钩子的工业化爆款视角把关' },
     { id: 'interviewer', name: '深度采访', emoji: '🎙️', brief: '连续追问直到挖透设定矛盾和人物动机，擅长逼出冰山' },
@@ -2536,23 +2537,28 @@ export default function ChatPanel() {
     streamBufferRef.current = '';
     reasoningBufferRef.current = '';
 
-    // ====== 节点设计师（通用助手斜杠命令）：/节点设计 第X卷 或 /设计节点 第X卷 ======
-    const _nodeDesignMatch = text.match(/^\/(节点设计|设计节点)\s*第?(\d+)\s*卷?/);
-    if (_nodeDesignMatch) {
-      const vi = parseInt(_nodeDesignMatch[2], 10);
+    // ====== 节点设计师助手：选中「节点设计师」助手后，输入卷号即可生成节点 ======
+    const _PREKEY = '__general_pending_session__';
+    const _sidReal = chatGeneralSessionId || '';
+    const _sid = _sidReal || _PREKEY;
+    const _rtRole = sessionRoleMap[_sid] || 'default';
+    if (_rtRole === 'node_designer') {
+      // 解析用户输入中的卷号：支持"第1卷" "第一卷" "1卷" "卷1" "1" 等
+      const _volMatch = text.match(/(?:第?\s*(\d+)\s*卷|卷\s*(\d+)|^(\d+)$)/);
+      const vi = _volMatch ? parseInt(_volMatch[1] || _volMatch[2] || _volMatch[3], 10) : 0;
       if (!vi || vi < 1) {
-        setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '❌ 请指定卷号，如：`/节点设计 第1卷`' }]);
+        // 不匹配卷号 → 提示用法
+        setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '🎯 **节点设计师**已就绪。请告诉我卷号，如：`第1卷`、`第一卷`、`1`\n\n系统将自动为该卷生成情节子节点，完成后可点击「采纳」落入剧情线。' }]);
         return;
       }
-      // 先显示用户消息 + 等待提示
-      setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '⏳ 正在生成第' + vi + '卷的情节节点…（逐事件分析，耗时约 1-3 分钟，请耐心等待）' }]);
+      // 匹配到卷号 → 走节点设计流程
+      setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '⏳ 正在为第' + vi + '卷设计情节节点…（逐事件分析，约 1-3 分钟，请等待）' }]);
       setStreaming(true);
       try {
         const r = await api.aiOutlineVolume(bookId, vi, `第${vi}卷`, undefined, undefined, true);
         const nodes = r?.volume_data?.nodes || [];
         const timeline = r?.timeline || '';
         const cardId = 'node-' + Math.random().toString(36).slice(2, 9);
-        // 生成节点摘要
         let summary = '';
         if (nodes.length > 0) {
           const chRanges = nodes.map((n: any, i: number) => `${i+1}. ${n.title||'无标题'}（第${n.chapters||'?'}章）`).join('\n');
@@ -2562,7 +2568,6 @@ export default function ChatPanel() {
         }
         setMessages(prev => {
           const next = [...prev];
-          // 替换最后的等待提示
           if (next[next.length-1]?.role === 'assistant') {
             next[next.length-1] = { ...next[next.length-1], content: summary, cards: nodes.length > 0 ? [{
               id: cardId, type: 'SAVE_PLOT' as const, title: `第${vi}卷情节节点`,
@@ -2586,10 +2591,6 @@ export default function ChatPanel() {
     }
 
     // ====== 圆桌会议分支：6个专家Agent两轮轮流发言，实时流式展示，最后出总结报告 ======
-    const _PREKEY = '__general_pending_session__';
-    const _sidReal = chatGeneralSessionId || '';
-    const _sid = _sidReal || _PREKEY;
-    const _rtRole = sessionRoleMap[_sid] || 'default';
     if (_rtRole === 'roundtable') {
       setMessages(prev => [...prev, { role: 'user', content: text }, {
         role: 'assistant', content: '', cards: [],
@@ -3779,11 +3780,7 @@ export default function ChatPanel() {
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b' }}>💬 通用聊天模式 · 想聊啥就聊啥</p>
                       <p style={{ fontSize: 13, color: '#6b7280', margin: '8px 0 0' }}>命中创作关键词自动提示一键入库 📦。自然语言聊天，直接说需求即可。</p>
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginTop: 14 }}>
-                        <button className="quick-action-chip" onClick={() => { setInput('/节点设计 第1卷'); setTimeout(() => handleGeneral({ text: '/节点设计 第1卷' }), 50); }} disabled={streaming}>🎯 节点设计 第1卷</button>
-                        <button className="quick-action-chip" onClick={() => { setInput('/节点设计 第2卷'); setTimeout(() => handleGeneral({ text: '/节点设计 第2卷' }), 50); }} disabled={streaming}>🎯 节点设计 第2卷</button>
-                        <button className="quick-action-chip" onClick={() => { setInput('/节点设计 第3卷'); setTimeout(() => handleGeneral({ text: '/节点设计 第3卷' }), 50); }} disabled={streaming}>🎯 节点设计 第3卷</button>
-                      </div>
+                      <p style={{ fontSize: 12, color: '#9ca3af', margin: '10px 0 0' }}>💡 选择上方「🎯 节点设计师」助手可生成情节节点</p>
                     </div>
                   ) : (
                     <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
