@@ -3779,6 +3779,11 @@ export default function ChatPanel() {
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b' }}>💬 通用聊天模式 · 想聊啥就聊啥</p>
                       <p style={{ fontSize: 13, color: '#6b7280', margin: '8px 0 0' }}>命中创作关键词自动提示一键入库 📦。自然语言聊天，直接说需求即可。</p>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginTop: 14 }}>
+                        <button className="quick-action-chip" onClick={() => { setInput('/节点设计 第1卷'); setTimeout(() => handleGeneral({ text: '/节点设计 第1卷' }), 50); }} disabled={streaming}>🎯 节点设计 第1卷</button>
+                        <button className="quick-action-chip" onClick={() => { setInput('/节点设计 第2卷'); setTimeout(() => handleGeneral({ text: '/节点设计 第2卷' }), 50); }} disabled={streaming}>🎯 节点设计 第2卷</button>
+                        <button className="quick-action-chip" onClick={() => { setInput('/节点设计 第3卷'); setTimeout(() => handleGeneral({ text: '/节点设计 第3卷' }), 50); }} disabled={streaming}>🎯 节点设计 第3卷</button>
+                      </div>
                     </div>
                   ) : (
                     <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
