@@ -152,7 +152,11 @@ TOOLSPAGE_BASELINE = 1192
 #   - chat_general 新增 deep_think / web_search_enabled 透传：深度思考(temp 0.3/max 8192/system追加推演)
 #     联网开关(强制搜索)、system 增强；顶部助手切换在纯前端(SkillPackSelector 条件渲染)，后端净增 9 行
 #   → 净增 9 行（7827→7836）
-CHAT_COLLAB_BP_BASELINE = 7836
+# 2026-08-28 重校准（装上联网接口 + 思考程度三档）：
+#   - 新增 /api/ai/search-config GET/PUT 路由（存 AppPreference KV）+ _sync_search_keys_from_preference 助手
+#   - deep_think 由布尔改为程度档位(0/1/2)：temperature 0.7/0.5/0.3、max_tokens 4096/6144/8192、system 按档增强
+#   → 净增 80 行（7836→7916）
+CHAT_COLLAB_BP_BASELINE = 7916
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

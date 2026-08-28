@@ -1079,11 +1079,11 @@ export const api = {
     ),
 
   // ────────────────────────────────────────────────────────────────
-  // 通用聊天 + 爆款3步流水线（通用对话Tab新增能力）
+  // 通用对话Tab新增能力
   // ────────────────────────────────────────────────────────────────
 
   // 通用聊天模式（SSE）：不强制创作上下文，任意话题；命中维度时 meta.hit_suggestions 回传提示气泡
-  chatGeneralStream: (message: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; roleId?: string; deepThink?: boolean; webSearch?: boolean }, signal?: AbortSignal) => {
+  chatGeneralStream: (message: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; roleId?: string; deepThink?: number; webSearch?: boolean }, signal?: AbortSignal) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -1092,10 +1092,18 @@ export const api = {
     if (opts?.sessionId) body.session_id = opts.sessionId;
     if (opts?.aiConfigId) body.ai_config_id = opts.aiConfigId;
     if (opts?.roleId) body.role_id = opts.roleId;
-    if (opts?.deepThink) body.deep_think = true;
+    if (opts?.deepThink && opts.deepThink > 0) body.deep_think = opts.deepThink; // 0=关 1=标准 2=深度
     if (opts?.webSearch) body.web_search_enabled = true;
     const cfg: RequestInit = { method: 'POST', headers, body: JSON.stringify(body) };
     if (signal) cfg.signal = signal;
     return fetchStream(`${getApiBaseUrl()}/ai/chat/general`, cfg, signal);
   },
+
+  // ===== 联网搜索 Key 配置（Tavily/Exa/Brave 可选填；保存后立即生效） =====
+  getSearchConfig: () =>
+    request<{ keys: Record<string, string>; env: Record<string, boolean> }>('/ai/search-config', { method: 'GET' }),
+  saveSearchConfig: (keys: { tavily?: string; exa?: string; brave?: string }) =>
+    request<{ ok: boolean; updated: Record<string, boolean> }>('/ai/search-config', {
+      method: 'PUT', body: JSON.stringify(keys),
+    }),
 };

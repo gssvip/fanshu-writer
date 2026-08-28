@@ -1005,6 +1005,129 @@ function SkillPackSelector({ packs, selected, onToggle, compact, onPreview }: {
 }
 
 // ============================================================================
+// 通用聊天·顶部"助手选择器"（折叠式，视觉对齐技能包；含联网搜索 Key 配置）
+//   7款内置助手单选 + "🌐 联网搜索 Key"配置表单，全部做成可折叠列表
+// ============================================================================
+function GeneralAssistantSelector({ roles, currentId, onSelect }: {
+  roles: readonly { id: string; name: string; emoji: string; brief: string }[];
+  currentId: string;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [cfgOpen, setCfgOpen] = useState(false);
+  const [draft, setDraft] = useState<{ tavily: string; exa: string; brave: string }>({ tavily: '', exa: '', brave: '' });
+  const [state, setState] = useState<{ keys: Record<string, string>; env: Record<string, boolean> } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const curRole = roles.find(r => r.id === currentId) || roles[0];
+
+  const loadCfg = async () => {
+    try {
+      const d = await api.getSearchConfig();
+      setState(d);
+      setMsg('');
+    } catch (e: any) {
+      setState({ keys: {}, env: {} });
+      setMsg('读取配置失败：' + (e?.message || String(e)));
+    }
+  };
+  const saveCfg = async () => {
+    setSaving(true);
+    try {
+      const r = await api.saveSearchConfig({ tavily: draft.tavily.trim(), exa: draft.exa.trim(), brave: draft.brave.trim() });
+      setMsg(`✅ 已保存（${Object.entries(r.updated).filter(([, v]) => v).map(([k]) => k).join(' / ') || '已清空'}）`);
+      setDraft({ tavily: '', exa: '', brave: '' });
+      loadCfg();
+    } catch (e: any) {
+      setMsg('❌ 保存失败：' + (e?.message || String(e)));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="smart-skill-selector compact" data-gt-assistant-selector>
+      <button
+        className="smart-skill-toggle"
+        data-gt-assistant-toggle
+        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        title="切换助手（7款内置角色）· 下方可配置联网搜索 Key"
+      >
+        👤 <span style={{ fontWeight: 600 }}>{curRole.emoji}{curRole.name}</span>
+        <span className="smart-skill-arrow">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="smart-skill-list" data-gt-assistant-popover
+          onClick={(e) => { e.stopPropagation(); }}
+          style={{ maxHeight: 260, overflowY: 'auto' }}
+        >
+          {roles.map(r => {
+            const active = currentId === r.id;
+            return (
+              <div
+                key={r.id}
+                className={`smart-skill-item ${active ? 'checked' : ''}`}
+                onClick={() => { onSelect(r.id); }}
+                title={r.brief}
+                style={{ cursor: 'pointer', opacity: 1 }}
+              >
+                <span className="smart-skill-icon">{r.emoji}</span>
+                <span className="smart-skill-name" style={{ color: active ? '#c25e00' : '#333' }}>{r.name}</span>
+                {active && <span style={{ marginLeft: 'auto', color: '#e97b00', fontSize: 12 }}>当前</span>}
+              </div>
+            );
+          })}
+          {/* 分隔：联网搜索 Key 配置 */}
+          <div
+            style={{ margin: '6px 2px 0', borderTop: '1px solid #eee', padding: '6px 2px 0', cursor: 'pointer' }}
+            data-gt-searchcfg-toggle
+            onClick={(e) => { e.stopPropagation(); setCfgOpen(o => !o); if (!cfgOpen) loadCfg(); }}
+          >
+            <span style={{ fontSize: 12, fontWeight: 600, color: cfgOpen ? '#0a7d4f' : '#555' }}>
+              🌐 联网搜索 Key {cfgOpen ? '▲' : '▼'}
+            </span>
+            <span style={{ fontSize: 11, color: '#aaa', marginLeft: 6 }}>
+              {state ? (['tavily', 'exa', 'brave'].some(k => state.keys[k] || state.env[(k === 'tavily' ? 'TAVILY' : k === 'exa' ? 'EXA' : 'BRAVE') + '_API_KEY']) ? '已配置' : '未配置') : ''}
+            </span>
+          </div>
+          {cfgOpen && (
+            <div style={{ padding: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {(['tavily', 'exa', 'brave'] as const).map(k => (
+                <label key={k} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <span style={{ fontSize: 11, color: '#777' }}>
+                    {k === 'tavily' ? 'Tavily' : k === 'exa' ? 'Exa' : 'Brave Search'} <span style={{ color: '#aaa', marginLeft: 4 }}>
+                      {state?.keys[k] ? `（已保存${state.env[k.toUpperCase() + '_API_KEY'] ? ' · 已生效' : ''}）` : '（未配置）'}
+                    </span>
+                  </span>
+                  <input
+                    type="password"
+                    placeholder="https://www.tavily.com 右侧复制 API Key，留空=不改"
+                    value={draft[k]}
+                    onChange={(e) => setDraft(d => ({ ...d, [k]: e.target.value }))}
+                    style={{ fontSize: 12, padding: '5px 7px', border: '1px solid #d9d9e4', borderRadius: 7 }}
+                  />
+                </label>
+              ))}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); saveCfg(); }}
+                  disabled={saving}
+                  style={{ fontSize: 12, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#0a7d4f', color: '#fff', cursor: 'pointer' }}
+                >{saving ? '保存中…' : '保存'}</button>
+                <span style={{ fontSize: 11, color: msg.startsWith('✅') ? '#288f2b' : msg.startsWith('❌') ? '#c32e2e' : '#888' }}>{msg}</span>
+              </div>
+              <div style={{ fontSize: 10.5, color: '#aaa', lineHeight: 1.5 }}>
+                不填也能联网（DuckDuckGo 兜底）；填了 Tavily/Exa/Brave 任一生效即可更稳、结果更准。
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // 主组件：AI 智驾
 // ============================================================================
 export default function ChatPanel() {
@@ -1102,9 +1225,10 @@ export default function ChatPanel() {
   ] as const;
   // 通用聊天每个会话独立记住上次选的角色：sessionId -> roleId
   const [sessionRoleMap, setSessionRoleMap] = useState<Record<string, string>>({});
-  // P0-4 通用聊天工具栏开关：联网搜索🔍 / 深度思考🧠（全局会话级，跨会话沿用）
+  // P0-4 通用聊天工具栏开关：联网搜索🔍 / 深度思考🧠（深度思考有档位：0=关 1=标准 2=深度）
   const [generalWebSearch, setGeneralWebSearch] = useState(false);
-  const [generalDeepThink, setGeneralDeepThink] = useState(false);
+  const [generalDeepThink, setGeneralDeepThink] = useState<number>(0);
+  const [deepThinkOpen, setDeepThinkOpen] = useState(false);
   // P1-4 Silly Tavern 角色卡导入：隐藏的 file input ref + 解析工具
   const stCharCardRef = useRef<HTMLInputElement | null>(null);
   const [stImportMsg, setStImportMsg] = useState<string>('');  // 导入完成后的提示文本
@@ -1136,20 +1260,21 @@ export default function ChatPanel() {
     }).catch(() => {});
   }, []);
 
+  // 【P0-5 通用工具栏浮层】模型 + 深度思考档位 两个浮层的点击外部关闭（capture 阶段，白名单）
   useEffect(() => {
-    if (!showModelPicker) return;
+    if (!showModelPicker && !deepThinkOpen) return;
     function handler(e: Event) {
-      // Chip onClick / picker 浮层 onClick 里 stopPropagation 后 e.target 仍存在，
-      // 用 composedPath 判断点击源是否来自"开关Chip本身"或"浮层内部"，来源则不关（兼容 capture 阶段）
       const path = e.composedPath ? e.composedPath() : [e.target as any];
       const within = (s: string) =>
         Array.from(document.querySelectorAll<HTMLElement>(s)).some(el => path.includes(el));
       if (within('[data-gt-model-chip]') || within('[data-gt-model-popover]')) return;
+      if (within('[data-gt-deeppicker-chip]') || within('[data-gt-deeppicker-popover]')) return;
       setShowModelPicker(false);
+      setDeepThinkOpen(false);
     }
     document.addEventListener('click', handler, true);
     return () => document.removeEventListener('click', handler, true);
-  }, [showModelPicker]);
+  }, [showModelPicker, deepThinkOpen]);
 
   // 提示1：助手切换已上移到"通用顶部"，浮层选择器已删除（底部一排改为：模型/联网搜索/深度思考/导入角色卡）
 
@@ -2755,28 +2880,13 @@ export default function ChatPanel() {
                       })}
                     </div>
                   </div>
-                  {/* 通用维度：顶部技能包区 → 换成"助手切换"（7款内置助手横排平铺，点击即选）；其他维度保持技能包选择 */}
+                  {/* 通用维度：顶部"助手切换"（折叠式选择器，视感对齐技能包，含联网搜索Key配置）；其他维度保持技能包选择 */}
                   {selectedDim === 'general' ? (
-                    <div className="general-assistant-row" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '4px 8px' }}>
-                      <style>{`
-                        .general-assistant-row .ga-chip { display:inline-flex; align-items:center; gap:3px; height:26px; padding:0 10px; border-radius:999px; font-size:12px; border:1px solid #f0dcc2; background:#fffaf3; color:#8a5a2a; cursor:pointer; white-space:nowrap; }
-                        .general-assistant-row .ga-chip.active { background:#ffefe0; border-color:#ffb75d; color:#c25e00; box-shadow:0 0 0 1px #ffb75d66; font-weight:600; }
-                      `}</style>
-                      <span style={{ fontSize: 12, color: '#999', whiteSpace: 'nowrap' }}>👤 助手</span>
-                      {BUILTIN_ROLES.map(r => {
-                        const _gaKey = chatGeneralSessionId || '__general_pending_session__';
-                        const _gaActive = (sessionRoleMap[_gaKey] || 'default') === r.id;
-                        return (
-                          <button
-                            key={r.id}
-                            data-gt-role-chip
-                            className={`ga-chip ${_gaActive ? 'active' : ''}`}
-                            onClick={(e) => { e.stopPropagation(); setSessionRoleMap(m => ({ ...m, [_gaKey]: r.id })); }}
-                            title={`${r.name}：${r.brief}`}
-                          >{r.emoji}{r.name}</button>
-                        );
-                      })}
-                    </div>
+                    <GeneralAssistantSelector
+                      roles={BUILTIN_ROLES}
+                      currentId={sessionRoleMap[chatGeneralSessionId || '__general_pending_session__'] || 'default'}
+                      onSelect={(id) => setSessionRoleMap(m => ({ ...m, [chatGeneralSessionId || '__general_pending_session__']: id }))}
+                    />
                   ) : (
                     <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} onPreview={(pack) => setPreviewPack(pack)} compact />
                   )}
@@ -3594,14 +3704,18 @@ export default function ChatPanel() {
                             🔍<span style={{ fontWeight: 600 }}>联网</span>
                           </button>
 
-                          {/* ── 🧠 深度思考 Toggle：占 1/4（高亮=降temperature+提max_tokens，先推演再给结论） ── */}
+                          {/* ── 🧠 深度思考 Button：占 1/4（三档：关/标准/深度，点开选档） ── */}
                           <button
-                            className={`gt-4cell ${generalDeepThink ? 'gt-toggle-on' : 'gt-toggle-off'}`}
-                            onClick={(e) => { e.stopPropagation(); setGeneralDeepThink(s => !s); }}
-                            title={generalDeepThink ? '🧠 深度思考已开启：AI会先深入的推演分析再给结论' : '🧠 点击开启深度思考：AI会先深入推演、权衡取舍，再给出更扎实的结论'}
-                            style={{ ..._chipBase, border: '1px solid #d8d0ec', background: generalDeepThink ? '#f1ecfa' : '#fafafa', cursor: 'pointer', color: generalDeepThink ? '#6236c9' : '#555' }}
+                            className={`gt-4cell ${generalDeepThink > 0 ? 'gt-toggle-on' : 'gt-toggle-off'}`}
+                            data-gt-deeppicker-chip
+                            onClick={(e) => { e.stopPropagation(); setDeepThinkOpen(s => !s); }}
+                            title={`深度思考${generalDeepThink > 0 ? '：' + ({1: '标准思考', 2: '深度思考'} as Record<number, string>)[generalDeepThink] : '（关闭）'}. 点击选择思考程度`}
+                            style={{ ..._chipBase, border: '1px solid #d8d0ec', background: generalDeepThink > 0 ? '#f1ecfa' : '#fafafa', cursor: 'pointer', color: generalDeepThink > 0 ? '#6236c9' : '#555' }}
                           >
-                            <span style={{ fontWeight: 600 }}>深度思考</span>
+                            <span style={{ fontWeight: 600 }}>
+                              🧠{generalDeepThink === 2 ? '深度' : generalDeepThink === 1 ? '标准' : '思考'}
+                            </span>
+                            <span style={{ color: '#bbb' }}>{deepThinkOpen ? '▲' : '▼'}</span>
                           </button>
 
                           {/* ── 📥 导入角色卡 Button：占 1/4 ── */}
@@ -3744,6 +3858,43 @@ export default function ChatPanel() {
                                     {!c.has_key && <span style={{ color: '#e24', fontSize: 11 }}>未填Key</span>}
                                   </div>
                                   <div style={{ fontSize: 11, color: '#777' }}>{c.provider} · {c.model}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* ── 🧠 深度思考档次浮层：关/标准/深度 三档 ── */}
+                        {deepThinkOpen && (
+                          <div
+                            data-gt-deeppicker-popover
+                            onClick={e => e.stopPropagation()}
+                            style={{
+                              position: 'absolute', left: '36%', bottom: '100%', marginBottom: 4, zIndex: 100,
+                              minWidth: 220, padding: 6,
+                              background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
+                              boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
+                            }}
+                          >
+                            {([
+                              { level: 0, label: '⚡ 关闭', desc: '默认快速回答' },
+                              { level: 1, label: '🔄 标准思考', desc: '先理清思路，言简意赅' },
+                              { level: 2, label: '🧠 深度思考', desc: '拆假设·列逻辑·权衡取舍再给结论' },
+                            ]).map(opt => {
+                              const active = generalDeepThink === opt.level;
+                              return (
+                                <div
+                                  key={opt.level}
+                                  onClick={() => { setGeneralDeepThink(opt.level); setDeepThinkOpen(false); }}
+                                  style={{
+                                    padding: '8px 10px', borderRadius: 8, cursor: 'pointer', marginBottom: 2,
+                                    display: 'flex', flexDirection: 'column', gap: 2,
+                                    background: active ? '#f1ecfa' : 'transparent',
+                                    border: active ? '1px solid #9b7ee0' : '1px solid transparent',
+                                  }}
+                                >
+                                  <span style={{ fontWeight: 600, fontSize: 13, color: active ? '#6236c9' : '#333' }}>{opt.label}</span>
+                                  <span style={{ fontSize: 11, color: '#888' }}>{opt.desc}</span>
                                 </div>
                               );
                             })}

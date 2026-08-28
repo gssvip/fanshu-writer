@@ -7298,7 +7298,80 @@ def smart_apply_text_fix():
 # ============================================================================
 # 【通用聊天】新增路由（薄壳，核心逻辑放独立模块，防chat_collab_bp超基线）
 #   POST /api/ai/chat/general                   通用聊天（任意话题）+ 命中维度提示气泡
+#   GET/PUT /api/ai/search-config               联网搜索 Key 配置（存 AppPreference KV）
 # ============================================================================
+
+def _sync_search_keys_from_preference():
+    """把 AppPreference.web_search_keys 里的 Tavily/Exa/Brave Key 同步进 os.environ。
+
+    优先用外部环境变量；只有 env 未设置时才用用户保存的 Key。
+    """
+    import json as _json
+    try:
+        from app import AppPreference
+    except Exception:
+        return
+    try:
+        raw = AppPreference.get('web_search_keys', '') or ''
+        if not str(raw).strip():
+            return
+        d = _json.loads(raw) if isinstance(raw, str) else {}
+        if not isinstance(d, dict):
+            return
+        for env_key, pref_key in (('TAVILY_API_KEY', 'tavily'), ('EXA_API_KEY', 'exa'), ('BRAVE_API_KEY', 'brave')):
+            if not os.environ.get(env_key):
+                v = str(d.get(pref_key) or '').strip()
+                if v:
+                    os.environ[env_key] = v
+    except Exception:
+        return
+
+
+@chat_collab_bp.route('/api/ai/search-config', methods=['GET'])
+def ai_search_config_get():
+    """返回当前联网搜索 Key 配置状态（不回传明文，只有"已配置/未配置"）。"""
+    from app import AppPreference
+    d = {}
+    try:
+        raw = AppPreference.get('web_search_keys', '') or ''
+        d = json.loads(raw) if str(raw).strip() else {}
+        if not isinstance(d, dict):
+            d = {}
+    except Exception:
+        d = {}
+    masked = {}
+    for k in ('tavily', 'exa', 'brave'):
+        v = str(d.get(k) or '').strip()
+        masked[k] = '已配置' if v else ''
+    env = {}
+    for k in ('TAVILY_API_KEY', 'EXA_API_KEY', 'BRAVE_API_KEY'):
+        env[k] = bool(str(os.environ.get(k) or '').strip())
+    return jsonify({'keys': masked, 'env': env})
+
+
+@chat_collab_bp.route('/api/ai/search-config', methods=['PUT'])
+def ai_search_config_put():
+    """保存联网搜索 Key（可选，Tavily/Exa/Brave 任一即可；留空=清除该引擎）。"""
+    from app import AppPreference
+    body = request.json or {}
+    cur = {}
+    try:
+        raw = AppPreference.get('web_search_keys', '') or ''
+        cur = json.loads(raw) if str(raw).strip() else {}
+        if not isinstance(cur, dict):
+            cur = {}
+    except Exception:
+        cur = {}
+    changed = {}
+    for k in ('tavily', 'exa', 'brave'):
+        if k in body:
+            v = str(body.get(k) or '').strip()
+            cur[k] = v
+            changed[k] = bool(v)
+    AppPreference.set('web_search_keys', json.dumps(cur, ensure_ascii=False))
+    # 新 Key 立刻生效（写入 os.environ 供 web_search_bridge 这里的连接读取）
+    _sync_search_keys_from_preference()
+    return jsonify({'ok': True, 'updated': changed})
 
 @chat_collab_bp.route('/api/ai/chat/general', methods=['POST'])
 def chat_general():
@@ -7341,9 +7414,9 @@ def chat_general():
     session_id = data.get('session_id')
     message = (data.get('message') or '').strip()
     # P0-4 通用聊天工具栏（底部一排）透传项：
-    #   deep_think: 深度思考模式（降temperature、提max_tokens、system追加"先推演再给结论"）
+    #   deep_think: 深度思考程度（0=关闭 1=标准思考 2=深度思考：温度/字数/system 逐级增强）
     #   web_search_enabled: 联网搜索开关（true=强制联网搜索，绕开"创作类话题不搜"的启发式过滤）
-    deep_think = bool(data.get('deep_think'))
+    deep_think = min(max((int(data.get('deep_think') or 0)), 0), 2)
     web_search_enabled = bool(data.get('web_search_enabled'))
     # P1-1 会话级切模型：请求体 ai_config_id > 会话 meta_json.ai_config_id > 全局激活
     req_ai_config_id = (data.get('ai_config_id') or '').strip() or None
@@ -7665,10 +7738,15 @@ def chat_general():
                 # 取尾部 1500 字（最后一段才是用户本轮之前的意图/对话），并标注已截尾
                 c = '…（会话历史超长已截断，取尾部关键内容）\n' + c[-1500:]
             trimmed.append({'role': m.get('role') or 'user', 'content': c})
-    # P0-4 深度思考模式：在 system 末尾追加"先推演再给结论"的指令（temperature/max_tokens 在 generate 里按此调整）
-    if deep_think:
-        system_prompt = system_prompt.rstrip() + ("\n\n【深度思考模式·已开启】请先深入推演：拆解关键假设 → 列出逻辑链 → 权衡各方案取舍，再给出最终结论。"
-                                                   "\n适当保留推理过程便于作者理解，但最终答案必须清晰、可落地，不因多了推理而啰嗦。")
+    # P0-4 深度思考程度：level>=1 时在 system 末尾按档位追加"先推演再给结论"的指令
+    if deep_think >= 1:
+        if deep_think >= 2:
+            _banner = ("【深度思考·已开启】请先深入推演：拆解关键假设 → 列出逻辑链 → 权衡各方案取舍，再给出最终结论。"
+                       "适当保留推演过程便于作者理解，但结论必须清晰、可落地，不因推演而啰嗦。")
+        else:
+            _banner = ("【标准思考·已开启】先快速理清思路、对齐目标，再给结论；推理过程点到为止，避免长篇展开，"
+                       "结论要简明可用。")
+        system_prompt = system_prompt.rstrip() + "\n\n" + _banner
     messages = [{'role': 'system', 'content': system_prompt}]
     messages.extend(trimmed)
     messages.append({'role': 'user', 'content': enriched[:8000]})
@@ -7756,6 +7834,8 @@ def chat_general():
                 _mcp_native_kwargs['tools'] = mcp_tools
 
             # ============== P0 真联网搜索接入 ==============
+            # 0) 先把用户配置的搜索 Key 同步进 env（无 env 时才用；配置路由保存后立即生效）
+            _sync_search_keys_from_preference()
             # 1) 是否需要搜：联网开关开启=强制搜（绕开创作类话题不搜的过滤）；未开启=启发式判定
             _need_search = _search_available and (web_search_enabled or should_use_web_search(message, trimmed))
             _search_ctx = ''
@@ -7797,7 +7877,7 @@ def chat_general():
             except Exception:
                 _native_p = None
 
-            for chunk in gw_stream_with_hb(gw, messages, temperature=(0.3 if deep_think else 0.7), max_tokens=(8192 if deep_think else 4096), **_mcp_native_kwargs):
+            for chunk in gw_stream_with_hb(gw, messages, temperature=({0: 0.7, 1: 0.5, 2: 0.3}.get(deep_think)), max_tokens=({0: 4096, 1: 6144, 2: 8192}.get(deep_think)), **_mcp_native_kwargs):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
                     continue
