@@ -10358,8 +10358,11 @@ def ai_outline_volume(book_id):
         _sema = threading.Semaphore(3)  # 同时最多 3 个 LLM 请求，避免并发限流
 
         def _gen_event_worker(_alloc):
-            _idx2, _ttl2, _s2, _e2, _ec2, _me2 = _alloc
-            _per_event_user = f"""{shared_user_prefix}
+            # 【P1修复】worker 线程无 Flask app context，_call_llm 内 AIConfig.get_active()
+            # 访问数据库需要 app context，必须显式包裹，否则报 Working outside of application context
+            with app.app_context():
+                _idx2, _ttl2, _s2, _e2, _ec2, _me2 = _alloc
+                _per_event_user = f"""{shared_user_prefix}
 
 【本次生成的 main_event 详情】（请严格按此事件展开成 {_per_event_node_count}-{_per_event_node_max} 个子节点，子节点 chapters 必须严格卡在 {_s2}-{_e2} 区间内，合计 {_e2-_s2+1} 章）：
   · 事件{_idx2}《{_ttl2}》（分配章节：{_s2}-{_e2}，共 {_e2-_s2+1} 章，支撑 ec={_ec2} 章）
@@ -10375,29 +10378,29 @@ def ai_outline_volume(book_id):
 
 请为第 {volume_index} 卷的 main_event.{_idx2}《{_ttl2}》设计 {_per_event_node_count}-{_per_event_node_max} 个情节子节点事件（nodes），所有子节点的 chapters 必须严格卡在 {_s2}-{_e2} 区间内。"""
 
-            with _sema:
-                import time as _time
-                # 按剩余总预算决定本事件可用时长：剩余越少，重试越少、单次超时越短
-                _remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
-                _ev_retry = 3 if _remain > 180 else (1 if _remain > 90 else 0)
-                _ev_timeout = min(300, max(30, _remain // 2))
-                _content, _err = _call_llm(
-                    [{'role': 'system', 'content': shared_system_prompt},
-                     {'role': 'user', 'content': _per_event_user}],
-                    max_tokens=16384, temperature=0.65, retry_count=_ev_retry,
-                    timeout=_ev_timeout,
-                )
-            if _err:
-                return [], f'事件{_idx2}《{_ttl2}》生成失败: {_err}'
-            _parsed, _json_err = _extract_json_from_llm(_content, expect='object')
-            if _json_err:
-                return [], f'事件{_idx2}《{_ttl2}》JSON解析失败: {_json_err}'
-            _event_nodes = _parsed.get('nodes', []) or []
-            # 确保每个节点带 main_event_index
-            for _n in _event_nodes:
-                if not _n.get('main_event_index'):
-                    _n['main_event_index'] = _idx2
-            return _event_nodes, None
+                with _sema:
+                    import time as _time
+                    # 按剩余总预算决定本事件可用时长：剩余越少，重试越少、单次超时越短
+                    _remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
+                    _ev_retry = 3 if _remain > 180 else (1 if _remain > 90 else 0)
+                    _ev_timeout = min(300, max(30, _remain // 2))
+                    _content, _err = _call_llm(
+                        [{'role': 'system', 'content': shared_system_prompt},
+                         {'role': 'user', 'content': _per_event_user}],
+                        max_tokens=16384, temperature=0.65, retry_count=_ev_retry,
+                        timeout=_ev_timeout,
+                    )
+                if _err:
+                    return [], f'事件{_idx2}《{_ttl2}》生成失败: {_err}'
+                _parsed, _json_err = _extract_json_from_llm(_content, expect='object')
+                if _json_err:
+                    return [], f'事件{_idx2}《{_ttl2}》JSON解析失败: {_json_err}'
+                _event_nodes = _parsed.get('nodes', []) or []
+                # 确保每个节点带 main_event_index
+                for _n in _event_nodes:
+                    if not _n.get('main_event_index'):
+                        _n['main_event_index'] = _idx2
+                return _event_nodes, None
 
         # 并发执行所有事件的节点生成
         # 【P1修复】整体 deadline：预留 30s 给合并落库，剩余预算分给并发请求。
