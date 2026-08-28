@@ -2076,6 +2076,36 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .smart-dim-btn.batch.active { background: var(--accent); color: #fff; }
 .smart-dim-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* 手机端折叠：维度按钮三排 + 助手选择器 */
+@media (max-width: 600px) {
+  .smart-dim-collapsible {
+    overflow: hidden; transition: max-height 0.25s ease, opacity 0.2s ease;
+    max-height: 300px; opacity: 1;
+  }
+  .smart-dim-collapsible[data-collapsed="true"] {
+    max-height: 0; opacity: 0; padding: 0; margin: 0;
+    pointer-events: none;
+  }
+}
+@media (min-width: 601px) {
+  /* 电脑端始终显示，折叠按钮隐藏 */
+  .smart-dim-collapsible { display: contents; }
+  .chat-dim-fold-btn { display: none; }
+}
+/* 折叠按钮：手机端在 AI 智驾标题旁显示 */
+.chat-dim-fold-btn {
+  display: none;
+  background: transparent; border: 1px solid var(--border-color);
+  border-radius: 6px; font-size: 11px; padding: 2px 6px;
+  cursor: pointer; color: var(--text-secondary); line-height: 1.2;
+  transition: transform 0.2s; touch-action: manipulation;
+}
+@media (max-width: 600px) {
+  .chat-dim-fold-btn { display: inline-flex; align-items: center; justify-content: center; }
+  .chat-dim-fold-btn[data-collapsed="true"] { transform: rotate(0deg); }
+}
+.chat-dim-fold-btn:active { opacity: 0.6; }
+
 /* 技能包选择器 */
 .smart-skill-selector.compact { font-size: 12px; }
 .smart-skill-toggle {

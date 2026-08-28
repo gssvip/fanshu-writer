@@ -1162,6 +1162,9 @@ export default function ChatPanel() {
   const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetFixTasks, closeChatPanel } = useStore() as any;
   const setChatPanelSessionId = useStore((s: any) => s.setChatPanelSessionId) as (id: string | null) => void;
   const [activeTab, setActiveTab] = useState<SmartTab>('setting');
+  // 手机端折叠：折叠"设定"Tab 的维度按钮三排（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔 + 助手选择器），
+  // 为手机端输入/阅读区域留出更多空间
+  const [dimRowsCollapsed, setDimRowsCollapsed] = useState(false);
   const [messages, setMessages] = useState<AIMessage[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -2712,6 +2715,12 @@ export default function ChatPanel() {
               <div className="chat-panel-title">
                 <span className="chat-panel-logo"><CarLogo size={20} /></span>
                 <div className="chat-panel-name">AI 智驾</div>
+                <button
+                  className="chat-dim-fold-btn"
+                  onClick={() => setDimRowsCollapsed(s => !s)}
+                  title={dimRowsCollapsed ? '展开维度栏' : '折叠维度栏'}
+                  data-collapsed={dimRowsCollapsed}
+                >{dimRowsCollapsed ? '▶' : '▼'}</button>
               </div>
               <div className="chat-panel-tools">
                 <button className="chat-tool-btn" onClick={() => { setShowProgress(s => !s); }} title="创作进度">🗺️<span className="chat-tool-label">创作进度</span></button>
@@ -2893,6 +2902,8 @@ export default function ChatPanel() {
                       </div>
                     </div>
                   )}
+                  {/* 维度子按钮栏 + 助手选择器（手机端可折叠） */}
+                  <div className="smart-dim-collapsible" data-collapsed={dimRowsCollapsed}>
                   {/* 维度子按钮栏：两行（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔） */}
                   <div className="smart-dim-rows">
                     <div className="smart-dim-row">
@@ -2942,6 +2953,7 @@ export default function ChatPanel() {
                   ) : (
                     <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} onPreview={(pack) => setPreviewPack(pack)} compact />
                   )}
+                  </div>
                   {/* 修正任务清单（从防遗忘报告违规项带入，支持多维度连续修正并追踪进度） */}
                   {fixTasks.length > 0 && (
                     <div className="fix-tasks-panel">
