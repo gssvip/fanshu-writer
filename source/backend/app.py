@@ -9370,42 +9370,91 @@ def _extract_json_from_llm(content, expect='auto'):
 
     return None, f'未找到有效JSON（最后错误: {last_error}），原始内容前300字: {content[:300]}'
 
-def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation'):
+def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation', retry_count=2):
     """统一的 LLM 调用辅助函数，返回 (content, error)
     task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)
-    max_tokens 语义：None → 用 cfg.max_tokens；0 → 不限制（不下发该字段，用模型自身默认上限）；正整数 → 显式限定。"""
+    max_tokens 语义：None → 用 cfg.max_tokens；0 → 不限制（不下发该字段，用模型自身默认上限）；正整数 → 显式限定。
+    retry_count: 临时性错误（空响应/5xx/连接异常）的重试次数，默认 2 次（共 3 次尝试）。"""
     cfg = AIConfig.get_active()
     if not cfg or not cfg.api_key:
         return None, '请先配置 AI 模型 API Key'
-    try:
-        base = cfg.base_url.rstrip('/')
-        if not base.endswith('/v1'):
-            base += '/v1'
-        model = cfg.get_model_for_task(task_type)
-        payload = {
-            'model': model,
-            'messages': messages,
-            'temperature': temperature if temperature is not None else cfg.temperature,
-            'stream': False
-        }
-        # max_tokens：0 表示不限制（不下发），None 用配置默认值，正整数显式限定
-        # 【输出上限适配】请求值按模型已知/已学习输出上限钳制，防大值撞 8k 上限直接 400
-        _mt_limit = get_output_limit(base, model)
-        if max_tokens == 0:
-            pass  # 不下发，让模型用自身默认输出上限
-        elif max_tokens:
-            payload['max_tokens'] = min(max_tokens, _mt_limit) if _mt_limit else max_tokens
-        else:
-            payload['max_tokens'] = min(cfg.max_tokens, _mt_limit) if _mt_limit else cfg.max_tokens
-        resp = requests.post(f'{base}/chat/completions',
-            headers=build_auth_headers(cfg.api_key),
-            json=payload, timeout=180)
-        result = resp.json()
-        if 'choices' in result and len(result['choices']) > 0:
-            return result['choices'][0]['message']['content'], None
-        return None, str(result)
-    except Exception as e:
-        return None, str(e)
+
+    base = cfg.base_url.rstrip('/')
+    if not base.endswith('/v1'):
+        base += '/v1'
+    model = cfg.get_model_for_task(task_type)
+    payload = {
+        'model': model,
+        'messages': messages,
+        'temperature': temperature if temperature is not None else cfg.temperature,
+        'stream': False
+    }
+    # max_tokens：0 表示不限制（不下发），None 用配置默认值，正整数显式限定
+    # 【输出上限适配】请求值按模型已知/已学习输出上限钳制，防大值撞 8k 上限直接 400
+    _mt_limit = get_output_limit(base, model)
+    if max_tokens == 0:
+        pass  # 不下发，让模型用自身默认输出上限
+    elif max_tokens:
+        payload['max_tokens'] = min(max_tokens, _mt_limit) if _mt_limit else max_tokens
+    else:
+        payload['max_tokens'] = min(cfg.max_tokens, _mt_limit) if _mt_limit else cfg.max_tokens
+
+    last_error = None
+    for attempt in range(1 + retry_count):
+        try:
+            resp = requests.post(f'{base}/chat/completions',
+                headers=build_auth_headers(cfg.api_key),
+                json=payload, timeout=180)
+
+            # 检查 HTTP 状态：5xx 可重试，4xx 为客户端错误不重试
+            if resp.status_code >= 500:
+                last_error = f'LLM 服务错误 (HTTP {resp.status_code})'
+                if attempt < retry_count:
+                    import time as _time
+                    _time.sleep(1.5 * (attempt + 1))
+                    continue
+                return None, last_error
+
+            result = resp.json()
+            if 'choices' in result and len(result['choices']) > 0:
+                return result['choices'][0]['message']['content'], None
+            last_error = f'LLM 返回格式异常: {str(result)[:200]}'
+            if attempt < retry_count:
+                import time as _time
+                _time.sleep(1.5 * (attempt + 1))
+                continue
+            return None, last_error
+
+        except requests.exceptions.Timeout:
+            last_error = f'LLM 请求超时（第{attempt+1}次）'
+            if attempt < retry_count:
+                import time as _time
+                _time.sleep(1.5 * (attempt + 1))
+                continue
+            return None, f'LLM 请求超时，已重试{retry_count}次仍失败'
+        except requests.exceptions.ConnectionError:
+            last_error = f'LLM 连接失败（第{attempt+1}次）'
+            if attempt < retry_count:
+                import time as _time
+                _time.sleep(2 * (attempt + 1))
+                continue
+            return None, f'LLM 连接失败，请检查 API 地址配置'
+        except json.JSONDecodeError as e:
+            last_error = f'LLM 返回内容为空或非JSON格式: {str(e)}'
+            if attempt < retry_count:
+                import time as _time
+                _time.sleep(1.5 * (attempt + 1))
+                continue
+            return None, f'LLM 返回内容为空，已重试{retry_count}次仍失败，请检查模型是否可用或稍候重试'
+        except Exception as e:
+            last_error = str(e)
+            if attempt < retry_count:
+                import time as _time
+                _time.sleep(1.5 * (attempt + 1))
+                continue
+            return None, str(e)
+
+    return None, last_error or 'LLM 调用失败（未知错误）'
 
 def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500, mode='agent'):
     """从技能包提取指定 prompt_keys 的提示词（agent 协同模式：所有匹配 prompt 都注入）。
@@ -10362,9 +10411,10 @@ def ai_outline_volume(book_id):
 
 请为第 {volume_index} 卷生成详细大纲。"""
 
+    # 节点设计需要大量输出：每卷约50章 × 每个子节点约200字 ≈ 10000+ tokens，设置充足上限
     content, err = _call_llm(
         [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=0, temperature=0.7
+        max_tokens=16384, temperature=0.7
     )
     if err:
         return jsonify({'error': err}), 500
