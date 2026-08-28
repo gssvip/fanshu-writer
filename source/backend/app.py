@@ -9903,14 +9903,6 @@ def _split_volume_title(raw):
         return s, ''
     return '', s
 
-# ============================================================================
-# 情节节点设计异步任务存储（进程内存）
-# 【P0修复】node_only 逐事件生成是 3-10 分钟的长管线，同步 HTTP 请求必超
-# Render 等反向代理 ~100s 空闲超时（表现为 HTTP 504 / "一直失败"）。
-# 改为：POST 立即返回 202+job_id → 后台线程跑原同步逻辑 → 前端轮询 status。
-# ============================================================================
-_NODE_JOBS = {}  # job_id -> {status, book_id, volume_index, volume_title, total_events, done_events, node_count, phase, error, result, created_at}
-
 @app.route('/api/books/<book_id>/ai-outline-volume', methods=['POST'])
 def ai_outline_volume(book_id):
     """生成单卷详细大纲（滚动生成）：基于总纲+已完成章节，写入 timeline"""
@@ -9939,55 +9931,6 @@ def ai_outline_volume(book_id):
     chapters_per_volume = data.get('chapters_per_volume', 50)
     # 节点设计模式：已有卷剧情时只细化 nodes，不覆盖 main_plot 等字段
     node_only = bool(data.get('node_only', False))
-
-    # ===== 【P0修复】异步任务模式：node_only 长管线（逐事件 LLM 调用，3-10 分钟）
-    # 同步等响应必超 Render 等代理 ~100s 超时（HTTP 504）。改为后台线程跑原逻辑 + 前端轮询。
-    # _bg=True 标记防止后台线程内部递归进入本分支。
-    if node_only and data.get('async') and not data.get('_bg'):
-        job_id = uuid.uuid4().hex[:12]
-        _NODE_JOBS[job_id] = {
-            'status': 'running', 'book_id': str(book_id),
-            'volume_index': volume_index, 'volume_title': volume_title,
-            'total_events': 0, 'done_events': 0, 'node_count': 0,
-            'phase': 'init', 'error': None, 'result': None,
-            'created_at': time.time(),
-        }
-        _bg_payload = dict(data)
-        _bg_payload['async'] = False
-        _bg_payload['_bg'] = True
-        _bg_payload['job_id'] = job_id
-
-        def _node_job_run():
-            with app.app_context():
-                try:
-                    with app.test_request_context(
-                        f'/api/books/{book_id}/ai-outline-volume',
-                        method='POST', json=_bg_payload,
-                    ):
-                        _resp = ai_outline_volume(book_id)
-                    # 直接调用视图函数返回的可能是 (Response, status) 元组（Flask 未做 dispatch 转换）
-                    if isinstance(_resp, tuple):
-                        _resp, _code = _resp[0], int(_resp[1] or 200)
-                    else:
-                        _code = int(getattr(_resp, 'status_code', 200) or 200)
-                    try:
-                        _body = _resp.get_json(silent=True) or {}
-                    except Exception:
-                        _body = {'error': '后台任务响应解析失败'}
-                    _job = _NODE_JOBS.get(job_id)
-                    if _job is None:
-                        return
-                    if _code >= 400:
-                        _job.update(status='error', error=str(_body.get('error') or f'HTTP {_code}')[:500])
-                    else:
-                        _job.update(status='done', result=_body)
-                except Exception as _e:
-                    _job = _NODE_JOBS.get(job_id)
-                    if _job is not None:
-                        _job.update(status='error', error=str(_e)[:500])
-
-        threading.Thread(target=_node_job_run, daemon=True).start()
-        return jsonify({'job_id': job_id, 'status': 'running'}), 202
 
     # ===== 【P0弊端2修复】已完成章节摘要：取上一卷结尾章节，而非全局最后5章 =====
     # 解析已有 timeline，获取上一卷（volume_index-1）的节点章节范围
@@ -10392,11 +10335,6 @@ def ai_outline_volume(book_id):
 {prev_volume_end_summary or '（本卷为第一卷，无前文）'}"""
 
         # 逐个 main_event 生成
-        # 异步任务进度上报（_bg 模式下 job_id 通过请求参数传入）
-        _job = _NODE_JOBS.get(str(data.get('job_id') or '')) or None
-        if _job is not None:
-            _job['total_events'] = len(_evt_alloc)
-            _job['phase'] = 'per-event'
         all_nodes = []
         event_errors = []
         for _alloc in _evt_alloc:
@@ -10426,14 +10364,10 @@ def ai_outline_volume(book_id):
             )
             if _err:
                 event_errors.append(f'事件{idx}《{ttl}》生成失败: {_err}')
-                if _job is not None:
-                    _job['done_events'] += 1
                 continue
             _parsed, _json_err = _extract_json_from_llm(_content, expect='object')
             if _json_err:
                 event_errors.append(f'事件{idx}《{ttl}》JSON解析失败: {_json_err}')
-                if _job is not None:
-                    _job['done_events'] += 1
                 continue
             _event_nodes = _parsed.get('nodes', []) or []
             # 确保每个节点带 main_event_index
@@ -10443,10 +10377,6 @@ def ai_outline_volume(book_id):
             all_nodes.extend(_event_nodes)
             # 事件间退避，避免并发限流
             _time.sleep(0.5)
-            # 异步任务进度上报
-            if _job is not None:
-                _job['done_events'] += 1
-                _job['node_count'] = len(all_nodes)
 
         # 按 chapters 起始章号排序
         def _sort_key(n):
@@ -10463,8 +10393,6 @@ def ai_outline_volume(book_id):
         # 如果逐事件生成全部返回空节点，退回到单次请求模式（一次性生成所有事件）
         # 【P2-7修复】放宽触发条件：无论 event_errors 是否为空，只要 all_nodes 为空就触发回退
         if not all_nodes:
-            if _job is not None:
-                _job['phase'] = 'fallback-single'
             # 用完整的上下文 + 所有 main_events 做一次生成
             _fallback_user = f"""{shared_user_prefix}
 
@@ -10494,8 +10422,6 @@ def ai_outline_volume(book_id):
         # 如果单次回退也失败（all_nodes 仍为空），尝试超轻量级回退：只传必需的上下文
         # 【P2-7修复】第二回退：精简 prompt，只保留核心约束，避免大上下文导致超时
         if not all_nodes:
-            if _job is not None:
-                _job['phase'] = 'fallback-light'
             _light_system = f"""你是番茄小说金番作者级别的情节节点设计师。
 任务：为第 {volume_index} 卷“{volume_title}”的一个 main_event 生成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点（nodes）。
 每个子节点 events 约支撑 2400 字正文。
@@ -10565,8 +10491,6 @@ def ai_outline_volume(book_id):
         # 【P0修复】node_only 模式全部失败时必须返回错误（原代码 err 检查只在
         # 非 node_only 分支内，导致静默写入空 nodes → 前端看到"生成0个节点"假成功）
         if err:
-            if _job is not None:
-                _job.update(status='error', error=err[:500])
             return jsonify({'error': err}), 500
         # 设置 system_prompt 和 user_prompt 供下游 if err 判断后的逻辑使用
         system_prompt = ''
@@ -10726,20 +10650,6 @@ BOSS：{volume_data.get('boss', '')}
     db.session.commit()
 
     return jsonify({'volume_data': volume_data, 'timeline': bb.timeline, 'bible': bb.to_dict()})
-
-@app.route('/api/books/<book_id>/ai-outline-volume-status/<job_id>', methods=['GET'])
-def ai_outline_volume_status(book_id, job_id):
-    """查询情节节点设计异步任务进度/结果（配合 ai-outline-volume 的 async 模式）。"""
-    # 顺带清理超过 1 小时的旧任务，防内存泄漏
-    _now = time.time()
-    for _jid in list(_NODE_JOBS.keys()):
-        if _now - _NODE_JOBS[_jid].get('created_at', 0) > 3600:
-            _NODE_JOBS.pop(_jid, None)
-    job = _NODE_JOBS.get(str(job_id))
-    if not job or job.get('book_id') != str(book_id):
-        return jsonify({'error': '任务不存在或已过期'}), 404
-    # result 体积大（含全部节点+bible），非完成态不下发
-    return jsonify(job)
 
 @app.route('/api/books/<book_id>/ai-extract-volumes-from-outline', methods=['POST'])
 def ai_extract_volumes_from_outline(book_id):

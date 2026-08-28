@@ -2536,6 +2536,55 @@ export default function ChatPanel() {
     streamBufferRef.current = '';
     reasoningBufferRef.current = '';
 
+    // ====== 节点设计师（通用助手斜杠命令）：/节点设计 第X卷 或 /设计节点 第X卷 ======
+    const _nodeDesignMatch = text.match(/^\/(节点设计|设计节点)\s*第?(\d+)\s*卷?/);
+    if (_nodeDesignMatch) {
+      const vi = parseInt(_nodeDesignMatch[2], 10);
+      if (!vi || vi < 1) {
+        setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '❌ 请指定卷号，如：`/节点设计 第1卷`' }]);
+        return;
+      }
+      // 先显示用户消息 + 等待提示
+      setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '⏳ 正在生成第' + vi + '卷的情节节点…（逐事件分析，耗时约 1-3 分钟，请耐心等待）' }]);
+      setStreaming(true);
+      try {
+        const r = await api.aiOutlineVolume(bookId, vi, `第${vi}卷`, undefined, undefined, true);
+        const nodes = r?.volume_data?.nodes || [];
+        const timeline = r?.timeline || '';
+        const cardId = 'node-' + Math.random().toString(36).slice(2, 9);
+        // 生成节点摘要
+        let summary = '';
+        if (nodes.length > 0) {
+          const chRanges = nodes.map((n: any, i: number) => `${i+1}. ${n.title||'无标题'}（第${n.chapters||'?'}章）`).join('\n');
+          summary = `✅ 已为第${vi}卷生成 **${nodes.length}** 个情节子节点\n\n${chRanges}\n\n点击下方卡片「采纳」按钮，节点将落入第${vi}卷的剧情线。`;
+        } else {
+          summary = `⚠️ 第${vi}卷节点设计完成，但未生成有效节点。请检查该卷是否已有 main_events。`;
+        }
+        setMessages(prev => {
+          const next = [...prev];
+          // 替换最后的等待提示
+          if (next[next.length-1]?.role === 'assistant') {
+            next[next.length-1] = { ...next[next.length-1], content: summary, cards: nodes.length > 0 ? [{
+              id: cardId, type: 'SAVE_PLOT' as const, title: `第${vi}卷情节节点`,
+              content: timeline, target: '剧情', status: 'pending' as const,
+            }] : [] };
+          }
+          return next;
+        });
+      } catch (e: any) {
+        setMessages(prev => {
+          const next = [...prev];
+          if (next[next.length-1]?.role === 'assistant') {
+            next[next.length-1] = { ...next[next.length-1], content: '❌ 节点设计失败：' + (e?.message || '未知错误') };
+          }
+          return next;
+        });
+      } finally {
+        setStreaming(false);
+      }
+      return;
+    }
+
     // ====== 圆桌会议分支：6个专家Agent两轮轮流发言，实时流式展示，最后出总结报告 ======
     const _PREKEY = '__general_pending_session__';
     const _sidReal = chatGeneralSessionId || '';
