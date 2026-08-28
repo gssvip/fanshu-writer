@@ -10214,7 +10214,10 @@ def ai_outline_volume(book_id):
             )
         main_events_block = '\n'.join(_me_lines) if _me_lines else '（本卷尚未按新结构生成主要剧情事件，将基于旧的关键事件设计子节点）'
 
-        system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
+                # 共享系统提示词（不含按事件拆分的细节，各事件共享）
+        _per_event_node_count = 4 if len(existing_main_events) >= 7 else 5
+        _per_event_node_max = 8 if len(existing_main_events) >= 7 else 10
+        shared_system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
 任务：基于第 {volume_index} 卷“{volume_title}”已有的主要剧情事件（main_events），**按每个主要剧情事件分别拆成子节点事件（nodes）**。
 - 主要事件 ≤ 6 个 → 每个拆 5-10 个
 - 主要事件 ≥ 7 个 → 每个拆 4-8 个
@@ -10227,21 +10230,19 @@ def ai_outline_volume(book_id):
   · 境界变化区间：{vol_realm_change}
   · 年龄变化区间：{vol_age_change}
 
-【模式说明】本卷已有完整卷剧情，你的任务是把 main_events 中每一个主要剧情事件，分别拆成 5-10 个 nodes 子节点。
+【模式说明】本卷已有完整卷剧情，你的任务是把 main_events 中每一个主要剧情事件，分别拆成 {_per_event_node_count}-{_per_event_node_max} 个 nodes 子节点。
 - 不要修改本卷的 summary / main_plot / main_events / core_conflict / ending_hook 等卷级字段
 - 只输出 nodes 数组（保留原卷级字段由后端合并）
 - 各子节点之间必须剧情连贯：上一节点末尾自然衔接到下一节点开头
 - 卷与卷之间的节点更要连贯：本卷第一个节点必须承接上一卷卷尾钩子，本卷最后一个节点必须埋下卷尾钩子承接本卷 ending_hook
 - 每个子节点必须严格归属到一个 main_event，不得脱离对应主要剧情事件自创剧情
-- 同一 main_event 内部，子节点 chapters 区间要**连续不重叠**，刚好覆盖该 main_event 被分派的章节区间（下方"两层对应铁律"里给了每事件的区间）
+- 同一 main_event 内部，子节点 chapters 区间要**连续不重叠**，刚好覆盖该 main_event 被分派的章节区间
 
 【两层对应铁律·升级（事件→子节点 + 精确章节分派）】
   · 输入 main_events 共 {len(existing_main_events)} 个事件
-  · 每个 main_event → 展开 {4 if len(existing_main_events) >= 7 else 5}-{8 if len(existing_main_events) >= 7 else 10} 个 nodes 子节点事件
+  · 每个 main_event → 展开 {_per_event_node_count}-{_per_event_node_max} 个 nodes 子节点事件
   · 每个子节点必须标注：它从属于哪个主要剧情事件（main_event_index = main_event.index）
   · 子节点覆盖总章数必须刚好等于本卷 {chapters_per_volume} 章（从第 {_evt_start} 章到第 {_evt_end} 章）
-  · 关键：每个 main_event 被分派的章节区间如下，归属该事件的所有子节点的 chapters 加起来必须**精确**等于这个区间，连续不重叠不缺口：
-{chr(10).join(f'      - main_event.{idx}《{ttl}》 → 章节 {s}-{e}（共 {e-s+1} 章）' for idx, ttl, s, e, ec, raw in _evt_alloc)}
 
 【五幕模型对齐】本卷对应五幕中的“{current_act}”幕：{act_descriptions.get(current_act, '')}
 节点设计必须服务于该幕的核心目标。
@@ -10268,10 +10269,10 @@ def ai_outline_volume(book_id):
   "volume_title": "{volume_title}",
   "nodes": [
     {{
-      "main_event_index": 1,
-      "index": 1,
+      "main_event_index": <对应main_event的index>,
+      "index": <子节点序号>,
       "title": "节点标题（动宾结构，如：街市遭袭反杀三名劫修）",
-      "chapters": "{_evt_start}-{_evt_start+1}",
+      "chapters": "<起始章号>-<结束章号>",
       "type": "M（M主线/C角色/W世界观/D日常/F伏笔）",
       "characters": "本节点核心人物，按出场权重",
       "events": "本节点核心推进：谁在哪做了什么→关键后果（20-40字）",
@@ -10294,14 +10295,14 @@ def ai_outline_volume(book_id):
 
 【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
 【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（1-2章一个子节点，正好可直接写正文）
-本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），拆 {len(existing_main_events)} 个主要剧情事件 × {4 if len(existing_main_events) >= 7 else 5}-{8 if len(existing_main_events) >= 7 else 10} 个子节点事件。
+本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），拆 {len(existing_main_events)} 个主要剧情事件 × {_per_event_node_count}-{_per_event_node_max} 个子节点事件。
 节点 chapters 必须从 {_evt_start} 开始连续递增，合计到第 {_evt_end} 章，不能超出本卷边界；同一 main_event 内的子节点 chapters 加起来精确等于分派的区间。
 【节点容量铁律】每个子节点 summary 必须足够支撑其 chapters 范围的字数容量（按每章2400字估算），不得简略。
 【节点连贯铁律】各节点 summary 末尾必须自然过渡到下一节点开头；本卷最后一个节点必须埋下并承接本卷 ending_hook：{existing_ending[:120]}
 
 {skill_note}"""
 
-        user_prompt = f"""书名：{book.title}
+        shared_user_prefix = f"""书名：{book.title}
 
 {_build_core_params_block(bb, book)}
 
@@ -10318,13 +10319,9 @@ def ai_outline_volume(book_id):
 - 卷级6要素：人物={vol_characters}；时间={vol_timeline_anchor}；地点={vol_location}；境界={vol_realm_change}；年龄={vol_age_change}
 - 核心冲突：{existing_core_conflict or '（无）'}
 - 情感驱动：{existing_emotion or '（无）'}
-- 主要剧情事件（main_events）—— **每个事件需单独展开成 5-10 个子节点事件，且子节点 chapters 必须严格卡在分派区间内**：
-{main_events_block}
 - 高潮：{existing_climax or '（无）'}
 - 结局/卷尾钩子：{existing_ending or '（无）'}
 - 新埋伏笔：{', '.join(existing_foreshadowing) if existing_foreshadowing else '（无）'}
-
-请基于以上本卷 main_events 的每个事件，分别逐事件展开成 5-10 个情节子节点事件（nodes），子节点间剧情连贯，并按爽点系统配置爽点、标注**精确到章**的伏笔埋收章节号、补齐节点 6 要素（人物/事件/时间/地点/境界变化/年龄变化）。
 
 【世界观设定】
 {worldbuilding_ctx or '（暂无）'}
@@ -10336,9 +10333,78 @@ def ai_outline_volume(book_id):
 {characters_ctx or '（暂无）'}
 
 【上一卷结尾章节正文】（卷间衔接依据，本卷第一个子节点必须承接）
-{prev_volume_end_summary or '（本卷为第一卷，无前文）'}
+{prev_volume_end_summary or '（本卷为第一卷，无前文）'}"""
 
-请为第 {volume_index} 卷逐 main_event 设计情节子节点事件。"""
+        # 逐个 main_event 生成
+        all_nodes = []
+        event_errors = []
+        for _alloc in _evt_alloc:
+            idx, ttl, s, e, ec, _me = _alloc
+            # 构建本事件的 user prompt（含事件专属细节）
+            _per_event_user = f"""{shared_user_prefix}
+
+【本次生成的 main_event 详情】（请严格按此事件展开成 {_per_event_node_count}-{_per_event_node_max} 个子节点，子节点 chapters 必须严格卡在 {s}-{e} 区间内，合计 {e-s+1} 章）：
+  · 事件{idx}《{ttl}》（分配章节：{s}-{e}，共 {e-s+1} 章，支撑 ec={ec} 章）
+    概要：{str(_me.get("summary",""))[:300]}
+    ·人物：{_me.get("characters","")}
+    ·事件：{_me.get("events","")}
+    ·时间：{_me.get("time","")}
+    ·地点：{_me.get("location","")}
+    ·境界：{_me.get("realm_change","")}
+    ·年龄：{_me.get("age_change","")}{f'''
+    埋：{_me.get("bury","")}''' if _me.get("bury") else ''}{f'''
+    收：{_me.get("payoff","")}''' if _me.get("payoff") else ''}
+
+请为第 {volume_index} 卷的 main_event.{idx}《{ttl}》设计 {_per_event_node_count}-{_per_event_node_max} 个情节子节点事件（nodes），所有子节点的 chapters 必须严格卡在 {s}-{e} 区间内。"""
+
+            import time as _time
+            _content, _err = _call_llm(
+                [{'role': 'system', 'content': shared_system_prompt},
+                 {'role': 'user', 'content': _per_event_user}],
+                max_tokens=16384, temperature=0.65, retry_count=3
+            )
+            if _err:
+                event_errors.append(f'事件{idx}《{ttl}》生成失败: {_err}')
+                continue
+            _parsed, _json_err = _extract_json_from_llm(_content, expect='object')
+            if _json_err:
+                event_errors.append(f'事件{idx}《{ttl}》JSON解析失败: {_json_err}')
+                continue
+            _event_nodes = _parsed.get('nodes', []) or []
+            # 确保每个节点带 main_event_index
+            for _n in _event_nodes:
+                if not _n.get('main_event_index'):
+                    _n['main_event_index'] = idx
+            all_nodes.extend(_event_nodes)
+            # 事件间退避，避免并发限流
+            _time.sleep(0.5)
+
+        # 按 chapters 起始章号排序
+        def _sort_key(n):
+            ch = str(n.get('chapters', '')).split('-')[0]
+            try:
+                return int(ch)
+            except (ValueError, TypeError):
+                return 9999
+        all_nodes.sort(key=_sort_key)
+        # 重排 index
+        for _ni, _n in enumerate(all_nodes, 1):
+            _n['index'] = _ni
+
+        # 构建合并后的 content（供下游 _call_llm 之后的逻辑使用）
+        _merged = {
+            'volume_index': volume_index,
+            'volume_title': volume_title,
+            'nodes': all_nodes,
+        }
+        import json as _json
+        content = _json.dumps(_merged, ensure_ascii=False, indent=2)
+        err = None
+        if event_errors and not all_nodes:
+            err = '；'.join(event_errors)
+        # 设置 system_prompt 和 user_prompt 供下游 if err 判断后的逻辑使用
+        system_prompt = ''
+        user_prompt = content
 
     else:
         # ===== 整卷生成模式（默认）：生成完整卷大纲+情节节点 =====
@@ -10413,14 +10479,15 @@ def ai_outline_volume(book_id):
 
 请为第 {volume_index} 卷生成详细大纲。"""
 
-    # 节点设计需要大量输出：每卷约50章 × 每个子节点约200字 ≈ 10000+ tokens，设置充足上限
-    # temperature 调低到 0.65 减少发散，加快响应速度，降低超时概率
-    content, err = _call_llm(
-        [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-        max_tokens=16384, temperature=0.65, retry_count=3
-    )
-    if err:
-        return jsonify({'error': err}), 500
+    # 节点设计模式：content 已在逐事件循环中设置，跳过常规 _call_llm
+    if not node_only:
+        # 整卷生成模式：一次性调用 LLM 生成完整卷大纲+情节节点
+        content, err = _call_llm(
+            [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+            max_tokens=16384, temperature=0.65, retry_count=3
+        )
+        if err:
+            return jsonify({'error': err}), 500
 
     # 健壮 JSON 提取：处理 markdown 代码块、前后说明文字、尾随逗号等
     volume_data, json_err = _extract_json_from_llm(content, expect='object')
