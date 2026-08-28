@@ -700,21 +700,55 @@ export const api = {
       body: JSON.stringify({ skill_pack_ids: skillPackIds || [], total_chapters: totalChapters || 300, chapters_per_volume: chaptersPerVolume || 50, volume_count: volumeCount }),
     }),
 
-  // 情节节点/大纲分卷：不走 fetchWithRetry 默认 60s 超时（节点设计是 Agent 管线，LLM 要生成 50-80 个节点+6要素，总耗时 80-180s，
-  // 60s 硬超时会被自动 abort → UI 上显示"情节节点设计失败：请求已取消"，实际用户根本没取消。与 aiContinue 一样用直接 fetch + 300s 保护）
+  // 情节节点/大纲分卷。
+  // 【P0修复】node_only 节点设计是逐事件 LLM 长管线（3-10 分钟），同步等响应必超
+  // Render 等代理 ~100s 超时（HTTP 504"一直失败"）。改为异步任务模式：
+  // POST 立即返回 202+job_id → 前端每 3s 轮询 status → 完成取 result。
+  // 兼容旧后端：非 202 响应按原同步逻辑处理（旧后端忽略 async 参数）。
   aiOutlineVolume: async (bookId: string, volumeIndex: number, volumeTitle?: string, skillPackIds?: string[], chaptersPerVolume?: number, nodeOnly?: boolean): Promise<{ volume_data: any; timeline: string; bible: any }> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000); // 300s 长超时，足够 50-80 节点 + 6 要素管线跑完
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // 首次 POST 保护（异步模式下秒回）
     try {
       const res = await fetch(`${getApiBaseUrl()}/books/${bookId}/ai-outline-volume`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ volume_index: volumeIndex, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [], chapters_per_volume: chaptersPerVolume || 50, node_only: !!nodeOnly }),
+        body: JSON.stringify({ volume_index: volumeIndex, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [], chapters_per_volume: chaptersPerVolume || 50, node_only: !!nodeOnly, async: !!nodeOnly }),
         signal: controller.signal,
       });
+      // ===== 异步任务模式：后端返回 202 + job_id，进入轮询 =====
+      if (res.status === 202) {
+        const started = await res.json().catch(() => null);
+        const jobId = started?.job_id;
+        if (!jobId) throw new Error('任务创建失败，请重试');
+        const deadline = Date.now() + 15 * 60 * 1000; // 轮询上限 15 分钟（逐事件管线+回退）
+        let consecutiveFails = 0;
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 3000));
+          let st: Response;
+          try {
+            st = await fetch(`${getApiBaseUrl()}/books/${bookId}/ai-outline-volume-status/${jobId}`, { headers });
+          } catch {
+            // 网络抖动/后端冷启动：容忍连续 10 次（30s）后报错
+            if (++consecutiveFails >= 10) throw new Error('与服务器失去连接，请稍后在剧情面板确认是否已生成');
+            continue;
+          }
+          if (st.status === 404) throw new Error('任务已过期或不存在，请重新发起节点设计');
+          if (!st.ok) {
+            if (++consecutiveFails >= 10) throw new Error(`查询任务状态失败 (HTTP ${st.status})`);
+            continue;
+          }
+          consecutiveFails = 0;
+          const job = await st.json().catch(() => null);
+          if (!job) continue;
+          if (job.status === 'done' && job.result) return job.result as { volume_data: any; timeline: string; bible: any };
+          if (job.status === 'error') throw new Error(job.error || '节点设计失败');
+        }
+        throw new Error('节点设计超时（超过15分钟），请稍后在剧情面板查看是否已写入');
+      }
+      // ===== 同步模式（旧后端 / 非 node_only 整卷生成） =====
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
         throw new Error(err.error || `HTTP ${res.status}`);
