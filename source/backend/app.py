@@ -10218,10 +10218,10 @@ def ai_outline_volume(book_id):
         _per_event_node_count = 4 if len(existing_main_events) >= 7 else 5
         _per_event_node_max = 8 if len(existing_main_events) >= 7 else 10
         shared_system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
-任务：基于第 {volume_index} 卷“{volume_title}”已有的主要剧情事件（main_events），**按每个主要剧情事件分别拆成子节点事件（nodes）**。
+任务：为第 {volume_index} 卷“{volume_title}”的一个主要剧情事件（main_event）生成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点（nodes）。
 - 主要事件 ≤ 6 个 → 每个拆 5-10 个
 - 主要事件 ≥ 7 个 → 每个拆 4-8 个
-子节点事件总数 ≈ 足以覆盖本卷 {chapters_per_volume} 章 × 2400字/章 ≈ {chapters_per_volume * 2400} 字正文。
+每个子节点 events 字段约支撑 2400 字正文。
 
 【本卷 6 要素锚（所有子节点都要在这个大框架内推进，不能超界）】
   · 核心人物：{vol_characters}
@@ -10230,19 +10230,18 @@ def ai_outline_volume(book_id):
   · 境界变化区间：{vol_realm_change}
   · 年龄变化区间：{vol_age_change}
 
-【模式说明】本卷已有完整卷剧情，你的任务是把 main_events 中每一个主要剧情事件，分别拆成 {_per_event_node_count}-{_per_event_node_max} 个 nodes 子节点。
+【模式说明】本卷已有完整卷剧情，你的任务是为当前这个 main_event 生成 {_per_event_node_count}-{_per_event_node_max} 个 nodes 子节点。
 - 不要修改本卷的 summary / main_plot / main_events / core_conflict / ending_hook 等卷级字段
 - 只输出 nodes 数组（保留原卷级字段由后端合并）
 - 各子节点之间必须剧情连贯：上一节点末尾自然衔接到下一节点开头
-- 卷与卷之间的节点更要连贯：本卷第一个节点必须承接上一卷卷尾钩子，本卷最后一个节点必须埋下卷尾钩子承接本卷 ending_hook
-- 每个子节点必须严格归属到一个 main_event，不得脱离对应主要剧情事件自创剧情
-- 同一 main_event 内部，子节点 chapters 区间要**连续不重叠**，刚好覆盖该 main_event 被分派的章节区间
+- 本卷第一个子节点必须承接上一卷卷尾钩子，本卷最后一个子节点必须埋下卷尾钩子承接本卷 ending_hook
+- 所有子节点必须严格归属到本 main_event，不得脱离本主要剧情事件自创剧情
+- 子节点 chapters 区间要**连续不重叠**，刚好覆盖本 main_event 被分派的章节区间（由 user prompt 中的【本次生成的 main_event 详情】指定）
 
 【两层对应铁律·升级（事件→子节点 + 精确章节分派）】
-  · 输入 main_events 共 {len(existing_main_events)} 个事件
-  · 每个 main_event → 展开 {_per_event_node_count}-{_per_event_node_max} 个 nodes 子节点事件
+  · 本 main_event → 展开 {_per_event_node_count}-{_per_event_node_max} 个 nodes 子节点事件
   · 每个子节点必须标注：它从属于哪个主要剧情事件（main_event_index = main_event.index）
-  · 子节点覆盖总章数必须刚好等于本卷 {chapters_per_volume} 章（从第 {_evt_start} 章到第 {_evt_end} 章）
+  · 子节点覆盖的 chapters 区间见 user prompt 中的分配章节
 
 【五幕模型对齐】本卷对应五幕中的“{current_act}”幕：{act_descriptions.get(current_act, '')}
 节点设计必须服务于该幕的核心目标。
@@ -10295,8 +10294,8 @@ def ai_outline_volume(book_id):
 
 【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
 【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子（1-2章一个子节点，正好可直接写正文）
-本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），拆 {len(existing_main_events)} 个主要剧情事件 × {_per_event_node_count}-{_per_event_node_max} 个子节点事件。
-节点 chapters 必须从 {_evt_start} 开始连续递增，合计到第 {_evt_end} 章，不能超出本卷边界；同一 main_event 内的子节点 chapters 加起来精确等于分派的区间。
+本卷约 {chapters_per_volume} 章（约 {chapters_per_volume * 2400} 字），每个 main_event 拆 {_per_event_node_count}-{_per_event_node_max} 个子节点事件。
+当前 main_event 的子节点 chapters 必须严格卡在 user prompt 中【本次生成的 main_event 详情】指定的章节区间内。
 【节点容量铁律】每个子节点 summary 必须足够支撑其 chapters 范围的字数容量（按每章2400字估算），不得简略。
 【节点连贯铁律】各节点 summary 末尾必须自然过渡到下一节点开头；本卷最后一个节点必须埋下并承接本卷 ending_hook：{existing_ending[:120]}
 
@@ -10390,6 +10389,93 @@ def ai_outline_volume(book_id):
         # 重排 index
         for _ni, _n in enumerate(all_nodes, 1):
             _n['index'] = _ni
+
+        # 如果逐事件生成全部返回空节点，退回到单次请求模式（一次性生成所有事件）
+        # 【P2-7修复】放宽触发条件：无论 event_errors 是否为空，只要 all_nodes 为空就触发回退
+        if not all_nodes:
+            # 用完整的上下文 + 所有 main_events 做一次生成
+            _fallback_user = f"""{shared_user_prefix}
+
+【所有 main_events】（请为每个事件分别展开成 {_per_event_node_count}-{_per_event_node_max} 个子节点，子节点 chapters 必须严格卡在各事件分配的区间内，全部节点合计覆盖 {_evt_start}-{_evt_end} 章）：
+{main_events_block}
+
+请为第 {volume_index} 卷的所有 main_events 分别展开成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点事件（nodes），
+输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。"""
+            _fb_content, _fb_err = _call_llm(
+                [{'role': 'system', 'content': shared_system_prompt},
+                 {'role': 'user', 'content': _fallback_user}],
+                max_tokens=16384, temperature=0.65, retry_count=3
+            )
+            if _fb_err:
+                event_errors.append(f'单次生成也失败: {_fb_err}')
+            else:
+                _fb_parsed, _fb_json_err = _extract_json_from_llm(_fb_content, expect='object')
+                if _fb_json_err:
+                    event_errors.append(f'单次生成JSON解析失败: {_fb_json_err}')
+                else:
+                    all_nodes = _fb_parsed.get('nodes', []) or []
+                    # 排序+重编号
+                    all_nodes.sort(key=_sort_key)
+                    for _ni2, _n2 in enumerate(all_nodes, 1):
+                        _n2['index'] = _ni2
+
+        # 如果单次回退也失败（all_nodes 仍为空），尝试超轻量级回退：只传必需的上下文
+        # 【P2-7修复】第二回退：精简 prompt，只保留核心约束，避免大上下文导致超时
+        if not all_nodes:
+            _light_system = f"""你是番茄小说金番作者级别的情节节点设计师。
+任务：为第 {volume_index} 卷“{volume_title}”的一个 main_event 生成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点（nodes）。
+每个子节点 events 约支撑 2400 字正文。
+
+【本卷 6 要素锚】核心人物：{vol_characters} | 时间：{vol_timeline_anchor} | 地点：{vol_location} | 境界：{vol_realm_change} | 年龄：{vol_age_change}
+
+【五幕模型对齐】本卷对应“{current_act}”幕：{act_descriptions.get(current_act, '')}
+
+【节点 6 要素铁律】每个节点必须包含：characters / events / time / location / realm_change / age_change
+
+【埋收标注】每个节点必须标注 bury（第XX章埋下）和 payoff（第XX章回收），无则空串。
+
+【输出格式】严格输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。
+
+{cohesion_constraint}
+
+【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
+【节点容量铁律】每个子节点 summary 必须足够支撑其 chapters 范围的字数容量（按每章2400字估算）。"""
+
+            _light_user = f"""书名：{book.title}
+{_build_core_params_block(bb, book)}
+
+【本卷已有卷剧情】
+- 卷名：第{volume_index}卷“{volume_title}”
+- 总体剧情概要：{existing_summary or '（无）'}
+- 主线推进路径：{existing_main_plot or '（无）'}
+- 核心冲突：{existing_core_conflict or '（无）'}
+- 高潮：{existing_climax or '（无）'}
+- 结局/卷尾钩子：{existing_ending or '（无）'}
+- 新埋伏笔：{', '.join(existing_foreshadowing) if existing_foreshadowing else '（无）'}
+
+【上一卷结尾】{prev_volume_end_summary or '本卷为第一卷，无前文'}
+
+【所有 main_events】（请为每个事件分别展开成 {_per_event_node_count}-{_per_event_node_max} 个子节点，子节点 chapters 必须严格卡在各事件分配的区间内，全部节点合计覆盖 {_evt_start}-{_evt_end} 章）：
+{main_events_block}
+
+请为第 {volume_index} 卷的所有 main_events 分别展开成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点事件（nodes），
+输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。"""
+            _l2_content, _l2_err = _call_llm(
+                [{'role': 'system', 'content': _light_system},
+                 {'role': 'user', 'content': _light_user}],
+                max_tokens=16384, temperature=0.7, retry_count=3
+            )
+            if _l2_err:
+                event_errors.append(f'轻量回退也失败: {_l2_err}')
+            else:
+                _l2_parsed, _l2_json_err = _extract_json_from_llm(_l2_content, expect='object')
+                if _l2_json_err:
+                    event_errors.append(f'轻量回退JSON解析失败: {_l2_json_err}')
+                else:
+                    all_nodes = _l2_parsed.get('nodes', []) or []
+                    all_nodes.sort(key=_sort_key)
+                    for _ni3, _n3 in enumerate(all_nodes, 1):
+                        _n3['index'] = _ni3
 
         # 构建合并后的 content（供下游 _call_llm 之后的逻辑使用）
         _merged = {
