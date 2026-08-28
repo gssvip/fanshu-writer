@@ -9414,6 +9414,14 @@ def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation',
                     _time.sleep(1.5 * (attempt + 1))
                     continue
                 return None, last_error
+            if resp.status_code >= 400:
+                try:
+                    err_body = resp.json()
+                    err_msg = (err_body.get('error') or {}).get('message') or str(err_body)
+                except Exception:
+                    err_msg = resp.text[:200]
+                last_error = f'LLM 请求被拒绝 (HTTP {resp.status_code}): {err_msg}'
+                return None, last_error
 
             result = resp.json()
             if 'choices' in result and len(result['choices']) > 0:
@@ -10337,6 +10345,10 @@ def ai_outline_volume(book_id):
         # 逐个 main_event 生成
         all_nodes = []
         event_errors = []
+        # 【P0修复】_evt_alloc 为空时直接返回错误，避免静默保存空节点
+        if not _evt_alloc:
+            err = '该卷没有 main_events 或 key_events 可供拆分为子节点，请先在卷剧情中生成主要剧情事件'
+            return jsonify({'error': err}), 400
         for _alloc in _evt_alloc:
             idx, ttl, s, e, ec, _me = _alloc
             # 构建本事件的 user prompt（含事件专属细节）
@@ -10570,7 +10582,9 @@ def ai_outline_volume(book_id):
 请为第 {volume_index} 卷生成详细大纲。"""
 
     # 节点设计模式：content 已在逐事件循环中设置，跳过常规 _call_llm
-    if not node_only:
+    # 【P0修复】当 node_only=True 但 current_vol_existing 不存在（用户指定了不存在的卷号）时，
+    # 必须回退到整卷生成模式，否则 content 未定义会导致 UnboundLocalError 500
+    if not node_only or not current_vol_existing:
         # 整卷生成模式：一次性调用 LLM 生成完整卷大纲+情节节点
         content, err = _call_llm(
             [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
