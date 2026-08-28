@@ -9370,7 +9370,7 @@ def _extract_json_from_llm(content, expect='auto'):
 
     return None, f'未找到有效JSON（最后错误: {last_error}），原始内容前300字: {content[:300]}'
 
-def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation', retry_count=2):
+def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation', retry_count=2, timeout=300):
     """统一的 LLM 调用辅助函数，返回 (content, error)
     task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)
     max_tokens 语义：None → 用 cfg.max_tokens；0 → 不限制（不下发该字段，用模型自身默认上限）；正整数 → 显式限定。
@@ -9404,7 +9404,7 @@ def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation',
         try:
             resp = requests.post(f'{base}/chat/completions',
                 headers=build_auth_headers(cfg.api_key),
-                json=payload, timeout=300)
+                json=payload, timeout=timeout)
 
             # 检查 HTTP 状态：5xx 可重试，4xx 为客户端错误不重试
             if resp.status_code >= 500:
@@ -10342,53 +10342,80 @@ def ai_outline_volume(book_id):
 【上一卷结尾章节正文】（卷间衔接依据，本卷第一个子节点必须承接）
 {prev_volume_end_summary or '（本卷为第一卷，无前文）'}"""
 
-        # 逐个 main_event 生成
+        # 逐个 main_event 生成（改为线程池并发 + 信号量限流）
+        # 根因修复：原实现逐事件**串行**调用 LLM，每个事件生成 4-10 个详细节点（单次 40-90s），
+        # 有 8-12 个事件时串行总时长可达 5-15 分钟，远超前端 300s / Render 500s 请求超时→必然 504。
+        # 并发后总时长≈单个事件耗时，根治超时。
         all_nodes = []
         event_errors = []
         # 【P0修复】_evt_alloc 为空时直接返回错误，避免静默保存空节点
         if not _evt_alloc:
             err = '该卷没有 main_events 或 key_events 可供拆分为子节点，请先在卷剧情中生成主要剧情事件'
             return jsonify({'error': err}), 400
-        for _alloc in _evt_alloc:
-            idx, ttl, s, e, ec, _me = _alloc
-            # 构建本事件的 user prompt（含事件专属细节）
+
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        _sema = threading.Semaphore(3)  # 同时最多 3 个 LLM 请求，避免并发限流
+
+        def _gen_event_worker(_alloc):
+            _idx2, _ttl2, _s2, _e2, _ec2, _me2 = _alloc
             _per_event_user = f"""{shared_user_prefix}
 
-【本次生成的 main_event 详情】（请严格按此事件展开成 {_per_event_node_count}-{_per_event_node_max} 个子节点，子节点 chapters 必须严格卡在 {s}-{e} 区间内，合计 {e-s+1} 章）：
-  · 事件{idx}《{ttl}》（分配章节：{s}-{e}，共 {e-s+1} 章，支撑 ec={ec} 章）
-    概要：{str(_me.get("summary",""))[:300]}
-    ·人物：{_me.get("characters","")}
-    ·事件：{_me.get("events","")}
-    ·时间：{_me.get("time","")}
-    ·地点：{_me.get("location","")}
-    ·境界：{_me.get("realm_change","")}
-    ·年龄：{_me.get("age_change","")}{f'''
-    埋：{_me.get("bury","")}''' if _me.get("bury") else ''}{f'''
-    收：{_me.get("payoff","")}''' if _me.get("payoff") else ''}
+【本次生成的 main_event 详情】（请严格按此事件展开成 {_per_event_node_count}-{_per_event_node_max} 个子节点，子节点 chapters 必须严格卡在 {_s2}-{_e2} 区间内，合计 {_e2-_s2+1} 章）：
+  · 事件{_idx2}《{_ttl2}》（分配章节：{_s2}-{_e2}，共 {_e2-_s2+1} 章，支撑 ec={_ec2} 章）
+    概要：{str(_me2.get("summary",""))[:300]}
+    ·人物：{_me2.get("characters","")}
+    ·事件：{_me2.get("events","")}
+    ·时间：{_me2.get("time","")}
+    ·地点：{_me2.get("location","")}
+    ·境界：{_me2.get("realm_change","")}
+    ·年龄：{_me2.get("age_change","")}{f'''
+    埋：{_me2.get("bury","")}''' if _me2.get("bury") else ''}{f'''
+    收：{_me2.get("payoff","")}''' if _me2.get("payoff") else ''}
 
-请为第 {volume_index} 卷的 main_event.{idx}《{ttl}》设计 {_per_event_node_count}-{_per_event_node_max} 个情节子节点事件（nodes），所有子节点的 chapters 必须严格卡在 {s}-{e} 区间内。"""
+请为第 {volume_index} 卷的 main_event.{_idx2}《{_ttl2}》设计 {_per_event_node_count}-{_per_event_node_max} 个情节子节点事件（nodes），所有子节点的 chapters 必须严格卡在 {_s2}-{_e2} 区间内。"""
 
-            import time as _time
-            _content, _err = _call_llm(
-                [{'role': 'system', 'content': shared_system_prompt},
-                 {'role': 'user', 'content': _per_event_user}],
-                max_tokens=16384, temperature=0.65, retry_count=3
-            )
+            with _sema:
+                import time as _time
+                # 按剩余总预算决定本事件可用时长：剩余越少，重试越少、单次超时越短
+                _remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
+                _ev_retry = 3 if _remain > 180 else (1 if _remain > 90 else 0)
+                _ev_timeout = min(300, max(30, _remain // 2))
+                _content, _err = _call_llm(
+                    [{'role': 'system', 'content': shared_system_prompt},
+                     {'role': 'user', 'content': _per_event_user}],
+                    max_tokens=16384, temperature=0.65, retry_count=_ev_retry,
+                    timeout=_ev_timeout,
+                )
             if _err:
-                event_errors.append(f'事件{idx}《{ttl}》生成失败: {_err}')
-                continue
+                return [], f'事件{_idx2}《{_ttl2}》生成失败: {_err}'
             _parsed, _json_err = _extract_json_from_llm(_content, expect='object')
             if _json_err:
-                event_errors.append(f'事件{idx}《{ttl}》JSON解析失败: {_json_err}')
-                continue
+                return [], f'事件{_idx2}《{_ttl2}》JSON解析失败: {_json_err}'
             _event_nodes = _parsed.get('nodes', []) or []
             # 确保每个节点带 main_event_index
             for _n in _event_nodes:
                 if not _n.get('main_event_index'):
-                    _n['main_event_index'] = idx
-            all_nodes.extend(_event_nodes)
-            # 事件间退避，避免并发限流
-            _time.sleep(0.5)
+                    _n['main_event_index'] = _idx2
+            return _event_nodes, None
+
+        # 并发执行所有事件的节点生成
+        # 【P1修复】整体 deadline：预留 30s 给合并落库，剩余预算分给并发请求。
+        # 即使个别事件单次超时+重试放大耗时，超过剩余预算的 worker 直接放弃（retry_count=0），
+        # 保证整个接口总时长 < 前端 300s 超时，杜绝 504。
+        import time as _deadline_time
+        _wall_deadline = _deadline_time.monotonic() + 250  # 300s 预算留 50s 余量
+        with ThreadPoolExecutor(max_workers=min(3, len(_evt_alloc))) as _ex:
+            _futures = {_ex.submit(_gen_event_worker, _alloc): _alloc for _alloc in _evt_alloc}
+            for _fut in as_completed(_futures):
+                try:
+                    _ev_nodes, _ev_err = _fut.result()
+                except Exception as _e:
+                    _ev_nodes, _ev_err = [], f'线程异常: {_e}'
+                if _ev_err:
+                    event_errors.append(_ev_err)
+                elif _ev_nodes:
+                    all_nodes.extend(_ev_nodes)
 
         # 按 chapters 起始章号排序
         def _sort_key(n):
@@ -10413,10 +10440,14 @@ def ai_outline_volume(book_id):
 
 请为第 {volume_index} 卷的所有 main_events 分别展开成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点事件（nodes），
 输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。"""
+            _fb_remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
+            _fb_retry = 2 if _fb_remain > 120 else (1 if _fb_remain > 60 else 0)
+            _fb_timeout = min(120, max(30, _fb_remain))
             _fb_content, _fb_err = _call_llm(
                 [{'role': 'system', 'content': shared_system_prompt},
                  {'role': 'user', 'content': _fallback_user}],
-                max_tokens=16384, temperature=0.65, retry_count=3
+                max_tokens=16384, temperature=0.65, retry_count=_fb_retry,
+                timeout=_fb_timeout,
             )
             if _fb_err:
                 event_errors.append(f'单次生成也失败: {_fb_err}')
@@ -10472,10 +10503,14 @@ def ai_outline_volume(book_id):
 
 请为第 {volume_index} 卷的所有 main_events 分别展开成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点事件（nodes），
 输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。"""
+            _l2_remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
+            _l2_retry = 1 if _l2_remain > 60 else 0
+            _l2_timeout = min(90, max(25, _l2_remain))
             _l2_content, _l2_err = _call_llm(
                 [{'role': 'system', 'content': _light_system},
                  {'role': 'user', 'content': _light_user}],
-                max_tokens=16384, temperature=0.7, retry_count=3
+                max_tokens=16384, temperature=0.7, retry_count=_l2_retry,
+                timeout=_l2_timeout,
             )
             if _l2_err:
                 event_errors.append(f'轻量回退也失败: {_l2_err}')
