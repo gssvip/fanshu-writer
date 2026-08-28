@@ -1100,6 +1100,21 @@ export const api = {
     return fetchStream(`${getApiBaseUrl()}/ai/chat/general`, cfg, signal);
   },
 
+  // 圆桌会议：6个专家Agent按两轮依次发言（主持人开场→讨论→总结报告），全程流式推送
+  chatRoundtableStream: (topic: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; rounds?: number }, signal?: AbortSignal) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const body: Record<string, any> = { topic };
+    if (opts?.bookId) body.book_id = opts.bookId;
+    if (opts?.sessionId) body.session_id = opts.sessionId;
+    if (opts?.aiConfigId) body.ai_config_id = opts.aiConfigId;
+    if (typeof opts?.rounds === 'number' && opts.rounds > 0) body.rounds = opts.rounds;
+    const cfg: RequestInit = { method: 'POST', headers, body: JSON.stringify(body) };
+    if (signal) cfg.signal = signal;
+    return fetchStream(`${getApiBaseUrl()}/ai/chat/roundtable`, cfg, signal);
+  },
+
   // ===== 联网搜索 Key 配置（Tavily/Exa/Brave 可选填；保存后立即生效） =====
   getSearchConfig: () =>
     request<{ keys: Record<string, string>; env: Record<string, boolean> }>('/ai/search-config', { method: 'GET' }),

@@ -43,9 +43,10 @@ interface DimSpec {
 
 // SSE 事件类型
 type SseEvent =
-  | { type: 'delta'; content: string }
+  | { type: 'delta'; content: string; speaker?: string }
   | { type: 'card'; card: ActionCard; session_id: string; meta?: any }
-  | { type: 'done'; session_id: string }
+  | { type: 'done'; session_id: string; summary?: string }
+  | { type: 'speaker_done'; speaker?: string; round?: number }
   | { type: 'error'; error: string }
   | { type: 'meta'; kind: string; info?: any };
 
@@ -767,6 +768,7 @@ const LONG_PRESS_MS = 500;
 
 const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onEdit, onIgnore, applyingCardId, streaming, onReplaceChapter, onEditMessage, onDeleteMessage, onRegenerate, bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const isRoundtable = !isUser && message.roundtable !== undefined;
   const [collapsed, setCollapsed] = useState(true);
   const [showMenu, setShowMenu] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -854,6 +856,38 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
     >
       <div className="chat-msg-avatar">{isUser ? '我' : <CarLogo size={22} />}</div>
       <div className="chat-msg-body">
+        {isRoundtable && (
+          <div className="rt-box">
+            <div className="rt-header">
+              <span className="rt-title">🪑 圆桌会议</span>
+              {message.roundtable?.status === 'open' && <span className="rt-live">● 进行中</span>}
+              {message.roundtable?.status === 'done' && <span className="rt-done">✓ 已结束</span>}
+            </div>
+            {message.roundtable?.speech && message.roundtable.speech.length > 0 ? (
+              <div className="rt-discussion">
+                {message.roundtable.speech.map((seg, si) => (
+                  <div key={si} className={(message.roundtable as any).currentSpeaker === seg.name && message.roundtable?.status === 'open' ? 'rt-seg speaking' : 'rt-seg'}>
+                    <div className="rt-name">{seg.name || seg.speaker}</div>
+                    <div className="rt-bubble">
+                      {seg.content ? (
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm, remarkMath]}
+                          rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+                          components={{ a: (p: any) => <a {...p} target="_blank" rel="noopener noreferrer" /> }}
+                        >{seg.content}</ReactMarkdown>
+                      ) : streaming && (message.roundtable as any).currentSpeaker === seg.name ? (
+                        <span className="chat-cursor">▋</span>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+                {streaming && <div className="rt-waiting">🔊 {message.roundtable?.currentSpeaker || '某位'} 正在发言…</div>}
+              </div>
+            ) : streaming ? (
+              <div className="rt-waiting">🪑 会议即将开始，各位专家正在入座…</div>
+            ) : null}
+          </div>
+        )}
         {editing ? (
           <div className="chat-msg-edit-wrap">
             <textarea
@@ -1247,6 +1281,7 @@ export default function ChatPanel() {
   // P1-3 内置角色 persona：6款常用人格（仅通用聊天生效），选中后发送给后端作为system persona前缀
   const BUILTIN_ROLES = [
     { id: 'default',    name: '默认助手', emoji: '🧠', brief: '正常智驾回答，不附加人格' },
+    { id: 'roundtable', name: '圆桌会议', emoji: '🪑', brief: '6位专家Agent围坐开会，两轮轮流发言后产出总结报告' },
     { id: 'polish',     name: '润色编辑', emoji: '✍️', brief: '擅长文字润色，指出语病、节奏、结构问题，给出具体改写对比' },
     { id: 'toxic_critic', name: '毒舌读者', emoji: '🔥', brief: '极度挑剔的读者视角，不留情面，专挑AI味和套路化' },
     { id: 'architect',  name: '剧情架构师', emoji: '🧱', brief: '擅长分卷结构、张力曲线、伏笔回收、CDL角色三角' },
@@ -2500,6 +2535,105 @@ export default function ChatPanel() {
     setAutoContextNotice(null);
     streamBufferRef.current = '';
     reasoningBufferRef.current = '';
+
+    // ====== 圆桌会议分支：6个专家Agent两轮轮流发言，实时流式展示，最后出总结报告 ======
+    const _PREKEY = '__general_pending_session__';
+    const _sidReal = chatGeneralSessionId || '';
+    const _sid = _sidReal || _PREKEY;
+    const _rtRole = sessionRoleMap[_sid] || 'default';
+    if (_rtRole === 'roundtable') {
+      setMessages(prev => [...prev, { role: 'user', content: text }, {
+        role: 'assistant', content: '', cards: [],
+        roundtable: { speech: [], currentSpeaker: '', status: 'open' as const },
+      }]);
+      setStreaming(true);
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      const _cfgId = sessionModelMap[_sid] || undefined;
+      try {
+        const res = await api.chatRoundtableStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId }, ctrl.signal);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        let curName = '';
+        for await (const evt of parseSSE(res)) {
+          if (ctrl.signal.aborted) break;
+          if (evt.type === 'error') throw new Error(evt.error);
+          if (evt.type === 'meta' && evt.kind === 'roundtable_start' && evt.info) {
+            curName = '';
+          } else if (evt.type === 'meta' && evt.kind === 'roundtable_speaker' && evt.info) {
+            // 切换发言人：记录当前发言人名字，接下来的delta都算它的发言
+            curName = String(evt.info.speaker_name || '').trim();
+            setMessages(prev => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant' && last.roundtable) {
+                const rt = { ...last.roundtable };
+                rt.currentSpeaker = curName;
+                next[next.length - 1] = { ...last, roundtable: rt };
+              }
+              return next;
+            });
+          } else if (evt.type === 'meta' && evt.kind === 'reasoning' && evt.info && typeof evt.info.text === 'string') {
+            reasoningBufferRef.current += evt.info.text;
+            const rbuf = reasoningBufferRef.current;
+            setMessages(prev => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant') next[next.length - 1] = { ...last, reasoning: rbuf };
+              return next;
+            });
+          } else if (evt.type === 'delta' && typeof evt.content === 'string') {
+            const sp = String((evt as any).speaker || '');
+            const c = evt.content;
+            setMessages(prev => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant' && last.roundtable) {
+                const rt = { ...last.roundtable };
+                const speech = [...rt.speech];
+                // 找当前发言人：若最后一节=同一人则追加，否则开新一节
+                const lastSeg = speech[speech.length - 1];
+                if (lastSeg && lastSeg.speaker === sp) {
+                  lastSeg.content += c;
+                  speech[speech.length - 1] = lastSeg;
+                } else {
+                  speech.push({ speaker: sp, name: curName || sp, content: c });
+                }
+                rt.speech = speech;
+                rt.currentSpeaker = curName || rt.currentSpeaker;
+                next[next.length - 1] = { ...last, roundtable: rt };
+              }
+              return next;
+            });
+          } else if (evt.type === 'speaker_done' && (evt as any).speaker === 'moderator_summary') {
+            setMessages(prev => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant' && last.roundtable) {
+                next[next.length - 1] = { ...last, roundtable: { ...last.roundtable, status: 'done' as const } };
+              }
+              return next;
+            });
+          } else if (evt.type === 'done') {
+            if (evt.session_id) setChatGeneralSessionId(evt.session_id);
+          }
+        }
+      } catch (e: any) {
+        if (e.name !== 'AbortError') {
+          const msg = (e?.message || e?.error || '圆桌会议出错').trim() || '圆桌会议出错';
+          appendAiNotice('❌ 圆桌会议出错：' + msg + '\n\n常见原因&解决：\n1) LLM上游503/限流 → 等30秒后重发\n2) 六个专家叠加调用可能触发模型配额上限 → 检查模型配置token配额');
+          setStreamError('');
+          removeEmptyAi();
+        }
+      } finally {
+        setStreaming(false);
+        abortRef.current = null;
+      }
+      return;
+    }
+
     // ====== 所有消息统一走普通通用聊天（命中创作维度→气泡入库提示） ======
     appendUserAi(text);
     setStreaming(true);

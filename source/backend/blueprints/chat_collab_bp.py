@@ -60,6 +60,24 @@ _DIM_MAX_TOKENS = 131072
 _REASON_START = '【推理】'
 _REASON_END = '【推理结束】'
 
+# ============================================================================
+# 内置人格角色表（单一定义，通用聊天 & 圆桌会议共用）：
+#   id -> (全名, system_prompt_extra)。通过强化提示词把毒舌读者/爆款编辑
+#   打磨成"严格嘴毒、阅历丰富、有独特见解"的老炮，供圆桌多 Agent 交锋质量。
+# ============================================================================
+_PERSONAS = {
+    'polish': ('润色编辑', '【你的身份】网文资深文字润色编辑。习惯：① 先指出"原句→改写句"成对对比，绝不空泛说"不通顺"；② 每条问题标注坏味道类别（碎句/被字句/AI味/句号过载/逻辑跳步）；③ 最后附1条可执行的自检清单。绝不居高临下，尽量幽默但不油。'),
+    'toxic_critic': ('毒舌读者', '【你的身份】一个付费追更十年、被流水线网文喂到吐的资深毒舌老炮。你阅书过万，什么套路都见过，嗅觉极其敏锐，一开口就能戳中最恶心人的AI味和假大空。\n\n说话要求：\n- 嘴毒但不骂人，针对内容不针对作者，刻薄但幽默\n- 必须尖锐指出问题：AI套话、人设分裂、情绪假、逻辑崩、爽点无力\n- 每个批评必须带具体例子（从原文/构思里摘），骂完必须给可落地改法\n- 你阅历丰富，能用行业老炮的比喻戳穿本质，别用学术词，就是胡同口侃大山的劲儿\n- 记住：用户想听真话，不是鼓励，别委婉，直接骂到点子上！'),
+    'architect': ('剧情架构师', '【你的身份】百万字长篇剧情架构师。擅长分卷三幕结构（触发→升级→大高潮）、张力曲线（低谷期绝不能连两章、爽点密度3章一个微爽、10章一个大爽）、伏笔回收清单、CDL三角（Character/Desire/Lie vs Truth）。回复永远结构化：分卷分段，每段结尾给一个"为什么这样设计"的解释。'),
+    'worldbuilder': ('世界观策划', '【你的身份】资深世界观策划。输出永远用：能量体系分级→社会结构分层→势力地图→科技/修炼树→经济体系自洽→禁忌规则→差异化锚点 七段式结构。每一条必须回答"这对主角爽点有什么用？"，绝不空堆设定。'),
+    'marketeer': ('爆款编辑', '【你的身份】番茄/起点工业化爆款流水线总编辑。你干了十年，手上出过3本十万订，对商业数据敏感，说话直接粗暴，从不讲废话，像骂新人作者一样骂醒他。\n\n审核标准（按工业流程卡）：\n- 书名钩子：3秒抓不抓得住人？有没有关键词+反差+金手指暗示？不合格直接打回\n- 开篇密度：第1章末尾必须有反常识反转，第3章必须金手指兑现，钩子密度够不够？\n- 爽点节奏：每3章一个微爽，每10章一个大爽，情绪曲线对不对？\n- 金手指兑现：读者追更就是为了看金手指用了爽，有没有拖？\n- 一句话总结必须给出：保留什么，砍什么，改哪里，数据说话，别扯"文学性"这种虚的。'),
+    'interviewer': ('深度采访', '【你的身份】调查记者。你不做结论，你只追问。针对用户聊的任何人物/剧情/设定，你的工作是逼出冰山底下没说出来的内容。每轮回复至少3个连续追问，从表面→动机→矛盾→代价→蝴蝶效应，层层深入，绝对不代替用户回答。'),
+}
+
+# 圆桌会议顺序：毒舌读者 → 剧情架构师 → 世界观策划 → 爆款编辑 → 润色编辑 → 深度采访
+_ROUNDTABLE_ORDER = ['toxic_critic', 'architect', 'worldbuilder', 'marketeer', 'polish', 'interviewer']
+_MODERATOR_ROLE = ('主持人', '【你的身份】圆桌会议主持人。你负责开场破题、掌握议程节奏，并在讨论收束后把6位专家的共识整理成结构化的总结报告。开场要简短点题，不替专家发言；总结报告要分议题给结论+最优先改法。')
+
 
 class _ThinkingSplitter:
     """流式把『【推理】...【推理结束】』标记内的思考从正文中切出。
@@ -7594,15 +7612,9 @@ def chat_general():
 
     # 构建 messages
     # P1-3 内置角色 persona 表：id -> (name, system_prompt_extra)
-    _BUILTIN_ROLES = {
-        'default': ('默认助手', ''),
-        'polish': ('润色编辑', '【你的身份】网文资深文字润色编辑。习惯：① 先指出"原句→改写句"成对对比，绝不空泛说"不通顺"；② 每条问题标注坏味道类别（碎句/被字句/AI味/句号过载/逻辑跳步）；③ 最后附1条可执行的自检清单。绝不居高临下，尽量幽默但不油。'),
-        'toxic_critic': ('毒舌读者', '【你的身份】一个付费追更十年、被流水线喂到恶心的毒舌读者。你不会网暴作者，但会不留情面地指出任何AI味、套路化、假情绪、"主角像机器人"的问题。说话风格：比喻夸张、讽刺到位、偶尔刻薄但永远针对内容，不人身攻击。用户就是作者本人，你要骂到点子上，骂完还要给一个可落地的改法。'),
-        'architect': ('剧情架构师', '【你的身份】百万字长篇剧情架构师。擅长分卷三幕结构（触发→升级→大高潮）、张力曲线（低谷期绝不能连两章、爽点密度3章一个微爽、10章一个大爽）、伏笔回收清单、CDL三角（Character/Desire/Lie vs Truth）。回复永远结构化：分卷分段，每段结尾给一个"为什么这样设计"的解释。'),
-        'worldbuilder': ('世界观策划', '【你的身份】资深世界观策划。输出永远用：能量体系分级→社会结构分层→势力地图→科技/修炼树→经济体系自洽→禁忌规则→差异化锚点 七段式结构。每一条必须回答"这对主角爽点有什么用？"，绝不空堆设定。'),
-        'marketeer': ('爆款编辑', '【你的身份】番茄/起点工业化爆款编辑。只关心：① 书名（3s内抓眼球公式：关键词+反差+金手指暗示）；② 一句话梗（hook，20字内可复述）；③ 前3章钩子密度（第1章末尾必须有反常识反转；第3章必须展示金手指第一次兑现）；④ 爽点文案（能直接当广告标题）。给出的都是可落地的工业标准，不含"写得更好看"这种空话。'),
-        'interviewer': ('深度采访', '【你的身份】调查记者。你不做结论，你只追问。针对用户聊的任何人物/剧情/设定，你的工作是逼出冰山底下没说出来的内容。每轮回复至少3个连续追问，从表面→动机→矛盾→代价→蝴蝶效应，层层深入，绝对不代替用户回答。'),
-    }
+    #（单一定义在模块级 _PERSONAS，通用聊天与圆桌会议共用，避免人格漂移）
+    _BUILTIN_ROLES = dict(_PERSONAS)  # 注意：模块级表不含 'default'，这里补上
+    _BUILTIN_ROLES['default'] = ('默认助手', '')
     # 选角色：请求 > 会话meta_json.role_id > default
     _session_role_id = None
     try:
@@ -8034,6 +8046,373 @@ def chat_general():
                             'cards': persisted_cards})
             _safe_save_session_messages(session, history)
             yield f'data: {json.dumps({"type": "done", "session_id": session_id}, ensure_ascii=False)}\n\n'
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache, no-transform',
+                             'X-Accel-Buffering': 'no',
+                             'Connection': 'keep-alive'})
+
+
+@chat_collab_bp.route('/api/ai/chat/roundtable', methods=['POST'])
+def chat_roundtable():
+    """圆桌会议（多 Agent 轮询讨论，参考 AutoGen RoundRobinGroupChat 固定顺序轮流发言）：
+    - 6个内置专家按固定顺序轮流发言：毒舌读者→剧情架构师→世界观策划→爆款编辑→润色编辑→深度采访
+    - 完整走两轮，让交锋充分深入
+    - 每步实时SSE推给前端，用户可以看到整个讨论过程
+    - 讨论结束主持人做总结报告，输出共识+结论+落地步骤
+    - body: { book_id?, session_id?, topic }  (book_id可选，绑定作品时注入维度资料)
+    """
+    from app import db, AISession, Book, BookBible, AIConfig
+    from llm_gateway import LLMGateway, get_llm_config
+
+    data = request.json or {}
+    book_id = data.get('book_id')
+    session_id = data.get('session_id')
+    topic = (data.get('topic') or '').strip()
+    # P0 深度思考级别：统一用标准思考，保证讨论质量
+    deep_think = 1
+
+    if not topic:
+        return jsonify({'error': '缺少讨论话题'}), 400
+
+    # book_id 为空 = 纯自由讨论；绑定则注入作品维度资料
+    scope = 'roundtable_global' if not book_id else 'roundtable_per_book'
+    book_title = ''
+    bb_summary = ''
+    book = None
+    bb = None
+    base_system = ''
+    if book_id:
+        book = Book.query.get(book_id)
+        if not book:
+            return jsonify({'error': '书籍不存在'}), 404
+        book_title = book.title or ''
+        bb = BookBible.query.filter_by(book_id=book_id).first()
+        from app import Chapter, parse_chapter_number
+        recent_chapters: list = []
+        next_chapter_num: int | None = None
+        toc_block = ''
+        try:
+            ch_info = _get_latest_chapter_info(book_id)
+            next_chapter_num = ch_info['next_num']
+            recent_raw = Chapter.query.filter_by(book_id=book_id, is_volume=False).all()
+            def _ck(c):
+                n = parse_chapter_number(c.title or '')
+                return n if isinstance(n, int) and n > 0 else (99999 + int(c.order_index or 0))
+            recent_sorted = sorted(recent_raw, key=_ck)
+            recent_chapters = [
+                {
+                    'title': ch.title or f'第{ch.order_index or 0}章',
+                    'word_count': getattr(ch, 'word_count', 0) or 0,
+                    'order_index': int(ch.order_index or 0),
+                } for ch in recent_sorted[-5:]
+            ]
+        except Exception:
+            recent_chapters = []
+            next_chapter_num = None
+        try:
+            toc_block = _build_toc_block(book_id)
+        except Exception:
+            toc_block = ''
+        try:
+            from prompt_context_cache import PromptContextCache
+            _cache = PromptContextCache.get_instance()
+            _cache_key = f'general_chat_system:{book_id}'
+            def _builder():
+                return build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block)
+            base_system = _cache.get_or_build(_cache_key, _builder, ttl_sec=900)
+        except Exception:
+            base_system = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block)
+        non_empty_fields = [f for f in [
+            ('concept', '核心构思'), ('worldbuilding', '世界观'), ('key_rules', '核心规则'),
+            ('character_profiles', '人物'), ('plot_design', '大纲'),
+            ('timeline', '剧情线'), ('foreshadowing', '伏笔'),
+            ('locations', '地点'), ('style_guide', '文风'),
+        ] if getattr(bb, f[0], None) and str(getattr(bb, f[0])).strip()]
+        bb_summary = '、'.join(nf[1] for nf in non_empty_fields) if non_empty_fields else '暂无已填充维度'
+
+    # 会话创建/获取
+    if not book_id:
+        session = AISession.query.filter(
+            AISession.scope == 'roundtable_global',
+            AISession.title == '圆桌会议',
+        ).order_by(AISession.updated_at.desc()).first()
+        if not session:
+            session = AISession(id=str(uuid.uuid4()), scope='roundtable_global',
+                                title='圆桌会议', book_id=None,
+                                messages_json='[]', created_at=datetime.now(timezone.utc),
+                                updated_at=datetime.now(timezone.utc))
+            db.session.add(session); db.session.commit()
+        session_id = session.id
+    else:
+        session = _get_or_create_session_for_book(session_id, book_id, scope=scope, title=topic[:30])
+        session_id = session.id
+
+    # P1-1 模型配置解析（与 chat_general 完全一致，复用会话级模型配置逻辑）
+    req_ai_config_id = (data.get('ai_config_id') or '').strip() or None
+    session_cfg_id = None
+    try:
+        if session and hasattr(session, 'meta_json') and session.meta_json:
+            session_meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads(session.meta_json or '{}')
+            session_cfg_id = (session_meta.get('ai_config_id') or '').strip() or None
+    except Exception:
+        session_cfg_id = None
+    chosen_cfg_id = req_ai_config_id or session_cfg_id
+    cfg = AIConfig.get_by_id(chosen_cfg_id) if chosen_cfg_id else None
+    if cfg and not cfg.api_key:
+        cfg = None
+    if cfg is None:
+        cfg = AIConfig.get_active()
+    if not cfg or not cfg.api_key:
+        return jsonify({'error': '请先配置 AI'}), 400
+    if chosen_cfg_id and chosen_cfg_id == cfg.id and session:
+        try:
+            meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+            if not isinstance(meta, dict): meta = {}
+            if meta.get('ai_config_id') != cfg.id:
+                meta['ai_config_id'] = cfg.id
+                session.meta_json = json.dumps(meta, ensure_ascii=False)
+                db.session.add(session); db.session.commit()
+        except Exception:
+            pass
+
+    # 模型URL/KEY解析（与 chat_general 完全一致）
+    import os as _os_g
+    from llm_gateway import _normalize_llm_base_url as _nlg
+    import app as _modg
+    try:
+        _actg = _modg.AIConfig.get_active()
+        _actg_id = getattr(_actg, 'id', None) if _actg else None
+    except Exception:
+        _actg_id = None
+    _is_act_g = (_actg_id and chosen_cfg_id and _actg_id == chosen_cfg_id) or (not chosen_cfg_id)
+    if _is_act_g:
+        _bg, _kg, _mg = get_llm_config(_modg)
+        if cfg.model and cfg.model != _mg:
+            _mg = cfg.model
+    else:
+        _bg = _nlg(cfg.base_url or _os_g.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1'), cfg.model)
+        _kg = cfg.api_key or _os_g.environ.get('USER_LLM_API_KEY', '')
+        _mg = cfg.model or _os_g.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+
+    # 运行时变量
+    from datetime import datetime, timezone, timedelta
+    _tz = timezone(timedelta(hours=8))
+    _now = datetime.now(_tz)
+    _var_ctx = {
+        'date': _now.strftime('%Y-%m-%d'),
+        'time': _now.strftime('%H:%M'),
+        'current_book': book_title or '(未绑定作品)',
+        'model_name': _mg,
+    }
+    def _var_replace(s: str) -> str:
+        if not s: return s
+        for k, v in _var_ctx.items():
+            s = s.replace('{' + k + '}', str(v))
+        return s
+
+    # 加载历史（保存完整讨论过程供后续复盘）
+    history = load_session_messages(session)
+
+    def generate():
+        yield ': ping-heartbeat-keepalive\n\n'
+        all_messages = []
+        try:
+            # 首帧meta：告诉前端这是圆桌模式
+            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_start", "info": {"rounds": 2, "speakers": len(_ROUNDTABLE_ORDER)}}, ensure_ascii=False)}\n\n'
+
+            # ========== Step 1: 主持人开场 ==========
+            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator", "speaker_name": _MODERATOR_ROLE[0]}}, ensure_ascii=False)}\n\n'
+            mod_system = _MODERATOR_ROLE[1] + f"""
+
+【讨论议题】
+{topic}
+
+【规则】
+- 你现在开场，简短说明讨论规则：6位专家分两轮依次发言，每人就议题讲出自己的专业见解
+- 鼓励交锋，允许不同意前面发言人的观点，必须碰撞出真实结论
+- 开场只要说3-5句话点明规则和议题，不用展开，把场子交给专家就行
+"""
+            if book_id and base_system:
+                mod_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + mod_system
+            mod_system = mod_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+            mod_messages = [{'role': 'system', 'content': _var_replace(mod_system)}]
+            mod_messages.append({'role': 'user', 'content': f'请开始开场，议题是：{topic}'})
+
+            gw_mod = LLMGateway(_bg, _kg, _mg)
+            _splitter = _ThinkingSplitter() if deep_think >= 1 else None
+            mod_full = []
+            for chunk in gw_stream_with_hb(gw_mod, mod_messages, emit_reasoning=True,
+                                           temperature=0.6, max_tokens=_DIM_MAX_TOKENS):
+                if chunk is HEARTBEAT:
+                    yield SSE_HEARTBEAT_COMMENT
+                    continue
+                if _is_stream_retry(chunk):
+                    yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": chunk.info}, ensure_ascii=False)}\n\n'
+                    continue
+                if _is_reasoning_frame(chunk):
+                    yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": chunk.text}, ensure_ascii=False)}\n\n'
+                    continue
+                for _pk, _pt in (_splitter.feed(chunk) if _splitter else [('body', chunk)]):
+                    if _pk == 'reason':
+                        yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _pt}, ensure_ascii=False)}\n\n'
+                    else:
+                        mod_full.append(_pt)
+                        yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": _pt}, ensure_ascii=False)}\n\n'
+            if _splitter is not None:
+                for _fk, _ft in _splitter.finish():
+                    if _fk == 'reason':
+                        yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _ft}, ensure_ascii=False)}\n\n'
+                    else:
+                        mod_full.append(_ft)
+                        yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": _ft}, ensure_ascii=False)}\n\n'
+            mod_content = ''.join(mod_full)
+            all_messages.append({'role': 'assistant', 'content': f'【{_MODERATOR_ROLE[0]}】\n{mod_content}'})
+            yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator"}, ensure_ascii=False)}\n\n'
+
+            # ========== Step 2: 两轮依次发言 ==========
+            discussion_history = f'【原始议题】\n{topic}\n\n【主持人开场】\n{mod_content}\n\n'
+
+            for round_num in [1, 2]:
+                for speaker_id in _ROUNDTABLE_ORDER:
+                    sp_name, sp_system_prompt = _PERSONAS[speaker_id]
+                    yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": speaker_id, "speaker_name": sp_name, "round": round_num}}, ensure_ascii=False)}\n\n'
+
+                    sp_system = sp_system_prompt + f"""
+
+【当前议题】
+{topic}
+
+【规则】
+现在是圆桌会议第{round_num}轮讨论，你是{sp_name}，请严格按你的专业身份发言。
+- {f'前面已有多位专家的发言，你必须先回应他们的观点，可以用不同意直接碰撞' if not (round_num == 1 and speaker_id == _ROUNDTABLE_ORDER[0]) else '第一轮开场，你第一个从你的专业视角破题'}
+- {f'这是第二轮，请收敛：抓住第一轮别人没讲透的坑，或直接反驳前面错误的结论，给出你的最终主张' if round_num > 1 else '这是第一轮，请从你的专业视角给出清晰的第一轮见解'}
+- 不总结所有人，只说你自己的专业观点
+- 字数控制在300-800字，观点鲜明、可直接落地，拒绝空话套话
+"""
+                    if book_id and base_system:
+                        sp_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + sp_system
+                    sp_system = sp_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+
+                    sp_messages = [{'role': 'system', 'content': _var_replace(sp_system)}]
+                    sp_messages.append({'role': 'user', 'content': (discussion_history + f"\n【轮次】第{round_num}轮 → 轮到【{sp_name}】发言，请开始：\n")[:10000]})
+
+                    gw_sp = LLMGateway(_bg, _kg, _mg)
+                    _splitter = _ThinkingSplitter() if deep_think >= 1 else None
+                    sp_full = []
+                    for chunk in gw_stream_with_hb(gw_sp, sp_messages, emit_reasoning=True,
+                                                   temperature=0.7, max_tokens=_DIM_MAX_TOKENS):
+                        if chunk is HEARTBEAT:
+                            yield SSE_HEARTBEAT_COMMENT
+                            continue
+                        if _is_stream_retry(chunk):
+                            yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": chunk.info}, ensure_ascii=False)}\n\n'
+                            continue
+                        if _is_reasoning_frame(chunk):
+                            yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": chunk.text}, ensure_ascii=False)}\n\n'
+                            continue
+                        for _pk, _pt in (_splitter.feed(chunk) if _splitter else [('body', chunk)]):
+                            if _pk == 'reason':
+                                yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _pt}, ensure_ascii=False)}\n\n'
+                            else:
+                                sp_full.append(_pt)
+                                yield f'data: {json.dumps({"type": "delta", "speaker": speaker_id, "content": _pt}, ensure_ascii=False)}\n\n'
+                    if _splitter is not None:
+                        for _fk, _ft in _splitter.finish():
+                            if _fk == 'reason':
+                                yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _ft}, ensure_ascii=False)}\n\n'
+                            else:
+                                sp_full.append(_ft)
+                                yield f'data: {json.dumps({"type": "delta", "speaker": speaker_id, "content": _ft}, ensure_ascii=False)}\n\n'
+
+                    sp_content = ''.join(sp_full)
+                    discussion_history += f"\n【第{round_num}轮 · {sp_name}】\n{sp_content}\n\n"
+                    all_messages.append({'role': 'assistant', 'content': f'【{sp_name}】\n{sp_content}'})
+                    yield f'data: {json.dumps({"type": "speaker_done", "speaker": speaker_id, "round": round_num}, ensure_ascii=False)}\n\n'
+
+            # ========== Step 3: 主持人总结报告 ==========
+            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator_summary", "speaker_name": "主持人·总结报告"}}, ensure_ascii=False)}\n\n'
+            sum_system = _MODERATOR_ROLE[1] + f"""
+
+【讨论议题】
+{topic}
+
+【完整讨论记录】
+{discussion_history[:12000]}
+
+【总结要求】
+把两轮6位专家的讨论收束成一份清晰的总结报告，结构必须是：
+
+# 圆桌会议总结：{topic[:40]}
+
+## 核心共识
+列出大家都同意的结论，每条一句话
+
+## 主要分歧
+列出不同专家观点不一致的地方，点出各方理由
+
+## 优化建议（按优先级排序）
+1. 最优先改什么（必须具体可落地）
+2. 次优先改什么
+3. ...
+
+## 最终结论
+一句话给作者拍板：这个点子能不能打，核心优势在哪，最大短板在哪
+
+严格按这个结构输出，用markdown标题分级，结论要明确，别模棱两可。
+"""
+            if book_id and base_system:
+                sum_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。总结请以落地资料为准。\n\n" + sum_system
+            sum_system = sum_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+            sum_messages = [{'role': 'system', 'content': _var_replace(sum_system)}]
+            sum_messages.append({'role': 'user', 'content': '请输出总结报告'})
+
+            gw_sum = LLMGateway(_bg, _kg, _mg)
+            _splitter = _ThinkingSplitter() if deep_think >= 1 else None
+            sum_full = []
+            for chunk in gw_stream_with_hb(gw_sum, sum_messages, emit_reasoning=True,
+                                           temperature=0.5, max_tokens=_DIM_MAX_TOKENS):
+                if chunk is HEARTBEAT:
+                    yield SSE_HEARTBEAT_COMMENT
+                    continue
+                if _is_stream_retry(chunk):
+                    yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": chunk.info}, ensure_ascii=False)}\n\n'
+                    continue
+                if _is_reasoning_frame(chunk):
+                    yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": chunk.text}, ensure_ascii=False)}\n\n'
+                    continue
+                for _pk, _pt in (_splitter.feed(chunk) if _splitter else [('body', chunk)]):
+                    if _pk == 'reason':
+                        yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _pt}, ensure_ascii=False)}\n\n'
+                    else:
+                        sum_full.append(_pt)
+                        yield f'data: {json.dumps({"type": "delta", "speaker": "moderator_summary", "content": _pt}, ensure_ascii=False)}\n\n'
+            if _splitter is not None:
+                for _fk, _ft in _splitter.finish():
+                    if _fk == 'reason':
+                        yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _ft}, ensure_ascii=False)}\n\n'
+                    else:
+                        sum_full.append(_ft)
+                        yield f'data: {json.dumps({"type": "delta", "speaker": "moderator_summary", "content": _ft}, ensure_ascii=False)}\n\n'
+            sum_content = ''.join(sum_full)
+            all_messages.append({'role': 'assistant', 'content': f'【总结报告】\n{sum_content}'})
+            yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator_summary"}, ensure_ascii=False)}\n\n'
+
+            # 完整讨论持久化到会话
+            history.append({'role': 'user', 'content': f'圆桌会议议题：{topic}'})
+            history.extend(all_messages)
+            _safe_save_session_messages(session, history)
+
+            full_discussion = [
+                {'speaker': m.get('content', '').split('】')[0].split('【')[-1] if m.get('role') == 'assistant' else '', 'content': m.get('content', '')}
+                for m in all_messages
+            ]
+            yield f'data: {json.dumps({"type": "done", "session_id": session_id, "summary": sum_content}, ensure_ascii=False)}\n\n'
+
         except Exception as e:
             import traceback
             traceback.print_exc()

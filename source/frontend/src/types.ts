@@ -81,6 +81,12 @@ export interface AIMessage {
   content: string;
   cards?: ActionCard[];  // AI 回复中携带的落地卡片
   reasoning?: string;    // 思考过程（可选）：独立展示，不参与复制/采纳
+  roundtable?: {         // 圆桌会议讨论数据
+    speech: Array<{ speaker: string; name: string; content: string }>;
+    currentSpeaker: string;
+    status: 'open' | 'done';
+    summary?: string;
+  };
 }
 
 // 聊天中的 Action Card（讨论即落地）
