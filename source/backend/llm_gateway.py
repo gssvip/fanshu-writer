@@ -52,6 +52,18 @@ _RETRYABLE = {FailureClass.TIMEOUT, FailureClass.UNAVAILABLE, FailureClass.EMPTY
 # 上层据此向客户端发 SSE 注释心跳帧（': ping'），防止推理期间代理层 30s idle 掐断连接。
 REASONING_HB = "\x00\x00reasoning-heartbeat\x00\x00"
 
+# 思考内容帧哨兵：chat_stream(emit_reasoning=True) 时，thinking 帧文本原样包装成此哨兵
+# yield，供上层单独以 SSE meta(kind=reasoning) 转发给前端展示（可展开查看）；不混入正文 delta，
+# 因此不会污染最终 content/卡片/落盘——复制、采纳落地仍只取结果。
+class _ReasoningFrame:
+    __slots__ = ('text',)
+    def __init__(self, text: str): self.text = text
+    def __repr__(self): return '<ReasoningFrame>'
+
+
+def REASONING(text): return _ReasoningFrame(text)
+def _is_reasoning_frame(obj): return isinstance(obj, _ReasoningFrame)
+
 # 中流续连事件哨兵（P0-6）：chat_stream 在已吐出部分正文后断流、自动续连前，
 # yield 此哨兵通知上层（格式 \x00\x00stream-retry|{JSON}\x00\x00，JSON 含
 # attempt/reason/continued_chars），上层转成 SSE meta 帧提示前端"正在续连"。
@@ -555,12 +567,15 @@ class LLMGateway:
         return result
 
     def chat_stream(self, messages: list[dict], temperature: float = 0.7,
-                    max_tokens: int = 4096, yield_reasoning_heartbeat: bool = False, **extra):
+                    max_tokens: int = 4096, yield_reasoning_heartbeat: bool = False,
+                    emit_reasoning: bool = False, **extra):
         """流式调用 LLM，yield delta content.
 
         兼容多种 chunk 格式（标准 OpenAI / 简化 delta / 直接 content）。
         yield_reasoning_heartbeat=True 时，thinking（reasoning_content）帧到达即 yield
         REASONING_HB 哨兵（不混入正文），供上层转发 SSE 心跳防代理 idle 掐断。
+        emit_reasoning=True 时，thinking 帧文本包装成 REASONING() 哨兵原样 yield（不丢内容），
+        供上层单独转发前端展示思考过程（与 yield_reasoning_heartbeat 互斥，优先完整文本）。
 
         【流式重试规则 · 新增 2026-08-21】
         仅在"第一个正文/思考 chunk 吐出去之前"的失败允许重试（避免已吐部分内容导致正文重复）：
@@ -656,7 +671,10 @@ class LLMGateway:
                         yield value
                     elif kind == "reasoning":
                         got_reasoning = True
-                        if yield_reasoning_heartbeat:
+                        if emit_reasoning:
+                            # 思考内容原样外传（框架外置，不混正文），后端保活交给上层逐帧转发
+                            yield REASONING(value)
+                        elif yield_reasoning_heartbeat:
                             yield REASONING_HB
                 # 【空回复根因修复】流走完但一个内容帧都没有 → 先非流式兜底再报错：
                 if not got_content:

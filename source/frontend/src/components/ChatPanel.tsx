@@ -770,6 +770,7 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
   const [collapsed, setCollapsed] = useState(true);
   const [showMenu, setShowMenu] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [showReasoning, setShowReasoning] = useState(false);
   const [draft, setDraft] = useState(message.content);
   const [copied, setCopied] = useState(false);
   const pressTimer = useRef<number | null>(null);
@@ -893,6 +894,27 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
           </div>
         ) : streaming ? (
           <div className="chat-msg-text"><span className="chat-cursor">▋</span></div>
+        ) : null}
+        {/* 【思考过程】可切换展示：独立于正文，不参与复制/采纳 */}
+        {!isUser && message.reasoning && message.reasoning.trim() ? (
+          <div className="chat-msg-reasoning">
+            <button
+              className="chat-msg-reasoning-toggle"
+              onClick={() => setShowReasoning(s => !s)}
+              title={showReasoning ? '收起思考过程' : '查看模型的思考过程'}
+            >
+              <span className={`chat-msg-reasoning-chev ${showReasoning ? 'open' : ''}`}>▸</span>
+              {showReasoning ? '收起' : '思考过程'} {`(${message.reasoning.length}字)`}
+            </button>
+            {showReasoning && (
+              <div className="chat-msg-reasoning-content">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm, remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                >{message.reasoning}</ReactMarkdown>
+              </div>
+            )}
+          </div>
         ) : null}
         {showCollapsed && <button className="chat-msg-expand" onClick={(e) => { e.stopPropagation(); setCollapsed(false); }}>展开全文 ▼</button>}
         {/* 消息操作栏：复制 / 重新生成 / 删除（流式生成中隐藏） */}
@@ -1259,6 +1281,8 @@ export default function ChatPanel() {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef<string>('');
+  // 思考过程累积缓冲：后端以 meta(kind=reasoning) 单独推送（不混正文），前端累计到当前 AI 气泡可展开展示
+  const reasoningBufferRef = useRef<string>('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // 追踪正在修改的章节（用于修改完成后自动标记任务清单 done）
   const polishingChapterIdRef = useRef<string | null>(null);
@@ -1699,6 +1723,18 @@ export default function ChatPanel() {
             const hint = err ? `：${err.slice(0, 60)}` : '（使用本地知识库兜底）';
             pushNote(`\n\n> ⚠ 联网搜索未命中${hint}\n\n`);
           }
+        }
+        // 【新思考过程展示】后端单独推的 reasoning meta帧 → 累积到当前 AI 气泡的可展开区（不混正文，
+        // 因此复制、卡片、落盘都不会带上思考内容；思考帧也不计入 gotPayload 的"正文空回复"判定）
+        if (evt.kind === 'reasoning' && evt.info && typeof evt.info.text === 'string' && evt.info.text) {
+          reasoningBufferRef.current += evt.info.text;
+          const rbuf = reasoningBufferRef.current;
+          setMessages(prev => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last && last.role === 'assistant') next[next.length - 1] = { ...last, reasoning: rbuf };
+            return next;
+          });
         }
         // 【扩展钩子】如果传了 onMeta，把 meta 事件也转交外部处理（命中维度气泡）
         if (typeof onMeta === 'function') {
@@ -2467,6 +2503,7 @@ export default function ChatPanel() {
     setStreamError('');
     setAutoContextNotice(null);
     streamBufferRef.current = '';
+    reasoningBufferRef.current = '';
     // ====== 所有消息统一走普通通用聊天（命中创作维度→气泡入库提示） ======
     appendUserAi(text);
     setStreaming(true);

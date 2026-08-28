@@ -80,6 +80,7 @@ export interface AIMessage {
   role: AIMessageRole;
   content: string;
   cards?: ActionCard[];  // AI 回复中携带的落地卡片
+  reasoning?: string;    // 思考过程（可选）：独立展示，不参与复制/采纳
 }
 
 // 聊天中的 Action Card（讨论即落地）

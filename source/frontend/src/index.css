@@ -2663,6 +2663,27 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 }
 .chat-msg-action-btn.danger:hover { color: var(--danger); background: rgba(220,53,69,0.08); }
 
+/* ========== 思考过程：可切换展示（独立于正文，不参与复制/采纳） ========== */
+.chat-msg-reasoning { margin-top: 8px; }
+.chat-msg-reasoning-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; font-size: 11px; line-height: 1.4;
+  color: var(--text-muted); background: transparent;
+  border: 1px solid var(--border-color); border-radius: 999px;
+  cursor: pointer; transition: all 0.15s;
+}
+.chat-msg-reasoning-toggle:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-light); }
+.chat-msg-reasoning-chev { display: inline-block; transition: transform 0.15s; font-size: 10px; }
+.chat-msg-reasoning-chev.open { transform: rotate(90deg); }
+.chat-msg-reasoning-content {
+  margin-top: 6px; padding: 10px 12px;
+  background: var(--bg-secondary); border-left: 3px solid var(--accent);
+  border-radius: 6px; font-size: 12px; color: var(--text-secondary);
+  max-height: 260px; overflow-y: auto;
+}
+.chat-msg-reasoning-content p { margin: 0 0 6px; }
+.chat-msg-reasoning-content p:last-child { margin-bottom: 0; }
+
 /* ========== 正文Tab：润色章节选择列表 ========== */
 .smart-chapter-pick {
   display: flex; flex-direction: column; gap: 6px;

@@ -34,6 +34,7 @@ chat_collab_bp = Blueprint('chat_collab', __name__)
 # SSE 保活工具（SSE_HEARTBEAT_COMMENT / SSE_HB_INTERVAL_SEC / gw_stream_with_hb）
 # 已抽到 sse_keepalive.py 独立模块，避免 chat_collab_bp.py 巨石继续增长（架构门禁约束）
 from sse_keepalive import gw_stream_with_hb, SSE_HEARTBEAT_COMMENT, SSE_HB_INTERVAL_SEC, HEARTBEAT, _is_stream_retry
+from llm_gateway import _is_reasoning_frame
 
 # 会话消息持久化（load/_safe_save/断流抢救）已抽到 session_persist.py 独立模块
 # （架构门禁约束：chat_collab_bp.py 行数禁止超过基线，新功能必须拆模块）
@@ -7711,6 +7712,11 @@ def chat_general():
         user_with_ref = wrap_message_with_context(message, book_title, bb_summary)
     enriched = _var_replace(user_with_ref)
     history = load_session_messages(session)
+    # 【重新生成】truncate_history_to：仅保留历史前 N 条（含本条前的 user），丢弃旧 AI 回复及其后续，
+    # 本消息再重新生成并追加——避免重复堆积；不传则该会话按原样继续。
+    _trunc = data.get('truncate_history_to')
+    if isinstance(_trunc, int) and not isinstance(_trunc, bool) and 0 <= _trunc < len(history):
+        history = history[:_trunc]
     # 【P1-3 meta】把当前角色以 SSE meta 回传前端，便于右上角 chip UI 同步（保证刷新后 UI 显示的角色跟后端真正用到的一致）
     _p13_meta = {'role_id': chosen_role_id, 'role_name': _role_name, 'vars': _var_ctx}
     # 最大上下文：最近50条 + 首条保留（保留模型/角色/话题起始意图），应对长会话连续追问不轻易截断
@@ -7879,12 +7885,18 @@ def chat_general():
 
             # 通用聊天 max_tokens 不限、按模型能力：给足 _DIM_MAX_TOKENS(27000)，
             # 交由 llm_gateway._effective_max_tokens 按模型已知/自学习输出上限钳制，不再按 deep_think 分档缩小。
-            for chunk in gw_stream_with_hb(gw, messages, temperature=({0: 0.7, 1: 0.5, 2: 0.3}.get(deep_think)), max_tokens=_DIM_MAX_TOKENS, **_mcp_native_kwargs):
+            # emit_reasoning=True：思考文本以 SSE meta(kind=reasoning) 单独推前端（可展开看，不混正文）。
+            for chunk in gw_stream_with_hb(gw, messages, emit_reasoning=True,
+                                           temperature=({0: 0.7, 1: 0.5, 2: 0.3}.get(deep_think)), max_tokens=_DIM_MAX_TOKENS, **_mcp_native_kwargs):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
                     continue
                 if _is_stream_retry(chunk):
                     yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": chunk.info}, ensure_ascii=False)}\n\n'
+                    continue
+                if _is_reasoning_frame(chunk):
+                    # 思考过程单独透传，不 append 进 full_text（结果 content / 卡片 / 落盘只含最终回复）
+                    yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": chunk.text}, ensure_ascii=False)}\n\n'
                     continue
                 full_text.append(chunk)
                 yield f'data: {json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)}\n\n'

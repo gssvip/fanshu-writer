@@ -51,20 +51,22 @@ def STREAM_RETRY(info): return _StreamRetry(info)
 def _is_stream_retry(obj): return isinstance(obj, _StreamRetry)
 
 
-def gw_stream_with_hb(gw, msgs, **kw):
+def gw_stream_with_hb(gw, msgs, emit_reasoning: bool = False, **kw):
     """在后台线程跑 gw.chat_stream，静默期 yield HEARTBEAT 哨兵。
 
     思考帧（REASONING_HB 哨兵）同样转成 HEARTBEAT，不混入正文；
+    emit_reasoning=True 时思考文本以 _ReasoningFrame 哨兵逐帧 yield（供上层单独推前端展示）；
     STREAM_RETRY 事件（\x00\x00stream-retry|JSON\x00\x00）解析成 _StreamRetry
     哨兵，不混入正文；worker 异常会在主 generator 重新抛出，由上层 SSE 的
     try/except 转成 error 帧。
     """
-    from llm_gateway import REASONING_HB, parse_stream_retry_event
+    from llm_gateway import REASONING_HB, parse_stream_retry_event, _is_reasoning_frame
     q: Queue = Queue()
 
     def _worker():
         try:
-            for chunk in gw.chat_stream(msgs, yield_reasoning_heartbeat=True, **kw):
+            for chunk in gw.chat_stream(msgs, yield_reasoning_heartbeat=not emit_reasoning,
+                                        emit_reasoning=emit_reasoning, **kw):
                 q.put(("chunk", chunk))
             q.put(("done", None))
         except Exception as e:  # noqa: BLE001 在调用处重新抛出
@@ -80,6 +82,10 @@ def gw_stream_with_hb(gw, msgs, **kw):
         if kind == "chunk":
             if payload == REASONING_HB:
                 yield HEARTBEAT
+                continue
+            if _is_reasoning_frame(payload):
+                # 思考文本帧：整体透传，调用方据此单独发 SSE meta(kind=reasoning)
+                yield payload
                 continue
             # P0-6: 检测中流续连事件，解析成 STREAM_RETRY 哨兵，供调用方 yield meta 帧
             _sre_info = parse_stream_retry_event(payload)
