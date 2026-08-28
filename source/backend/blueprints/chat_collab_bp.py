@@ -7713,14 +7713,14 @@ def chat_general():
     history = load_session_messages(session)
     # 【P1-3 meta】把当前角色以 SSE meta 回传前端，便于右上角 chip UI 同步（保证刷新后 UI 显示的角色跟后端真正用到的一致）
     _p13_meta = {'role_id': chosen_role_id, 'role_name': _role_name, 'vars': _var_ctx}
-    # 最大上下文：最近15条 + 首条保留（保留模型/角色/话题起始意图），避免三轮对话就因为每条内容过长而撞截断
+    # 最大上下文：最近50条 + 首条保留（保留模型/角色/话题起始意图），应对长会话连续追问不轻易截断
     #   - 首条保留的原因：如果首条是"我要写都市异能/毒舌读者模式开始/切换模型"，后面聊到一半丢了，LLM 会不知道自己该用啥角色/啥题材。
-    #   - 最近15条 ≈ 7 轮半 user+assistant。
+    #   - 最近50条 ≈ 25 轮 user+assistant。
     #   - 单条正文>1500字：截尾部1500（最后一段才是本轮讨论的重点，截头部会把重要讨论信息丢了）。
     trimmed: list[dict] = []
     if isinstance(history, list):
         keep_head = history[:1] if len(history) > 0 else []
-        keep_tail = history[-15:] if len(history) > 15 else history
+        keep_tail = history[-50:] if len(history) > 50 else history
         candidates = keep_head + [m for m in keep_tail if not (keep_head and keep_head[0] is m)]
         # 去重（避免首条同时出现在 keep_head 和 keep_tail 里导致重复）
         seen_ids: set[int] = set()
@@ -7877,7 +7877,9 @@ def chat_general():
             except Exception:
                 _native_p = None
 
-            for chunk in gw_stream_with_hb(gw, messages, temperature=({0: 0.7, 1: 0.5, 2: 0.3}.get(deep_think)), max_tokens=({0: 8192, 1: 10240, 2: 12288}.get(deep_think)), **_mcp_native_kwargs):
+            # 通用聊天 max_tokens 不限、按模型能力：给足 _DIM_MAX_TOKENS(27000)，
+            # 交由 llm_gateway._effective_max_tokens 按模型已知/自学习输出上限钳制，不再按 deep_think 分档缩小。
+            for chunk in gw_stream_with_hb(gw, messages, temperature=({0: 0.7, 1: 0.5, 2: 0.3}.get(deep_think)), max_tokens=_DIM_MAX_TOKENS, **_mcp_native_kwargs):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
                     continue

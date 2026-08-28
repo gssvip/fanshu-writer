@@ -36,8 +36,8 @@ def load_session_messages(session) -> list[dict]:
 _PERSIST_MSG_MAX_CHARS = 800
 # 落盘前卡片内容最大字符（卡片正文其实会落地到 Chapter/BookBible，session 里仅作回显，不需要完整）
 _PERSIST_CARD_CONTENT_MAX_CHARS = 120
-# 落盘前最多保留的"消息条数上限"（12 轮 = 24 条消息；一般够用）
-_PERSIST_MAX_MSGS = 24
+# 落盘前最多保留的"消息条数上限"（50 轮 = 100 条 + 首条冗余 = 102；匹配通用聊天"最近50条+首条"上下文）
+_PERSIST_MAX_MSGS = 102
 # 总 JSON 字符硬上限：超过就继续砍中间轮次，直到 ≤ 这个值 或 只剩最后 4 条
 _PERSIST_TOTAL_MAX_CHARS = 48 * 1024
 
