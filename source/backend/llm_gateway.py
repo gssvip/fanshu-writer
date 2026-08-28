@@ -684,6 +684,11 @@ class LLMGateway:
                             yield REASONING_HB
                 # 【空回复根因修复】流走完但一个内容帧都没有 → 先非流式兜底再报错：
                 if not got_content:
+                    # 思考耗尽修复：原生思考模型思考先占满 max_tokens、正文没配额 → 加倍上限重试。
+                    if got_reasoning and payload['max_tokens'] < 120000 and attempt < max_attempts:
+                        payload['max_tokens'] = min(payload['max_tokens'] * 2, 120000)
+                        time.sleep(0.3)
+                        continue
                     if got_reasoning:
                         raise LLMError(
                             f"思考型模型正文为空：模型思考已产出但 max_tokens={max_tokens} 被耗尽，"
