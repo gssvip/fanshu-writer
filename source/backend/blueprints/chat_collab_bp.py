@@ -182,6 +182,42 @@ def _rt_load_state(session):
     return None
 
 
+_RT_TOPIC_PREFIX = '圆桌会议议题：'
+
+
+def _rt_persist_messages(session, history, topic, moderator_open, done, summary=''):
+    """把圆桌进度渲染成"可复盘"的消息落盘到会话 → 刷新界面不丢。
+
+    幂等：每次都基于 history 里的通用历史 + 当前圆桌状态重建"圆桌块"，
+    异常只落已完成的发言（未完成的那位不写入），断连/手动停止后刷新即见。
+    只做展示，LLM 续会上下文仍以 meta_json['roundtable_state'] 全量为准。
+    """
+    import copy as _copy
+    try:
+        disp = _copy.deepcopy(history) if isinstance(history, list) else []
+        if not isinstance(disp, list):
+            disp = []
+        # 剔除历史里旧的"本次圆桌"块（以最新议题/进度为准，避免重复叠加）
+        cut = None
+        for i, m in enumerate(disp):
+            if isinstance(m, dict) and m.get('role') == 'user' and str(m.get('content', '')).startswith(_RT_TOPIC_PREFIX):
+                cut = i
+        if cut is not None:
+            disp = disp[:cut]
+        block = [{'role': 'user', 'content': f'{_RT_TOPIC_PREFIX}{topic}'}]
+        if moderator_open:
+            block.append({'role': 'assistant', 'content': f'【{_MODERATOR_ROLE[0]}】\n{moderator_open}'})
+        for d in (done or []):
+            if isinstance(d, dict) and d.get('content'):
+                block.append({'role': 'assistant', 'content': f'【{d.get("name","")}】\n{d.get("content","")}'})
+        if summary:
+            block.append({'role': 'assistant', 'content': f'【总结报告】\n{summary}'})
+        disp.extend(block)
+        _safe_save_session_messages(session, disp)
+    except Exception:
+        pass
+
+
 class _ThinkingSplitter:
     """流式把『【推理】...【推理结束】』标记内的思考从正文中切出。
 
@@ -8347,29 +8383,53 @@ def chat_roundtable():
             is_continue = _is_rt_continue(topic)
             state = _rt_load_state(session)
 
-            # 会议已完成 + 用户发"继续" → 明确提示，不重复开会
-            if is_continue and state and state.get('completed'):
-                yield f'data: {json.dumps({"type": "delta", "speaker": "moderator_summary", "content": "（本次圆桌会议已结束，上面的总结报告即最终结论。如需新议题，直接说出新话题即可。）"}, ensure_ascii=False)}\n\n'
-                yield f'data: {json.dumps({"type": "done", "session_id": session_id}, ensure_ascii=False)}\n\n'
-                return
+            # 会议已完成 + 用户发"继续/会议继续/追加一轮" → 交给 append_mode 追加新一轮
+            # 会议已完成 + 用户发新话题（非续会指令）→ 自动落入下方"新会议"，不重复上一场
 
+            # 模式判定：
+            #  append_mode —— 已整体完成，用户说"继续/会议继续/追加一轮"→ 追加新一轮
+            #  resuming    —— 开会中途断连/手动停止，接着剩余回合开完既定轮数
+            #  其余         —— 全新会议（两轮）
+            N = len(_ROUNDTABLE_ORDER)
+            append_mode = bool(is_continue and state and state.get('completed'))
             resuming = bool(is_continue and state and state.get('active') and not state.get('completed'))
 
-            if resuming:
-                # ========== 续会：沿用上次的议题与进度，接着剩余回合开会 ==========
+            if append_mode:
+                # ========== 追加一轮：沿用上次议题与全部发言，继续开新一轮 ==========
+                state['completed'] = False
+                state['active'] = True
                 topic_final = state.get('topic') or topic
-                done = state.get('done', [])
+                done = state.get('done', []) or []
                 discussion_history = state.get('discussion_history') or f'【原始议题】\n{topic_final}\n\n'
                 if state.get('moderator_open'):
                     all_messages.append({'role': 'assistant', 'content': f"【{_MODERATOR_ROLE[0]}】\n{state['moderator_open']}"})
                 for d in done:
                     all_messages.append({'role': 'assistant', 'content': f"【{d.get('name','')}】\n{d.get('content','')}"})
-                _nxt = '1' if len(done) < len(_ROUNDTABLE_ORDER) else '2'
+                _nxt = 1 + len(done) // N
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator", "speaker_name": _MODERATOR_ROLE[0], "round": _nxt}}, ensure_ascii=False)}\n\n'
+                yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": f"（已读到之前的完整讨论，现在追加一轮：第{_nxt}轮继续深挖…）"}, ensure_ascii=False)}\n\n'
+                target_total = len(done) + N
+                # 立即落盘一次（刷新即可见历史），随后继续发言
+                _rt_persist_messages(session, history, topic_final, state.get('moderator_open', ''), done, '')
+            elif resuming:
+                # ========== 续会：沿用上次的议题与进度，接着剩余回合开会 ==========
+                topic_final = state.get('topic') or topic
+                done = state.get('done', []) or []
+                discussion_history = state.get('discussion_history') or f'【原始议题】\n{topic_final}\n\n'
+                if state.get('moderator_open'):
+                    all_messages.append({'role': 'assistant', 'content': f"【{_MODERATOR_ROLE[0]}】\n{state['moderator_open']}"})
+                for d in done:
+                    all_messages.append({'role': 'assistant', 'content': f"【{d.get('name','')}】\n{d.get('content','')}"})
+                _nxt = 1 + len(done) // N
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator", "speaker_name": _MODERATOR_ROLE[0], "round": _nxt}}, ensure_ascii=False)}\n\n'
                 yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": f"（已自动保留到此前的进度，现在接着开第{_nxt}轮讨论…）"}, ensure_ascii=False)}\n\n'
                 if not state.get('moderator_open'):
                     # 极端情况：连开场都没存上，则这次视为新会议
                     resuming = False
                     state = None
+                target_total = 2 * N
+                # 立即落盘一次（刷新即可见已完成的发言）
+                _rt_persist_messages(session, history, topic_final, state.get('moderator_open', '') if isinstance(state, dict) else '', done, '')
             else:
                 # ========== 全新会议：主持人开场 ==========
                 yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator", "speaker_name": _MODERATOR_ROLE[0]}}, ensure_ascii=False)}\n\n'
@@ -8405,12 +8465,14 @@ def chat_roundtable():
                          'topic': topic_final, 'moderator_open': mod_content,
                          'done': [], 'discussion_history': discussion_history}
                 _rt_save_state(session, db, state)
+                # 开场即落盘消息 → 刷新界面能看到开场
+                _rt_persist_messages(session, history, topic_final, mod_content, [], '')
+                target_total = 2 * N
 
-            # ========== 讨论：从断点/开头继续，两轮×6位依次发言 ==========
-            total = 2 * len(_ROUNDTABLE_ORDER)
+            # ========== 讨论：从断点/开头继续，按 target_total 轮×6位依次发言 ==========
             done_count = len(done)
             gw_sp0 = LLMGateway(_bg, _kg, _mg)
-            while done_count < total:
+            while done_count < target_total:
                 seq_abs = done_count
                 round_num = 1 + seq_abs // len(_ROUNDTABLE_ORDER)
                 speaker_id = _ROUNDTABLE_ORDER[seq_abs % len(_ROUNDTABLE_ORDER)]
@@ -8425,7 +8487,7 @@ def chat_roundtable():
 【规则】
 现在是圆桌会议第{round_num}轮讨论，你是{sp_name}，请严格按你的专业身份发言。
 - {f'前面已有多位专家的发言，你必须先回应他们的观点，可以用不同意直接碰撞' if not (round_num == 1 and speaker_id == _ROUNDTABLE_ORDER[0]) else '第一轮开场，你第一个从你的专业视角破题'}
-- {f'这是第二轮，请收敛：抓住第一轮别人没讲透的坑，或直接反驳前面错误的结论，给出你的最终主张' if round_num > 1 else '这是第一轮，请从你的专业视角给出清晰的第一轮见解'}
+- {f'这是第{round_num}轮，请收敛：抓住前面几轮别人没讲透的坑，或直接反驳前面错误的结论，给出你这一轮的主张' if round_num > 1 else '这是第一轮，请从你的专业视角给出清晰的第一轮见解'}
 - 不总结所有人，只说你自己的专业观点
 - 字数控制在300-800字，观点鲜明、可直接落地，拒绝空话套话
 """
@@ -8447,10 +8509,13 @@ def chat_roundtable():
                 yield f'data: {json.dumps({"type": "speaker_done", "speaker": speaker_id, "round": round_num}, ensure_ascii=False)}\n\n'
 
                 # 每完成一人落一次进度 → 断连后说"继续"即可从下一位精准接上
+                _mod_open = state.get('moderator_open', '') if isinstance(state, dict) else ''
                 state = {'active': True, 'completed': False, 'phase': 'discussion',
-                         'topic': topic_final, 'moderator_open': state.get('moderator_open', ''),
+                         'topic': topic_final, 'moderator_open': _mod_open,
                          'done': done, 'discussion_history': discussion_history}
                 _rt_save_state(session, db, state)
+                # 同时把已讨论内容落盘到会话 → 中途断连/手动停止后刷新也能看到
+                _rt_persist_messages(session, history, topic_final, _mod_open, done, '')
                 done_count += 1
 
             # ========== 总结报告 ==========
@@ -8498,14 +8563,14 @@ def chat_roundtable():
             all_messages.append({'role': 'assistant', 'content': f'【总结报告】\n{sum_content}'})
             yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator_summary"}, ensure_ascii=False)}\n\n'
 
-            # 落盘 + 标记会议完成
+            # 落盘 + 标记会议完成（保留全量进度，供其后再"继续/追加一轮"）
             state['completed'] = True
             state['phase'] = 'done'
             _rt_save_state(session, db, state)
 
-            history.append({'role': 'user', 'content': f'圆桌会议议题：{topic_final}'})
-            history.extend(all_messages)
-            _safe_save_session_messages(session, history)
+            # 把整场（含追加轮）的可复盘消息落盘 → 刷新界面不丢
+            _mod_open = state.get('moderator_open', '') if isinstance(state, dict) else ''
+            _rt_persist_messages(session, history, topic_final, _mod_open, done, sum_content)
 
             full_discussion = [
                 {'speaker': m.get('content', '').split('】')[0].split('【')[-1] if m.get('role') == 'assistant' else '', 'content': m.get('content', '')}
