@@ -7340,6 +7340,11 @@ def chat_general():
     book_id = data.get('book_id')
     session_id = data.get('session_id')
     message = (data.get('message') or '').strip()
+    # P0-4 通用聊天工具栏（底部一排）透传项：
+    #   deep_think: 深度思考模式（降temperature、提max_tokens、system追加"先推演再给结论"）
+    #   web_search_enabled: 联网搜索开关（true=强制联网搜索，绕开"创作类话题不搜"的启发式过滤）
+    deep_think = bool(data.get('deep_think'))
+    web_search_enabled = bool(data.get('web_search_enabled'))
     # P1-1 会话级切模型：请求体 ai_config_id > 会话 meta_json.ai_config_id > 全局激活
     req_ai_config_id = (data.get('ai_config_id') or '').strip() or None
     # P1-3 内置角色 persona：default/polish/toxic_critic/architect/worldbuilder/marketeer/interviewer
@@ -7660,6 +7665,10 @@ def chat_general():
                 # 取尾部 1500 字（最后一段才是用户本轮之前的意图/对话），并标注已截尾
                 c = '…（会话历史超长已截断，取尾部关键内容）\n' + c[-1500:]
             trimmed.append({'role': m.get('role') or 'user', 'content': c})
+    # P0-4 深度思考模式：在 system 末尾追加"先推演再给结论"的指令（temperature/max_tokens 在 generate 里按此调整）
+    if deep_think:
+        system_prompt = system_prompt.rstrip() + ("\n\n【深度思考模式·已开启】请先深入推演：拆解关键假设 → 列出逻辑链 → 权衡各方案取舍，再给出最终结论。"
+                                                   "\n适当保留推理过程便于作者理解，但最终答案必须清晰、可落地，不因多了推理而啰嗦。")
     messages = [{'role': 'system', 'content': system_prompt}]
     messages.extend(trimmed)
     messages.append({'role': 'user', 'content': enriched[:8000]})
@@ -7747,8 +7756,8 @@ def chat_general():
                 _mcp_native_kwargs['tools'] = mcp_tools
 
             # ============== P0 真联网搜索接入 ==============
-            # 1) 启发式判断是否需要搜（创作话题不搜；硬事实/明确说"搜一下"才搜）
-            _need_search = _search_available and should_use_web_search(message, trimmed)
+            # 1) 是否需要搜：联网开关开启=强制搜（绕开创作类话题不搜的过滤）；未开启=启发式判定
+            _need_search = _search_available and (web_search_enabled or should_use_web_search(message, trimmed))
             _search_ctx = ''
             if _need_search:
                 try:
@@ -7788,7 +7797,7 @@ def chat_general():
             except Exception:
                 _native_p = None
 
-            for chunk in gw_stream_with_hb(gw, messages, temperature=0.7, max_tokens=4096, **_mcp_native_kwargs):
+            for chunk in gw_stream_with_hb(gw, messages, temperature=(0.3 if deep_think else 0.7), max_tokens=(8192 if deep_think else 4096), **_mcp_native_kwargs):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
                     continue

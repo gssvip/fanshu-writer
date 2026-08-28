@@ -148,7 +148,11 @@ TOOLSPAGE_BASELINE = 1192
 # 2026-08-28 重校准（通用聊天真联网搜索接入）：
 #   - chat_general 接入 web_search_bridge：启发式判定+搜索中/完成meta帧+结果注入+智谱原生web_search
 #   → 净增 57 行（7770→7827），用户明确要求P0补漏（之前接了搜索模块但没接到路由）
-CHAT_COLLAB_BP_BASELINE = 7827
+# 2026-08-28 重校准（通用聊天工具栏 4 按钮一排 + 顶部助手切换）：
+#   - chat_general 新增 deep_think / web_search_enabled 透传：深度思考(temp 0.3/max 8192/system追加推演)
+#     联网开关(强制搜索)、system 增强；顶部助手切换在纯前端(SkillPackSelector 条件渲染)，后端净增 9 行
+#   → 净增 9 行（7827→7836）
+CHAT_COLLAB_BP_BASELINE = 7836
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

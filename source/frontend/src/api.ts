@@ -1083,7 +1083,7 @@ export const api = {
   // ────────────────────────────────────────────────────────────────
 
   // 通用聊天模式（SSE）：不强制创作上下文，任意话题；命中维度时 meta.hit_suggestions 回传提示气泡
-  chatGeneralStream: (message: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; roleId?: string }, signal?: AbortSignal) => {
+  chatGeneralStream: (message: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; roleId?: string; deepThink?: boolean; webSearch?: boolean }, signal?: AbortSignal) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -1092,6 +1092,8 @@ export const api = {
     if (opts?.sessionId) body.session_id = opts.sessionId;
     if (opts?.aiConfigId) body.ai_config_id = opts.aiConfigId;
     if (opts?.roleId) body.role_id = opts.roleId;
+    if (opts?.deepThink) body.deep_think = true;
+    if (opts?.webSearch) body.web_search_enabled = true;
     const cfg: RequestInit = { method: 'POST', headers, body: JSON.stringify(body) };
     if (signal) cfg.signal = signal;
     return fetchStream(`${getApiBaseUrl()}/ai/chat/general`, cfg, signal);

@@ -1102,7 +1102,9 @@ export default function ChatPanel() {
   ] as const;
   // 通用聊天每个会话独立记住上次选的角色：sessionId -> roleId
   const [sessionRoleMap, setSessionRoleMap] = useState<Record<string, string>>({});
-  const [showRolePicker, setShowRolePicker] = useState(false);
+  // P0-4 通用聊天工具栏开关：联网搜索🔍 / 深度思考🧠（全局会话级，跨会话沿用）
+  const [generalWebSearch, setGeneralWebSearch] = useState(false);
+  const [generalDeepThink, setGeneralDeepThink] = useState(false);
   // P1-4 Silly Tavern 角色卡导入：隐藏的 file input ref + 解析工具
   const stCharCardRef = useRef<HTMLInputElement | null>(null);
   const [stImportMsg, setStImportMsg] = useState<string>('');  // 导入完成后的提示文本
@@ -1149,18 +1151,7 @@ export default function ChatPanel() {
     return () => document.removeEventListener('click', handler, true);
   }, [showModelPicker]);
 
-  useEffect(() => {
-    if (!showRolePicker) return;
-    function handler(e: Event) {
-      const path = e.composedPath ? e.composedPath() : [e.target as any];
-      const within = (s: string) =>
-        Array.from(document.querySelectorAll<HTMLElement>(s)).some(el => path.includes(el));
-      if (within('[data-gt-role-chip]') || within('[data-gt-role-popover]')) return;
-      setShowRolePicker(false);
-    }
-    document.addEventListener('click', handler, true);
-    return () => document.removeEventListener('click', handler, true);
-  }, [showRolePicker]);
+  // 提示1：助手切换已上移到"通用顶部"，浮层选择器已删除（底部一排改为：模型/联网搜索/深度思考/导入角色卡）
 
   // 自动滚动
   useEffect(() => {
@@ -2356,7 +2347,7 @@ export default function ChatPanel() {
       const _sid = _sidReal || _PREKEY;
       const _cfgId = sessionModelMap[_sid] || undefined;
       const _roleId = sessionRoleMap[_sid] || 'default';
-      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId, roleId: _roleId }, ctrl.signal);
+      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId, roleId: _roleId, deepThink: generalDeepThink, webSearch: generalWebSearch }, ctrl.signal);
       // consumeSSE 最后1个参数 onSessionId=setChatGeneralSessionId：把card/done帧带回的session_id只写入 chatGeneralSessionId，不污染全局 setSessionId（避免和其他创作维度会话互串）
       await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
         // 【P1-3 角色同步】后端把真实生效的角色 + 上下文变量通过 kind=role_applied meta帧回传
@@ -2456,7 +2447,7 @@ export default function ChatPanel() {
       setStreaming(false);
       abortRef.current = null;
     }
-  }, [input, bookId, streaming, sessionId, chatGeneralSessionId, appendUserAi, removeEmptyAi, consumeSSE]);
+  }, [input, bookId, streaming, sessionId, chatGeneralSessionId, appendUserAi, removeEmptyAi, consumeSSE, generalDeepThink, generalWebSearch]);
 
   // 主发送动作（设定Tab：通用走general，维度已有内容走dim-edit，否则走suggest）
   const handleMainSend = useCallback(() => {
@@ -2764,7 +2755,31 @@ export default function ChatPanel() {
                       })}
                     </div>
                   </div>
-                  <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} onPreview={(pack) => setPreviewPack(pack)} compact />
+                  {/* 通用维度：顶部技能包区 → 换成"助手切换"（7款内置助手横排平铺，点击即选）；其他维度保持技能包选择 */}
+                  {selectedDim === 'general' ? (
+                    <div className="general-assistant-row" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '4px 8px' }}>
+                      <style>{`
+                        .general-assistant-row .ga-chip { display:inline-flex; align-items:center; gap:3px; height:26px; padding:0 10px; border-radius:999px; font-size:12px; border:1px solid #f0dcc2; background:#fffaf3; color:#8a5a2a; cursor:pointer; white-space:nowrap; }
+                        .general-assistant-row .ga-chip.active { background:#ffefe0; border-color:#ffb75d; color:#c25e00; box-shadow:0 0 0 1px #ffb75d66; font-weight:600; }
+                      `}</style>
+                      <span style={{ fontSize: 12, color: '#999', whiteSpace: 'nowrap' }}>👤 助手</span>
+                      {BUILTIN_ROLES.map(r => {
+                        const _gaKey = chatGeneralSessionId || '__general_pending_session__';
+                        const _gaActive = (sessionRoleMap[_gaKey] || 'default') === r.id;
+                        return (
+                          <button
+                            key={r.id}
+                            data-gt-role-chip
+                            className={`ga-chip ${_gaActive ? 'active' : ''}`}
+                            onClick={(e) => { e.stopPropagation(); setSessionRoleMap(m => ({ ...m, [_gaKey]: r.id })); }}
+                            title={`${r.name}：${r.brief}`}
+                          >{r.emoji}{r.name}</button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} onPreview={(pack) => setPreviewPack(pack)} compact />
+                  )}
                   {/* 修正任务清单（从防遗忘报告违规项带入，支持多维度连续修正并追踪进度） */}
                   {fixTasks.length > 0 && (
                     <div className="fix-tasks-panel">
@@ -3498,11 +3513,8 @@ export default function ChatPanel() {
                   const _chosen = aiConfigList.length > 0
                     ? (aiConfigList.find(c => c.id === _chosenId) || aiConfigList.find(c => c.is_active) || aiConfigList[0])
                     : undefined;
-                  // ============== 🎭 角色 ==============
-                  const __rid = sessionRoleMap[_sid] || 'default';
-                  const __role = BUILTIN_ROLES.find(r => r.id === __rid) || BUILTIN_ROLES[0];
 
-                  // 按钮高度/基础样式：统一 height 28px，三按钮宽度等分 justify-content:space-between
+                  // 按钮高度/基础样式：统一 height 28px，四按钮宽度等分 justify-content:space-between
                   const _chipBase: React.CSSProperties = {
                     padding: '4px 10px',
                     height: 28, lineHeight: '20px',
@@ -3532,18 +3544,20 @@ export default function ChatPanel() {
                           }}
                         >
                           <style>{`
-                            .general-toolbar-row .gt-3cell { width: calc((100% - 16px) / 3); }
+                            .general-toolbar-row .gt-4cell { width: calc((100% - 24px) / 4); }
+                            .general-toolbar-row .gt-toggle-on { border-color: #3ecf8e !important; background: #eafaf3 !important; color: #0a7d4f !important; box-shadow: 0 0 0 1px #3ecf8e66 !important; }
+                            .general-toolbar-row .gt-toggle-off { opacity: .72; }
                             @media (max-width: 640px) {
-                              .general-toolbar-row .gt-3cell { width: calc((100% - 16px) / 3); }
+                              .general-toolbar-row .gt-4cell { width: calc((100% - 24px) / 4); }
                               .general-toolbar-row .gt-model-text { display: none; }
                               .general-toolbar-row .gt-model-dot { display: none; }
                               .general-toolbar-row .gt-import-text { display: none; }
                             }
                           `}</style>
 
-                          {/* ── 🤖 模型 Button：占 1/3 ── */}
+                          {/* ── 🤖 模型 Button：占 1/4 ── */}
                           <button
-                            className="gt-3cell"
+                            className="gt-4cell"
                             data-gt-model-chip
                             onClick={(e) => { e.stopPropagation(); setShowModelPicker(s => !s); }}
                             title={`会话级切换模型（当前：${_chosen?.name || '默认模型'} · ${_chosen?.model || ''}）`}
@@ -3570,28 +3584,27 @@ export default function ChatPanel() {
                             <span style={{ color: '#aaa' }}>{showModelPicker ? '▲' : '▼'}</span>
                           </button>
 
-                          {/* ── 🎭 角色 Button：占 1/3 ── */}
+                          {/* ── 🔍 联网搜索 Toggle：占 1/4（高亮=强制联网搜，未亮=自动判定） ── */}
                           <button
-                            className="gt-3cell"
-                            data-gt-role-chip
-                            onClick={(e) => { e.stopPropagation(); setShowRolePicker(s => !s); }}
-                            title={`当前角色「${__role.name}」：${__role.brief}。点击切换7款内置角色。`}
-                            style={{
-                              ..._chipBase,
-                              border: '1px solid #ffe7c2',
-                              background: '#fffaf1',
-                              cursor: 'pointer',
-                              color: '#333',
-                            }}
+                            className={`gt-4cell ${generalWebSearch ? 'gt-toggle-on' : 'gt-toggle-off'}`}
+                            onClick={(e) => { e.stopPropagation(); setGeneralWebSearch(s => !s); }}
+                            title={generalWebSearch ? '🔍 联网搜索已开启：每次提问都先联网搜索最新资料再回答' : '🔍 点击开启联网搜索：每次提问都先联网搜索最新资料（不开时按内容自动判定）'}
+                            style={{ ..._chipBase, border: '1px solid #d6e4d8', background: generalWebSearch ? '#eafaf3' : '#fafafa', cursor: 'pointer', color: generalWebSearch ? '#0a7d4f' : '#555' }}
                           >
-                            <span>{__role.emoji}</span>
-                            <span style={{
-                              fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 110,
-                            }}>{__role.name}</span>
-                            <span style={{ color: '#bbb' }}>{showRolePicker ? '▲' : '▼'}</span>
+                            🔍<span style={{ fontWeight: 600 }}>联网</span>
                           </button>
 
-                          {/* ── 📥 导入角色卡 Button：占 1/3 ── */}
+                          {/* ── 🧠 深度思考 Toggle：占 1/4（高亮=降temperature+提max_tokens，先推演再给结论） ── */}
+                          <button
+                            className={`gt-4cell ${generalDeepThink ? 'gt-toggle-on' : 'gt-toggle-off'}`}
+                            onClick={(e) => { e.stopPropagation(); setGeneralDeepThink(s => !s); }}
+                            title={generalDeepThink ? '🧠 深度思考已开启：AI会先深入的推演分析再给结论' : '🧠 点击开启深度思考：AI会先深入推演、权衡取舍，再给出更扎实的结论'}
+                            style={{ ..._chipBase, border: '1px solid #d8d0ec', background: generalDeepThink ? '#f1ecfa' : '#fafafa', cursor: 'pointer', color: generalDeepThink ? '#6236c9' : '#555' }}
+                          >
+                            <span style={{ fontWeight: 600 }}>深度思考</span>
+                          </button>
+
+                          {/* ── 📥 导入角色卡 Button：占 1/4 ── */}
                           <input
                             ref={stCharCardRef}
                             type="file"
@@ -3667,7 +3680,7 @@ export default function ChatPanel() {
                             }}
                           />
                           <button
-                            className="gt-3cell"
+                            className="gt-4cell"
                             onClick={(e) => { e.stopPropagation(); stCharCardRef.current?.click(); }}
                             style={{
                               ..._chipBase,
@@ -3731,45 +3744,6 @@ export default function ChatPanel() {
                                     {!c.has_key && <span style={{ color: '#e24', fontSize: 11 }}>未填Key</span>}
                                   </div>
                                   <div style={{ fontSize: 11, color: '#777' }}>{c.provider} · {c.model}</div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {/* ── 角色下拉浮层：挂外层 overflow:visible，不被横滑裁剪 ── */}
-                        {showRolePicker && (
-                          <div
-                            data-gt-role-popover
-                            onClick={e => e.stopPropagation()}
-                            style={{
-                              position: 'absolute', right: 10, bottom: '100%', marginBottom: 4, zIndex: 101,
-                              minWidth: 280, maxHeight: 360, overflowY: 'auto', padding: 6,
-                              background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
-                              boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
-                            }}
-                          >
-                            {BUILTIN_ROLES.map(r => {
-                              const active = r.id === __rid;
-                              return (
-                                <div
-                                  key={r.id}
-                                  onClick={() => {
-                                    setSessionRoleMap(m => ({ ...m, [_sid]: r.id }));
-                                    setShowRolePicker(false);
-                                  }}
-                                  style={{
-                                    padding: '8px 10px', borderRadius: 8, cursor: 'pointer', marginBottom: 4,
-                                    display: 'flex', flexDirection: 'column', gap: 3,
-                                    background: active ? '#fff3e0' : 'transparent',
-                                    border: active ? '1px solid #ffb75d' : '1px solid transparent',
-                                  }}
-                                >
-                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <span style={{ fontWeight: 600, fontSize: 13 }}>{r.emoji} {r.name}</span>
-                                    {active && <span style={{ color: '#e97b00', fontSize: 12 }}>当前</span>}
-                                  </div>
-                                  <div style={{ fontSize: 11, color: '#777', lineHeight: 1.5 }}>{r.brief}</div>
                                 </div>
                               );
                             })}
