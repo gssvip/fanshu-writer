@@ -925,19 +925,12 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
               onClick={handleCopy}
               title="复制"
             >{copied ? '✓ 已复制' : '📋 复制'}</button>
-            {!isUser && onRegenerate && (
+            {onRegenerate && (
               <button
                 className="chat-msg-action-btn"
                 onClick={() => onRegenerate(index)}
                 title="重新生成"
               >🔄 重新生成</button>
-            )}
-            {isUser && onEditMessage && (
-              <button
-                className="chat-msg-action-btn"
-                onClick={() => setEditing(true)}
-                title="编辑"
-              >✏️ 编辑</button>
             )}
             {onDeleteMessage && (
               <button
@@ -974,8 +967,7 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
       {showMenu && (
         <div className="chat-msg-menu" ref={menuRef}>
           <button className="chat-msg-menu-item" onClick={() => { handleCopy(); setShowMenu(false); }}>📋 复制</button>
-          {isUser && onEditMessage && <button className="chat-msg-menu-item" onClick={() => { setEditing(true); setShowMenu(false); }}>✏️ 编辑</button>}
-          {!isUser && onRegenerate && <button className="chat-msg-menu-item" onClick={() => { onRegenerate(index); setShowMenu(false); }}>🔄 重新生成</button>}
+          {onRegenerate && <button className="chat-msg-menu-item" onClick={() => { onRegenerate(index); setShowMenu(false); }}>🔄 重新生成</button>}
           {onDeleteMessage && <button className="chat-msg-menu-item danger" onClick={() => { if (window.confirm('确定删除这条消息？')) onDeleteMessage(index); setShowMenu(false); }}>🗑️ 删除</button>}
         </div>
       )}
@@ -2496,8 +2488,9 @@ export default function ChatPanel() {
 
   // 【设定】Tab内「通用」子维度（整合版）：调用 chatGeneralStream（任意话题+命中气泡入库）
   // 创作辅助入口已合并，直接让用户用自然语言聊天生成；命中创作维度自动气泡落卡
-  const handleGeneral = useCallback(async () => {
-    const text = input.trim();
+  // opts.text：重新生成时直接复用原提问（不读输入框）；opts.truncateHistoryTo：后端截断历史实现重新生成
+  const handleGeneral = useCallback(async (opts?: { text?: string; truncateHistoryTo?: number }) => {
+    const text = (opts?.text ?? input).trim();
     if (!bookId || !text || streaming) return;
     setInput('');
     setStreamError('');
@@ -2523,7 +2516,7 @@ export default function ChatPanel() {
       const _sid = _sidReal || _PREKEY;
       const _cfgId = sessionModelMap[_sid] || undefined;
       const _roleId = sessionRoleMap[_sid] || 'default';
-      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId, roleId: _roleId, deepThink: generalDeepThink, webSearch: generalWebSearch }, ctrl.signal);
+      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId, roleId: _roleId, deepThink: generalDeepThink, webSearch: generalWebSearch, truncateHistoryTo: opts?.truncateHistoryTo }, ctrl.signal);
       // consumeSSE 最后1个参数 onSessionId=setChatGeneralSessionId：把card/done帧带回的session_id只写入 chatGeneralSessionId，不污染全局 setSessionId（避免和其他创作维度会话互串）
       await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
         // 【P1-3 角色同步】后端把真实生效的角色 + 上下文变量通过 kind=role_applied meta帧回传
@@ -2656,24 +2649,32 @@ export default function ChatPanel() {
     }
   }, [activeTab, selectedDim, suggestions, selectedSuggestion, progress, bible, handleSuggest, handleDimEdit, handleGeneral, handleDirectGenerate, handleGenerateFromSelected]);
 
-  // 重新生成：找到该AI消息前最近的用户消息，重新触发对应动作
+  // 重新生成：无论点的是用户消息还是AI回复，都重新回答"目标用户提问"，
+  // 丢弃其后的旧回复并重新触发对应动作（通用聊天走 truncate_history_to 截断历史）
   const handleRegenerate = useCallback((index: number) => {
     setMessages(prev => {
-      // 删除该AI消息及之后的，保留之前的用户消息
-      const before = prev.slice(0, index);
-      const userMsg = [...before].reverse().find(m => m.role === 'user');
-      setMessages(before);
-      if (userMsg && activeTab === 'setting' && selectedDim) {
-        // 设定Tab：用用户消息内容重新触发（按维度判断走方案或直接生成/修改）
-        const text = userMsg.content.replace(/^【[^】]+】/, '').trim();
+      const clicked = prev[index];
+      // 目标用户消息：点AI回复→其前一条是提问；点用户消息→即它自己
+      const targetUserIdx = (clicked && clicked.role === 'assistant') ? index - 1 : index;
+      const targetMsg = prev[targetUserIdx];
+      if (!targetMsg || targetMsg.role !== 'user') return prev;
+      // 新消息列表：丢弃目标提问及其之后的所有（旧AI回复/后续），随后重新触发
+      const next = prev.slice(0, targetUserIdx);
+      if (activeTab === 'setting' && selectedDim === 'general') {
+        const text = targetMsg.content.trim();
         if (text) {
-          setInput(text);
+          setTimeout(() => handleGeneral({ text, truncateHistoryTo: Math.max(0, targetUserIdx) }), 50);
+        }
+      } else if (activeTab === 'setting' && selectedDim) {
+        const stripped = targetMsg.content.replace(/^【[^】]+】/, '').trim();
+        if (stripped) {
+          setInput(stripped);
           setTimeout(() => handleMainSend(), 50);
         }
       }
-      return before;
+      return next;
     });
-  }, [activeTab, selectedDim, handleMainSend]);
+  }, [activeTab, selectedDim, handleMainSend, handleGeneral]);
 
   // 设定Tab：选择维度后
   // - 构思/大纲/文风 等方向性维度：第一次输入走 suggest（生成多选意见），选中后 generate

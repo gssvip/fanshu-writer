@@ -54,6 +54,63 @@ from session_persist import (
 # ============================================================================
 _DIM_MAX_TOKENS = 27000
 
+# 深度思考的思考标记：deep_think>=1 时系统提示让模型把推演过程写在标记内，
+# 前端用独立 reasoning 面板展示，正文/卡片/落盘均剥离（不参与复制/采纳）。
+_REASON_START = '【推理】'
+_REASON_END = '【推理结束】'
+
+
+class _ThinkingSplitter:
+    """流式把『【推理】...【推理结束】』标记内的思考从正文中切出。
+
+    深思考=提示词式（不依赖模型原生 reasoning_content，任意模型都可用）。
+    feed() 逐块送入正文增量，yield ('body'|'reason', text)：
+      - 'body'   正常正文 → 照常 push delta / 计入 full_text（标记本身被剥离）
+      - 'reason' 思考片段 → 单独推 SSE meta(kind=reasoning)，不计入正文
+    支持标记被 SSE 分块切断（缓存尾部半个标记）与单轮多次思考。
+    """
+
+    __slots__ = ('buf', 'in_reason')
+
+    def __init__(self):
+        self.buf = ''          # 缓存可能只含半个标记的尾部
+        self.in_reason = False
+
+    def feed(self, chunk: str):
+        text = self.buf + chunk
+        self.buf = ''
+        while True:
+            if not self.in_reason:
+                idx = text.find(_REASON_START)
+                if idx == -1:
+                    keep = max(0, len(text) - (len(_REASON_START) - 1))
+                    if text[:keep]:
+                        yield ('body', text[:keep])
+                    self.buf = text[keep:]
+                    return
+                if text[:idx]:
+                    yield ('body', text[:idx])
+                self.in_reason = True
+                text = text[idx + len(_REASON_START):]
+            else:
+                idx = text.find(_REASON_END)
+                if idx == -1:
+                    keep = max(0, len(text) - (len(_REASON_END) - 1))
+                    if text[:keep]:
+                        yield ('reason', text[:keep])
+                    self.buf = text[keep:]
+                    return
+                if text[:idx]:
+                    yield ('reason', text[:idx])
+                self.in_reason = False
+                text = text[idx + len(_REASON_END):]
+
+    def finish(self):
+        """流结束时冲刷缓存尾巴，避免正文/思考尾部被丢掉。"""
+        if self.buf:
+            yield (('reason' if self.in_reason else 'body'), self.buf)
+            self.buf = ''
+
 
 def _dim_max_tokens(dim_key: str) -> int:
     """维度生成 max_tokens（用户要求统一 27000，防任何维度截断）。"""
@@ -7745,13 +7802,16 @@ def chat_general():
                 c = '…（会话历史超长已截断，取尾部关键内容）\n' + c[-1500:]
             trimmed.append({'role': m.get('role') or 'user', 'content': c})
     # P0-4 深度思考程度：level>=1 时在 system 末尾按档位追加"先推演再给结论"的指令
+    # 思考过程必须用【推理】...【推理结束】包裹 → 后端流式切分并单独展示给作者（可切换查看，不计入正文/落盘）。
     if deep_think >= 1:
         if deep_think >= 2:
             _banner = ("【深度思考·已开启】请先深入推演：拆解关键假设 → 列出逻辑链 → 权衡各方案取舍，再给出最终结论。"
-                       "适当保留推演过程便于作者理解，但结论必须清晰、可落地，不因推演而啰嗦。")
+                       "你的推演过程请写在『【推理】』与『【推理结束】』之间（仅作作者回顾，不算作答案正文），"
+                       "推演结束后再清晰、可落地地下结论，不因推演而啰嗦。")
         else:
-            _banner = ("【标准思考·已开启】先快速理清思路、对齐目标，再给结论；推理过程点到为止，避免长篇展开，"
-                       "结论要简明可用。")
+            _banner = ("【标准思考·已开启】先快速理清思路、对齐目标，再给结论。"
+                       "请把简要思考过程放在『【推理】』与『【推理结束】』之间（仅作作者回顾，不算作答案正文），"
+                       "然后给出简明可用的结论。")
         system_prompt = system_prompt.rstrip() + "\n\n" + _banner
     messages = [{'role': 'system', 'content': system_prompt}]
     messages.extend(trimmed)
@@ -7886,6 +7946,9 @@ def chat_general():
             # 通用聊天 max_tokens 不限、按模型能力：给足 _DIM_MAX_TOKENS(27000)，
             # 交由 llm_gateway._effective_max_tokens 按模型已知/自学习输出上限钳制，不再按 deep_think 分档缩小。
             # emit_reasoning=True：思考文本以 SSE meta(kind=reasoning) 单独推前端（可展开看，不混正文）。
+            # 【思考切分】deep_think>=1 时额外用 _ThinkingSplitter 把提示词式"【推理】…【推理结束】"
+            # 包裹的思考从正文剥离展示；与原生 reasoning_content 两条路径并存，结果 content/卡片/落盘均不含思考。
+            _splitter = _ThinkingSplitter() if deep_think >= 1 else None
             for chunk in gw_stream_with_hb(gw, messages, emit_reasoning=True,
                                            temperature=({0: 0.7, 1: 0.5, 2: 0.3}.get(deep_think)), max_tokens=_DIM_MAX_TOKENS, **_mcp_native_kwargs):
                 if chunk is HEARTBEAT:
@@ -7895,11 +7958,24 @@ def chat_general():
                     yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": chunk.info}, ensure_ascii=False)}\n\n'
                     continue
                 if _is_reasoning_frame(chunk):
-                    # 思考过程单独透传，不 append 进 full_text（结果 content / 卡片 / 落盘只含最终回复）
+                    # 原生 reasoning_content 思考 → 单独透传，不 append 进 full_text（结果/卡片/落盘只含最终回复）
                     yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": chunk.text}, ensure_ascii=False)}\n\n'
                     continue
-                full_text.append(chunk)
-                yield f'data: {json.dumps({"type": "delta", "content": chunk}, ensure_ascii=False)}\n\n'
+                # 深思考标记式：把正文流切成 body / reason 两部分分发
+                for _pk, _pt in (_splitter.feed(chunk) if _splitter else [('body', chunk)]):
+                    if _pk == 'reason':
+                        yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _pt}, ensure_ascii=False)}\n\n'
+                    else:
+                        full_text.append(_pt)
+                        yield f'data: {json.dumps({"type": "delta", "content": _pt}, ensure_ascii=False)}\n\n'
+            # 流结束：冲刷深思考切分器缓存的尾巴（避免正文/思考尾部被丢弃）
+            if _splitter is not None:
+                for _fk, _ft in _splitter.finish():
+                    if _fk == 'reason':
+                        yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _ft}, ensure_ascii=False)}\n\n'
+                    else:
+                        full_text.append(_ft)
+                        yield f'data: {json.dumps({"type": "delta", "content": _ft}, ensure_ascii=False)}\n\n'
 
             complete = ''.join(full_text)
             cards = parse_cards(complete)

@@ -247,13 +247,19 @@ def _parse_sse_event(blob: bytes):
         msg_content = (choice["message"] or {}).get("content")
         if msg_content:
             yield ("message", msg_content)
+        # 非流式思考：message.reasoning_content（滚雪球）单独透传，避免与正文互斥吞掉
+        msg_reasoning = (choice["message"] or {}).get("reasoning_content")
+        if msg_reasoning:
+            yield ("reasoning", msg_reasoning)
         return
     delta = choice.get("delta") or {}
     content = delta.get("content")
     reasoning = delta.get("reasoning_content")
+    # 【关键修复】思考与正文可能同 chunk 到达（部分网关把 reasoning_content 与 content 一起发）。
+    # 旧实现用 elif → reasoning 被 content 吞掉 → 前端永远看不到思考过程。改为两段独立判断。
     if content:
         yield ("delta", content)
-    elif reasoning:
+    if reasoning:
         yield ("reasoning", reasoning)
 
 
