@@ -78,6 +78,109 @@ _PERSONAS = {
 _ROUNDTABLE_ORDER = ['toxic_critic', 'architect', 'worldbuilder', 'marketeer', 'polish', 'interviewer']
 _MODERATOR_ROLE = ('主持人', '【你的身份】圆桌会议主持人。你负责开场破题、掌握议程节奏，并在讨论收束后把6位专家的共识整理成结构化的总结报告。开场要简短点题，不替专家发言；总结报告要分议题给结论+最优先改法。')
 
+# 圆桌会议续会状态（持久化到 session.meta_json['roundtable_state']）：
+# 目标是"开会中途异常/断连/用户手动停止后，说一声『继续』就能接着开会，不重新开始"。
+_RT_STATE_KEY = 'roundtable_state'
+
+# 用户"继续"指令识别：部分命中即可，避免误抢普通新话题。
+_RT_CONTINUE_HINTS = ('继续', '接着', '续会', '下次开', '往下')
+_RT_FULL_RE = re.compile(r'^(?:继续|继续会议|继续圆桌|继续圆桌会议|圆桌会议继续|会议继续|继续讨论|继续聊|继续开会|接着|接着聊|接着讨论|往下|再来|继续吧|继续\s*[。.!！，,？?]*\s*)$')
+
+
+def _is_rt_continue(msg: str) -> bool:
+    m = (msg or '').strip().lstrip('，。,.！!？? ').strip()
+    if not m:
+        return False
+    if _RT_FULL_RE.match(m):
+        return True
+    # 宽松版："继续..." 且带"继续"二字且整句很短（≤12字），判定为续会指令
+    if m.startswith('继续') and len(m) <= 12:
+        return True
+    return False
+
+
+# 可自动重试的流式网络异常：连接被上游提前掐断 / 读超时 / 连接层错误。
+# LLMGateway 在"已收到部分内容"时会直接抛错不重试，这里在发言层再兜一层。
+_RT_RETRY_RE = re.compile(
+    r'ChunkedEncodingError|ConnectionError|ConnectionResetError|BrokenPipeError|ReadTimeout'
+    r'|Read timed out|premature|RemoteProtocolError|503|502|bad gateway|unavailable|timed out|timeout',
+    re.IGNORECASE)
+
+
+def _rt_retryable(exc) -> bool:
+    txt = f'{type(exc).__name__}: {exc}'
+    return bool(_RT_RETRY_RE.search(txt))
+
+
+def _rt_stream_turn(gw, messages, temperature, max_tokens, attempts: int = 2):
+    """单次发言的带重试流式封装。
+    yield ('hb'|'retry'|'reason'|'body', payload) —— 与上层既有的 SSE 帧拼装解耦。
+    - 产出正文前遇到可重试网络异常（Chunked/超时/断连）→ 自动整轮重发（最多 attempts 次）
+    - 已流出一段正文后仍异常 → 当场抛出，由上层落状态，等用户"继续"从该发言人续会
+    - 正常结束 → 额外 yield ('__done__', 完整正文文本)
+    """
+    import time as _t
+    _attempt = 0
+    while True:
+        _attempt += 1
+        buf: list = []
+        splitter = _ThinkingSplitter()   # 每次重试重建，避免残留推理标记缓存
+        try:
+            for chunk in gw_stream_with_hb(gw, messages, emit_reasoning=True,
+                                           temperature=temperature, max_tokens=max_tokens):
+                if chunk is HEARTBEAT:
+                    yield ('hb', None)
+                    continue
+                if _is_stream_retry(chunk):
+                    yield ('retry', chunk.info)
+                    continue
+                if _is_reasoning_frame(chunk):
+                    yield ('reason', chunk.text)
+                    continue
+                for _pk, _pt in splitter.feed(chunk):
+                    if _pk == 'body':
+                        buf.append(_pt)
+                    yield (_pk, _pt)
+            for _fk, _ft in splitter.finish():
+                if _fk == 'body':
+                    buf.append(_ft)
+                yield (_fk, _ft)
+            yield ('__done__', ''.join(buf))
+            return
+        except Exception as e:
+            if buf:
+                # 已流出正文 → 不重试，交给上层续会
+                raise
+            if _attempt < attempts and _rt_retryable(e):
+                _t.sleep(min(2 ** _attempt, 4))
+                continue
+            raise
+
+
+def _rt_save_state(session, db, state: dict) -> None:
+    """把圆桌会议进度合并写回 session.meta_json（保留已有键，如 ai_config_id）。"""
+    try:
+        meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+        if not isinstance(meta, dict):
+            meta = {}
+        meta[_RT_STATE_KEY] = state
+        session.meta_json = json.dumps(meta, ensure_ascii=False)
+        db.session.add(session)
+        db.session.commit()
+    except Exception:
+        pass
+
+
+def _rt_load_state(session):
+    try:
+        meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+        if isinstance(meta, dict):
+            st = meta.get(_RT_STATE_KEY)
+            return st if isinstance(st, dict) else None
+    except Exception:
+        pass
+    return None
+
 
 class _ThinkingSplitter:
     """流式把『【推理】...【推理结束】』标记内的思考从正文中切出。
@@ -8221,13 +8324,56 @@ def chat_roundtable():
     def generate():
         yield ': ping-heartbeat-keepalive\n\n'
         all_messages = []
+
+        def _emit(gen, speaker_id):
+            # 把 _rt_stream_turn 的 tag 流翻译成 SSE 帧；正文累积进外层 full_parts
+            for _tag, _pay in gen:
+                if _tag == 'hb':
+                    yield f'{SSE_HEARTBEAT_COMMENT}'
+                elif _tag == 'reason':
+                    yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _pay}, ensure_ascii=False)}\n\n'
+                elif _tag == 'retry':
+                    yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": _pay}, ensure_ascii=False)}\n\n'
+                elif _tag == '__done__':
+                    full_parts.append(_pay)
+                else:
+                    full_parts.append(_pay)
+                    yield f'data: {json.dumps({"type": "delta", "speaker": speaker_id, "content": _pay}, ensure_ascii=False)}\n\n'
+
         try:
             # 首帧meta：告诉前端这是圆桌模式
             yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_start", "info": {"rounds": 2, "speakers": len(_ROUNDTABLE_ORDER)}}, ensure_ascii=False)}\n\n'
 
-            # ========== Step 1: 主持人开场 ==========
-            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator", "speaker_name": _MODERATOR_ROLE[0]}}, ensure_ascii=False)}\n\n'
-            mod_system = _MODERATOR_ROLE[1] + f"""
+            is_continue = _is_rt_continue(topic)
+            state = _rt_load_state(session)
+
+            # 会议已完成 + 用户发"继续" → 明确提示，不重复开会
+            if is_continue and state and state.get('completed'):
+                yield f'data: {json.dumps({"type": "delta", "speaker": "moderator_summary", "content": "（本次圆桌会议已结束，上面的总结报告即最终结论。如需新议题，直接说出新话题即可。）"}, ensure_ascii=False)}\n\n'
+                yield f'data: {json.dumps({"type": "done", "session_id": session_id}, ensure_ascii=False)}\n\n'
+                return
+
+            resuming = bool(is_continue and state and state.get('active') and not state.get('completed'))
+
+            if resuming:
+                # ========== 续会：沿用上次的议题与进度，接着剩余回合开会 ==========
+                topic_final = state.get('topic') or topic
+                done = state.get('done', [])
+                discussion_history = state.get('discussion_history') or f'【原始议题】\n{topic_final}\n\n'
+                if state.get('moderator_open'):
+                    all_messages.append({'role': 'assistant', 'content': f"【{_MODERATOR_ROLE[0]}】\n{state['moderator_open']}"})
+                for d in done:
+                    all_messages.append({'role': 'assistant', 'content': f"【{d.get('name','')}】\n{d.get('content','')}"})
+                _nxt = '1' if len(done) < len(_ROUNDTABLE_ORDER) else '2'
+                yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": f"（已自动保留到此前的进度，现在接着开第{_nxt}轮讨论…）"}, ensure_ascii=False)}\n\n'
+                if not state.get('moderator_open'):
+                    # 极端情况：连开场都没存上，则这次视为新会议
+                    resuming = False
+                    state = None
+            else:
+                # ========== 全新会议：主持人开场 ==========
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator", "speaker_name": _MODERATOR_ROLE[0]}}, ensure_ascii=False)}\n\n'
+                mod_system = _MODERATOR_ROLE[1] + f"""
 
 【讨论议题】
 {topic}
@@ -8237,55 +8383,44 @@ def chat_roundtable():
 - 鼓励交锋，允许不同意前面发言人的观点，必须碰撞出真实结论
 - 开场只要说3-5句话点明规则和议题，不用展开，把场子交给专家就行
 """
-            if book_id and base_system:
-                mod_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + mod_system
-            mod_system = mod_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
-            mod_messages = [{'role': 'system', 'content': _var_replace(mod_system)}]
-            mod_messages.append({'role': 'user', 'content': f'请开始开场，议题是：{topic}'})
+                if book_id and base_system:
+                    mod_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + mod_system
+                mod_system = mod_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+                mod_messages = [{'role': 'system', 'content': _var_replace(mod_system)}]
+                mod_messages.append({'role': 'user', 'content': f'请开始开场，议题是：{topic}'})
 
-            gw_mod = LLMGateway(_bg, _kg, _mg)
-            _splitter = _ThinkingSplitter() if deep_think >= 1 else None
-            mod_full = []
-            for chunk in gw_stream_with_hb(gw_mod, mod_messages, emit_reasoning=True,
-                                           temperature=0.6, max_tokens=_DIM_MAX_TOKENS):
-                if chunk is HEARTBEAT:
-                    yield SSE_HEARTBEAT_COMMENT
-                    continue
-                if _is_stream_retry(chunk):
-                    yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": chunk.info}, ensure_ascii=False)}\n\n'
-                    continue
-                if _is_reasoning_frame(chunk):
-                    yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": chunk.text}, ensure_ascii=False)}\n\n'
-                    continue
-                for _pk, _pt in (_splitter.feed(chunk) if _splitter else [('body', chunk)]):
-                    if _pk == 'reason':
-                        yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _pt}, ensure_ascii=False)}\n\n'
-                    else:
-                        mod_full.append(_pt)
-                        yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": _pt}, ensure_ascii=False)}\n\n'
-            if _splitter is not None:
-                for _fk, _ft in _splitter.finish():
-                    if _fk == 'reason':
-                        yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _ft}, ensure_ascii=False)}\n\n'
-                    else:
-                        mod_full.append(_ft)
-                        yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": _ft}, ensure_ascii=False)}\n\n'
-            mod_content = ''.join(mod_full)
-            all_messages.append({'role': 'assistant', 'content': f'【{_MODERATOR_ROLE[0]}】\n{mod_content}'})
-            yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator"}, ensure_ascii=False)}\n\n'
+                gw_mod = LLMGateway(_bg, _kg, _mg)
+                full_parts = []
+                for f in _emit(_rt_stream_turn(gw_mod, mod_messages, 0.6, _DIM_MAX_TOKENS), 'moderator'):
+                    yield f
+                mod_content = ''.join(full_parts)
+                all_messages.append({'role': 'assistant', 'content': f'【{_MODERATOR_ROLE[0]}】\n{mod_content}'})
+                yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator"}, ensure_ascii=False)}\n\n'
 
-            # ========== Step 2: 两轮依次发言 ==========
-            discussion_history = f'【原始议题】\n{topic}\n\n【主持人开场】\n{mod_content}\n\n'
+                topic_final = topic
+                done = []
+                discussion_history = f'【原始议题】\n{topic_final}\n\n【主持人开场】\n{mod_content}\n\n'
+                # 开场完成即落一次进度 → 之后任何一步断掉都能续会
+                state = {'active': True, 'completed': False, 'phase': 'discussion',
+                         'topic': topic_final, 'moderator_open': mod_content,
+                         'done': [], 'discussion_history': discussion_history}
+                _rt_save_state(session, db, state)
 
-            for round_num in [1, 2]:
-                for speaker_id in _ROUNDTABLE_ORDER:
-                    sp_name, sp_system_prompt = _PERSONAS[speaker_id]
-                    yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": speaker_id, "speaker_name": sp_name, "round": round_num}}, ensure_ascii=False)}\n\n'
+            # ========== 讨论：从断点/开头继续，两轮×6位依次发言 ==========
+            total = 2 * len(_ROUNDTABLE_ORDER)
+            done_count = len(done)
+            gw_sp0 = LLMGateway(_bg, _kg, _mg)
+            while done_count < total:
+                seq_abs = done_count
+                round_num = 1 + seq_abs // len(_ROUNDTABLE_ORDER)
+                speaker_id = _ROUNDTABLE_ORDER[seq_abs % len(_ROUNDTABLE_ORDER)]
+                sp_name, sp_system_prompt = _PERSONAS[speaker_id]
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": speaker_id, "speaker_name": sp_name, "round": round_num}}, ensure_ascii=False)}\n\n'
 
-                    sp_system = sp_system_prompt + f"""
+                sp_system = sp_system_prompt + f"""
 
 【当前议题】
-{topic}
+{topic_final}
 
 【规则】
 现在是圆桌会议第{round_num}轮讨论，你是{sp_name}，请严格按你的专业身份发言。
@@ -8294,52 +8429,36 @@ def chat_roundtable():
 - 不总结所有人，只说你自己的专业观点
 - 字数控制在300-800字，观点鲜明、可直接落地，拒绝空话套话
 """
-                    if book_id and base_system:
-                        sp_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + sp_system
-                    sp_system = sp_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+                if book_id and base_system:
+                    sp_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + sp_system
+                sp_system = sp_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
 
-                    sp_messages = [{'role': 'system', 'content': _var_replace(sp_system)}]
-                    sp_messages.append({'role': 'user', 'content': (discussion_history + f"\n【轮次】第{round_num}轮 → 轮到【{sp_name}】发言，请开始：\n")[:10000]})
+                sp_messages = [{'role': 'system', 'content': _var_replace(sp_system)}]
+                sp_messages.append({'role': 'user', 'content': (discussion_history + f"\n【轮次】第{round_num}轮 → 轮到【{sp_name}】发言，请开始：\n")[:12000]})
 
-                    gw_sp = LLMGateway(_bg, _kg, _mg)
-                    _splitter = _ThinkingSplitter() if deep_think >= 1 else None
-                    sp_full = []
-                    for chunk in gw_stream_with_hb(gw_sp, sp_messages, emit_reasoning=True,
-                                                   temperature=0.7, max_tokens=_DIM_MAX_TOKENS):
-                        if chunk is HEARTBEAT:
-                            yield SSE_HEARTBEAT_COMMENT
-                            continue
-                        if _is_stream_retry(chunk):
-                            yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": chunk.info}, ensure_ascii=False)}\n\n'
-                            continue
-                        if _is_reasoning_frame(chunk):
-                            yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": chunk.text}, ensure_ascii=False)}\n\n'
-                            continue
-                        for _pk, _pt in (_splitter.feed(chunk) if _splitter else [('body', chunk)]):
-                            if _pk == 'reason':
-                                yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _pt}, ensure_ascii=False)}\n\n'
-                            else:
-                                sp_full.append(_pt)
-                                yield f'data: {json.dumps({"type": "delta", "speaker": speaker_id, "content": _pt}, ensure_ascii=False)}\n\n'
-                    if _splitter is not None:
-                        for _fk, _ft in _splitter.finish():
-                            if _fk == 'reason':
-                                yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _ft}, ensure_ascii=False)}\n\n'
-                            else:
-                                sp_full.append(_ft)
-                                yield f'data: {json.dumps({"type": "delta", "speaker": speaker_id, "content": _ft}, ensure_ascii=False)}\n\n'
+                full_parts = []
+                for f in _emit(_rt_stream_turn(gw_sp0, sp_messages, 0.7, _DIM_MAX_TOKENS), speaker_id):
+                    yield f
+                sp_content = ''.join(full_parts)
 
-                    sp_content = ''.join(sp_full)
-                    discussion_history += f"\n【第{round_num}轮 · {sp_name}】\n{sp_content}\n\n"
-                    all_messages.append({'role': 'assistant', 'content': f'【{sp_name}】\n{sp_content}'})
-                    yield f'data: {json.dumps({"type": "speaker_done", "speaker": speaker_id, "round": round_num}, ensure_ascii=False)}\n\n'
+                done = done + [{'round': round_num, 'speaker': speaker_id, 'name': sp_name, 'content': sp_content}]
+                discussion_history += f"\n【第{round_num}轮 · {sp_name}】\n{sp_content}\n\n"
+                all_messages.append({'role': 'assistant', 'content': f'【{sp_name}】\n{sp_content}'})
+                yield f'data: {json.dumps({"type": "speaker_done", "speaker": speaker_id, "round": round_num}, ensure_ascii=False)}\n\n'
 
-            # ========== Step 3: 主持人总结报告 ==========
+                # 每完成一人落一次进度 → 断连后说"继续"即可从下一位精准接上
+                state = {'active': True, 'completed': False, 'phase': 'discussion',
+                         'topic': topic_final, 'moderator_open': state.get('moderator_open', ''),
+                         'done': done, 'discussion_history': discussion_history}
+                _rt_save_state(session, db, state)
+                done_count += 1
+
+            # ========== 总结报告 ==========
             yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator_summary", "speaker_name": "主持人·总结报告"}}, ensure_ascii=False)}\n\n'
             sum_system = _MODERATOR_ROLE[1] + f"""
 
 【讨论议题】
-{topic}
+{topic_final}
 
 【完整讨论记录】
 {discussion_history[:12000]}
@@ -8347,7 +8466,7 @@ def chat_roundtable():
 【总结要求】
 把两轮6位专家的讨论收束成一份清晰的总结报告，结构必须是：
 
-# 圆桌会议总结：{topic[:40]}
+# 圆桌会议总结：{topic_final[:40]}
 
 ## 核心共识
 列出大家都同意的结论，每条一句话
@@ -8372,38 +8491,19 @@ def chat_roundtable():
             sum_messages.append({'role': 'user', 'content': '请输出总结报告'})
 
             gw_sum = LLMGateway(_bg, _kg, _mg)
-            _splitter = _ThinkingSplitter() if deep_think >= 1 else None
-            sum_full = []
-            for chunk in gw_stream_with_hb(gw_sum, sum_messages, emit_reasoning=True,
-                                           temperature=0.5, max_tokens=_DIM_MAX_TOKENS):
-                if chunk is HEARTBEAT:
-                    yield SSE_HEARTBEAT_COMMENT
-                    continue
-                if _is_stream_retry(chunk):
-                    yield f'data: {json.dumps({"type": "meta", "kind": "stream_retry", "info": chunk.info}, ensure_ascii=False)}\n\n'
-                    continue
-                if _is_reasoning_frame(chunk):
-                    yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": chunk.text}, ensure_ascii=False)}\n\n'
-                    continue
-                for _pk, _pt in (_splitter.feed(chunk) if _splitter else [('body', chunk)]):
-                    if _pk == 'reason':
-                        yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _pt}, ensure_ascii=False)}\n\n'
-                    else:
-                        sum_full.append(_pt)
-                        yield f'data: {json.dumps({"type": "delta", "speaker": "moderator_summary", "content": _pt}, ensure_ascii=False)}\n\n'
-            if _splitter is not None:
-                for _fk, _ft in _splitter.finish():
-                    if _fk == 'reason':
-                        yield f'data: {json.dumps({"type": "meta", "kind": "reasoning", "text": _ft}, ensure_ascii=False)}\n\n'
-                    else:
-                        sum_full.append(_ft)
-                        yield f'data: {json.dumps({"type": "delta", "speaker": "moderator_summary", "content": _ft}, ensure_ascii=False)}\n\n'
-            sum_content = ''.join(sum_full)
+            full_parts = []
+            for f in _emit(_rt_stream_turn(gw_sum, sum_messages, 0.5, _DIM_MAX_TOKENS), 'moderator_summary'):
+                yield f
+            sum_content = ''.join(full_parts)
             all_messages.append({'role': 'assistant', 'content': f'【总结报告】\n{sum_content}'})
             yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator_summary"}, ensure_ascii=False)}\n\n'
 
-            # 完整讨论持久化到会话
-            history.append({'role': 'user', 'content': f'圆桌会议议题：{topic}'})
+            # 落盘 + 标记会议完成
+            state['completed'] = True
+            state['phase'] = 'done'
+            _rt_save_state(session, db, state)
+
+            history.append({'role': 'user', 'content': f'圆桌会议议题：{topic_final}'})
             history.extend(all_messages)
             _safe_save_session_messages(session, history)
 
