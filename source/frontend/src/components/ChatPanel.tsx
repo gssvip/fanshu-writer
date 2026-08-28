@@ -1059,7 +1059,7 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
       {open && (
         <div className="smart-skill-list" data-gt-assistant-popover
           onClick={(e) => { e.stopPropagation(); }}
-          style={{ maxHeight: 260, overflowY: 'auto' }}
+          style={{ maxHeight: cfgOpen ? 'none' : 260, overflowY: 'auto', zIndex: 102, position: 'relative' }}
         >
           {roles.map(r => {
             const active = currentId === r.id;
@@ -1079,48 +1079,62 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
           })}
           {/* 分隔：联网搜索 Key 配置 */}
           <div
-            style={{ margin: '6px 2px 0', borderTop: '1px solid #eee', padding: '6px 2px 0', cursor: 'pointer' }}
+            style={{ margin: '6px 2px 0', borderTop: '1px solid #eee', padding: '6px 2px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
             data-gt-searchcfg-toggle
-            onClick={(e) => { e.stopPropagation(); setCfgOpen(o => !o); if (!cfgOpen) loadCfg(); }}
+            onClick={(e) => { e.stopPropagation(); setCfgOpen(true); loadCfg(); }}
           >
-            <span style={{ fontSize: 12, fontWeight: 600, color: cfgOpen ? '#0a7d4f' : '#555' }}>
-              🌐 联网搜索 Key {cfgOpen ? '▲' : '▼'}
-            </span>
-            <span style={{ fontSize: 11, color: '#aaa', marginLeft: 6 }}>
-              {state ? (['tavily', 'exa', 'brave'].some(k => state.keys[k] || state.env[(k === 'tavily' ? 'TAVILY' : k === 'exa' ? 'EXA' : 'BRAVE') + '_API_KEY']) ? '已配置' : '未配置') : ''}
-            </span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#0a7d4f' }}>🌐 联网搜索 Key</span>
+            <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: '#eafaf3', color: '#0a7d4f' }}>设置 ›</span>
           </div>
-          {cfgOpen && (
-            <div style={{ padding: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {(['tavily', 'exa', 'brave'] as const).map(k => (
-                <label key={k} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: 11, color: '#777' }}>
-                    {k === 'tavily' ? 'Tavily' : k === 'exa' ? 'Exa' : 'Brave Search'} <span style={{ color: '#aaa', marginLeft: 4 }}>
-                      {state?.keys[k] ? `（已保存${state.env[k.toUpperCase() + '_API_KEY'] ? ' · 已生效' : ''}）` : '（未配置）'}
-                    </span>
-                  </span>
-                  <input
-                    type="password"
-                    placeholder="https://www.tavily.com 右侧复制 API Key，留空=不改"
-                    value={draft[k]}
-                    onChange={(e) => setDraft(d => ({ ...d, [k]: e.target.value }))}
-                    style={{ fontSize: 12, padding: '5px 7px', border: '1px solid #d9d9e4', borderRadius: 7 }}
-                  />
-                </label>
-              ))}
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <button
-                  onClick={(e) => { e.stopPropagation(); saveCfg(); }}
-                  disabled={saving}
-                  style={{ fontSize: 12, padding: '5px 12px', borderRadius: 7, border: 'none', background: '#0a7d4f', color: '#fff', cursor: 'pointer' }}
-                >{saving ? '保存中…' : '保存'}</button>
-                <span style={{ fontSize: 11, color: msg.startsWith('✅') ? '#288f2b' : msg.startsWith('❌') ? '#c32e2e' : '#888' }}>{msg}</span>
-              </div>
-              <div style={{ fontSize: 10.5, color: '#aaa', lineHeight: 1.5 }}>
-                不填也能联网（DuckDuckGo 兜底）；填了 Tavily/Exa/Brave 任一生效即可更稳、结果更准。
-              </div>
+        </div>
+      )}
+
+      {/* 🌐 联网搜索 Key 配置浮层（fixed 浮层，规避父容器裁剪；独立成层，点击必响应） */}
+      {cfgOpen && (
+        <div
+          data-gt-searchcfg-popover
+          onClick={(e) => { e.stopPropagation(); }}
+          style={{
+            position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', zIndex: 400,
+            width: Math.min(360, typeof window !== 'undefined' ? window.innerWidth - 40 : 360), maxHeight: '80vh', overflowY: 'auto',
+            background: '#fff', borderRadius: 14, padding: 14,
+            border: '1px solid #e0e0ea', boxShadow: '0 10px 40px rgba(0,0,0,0.18)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>🌐 联网搜索 Key</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); setCfgOpen(false); }}
+              style={{ border: 'none', background: '#f2f2f5', borderRadius: 8, width: 26, height: 26, cursor: 'pointer', fontSize: 13, color: '#666' }}
+            >✕</button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {(['tavily', 'exa', 'brave'] as const).map(k => (
+              <label key={k} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>{k === 'tavily' ? 'Tavily' : k === 'exa' ? 'Exa' : 'Brave Search'}
+                  <span style={{ color: '#aaa', fontWeight: 400, marginLeft: 6 }}>{state?.keys[k] ? '（已保存）' : '（未配置）'}</span>
+                </span>
+                <input
+                  type="password"
+                  placeholder="填写 API Key；留空则不修改"
+                  value={draft[k]}
+                  onChange={(e) => setDraft(d => ({ ...d, [k]: e.target.value }))}
+                  style={{ fontSize: 12, padding: '7px 9px', border: '1px solid #d9d9e4', borderRadius: 8, outline: 'none' }}
+                />
+              </label>
+            ))}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                onClick={(e) => { e.stopPropagation(); saveCfg(); }}
+                disabled={saving}
+                style={{ fontSize: 12, padding: '7px 16px', borderRadius: 8, border: 'none', background: '#0a7d4f', color: '#fff', cursor: 'pointer' }}
+              >{saving ? '保存中…' : '保存'}</button>
+              <span style={{ fontSize: 11, color: msg.startsWith('✅') ? '#288f2b' : msg.startsWith('❌') ? '#c32e2e' : '#888' }}>{msg}</span>
             </div>
-          )}
+            <div style={{ fontSize: 11, color: '#aaa', lineHeight: 1.6 }}>
+              不填也能联网（DuckDuckGo 兜底）；填 Tavily/Exa/Brave 任一生效，结果更稳更准。保存后立即生效。
+            </div>
+          </div>
         </div>
       )}
     </div>

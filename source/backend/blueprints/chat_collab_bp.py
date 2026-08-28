@@ -7877,7 +7877,7 @@ def chat_general():
             except Exception:
                 _native_p = None
 
-            for chunk in gw_stream_with_hb(gw, messages, temperature=({0: 0.7, 1: 0.5, 2: 0.3}.get(deep_think)), max_tokens=({0: 4096, 1: 6144, 2: 8192}.get(deep_think)), **_mcp_native_kwargs):
+            for chunk in gw_stream_with_hb(gw, messages, temperature=({0: 0.7, 1: 0.5, 2: 0.3}.get(deep_think)), max_tokens=({0: 8192, 1: 10240, 2: 12288}.get(deep_think)), **_mcp_native_kwargs):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
                     continue

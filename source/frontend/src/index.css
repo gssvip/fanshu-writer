@@ -2038,20 +2038,27 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   white-space: nowrap; transition: all 0.15s; touch-action: manipulation;
   text-align: center; flex-shrink: 0;
 }
-/* 电脑端（宽屏）：设定Tab维度按钮合并为一行，自动换行展示 */
+/* 电脑端（宽屏）：设定Tab 8个主维度按钮（通用/构思/规则/世界观/剧情/人物/时间线/伏笔）
+   合并为"一行均匀 8 等分"（display:contents 让两行子按钮同属一行 grid），手机端不受影响 */
 @media (min-width: 601px) {
   .smart-dim-rows {
-    flex-direction: row;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
     gap: 6px;
+    flex-direction: row;
   }
   .smart-dim-row {
+    display: contents;
     flex-wrap: wrap;
     overflow-x: visible;
     padding-bottom: 0;
   }
   .smart-dim-row .smart-dim-btn {
-    flex: 0 0 auto;
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 /* 手机端：设定Tab两行维度按钮均匀占满横向 */
