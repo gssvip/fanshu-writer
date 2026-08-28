@@ -2616,6 +2616,19 @@ export default function ChatPanel() {
               }
               return next;
             });
+          } else if (evt.type === 'card' && (evt as any).card) {
+            // 圆桌总结产出的"落地采纳建议"卡片 → 收集到本条消息 cards，前端即可采纳/编辑/忽略
+            const card = (evt as any).card as ActionCard;
+            setMessages(prev => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant') {
+                const cards = [...(last.cards || [])];
+                if (!cards.some(c => c.id === card.id)) cards.push(card);
+                next[next.length - 1] = { ...last, cards };
+              }
+              return next;
+            });
           } else if (evt.type === 'done') {
             if (evt.session_id) setChatGeneralSessionId(evt.session_id);
           }

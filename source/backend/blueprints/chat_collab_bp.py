@@ -185,7 +185,7 @@ def _rt_load_state(session):
 _RT_TOPIC_PREFIX = '圆桌会议议题：'
 
 
-def _rt_persist_messages(session, history, topic, moderator_open, done, summary=''):
+def _rt_persist_messages(session, history, topic, moderator_open, done, summary='', summary_cards=None):
     """把圆桌进度渲染成"可复盘"的消息落盘到会话 → 刷新界面不丢。
 
     幂等：每次都基于 history 里的通用历史 + 当前圆桌状态重建"圆桌块"，
@@ -211,7 +211,10 @@ def _rt_persist_messages(session, history, topic, moderator_open, done, summary=
             if isinstance(d, dict) and d.get('content'):
                 block.append({'role': 'assistant', 'content': f'【{d.get("name","")}】\n{d.get("content","")}'})
         if summary:
-            block.append({'role': 'assistant', 'content': f'【总结报告】\n{summary}'})
+            _msg = {'role': 'assistant', 'content': f'【总结报告】\n{summary}'}
+            if summary_cards:
+                _msg['cards'] = [{'status': 'pending', **c} for c in summary_cards if isinstance(c, dict)]
+            block.append(_msg)
         disp.extend(block)
         _safe_save_session_messages(session, disp)
     except Exception:
@@ -759,6 +762,13 @@ CARD_REGISTRY = {
     'APPLY_STYLE':       {'field': 'style_guide', 'mode': 'append', 'label': '文风'},
     'SAVE_CONCEPT':      {'field': 'concept', 'mode': 'append', 'label': '核心构思'},
     'SAVE_CHAPTER':      {'field': 'chapter', 'mode': 'chapter', 'label': '章节正文'},
+}
+
+# 通用聊天关键词命中的维度key → 落地卡片类型（供圆桌总结"是否采纳到各维度"用）
+_DIM_KEY_CARD = {
+    'concept': 'SAVE_CONCEPT', 'key_rules': 'SAVE_RULE', 'worldbuilding': 'SAVE_WORLDSETTING',
+    'plot_design': 'SAVE_OUTLINE_NODE', 'timeline': 'SAVE_PLOT', 'character_profiles': 'SAVE_CHARACTER',
+    'foreshadowing': 'SAVE_FORESHADOW', 'locations': 'SAVE_LOCATION', 'style_guide': 'APPLY_STYLE',
 }
 
 # 安全提取卷号：接受 dict 或 str，返回 int 或 0
@@ -8388,10 +8398,14 @@ def chat_roundtable():
 
             # 模式判定：
             #  append_mode —— 已整体完成，用户说"继续/会议继续/追加一轮"→ 追加新一轮
+            #  adjust_mode —— 已整体完成，用户发的是对结论的"自然意见/反馈"（非"继续"关键词）→ 调整阶段
+            #                 （主持确认意见→专家逐一回应意见收敛修正→出调整结论+更新可采纳卡片）
             #  resuming    —— 开会中途断连/手动停止，接着剩余回合开完既定轮数
             #  其余         —— 全新会议（两轮）
             N = len(_ROUNDTABLE_ORDER)
             append_mode = bool(is_continue and state and state.get('completed'))
+            # 已完成 + 用户发的不是"继续"关键词而是自然反馈 → 进入调整阶段，复用上次议题与讨论上下文
+            adjust_mode = bool(not is_continue and state and state.get('completed') and (topic or '').strip())
             resuming = bool(is_continue and state and state.get('active') and not state.get('completed'))
 
             if append_mode:
@@ -8411,6 +8425,54 @@ def chat_roundtable():
                 target_total = len(done) + N
                 # 立即落盘一次（刷新即可见历史），随后继续发言
                 _rt_persist_messages(session, history, topic_final, state.get('moderator_open', ''), done, '')
+            elif adjust_mode:
+                # ========== 调整阶段：作者对总结报告给出意见 → 专家逐一回应意见并收敛修正 ==========
+                state['completed'] = False
+                state['active'] = True
+                state['phase'] = 'adjust'
+                topic_final = state.get('topic') or topic
+                mod_open = state.get('moderator_open', '')
+                done = state.get('done', []) or []
+                feedback = (topic or '').strip()
+                # 把作者意见追加进讨论记录 → 后续专家发言都能读到并回应
+                discussion_history = (state.get('discussion_history') or f'【原始议题】\n{topic_final}\n\n')
+                if mod_open:
+                    discussion_history += f"\n【上次主持人开场】\n{mod_open}\n\n"
+                discussion_history += f"\n【作者意见（调整阶段）】\n{feedback}\n\n"
+                if mod_open:
+                    all_messages.append({'role': 'assistant', 'content': f"【{_MODERATOR_ROLE[0]}】\n{mod_open}"})
+                for d in done:
+                    all_messages.append({'role': 'assistant', 'content': f"【{d.get('name','')}】\n{d.get('content','')}"})
+                # 主持人开场：复述作者意见，说明本轮要重新审视并收敛修正，把场子交给专家
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator", "speaker_name": _MODERATOR_ROLE[0], "round": (1 + len(done)//N), "phase": "adjust"}}, ensure_ascii=False)}\n\n'
+                adj_system = _MODERATOR_ROLE[1] + f"""
+
+【议题】{topic_final}
+
+【作者意见】
+{feedback}
+
+【场景】这是圆桌会议总结报告出具后，作者对新结论提出了具体意见/调整方向，进入"调整阶段"。
+【任务】你现在以主持人身份开场（3-4句话）：先复述作者意见的核心点，说明本轮专家将围绕该意见重新审视并收敛修正此前结论，然后点出你最想先听哪位专家回应，把场子交给专家。不要展开论证。
+"""
+                if book_id and base_system:
+                    adj_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。\n\n" + adj_system
+                adj_system = adj_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+                adj_msgs = [{'role': 'system', 'content': _var_replace(adj_system)},
+                            {'role': 'user', 'content': f'主持人开场，议题：{topic_final}，作者意见：{feedback}'}]
+                gw_mod = LLMGateway(_bg, _kg, _mg)
+                full_parts = []
+                for f in _emit(_rt_stream_turn(gw_mod, adj_msgs, 0.6, _DIM_MAX_TOKENS), 'moderator'):
+                    yield f
+                adj_open = ''.join(full_parts)
+                all_messages.append({'role': 'assistant', 'content': f'【{_MODERATOR_ROLE[0]}】\n{adj_open}'})
+                yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator"}, ensure_ascii=False)}\n\n'
+                state['moderator_open'] = adj_open
+                state['discussion_history'] = discussion_history
+                _rt_save_state(session, db, state)
+                # 落盘一次（刷新可见历史 + 本轮作者意见）
+                _rt_persist_messages(session, history, topic_final, adj_open, done, '')
+                target_total = len(done) + N
             elif resuming:
                 # ========== 续会：沿用上次的议题与进度，接着剩余回合开会 ==========
                 topic_final = state.get('topic') or topic
@@ -8520,6 +8582,18 @@ def chat_roundtable():
 
             # ========== 总结报告 ==========
             yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator_summary", "speaker_name": "主持人·总结报告"}}, ensure_ascii=False)}\n\n'
+            # 从议题关键词识别命中维度（构思/设定/世界观/大纲/人物/剧情/伏笔/文风等）
+            _hit_dims = _detect_dim_from_text(topic_final)
+            _hit_card_types = []
+            _hit_labels = []
+            for _k, _kw in _hit_dims:
+                _ct = _DIM_KEY_CARD.get(_k)
+                if _ct and _ct in CARD_REGISTRY:
+                    _hit_card_types.append(_ct)
+                    _hit_labels.append(CARD_REGISTRY[_ct]['label'])
+            _sum_dim_note = ('；'.join(_hit_labels) if _hit_labels else '暂无明确命中')
+            _sum_dim_types = ('/'.join(_hit_card_types) if _hit_card_types else 'SAVE_CONCEPT/SAVE_RULE/SAVE_WORLDSETTING/SAVE_OUTLINE_NODE/SAVE_PLOT/SAVE_CHARACTER/SAVE_FORESHADOW/SAVE_LOCATION/APPLY_STYLE')
+
             sum_system = _MODERATOR_ROLE[1] + f"""
 
 【讨论议题】
@@ -8529,9 +8603,11 @@ def chat_roundtable():
 {discussion_history[:12000]}
 
 【总结要求】
-把两轮6位专家的讨论收束成一份清晰的总结报告，结构必须是：
+{f'''把讨论收束成一份清晰的总结报告（本次是【调整阶段】，请结合作者意见『{feedback[:120]}』，在上一版结论基础上说明：哪些做了修正、哪些维持、最终结论是否变化；「落地采纳建议」只针对调整后仍要采纳的维度）。结构必须是：
 
-# 圆桌会议总结：{topic_final[:40]}
+# 圆桌会议调整结论：{topic_final[:40]}''' if adjust_mode else f'''把讨论收束成一份清晰的总结报告，结构必须是：
+
+# 圆桌会议总结：{topic_final[:40]}'''}
 
 ## 核心共识
 列出大家都同意的结论，每条一句话
@@ -8544,11 +8620,22 @@ def chat_roundtable():
 2. 次优先改什么
 3. ...
 
+## 落地采纳建议（是否采纳到各维度）
+结合讨论结论，逐条给出本话题若落地应"要不要采纳"进哪些创作维度，每条格式：
+- 维度：人物 / 大纲 / 世界观 / 剧情 / 伏笔 / 文风 / 设定 / 构思 / 地图……
+- 结论：一两句说清该维度应做什么调整或新增
+- 是否采纳：直接写"建议采纳"/"有条件采纳"/"暂不采纳"，并一句话说明理由
+
 ## 最终结论
 一句话给作者拍板：这个点子能不能打，核心优势在哪，最大短板在哪
 
 严格按这个结构输出，用markdown标题分级，结论要明确，别模棱两可。
+
+【落地采纳建议的书写要求】
+"落地采纳建议"小节除上述格式外，每条必须写"是否采纳"（建议采纳/有条件采纳/暂不采纳）；本小节用纯中文 markdown 输出，不要出现 [[CARD:...]] 这类标记，卡片另由系统整理。
+本次议题已识别相关维度：{_sum_dim_note}
 """
+
             if book_id and base_system:
                 sum_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。总结请以落地资料为准。\n\n" + sum_system
             sum_system = sum_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
@@ -8563,6 +8650,36 @@ def chat_roundtable():
             all_messages.append({'role': 'assistant', 'content': f'【总结报告】\n{sum_content}'})
             yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator_summary"}, ensure_ascii=False)}\n\n'
 
+            # ========== 单独整理"落地采纳建议卡片"（不进讨论气泡，作为可采纳的 ActionCard 下发） ==========
+            sum_cards = []
+            try:
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "正在整理可落地的采纳建议…"}}, ensure_ascii=False)}\n\n'
+                _card_sys = _MODERATOR_ROLE[1] + f"""
+
+【任务】根据下面的圆桌会议总结，把"落地采纳建议"小节里判定为「建议采纳/有条件采纳」的维度整理成可落地的 Action Card。
+
+【输出格式】只输出卡片标记，禁止一切解释/前言/后记，一个维度一张，格式严格如下：
+[[CARD:卡片类型|标题|具体内容]]
+
+【卡片类型对照】SAVE_CONCEPT=构思, SAVE_RULE=设定, SAVE_WORLDSETTING=世界观, SAVE_OUTLINE_NODE=大纲, SAVE_PLOT=剧情, SAVE_CHARACTER=人物, SAVE_FORESHADOW=伏笔, SAVE_LOCATION=地图, APPLY_STYLE=文风
+【内容要求】卡片内容必须具体、可直接写入对应维度（如"采纳到人物"就写清楚姓名/性格/动机等）；拿不准的维度宁可不产，少于一行不要产。
+"""
+                _card_msg = [{'role': 'system', 'content': _var_replace(_card_sys)},
+                             {'role': 'user', 'content': sum_content[:8000]}]
+                _card_full = []
+                for _tk, _tp in _rt_stream_turn(gw_sum, _card_msg, 0.3, 2048):
+                    if _tk == 'body':
+                        _card_full.append(_tp)
+                _card_txt = ''.join(_card_full) or ''
+                sum_cards = parse_cards(_card_txt)
+            except Exception:
+                sum_cards = []
+            # 下发卡片；顺带清理总结正文里可能残留的卡片标记
+            for _card in sum_cards:
+                yield f'data: {json.dumps({"type": "card", "card": _card, "session_id": session_id}, ensure_ascii=False)}\n\n'
+            sum_content = strip_cards(sum_content or '').strip()
+            all_messages[-1]['content'] = f'【总结报告】\n{sum_content}'
+
             # 落盘 + 标记会议完成（保留全量进度，供其后再"继续/追加一轮"）
             state['completed'] = True
             state['phase'] = 'done'
@@ -8570,7 +8687,7 @@ def chat_roundtable():
 
             # 把整场（含追加轮）的可复盘消息落盘 → 刷新界面不丢
             _mod_open = state.get('moderator_open', '') if isinstance(state, dict) else ''
-            _rt_persist_messages(session, history, topic_final, _mod_open, done, sum_content)
+            _rt_persist_messages(session, history, topic_final, _mod_open, done, sum_content, summary_cards=sum_cards)
 
             full_discussion = [
                 {'speaker': m.get('content', '').split('】')[0].split('【')[-1] if m.get('role') == 'assistant' else '', 'content': m.get('content', '')}
