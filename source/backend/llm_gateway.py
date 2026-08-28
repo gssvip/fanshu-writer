@@ -291,6 +291,9 @@ _KNOWN_OUTPUT_LIMITS = {
     'claude-3-7-sonnet': 64000, 'claude-sonnet-4': 64000, 'claude-opus-4': 32000,
     # Google
     'gemini-2.5-pro': 65536, 'gemini-2.5-flash': 65536, 'gemini-2.0-flash': 8192,
+    # 智谱 GLM（5.x 最大输出 131072；4.x 较低——不在此列的 GLM 靠 400 自学习）
+    'glm-5.3': 131072, 'glm-5.3-flash': 131072, 'glm-5.2': 131072,
+    'glm-5': 131072, 'glm-5-turbo': 131072,
 }
 
 # (base_url, model) → 报错学到的输出上限（进程级缓存，重启后首跑自学习一次）

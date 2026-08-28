@@ -48,11 +48,12 @@ from session_persist import (
 
 
 # ============================================================================
-# 2026-08-21 按用户要求统一上调至 27000（宁可给足不留截断），不再区分维度档位；
-# 模型实际输出上限低于 27000 时由 llm_gateway 自动适配：已知模型表预钳制 +
-# 400 报错解析真实上限自学习（见 llm_gateway._KNOWN_OUTPUT_LIMITS）。
+# max_tokens 按模型能力"给足"：统一取 _DIM_MAX_TOKENS（智谱 GLM-5.x 最大输出 131072，
+# 也覆盖了 gpt-5/o1/claude 等大输出模型）。真正的"按能力不限"由 llm_gateway 落地：
+# 已知模型表预钳制（deepseek-chat→8192、deepseek-reasoner→65536…）+ 400 报错自学习
+# 真实上限，最终 max_tokens = min(本常量, 模型真实上限)，既不截断也不越界。
 # ============================================================================
-_DIM_MAX_TOKENS = 27000
+_DIM_MAX_TOKENS = 131072
 
 # 深度思考的思考标记：deep_think>=1 时系统提示让模型把推演过程写在标记内，
 # 前端用独立 reasoning 面板展示，正文/卡片/落盘均剥离（不参与复制/采纳）。
@@ -138,7 +139,7 @@ def _native_reasoning_kwargs(model: str, deep_think: int) -> dict:
 
 
 def _dim_max_tokens(dim_key: str) -> int:
-    """维度生成 max_tokens（用户要求统一 27000，防任何维度截断）。"""
+    """维度生成 max_tokens（按模型能力给足 _DIM_MAX_TOKENS，防任何维度截断）。"""
     return _DIM_MAX_TOKENS
 
 
@@ -5585,9 +5586,9 @@ def smart_generate():
                 if _attempt == 0:
                     _max_tok = max_tok
                 elif _last_fc_truncated:
-                    _max_tok = 27000  # 截断类失败（思考耗尽 token）重试直接顶满，渐进 1.5x 不够思考消耗
+                    _max_tok = _DIM_MAX_TOKENS  # 截断类失败（思考耗尽 token）重试直接顶满，渐进 1.5x 不够思考消耗
                 else:
-                    _max_tok = min(int(max_tok * (1.5 if _attempt == 1 else 2)), 27000)
+                    _max_tok = min(int(max_tok * (1.5 if _attempt == 1 else 2)), _DIM_MAX_TOKENS)
                 # 第 2 次起进"精简模式"：截断过长 system/铁律，防 prompt 溢出 → 模型拒答吐空
                 _msgs_for_this_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key) if _attempt >= 1 else cur_messages
                 try:
@@ -5845,9 +5846,9 @@ def smart_dim_edit():
                 _temp = 0.7 + min(_attempt * 0.08, 0.2)
                 _max_tok = max_tok
                 if _attempt == 1:
-                    _max_tok = min(int(max_tok * 1.5), 27000)
+                    _max_tok = min(int(max_tok * 1.5), _DIM_MAX_TOKENS)
                 elif _attempt >= 2:
-                    _max_tok = min(int(max_tok * 2), 27000)
+                    _max_tok = min(int(max_tok * 2), _DIM_MAX_TOKENS)
                 _msgs_call = cur_messages
                 if _attempt >= 1:
                     _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
@@ -6089,9 +6090,9 @@ def smart_batch():
                         _temp = 0.7 + min(_attempt * 0.08, 0.2)
                         _max_tok = max_tok
                         if _attempt == 1:
-                            _max_tok = min(int(max_tok * 1.5), 27000)
+                            _max_tok = min(int(max_tok * 1.5), _DIM_MAX_TOKENS)
                         elif _attempt >= 2:
-                            _max_tok = min(int(max_tok * 2), 27000)
+                            _max_tok = min(int(max_tok * 2), _DIM_MAX_TOKENS)
                         _msgs_call = cur_messages
                         if _attempt >= 1:
                             _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim=dim_key)
@@ -6379,9 +6380,9 @@ def smart_deai():
                 _temp = 0.5 + min(_attempt * 0.08, 0.2)
                 _max_tok = max_tok
                 if _attempt == 1:
-                    _max_tok = min(int(max_tok * 1.5), 27000)
+                    _max_tok = min(int(max_tok * 1.5), _DIM_MAX_TOKENS)
                 elif _attempt >= 2:
-                    _max_tok = min(int(max_tok * 2), 27000)
+                    _max_tok = min(int(max_tok * 2), _DIM_MAX_TOKENS)
                 _msgs_call = cur_messages
                 if _attempt >= 1:
                     _msgs_call = _downgrade_prompt_for_retry(cur_messages, keep_dim='chapter_deai')
@@ -7979,8 +7980,10 @@ def chat_general():
             except Exception:
                 pass
 
-            # 通用聊天 max_tokens 不限、按模型能力：给足 _DIM_MAX_TOKENS(27000)，
-            # 交由 llm_gateway._effective_max_tokens 按模型已知/自学习输出上限钳制，不再按 deep_think 分档缩小。
+            # 通用聊天 max_tokens 按模型能力"不限"：给足 _DIM_MAX_TOKENS(131072)，
+            # 交由 llm_gateway._effective_max_tokens 按模型已知/自学习输出上限钳制（deepseek→8192、
+            # glm-5.3→131072…），不再按 deep_think 分档缩小；思考型模型正文为空时还有
+            # chat_stream 的"思考耗尽自动翻倍 max_tokens"兜底。
             # emit_reasoning=True：思考文本以 SSE meta(kind=reasoning) 单独推前端（可展开看，不混正文）。
             # 【思考切分】deep_think>=1 时额外用 _ThinkingSplitter 把提示词式"【推理】…【推理结束】"
             # 包裹的思考从正文剥离展示；与原生 reasoning_content 两条路径并存，结果 content/卡片/落盘均不含思考。
