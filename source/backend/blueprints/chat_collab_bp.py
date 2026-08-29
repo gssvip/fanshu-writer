@@ -838,6 +838,51 @@ def _rt_parse_create_dims(text: str):
     return hit  # 可能为空列表（命中创作意图但没识别出具体维度 → 由调用方按"全部"兜底）
 
 
+def _rt_general_dim_request(text: str):
+    """通用聊天自然语：识别"明确要求生成某维度"的指令。
+
+    与 _rt_parse_create_dims（圆桌"按讨论结果创作")不同，这里是通用聊天里作者直接用自然语要求
+    生成某一维度长内容（"帮我生成世界观/主角/大纲/伏笔/文风…"）。命中返回目标维度 key 列表。
+    - 明确要求"全部/所有维度" → 返回全部核心维度
+    - 命中具体维度关键词 → 只返回匹配的
+    - 非明确生成指令 → 返回 None（走普通聊天，不注入维度格式，避免打断闲聊）
+    """
+    t = (text or '').strip()
+    if not t or len(t) < 3:
+        return None
+    # 必须有"生成/创作/写...设定/内容/维度"等明确动作词 + 一个维度目标，才是明确生成指令
+    _act = re.search(r'(?:帮我|请|替我|为(?:我|这本书))?\s*(?:生成|创作|产出|起草|草拟|制定|编排|设计|写|建立|搭|规划|形成|整理)?\s*(?:一份|一套|一个)?\s*(?:完整的|详细的|全面的)?', t)
+    if not _act:
+        return None
+    # 动作词必须确凿（常见 AI 违例词首字符）——否则如"帮我看看"不触发
+    if not re.search(r'(?:生成|创作|产出|起草|草拟|制定|编排|设计|建立|搭|规划|形成|整理)\s*(?:一份|一套|一个|完整的|详细的|全面的)?', t):
+        return None
+    # 明确"全部/所有维度"
+    if re.search(r'(?:全部|所有|各|多|一系列|整\s*套)\s*(?:维度|设定|内容|方案)', t):
+        return list(_RT_CREATE_ALL)
+    # 具体维度关键词（从强到弱，取命中数最多/最高置信）
+    kw_map = [
+        ('concept', r'(?:核心?构思|创意|logline|卖点|一句话(?:故事|梗))'),
+        ('key_rules', r'(?:核心规则|核心设定|力量体系|规则|设定)'),
+        ('worldbuilding', r'(?:世界观|世界设定|世界背景|世界架构)'),
+        ('character_profiles', r'(?:人物档案|人物设定|人物|角色|主角|配角|反派)'),
+        ('plot_design', r'(?:全书大纲|剧情大纲|大纲|分卷大纲)'),
+        ('timeline', r'(?:剧情线|时间线|情节|卷剧情|剧情)'),
+        ('foreshadowing', r'(?:伏笔|埋线|伏?笔)'),
+        ('locations', r'(?:地点|地图|区域|场景设定|地理)'),
+        ('style_guide', r'(?:文风|行文风格|写作风格|叙事风格|语言风格|文风指南)'),
+    ]
+    # 若动作目标是"维度"但用户直接说"生成世界观/写男主"这类（维度词紧跟动作词且无额外话题）→ 命中
+    hit = []
+    for k, pat in kw_map:
+        if re.search(pat, t):
+            if k not in hit:
+                hit.append(k)
+    if not hit:
+        return None
+    return hit  # 明确生成指令且命中具体维度 → 返回
+
+
 def _rt_create_dimension_system(dim_key: str, book, iron: str, consensus: str, existing: str) -> str:
     """构造圆桌"创作模式"某维度的 system prompt。
 
@@ -8137,6 +8182,37 @@ def chat_general():
                        "然后给出简明可用的结论。")
         system_prompt = system_prompt.rstrip() + "\n\n" + _banner
     messages = [{'role': 'system', 'content': system_prompt}]
+    # 【通用聊天·明确指令生成维度】作者用自然语明确要求"生成/创作某维度"时，
+    # 按该维度的完整格式铁律（与对应维度生成的要求一致）产出长内容 + 标准 CARD 卡片（可采纳落地）。
+    # 仅命中明确指令且已绑定作品才注入（未绑定作品无落库对象，就不打断普通聊天）。
+    _gen_dim_list = _rt_general_dim_request(message) if book_id else None
+    if _gen_dim_list:
+        try:
+            _gh_bb = BookBible.query.filter_by(book_id=book_id).first() if book_id else None
+        except Exception:
+            _gh_bb = None
+        _gh_extra = []
+        for _dk in _gen_dim_list:
+            _gh_sys = _rt_create_dimension_system(_dk, book, '', '', '')
+            # 去掉圆桌"共识取材"措辞，换成通用聊天的"按作者要求直接创作"
+            _gh_sys = _gh_sys.replace('现在要根据一场"圆桌专家讨论"得出的共识', '现在要根据作者的明确要求')
+            _gh_sys = _gh_sys.replace('必须以圆桌共识为唯一取材依据', '必须按下列维度的完整格式、直接创作出具体可落地的内容')
+            _gh_extra.append(_gh_sys)
+        _dim_label = '、'.join(_RT_CREATE_DIMS.get(_dk, [_dk, ''])[0] for _dk in _gen_dim_list)
+        _instr = (
+            f"\n\n================================\n【本轮为维度生成任务】作者要求生成：{_dim_label}。\n"
+            "你只需严格按下面指定维度的完整格式要求，输出该维度的一份完整、具体、可直接写入设定库的长内容。\n"
+            "输出完成后，**在回复末尾追加一张落地卡片**，格式严格为：\n"
+            "[[CARD:卡片类型|标题|该维度的完整内容]]\n"
+            "卡片类型从这些里面选：SAVE_CONCEPT/SAVE_RULE/SAVE_WORLDSETTING/SAVE_CHARACTER/"
+            "SAVE_OUTLINE_NODE/SAVE_PLOT/SAVE_FORESHADOW/SAVE_LOCATION/APPLY_STYLE。\n"
+            "正文给作者展示可读的排版版本，卡片放完整内容（两者内容一致）。\n"
+        )
+        for _dk in _gen_dim_list:
+            _ct = _RT_CREATE_DIMS.get(_dk, (_dk, 'SAVE_CONCEPT'))[1]
+            _instr += f"\n\n---------------【{_RT_CREATE_DIMS.get(_dk,(_dk,''))[0]}·完整格式要求】---------------\n" + _gh_extra[_gen_dim_list.index(_dk)]
+        system_prompt = system_prompt.rstrip() + _instr
+        messages[0]['content'] = system_prompt
     messages.extend(trimmed)
     messages.append({'role': 'user', 'content': enriched[:8000]})
 
@@ -8523,8 +8599,17 @@ def chat_roundtable():
                     yield f'data: {json.dumps({"type": "delta", "speaker": speaker_id, "content": _pay}, ensure_ascii=False)}\n\n'
 
         try:
-            # 首帧meta：告诉前端这是圆桌模式
-            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_start", "info": {"rounds": 2, "speakers": len(_ROUNDTABLE_ORDER)}}, ensure_ascii=False)}\n\n'
+            N = len(_ROUNDTABLE_ORDER)
+            default_rounds = 2
+            # 【轮数可配】解析作者本轮要求的讨论轮数（如"讨论3轮"/"开4轮"/"谈个5轮"）。
+            # 未命中则按默认(2轮)；命中则「全新会议」首轮按 {轮数}×6位专家 开完。
+            _round_req = None
+            _rm = re.search(r'(?:讨论|开会|开|谈|聊|辩|进行)\s*([1-9]\d?)\s*(?:轮|圈|回合)', topic)
+            if _rm:
+                _round_req = int(_rm.group(1))
+            # 首帧meta：告诉前端这是圆桌模式（rounds 反映实际轮数：默认2轮；作者指定则按指定值）
+            _hint_rounds = (_round_req if _round_req else default_rounds)
+            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_start", "info": {"rounds": _hint_rounds, "speakers": N}}, ensure_ascii=False)}\n\n'
 
             is_continue = _is_rt_continue(topic)
             state = _rt_load_state(session)
@@ -8538,7 +8623,6 @@ def chat_roundtable():
             #                 （主持确认意见→专家逐一回应意见收敛修正→出调整结论+更新可采纳卡片）
             #  resuming    —— 开会中途断连/手动停止，接着剩余回合开完既定轮数
             #  其余         —— 全新会议（两轮）
-            N = len(_ROUNDTABLE_ORDER)
             # 【创作模式】作者要求"按讨论结果创作各维度/某维度" → 直接产出可采纳卡片
             _create_dims = _rt_parse_create_dims(topic) if (state and state.get('completed')) else None
             create_mode = bool(_create_dims is not None)
@@ -8729,7 +8813,8 @@ def chat_roundtable():
                 _rt_save_state(session, db, state)
                 # 开场即落盘消息 → 刷新界面能看到开场
                 _rt_persist_messages(session, history, topic_final, mod_content, [], '')
-                target_total = 2 * N
+                # 【轮数可配】全新会议：默认2轮；作者明确要求则按作者指定轮数（如"讨论3轮"→3×6位专家）
+                target_total = (_round_req if _round_req else default_rounds) * N
 
             # ========== 讨论：从断点/开头继续，按 target_total 轮×6位依次发言 ==========
             done_count = len(done)

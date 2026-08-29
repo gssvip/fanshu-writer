@@ -28,13 +28,7 @@ const __BUILD_TAG__ = 'v3-0814';
 
 type SmartTab = 'setting' | 'chapter' | 'deai' | 'review';
 
-// 命中维度提示（通用聊天模式）类型定义
-interface HitSuggestion {
-  id?: string;
-  dim: string; label: string; card_type: string; confidence: number;
-  hits: string[]; suggested_title: string;
-  quick_fill?: string;
-}
+
 
 // 维度定义（与后端 SMART_DIMENSIONS 对齐）
 interface DimSpec {
@@ -1262,13 +1256,6 @@ export default function ChatPanel() {
   // 系统学习面板折叠（默认收起 → 只占一行高度）
   const [showOptReport, setShowOptReport] = useState(false);
 
-  // ──────── 通用对话Tab专属state（命中维度气泡） ────────
-  // 命中维度提示气泡：接收到 hit_suggestions meta 时弹出
-  const [hitSuggestionPopups, setHitSuggestionPopups] = useState<Array<{
-    id: string; msg_index: number; suggestions: HitSuggestion[];
-  }>>([]);
-  // 命中气泡「📦入库」按钮落卡loading：key=popId+dim，避免重复点/多按钮同时落卡
-  const [applyingHitKey, setApplyingHitKey] = useState<string | null>(null);
   // Q2 合并：事件日志重算（原先在工具栏浮层，现在合并进「校审」Tab 子面板）
   // 通用聊天专用会话ID（与设定Tab其他维度session隔离，避免串session/记忆丢失）
   // 根因：原代码传sessionId:undefined→后端每次新建会话→聊天记忆完全丢失；若复用全局sessionId，会跟其他维度（构思/设定/正文创作）会话互相覆盖导致混乱
@@ -2702,9 +2689,6 @@ export default function ChatPanel() {
     setStreaming(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-    // 命中气泡：挂在用户消息之后（msg_index = 倒数第2条=这条用户消息）
-    const insertedPopupIndex = { idx: -1 };
-    setMessages(prev => { insertedPopupIndex.idx = prev.length - 2; return prev; });
     try {
       // 修复：传 chatGeneralSessionId（通用聊天专用），不传 undefined → 否则后端每次新建会话=记忆全丢（用户投诉：通用比普通CHATBOX差远了，没记忆没上下文）
       // P1-1 会话级切模型 + P1-3 内置角色 persona → 一并传通用聊天
@@ -2732,51 +2716,8 @@ export default function ChatPanel() {
             }
           }
         }
-        // 命中创作维度 → 气泡提示一键入库
-        if (kind === 'hit_suggestions' && Array.isArray(info?.suggestions) && info.suggestions.length > 0) {
-          const popId = 'hit-' + Math.random().toString(36).slice(2, 9);
-          // 映射校正：后端hit_suggestions可能返回非正式ctype（'setting'/'worldview'/'concept'/'key_rules'/'character'），统一转CARD_REGISTRY合法值
-          const normalized = (info.suggestions as Array<any>).map((s, i) => {
-            const rawDim = String(s.dim || s.label || 'concept').trim().toLowerCase();
-            const dimShort = rawDim.replace(/^save_/, '');
-            let mappedCard = s.card_type || '';
-            let mappedDim = s.dim || dimShort;
-            let mappedLabel = s.label || s.dim || '创作内容';
-            if (dimShort.includes('worldview') || dimShort.includes('world') || s.card_type === 'SAVE_WORLDSETTING') {
-              mappedCard = 'SAVE_WORLDSETTING'; mappedDim = 'worldview'; mappedLabel = '世界观';
-            } else if (dimShort.includes('setting') || dimShort === '设定' || dimShort.includes('设定')) {
-              mappedCard = 'SAVE_SETTING'; mappedDim = 'setting'; mappedLabel = '设定';
-            } else if (dimShort.includes('concept') || dimShort.includes('构思') || s.card_type === 'SAVE_CONCEPT') {
-              mappedCard = 'SAVE_CONCEPT'; mappedDim = 'concept'; mappedLabel = mappedLabel || '构思';
-            } else if (dimShort.includes('key_rule') || dimShort.includes('规则') || s.card_type === 'SAVE_RULE') {
-              mappedCard = 'SAVE_RULE'; mappedDim = 'key_rules'; mappedLabel = mappedLabel || '核心规则';
-            } else if (dimShort.includes('character') || dimShort.includes('人物') || s.card_type === 'SAVE_CHARACTER') {
-              mappedCard = 'SAVE_CHARACTER'; mappedDim = 'character_profiles'; mappedLabel = mappedLabel || '人物';
-            } else if (dimShort.includes('foreshadow') || dimShort.includes('伏笔') || s.card_type === 'SAVE_FORESHADOW') {
-              mappedCard = 'SAVE_FORESHADOW'; mappedDim = 'foreshadowing'; mappedLabel = mappedLabel || '伏笔';
-            } else if (dimShort.includes('plot') || dimShort.includes('剧情') || s.card_type === 'SAVE_PLOT') {
-              mappedCard = 'SAVE_PLOT'; mappedDim = 'timeline'; mappedLabel = mappedLabel || '剧情';
-            } else if (dimShort.includes('outline') || dimShort.includes('大纲') || s.card_type === 'SAVE_OUTLINE_NODE') {
-              mappedCard = 'SAVE_OUTLINE_NODE'; mappedDim = 'plot_design'; mappedLabel = mappedLabel || '大纲';
-            } else if (dimShort.includes('location') || dimShort.includes('地点') || s.card_type === 'SAVE_LOCATION') {
-              mappedCard = 'SAVE_LOCATION'; mappedDim = 'locations'; mappedLabel = mappedLabel || '地点';
-            } else if (dimShort.includes('style') || dimShort.includes('文风') || s.card_type === 'APPLY_STYLE') {
-              mappedCard = 'APPLY_STYLE'; mappedDim = 'style_guide'; mappedLabel = mappedLabel || '文风';
-            }
-            if (!mappedCard) mappedCard = 'SAVE_CONCEPT';
-            return {
-              id: s.id || ('hit-sug-' + i + '-' + Date.now()),
-              dim: mappedDim,
-              label: mappedLabel,
-              card_type: mappedCard,
-              confidence: typeof s.confidence === 'number' ? s.confidence : 0.85,
-              hits: Array.isArray(s.hits) && s.hits.length > 0 ? s.hits : [mappedLabel + '内容命中'],
-              suggested_title: s.suggested_title || s.title || ('📦 ' + mappedLabel + '落卡'),
-              quick_fill: s.quick_fill || s.content || s.text || '',
-            } as HitSuggestion;
-          });
-          setHitSuggestionPopups(prev => [...prev, { id: popId, msg_index: insertedPopupIndex.idx, suggestions: normalized }]);
-        }
+        // 命中创作维度的 meta_json 不做前端气泡处理（顶部命中选择按钮已移除）
+        // 通用聊天命中维度改由后端按对应维度的完整格式直接产出 CARD 卡片，可采纳落地。
       }, false, (freshSid: string) => {
         // 新建会话 → 把预会话里的模型/角色迁移到真实sid下，然后清除预会话占位
         if (freshSid && freshSid !== chatGeneralSessionId) {
@@ -2978,127 +2919,6 @@ export default function ChatPanel() {
 
               {activeTab === 'setting' && (
                 <>
-                  {selectedDim === 'general' && hitSuggestionPopups.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 8px' }}>
-                      {hitSuggestionPopups.map(pop => (
-                        <div key={pop.id} className="auto-context-notice" style={{ borderRadius: 6, margin: 0 }} onClick={() => setHitSuggestionPopups(prev => prev.filter(x => x.id !== pop.id))}>
-                          <span className="acn-icon">💡</span>
-                          <span className="acn-text">
-                            <strong>命中：</strong>
-                            {pop.suggestions.map((s: HitSuggestion, i: number) => (
-                              <span key={s.dim + i} style={{ marginLeft: 6, background: '#fff7ed', color: '#c2410c', padding: '1px 6px', borderRadius: 999, fontSize: 12 }}>
-                                {s.label} {Math.round(s.confidence * 100)}%
-                              </span>
-                            ))}
-                          </span>
-                          <span className="acn-close" style={{ marginLeft: 8, padding: '0 6px', fontSize: 12 }}>×</span>
-                        </div>
-                      ))}
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {hitSuggestionPopups.flatMap(pop => pop.suggestions.map((s: HitSuggestion) => {
-                          const hitKey = pop.id + '-' + s.dim + '-' + (s.id || Math.random().toString(36).slice(2,7));
-                          const applying = applyingHitKey === hitKey;
-                          return (
-                            <button
-                              key={hitKey}
-                              className="btn-sm"
-                              style={{ fontSize: 12, opacity: applying ? 0.7 : 1, minWidth: 140 }}
-                              disabled={applying || !bookId}
-                              onClick={async () => {
-                                if (!bookId || applying) return;
-                                if (!s.quick_fill || !String(s.quick_fill).trim()) {
-                                  setMessages(prev => {
-                                    const next = [...prev];
-                                    next.push({
-                                      role: 'assistant',
-                                      content: '❌ 命中气泡缺少可落卡的填充内容(quick_fill为空)：请回到通用聊天区，重新生成方案/命中创作内容后再试。',
-                                      cards: [],
-                                    });
-                                    return next;
-                                  });
-                                  setHitSuggestionPopups(prev => prev.filter(x => x.id !== pop.id));
-                                  return;
-                                }
-                                setApplyingHitKey(hitKey);
-                                const cardId = 'gen-' + Math.random().toString(36).slice(2, 10);
-                                const realCard = {
-                                  id: cardId,
-                                  type: s.card_type,
-                                  title: s.suggested_title || ('📦 ' + s.label + '落卡'),
-                                  content: s.quick_fill,
-                                  target: s.label,
-                                  status: 'adopted',
-                                };
-                                try {
-                                  // 命中气泡落卡：优先用chatGeneralSessionId（通用聊天专用会话，保证落卡记忆写入正确的session，供下一轮LLM"记得已经落过卡"），
-                                  // 否则退化到全局sessionId（其他维度场景兼容）
-                                  const effectiveSessionId = chatGeneralSessionId || sessionId;
-                                  const r = await api.applyChatCard(bookId, realCard as any, effectiveSessionId ?? undefined);
-                                  // 成功后刷新维度内容：Bible + 进度地图
-                                  try { api.getBible(bookId).then(b => { if (b) setBible(b); }).catch(() => {}); } catch {}
-                                  try { api.getProgressMap(bookId).then(p => { if (p) { setProgress(p); setShowProgress(true); setTimeout(() => setShowProgress(false), 2800); } }).catch(() => {}); } catch {}
-                                  // 自动切 Tab + 选中对应子维度 → 真正打通"通用聊天→采纳→维度面板"工作流闭环
-                                  setActiveTab('setting');
-                                  const ct = String(s.card_type || '').toUpperCase();
-                                  let targetDim: string | null = null;
-                                  if (ct === 'SAVE_WORLDSETTING') targetDim = 'worldbuilding';
-                                  else if (ct === 'SAVE_SETTING' || ct === 'SAVE_CONCEPT') targetDim = 'concept';
-                                  else if (ct === 'SAVE_RULE') targetDim = 'key_rules';
-                                  else if (ct === 'SAVE_CHARACTER') targetDim = 'character_profiles';
-                                  else if (ct === 'SAVE_FORESHADOW') targetDim = 'foreshadowing';
-                                  else if (ct === 'SAVE_PLOT') targetDim = 'timeline';
-                                  else if (ct === 'SAVE_OUTLINE_NODE') targetDim = 'plot_design';
-                                  else if (ct === 'SAVE_LOCATION') targetDim = 'locations';
-                                  else if (ct === 'APPLY_STYLE') targetDim = 'style_guide';
-                                  else targetDim = 'concept';
-                                  if (targetDim) {
-                                    setSelectedDim(targetDim);
-                                    setSuggestions([]);
-                                    setSelectedSuggestion(null);
-                                  }
-                                  // 聊天区留痕：插一张"✅ 已采纳落卡成功"的折叠卡片（显示 AdoptedCardCollapsed 绿条）
-                                  setMessages(prev => {
-                                    const next = [...prev];
-                                    const afterIndex = pop.msg_index + 1;
-                                    const successBody = [
-                                      `✅ 已采纳落卡成功 → 已自动切到【${s.label}】子维度，可在上方面板直接查看/编辑刚写入的完整内容`,
-                                      '',
-                                      `📌 落地进度：整体 ${r?.progress?.overall ?? '--'}%（${r?.progress?.filled ?? '-'}/${r?.progress?.total ?? '-'} 维度完善）`,
-                                      '',
-                                      '【落卡字段】',
-                                      s.quick_fill,
-                                    ].join('\n');
-                                    const adoptedCard = { ...realCard, content: successBody, status: 'adopted' as const };
-                                    if (next[afterIndex]?.role === 'assistant') {
-                                      next[afterIndex] = { ...next[afterIndex], cards: [...(next[afterIndex].cards || []), adoptedCard as any] };
-                                    } else {
-                                      next.splice(afterIndex, 0, { role: 'assistant', content: '', cards: [adoptedCard as any] });
-                                    }
-                                    return next;
-                                  });
-                                  setHitSuggestionPopups(prev => prev.filter(x => x.id !== pop.id));
-                                  setInput('');
-                                } catch (e: any) {
-                                  const err = (e?.message || e?.error || String(e || '')).trim() || '未知错误';
-                                  setMessages(prev => {
-                                    const next = [...prev];
-                                    next.push({
-                                      role: 'assistant',
-                                      content: '❌ 落卡失败：' + err,
-                                      cards: [],
-                                    });
-                                    return next;
-                                  });
-                                } finally {
-                                  setApplyingHitKey(prevKey => (prevKey === hitKey ? null : prevKey));
-                                }
-                              }}
-                            >{applying ? '落卡中…' : `📦 以「${s.label}」入库`}</button>
-                          );
-                        }))}
-                      </div>
-                    </div>
-                  )}
                   {/* 维度子按钮栏 + 助手选择器（手机端可折叠） */}
                   <div className="smart-dim-collapsible" data-collapsed={dimRowsCollapsed}>
                   {/* 维度子按钮栏：两行（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔） */}
@@ -3109,7 +2929,7 @@ export default function ChatPanel() {
                         onClick={() => {
                           // 切到【通用】子维度 = 清空消息/气泡/任务（独立会话池，和其他维度互不干扰）
                           setSelectedDim('general'); setSuggestions([]); setSelectedSuggestion(null); setInput('');
-                          setMessages([]); setHitSuggestionPopups([]); setAutoContextNotice(null); setFixTasks([]); setStreamError('');
+                          setMessages([]); setAutoContextNotice(null); setFixTasks([]); setStreamError('');
                         }}
                         disabled={streaming || loadingSuggest}
                         title="通用聊天：自由讨论任何话题，命中创作关键词自动提示一键入库。自然语言直接说需求即可。"
