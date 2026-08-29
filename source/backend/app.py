@@ -10223,8 +10223,11 @@ def ai_outline_volume(book_id):
         main_events_block = '\n'.join(_me_lines) if _me_lines else '（本卷尚未按新结构生成主要剧情事件，将基于旧的关键事件设计子节点）'
 
                 # 共享系统提示词（不含按事件拆分的细节，各事件共享）
-        _per_event_node_count = 4 if len(existing_main_events) >= 7 else 5
-        _per_event_node_max = 8 if len(existing_main_events) >= 7 else 10
+        # 【P2修复】收紧单事件节点数：缩小单次 LLM 输出体量，避免超长输出导致 LLM 上游 504。
+        # 原来"4-10/8 个节点 + 详尽6要素+埋收"的超长 JSON 单次推理过久，上游必然超时。
+        # 压缩到 3-5 个，单次请求轻量，能稳定返回（后端按需补足总章节数，不影响覆盖）。
+        _per_event_node_count = 3 if len(existing_main_events) >= 7 else 4
+        _per_event_node_max = 5 if len(existing_main_events) >= 7 else 6
         shared_system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
 任务：为第 {volume_index} 卷“{volume_title}”的一个主要剧情事件（main_event）生成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点（nodes）。
 - 主要事件 ≤ 6 个 → 每个拆 5-10 个
@@ -10355,7 +10358,7 @@ def ai_outline_volume(book_id):
 
         import threading
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        _sema = threading.Semaphore(3)  # 同时最多 3 个 LLM 请求，避免并发限流
+        _sema = threading.Semaphore(2)  # 【P2】降为 2 路并发，降低同时打爆 LLM 上游的 504 风险
 
         def _gen_event_worker(_alloc):
             # 【P1修复】worker 线程无 Flask app context，_call_llm 内 AIConfig.get_active()
@@ -10383,7 +10386,7 @@ def ai_outline_volume(book_id):
                     # 按剩余总预算决定本事件可用时长：剩余越少，重试越少、单次超时越短
                     _remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
                     _ev_retry = 3 if _remain > 180 else (1 if _remain > 90 else 0)
-                    _ev_timeout = min(300, max(30, _remain // 2))
+                    _ev_timeout = min(80, max(30, _remain // 2))
                     _content, _err = _call_llm(
                         [{'role': 'system', 'content': shared_system_prompt},
                          {'role': 'user', 'content': _per_event_user}],
@@ -10408,7 +10411,7 @@ def ai_outline_volume(book_id):
         # 保证整个接口总时长 < 前端 300s 超时，杜绝 504。
         import time as _deadline_time
         _wall_deadline = _deadline_time.monotonic() + 250  # 300s 预算留 50s 余量
-        with ThreadPoolExecutor(max_workers=min(3, len(_evt_alloc))) as _ex:
+        with ThreadPoolExecutor(max_workers=min(2, len(_evt_alloc))) as _ex:
             _futures = {_ex.submit(_gen_event_worker, _alloc): _alloc for _alloc in _evt_alloc}
             for _fut in as_completed(_futures):
                 try:
