@@ -10386,11 +10386,14 @@ def ai_outline_volume(book_id):
                     # 按剩余总预算决定本事件可用时长：剩余越少，重试越少、单次超时越短
                     _remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
                     _ev_retry = 3 if _remain > 180 else (1 if _remain > 90 else 0)
-                    _ev_timeout = min(80, max(30, _remain // 2))
+                    # 【P3修复】客户端超时别比上游先放弃：上游 504 有时是"其实在算、只是慢"的假象。
+                    # 预算已提到 460s，单次调用给足 150s（慢但能成功的请求别被我们 80s 掐死）。
+                    _ev_timeout = min(150, max(45, _remain // 2))
                     _content, _err = _call_llm(
                         [{'role': 'system', 'content': shared_system_prompt},
                          {'role': 'user', 'content': _per_event_user}],
-                        max_tokens=16384, temperature=0.65, retry_count=_ev_retry,
+                        # 输出上限降到 10000：节点单事件输出通常 4-8K token，上限越高模型越爱拖长文拖慢上游→504
+                        max_tokens=10000, temperature=0.65, retry_count=_ev_retry,
                         timeout=_ev_timeout,
                     )
                 if _err:
@@ -10449,11 +10452,12 @@ def ai_outline_volume(book_id):
 输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。"""
             _fb_remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
             _fb_retry = 2 if _fb_remain > 120 else (1 if _fb_remain > 60 else 0)
-            _fb_timeout = min(120, max(30, _fb_remain))
+            # 单次回退要生成全部事件节点，属最大请求，给足 180s 客户端超时 + 输出上限 12000
+            _fb_timeout = min(180, max(45, _fb_remain))
             _fb_content, _fb_err = _call_llm(
                 [{'role': 'system', 'content': shared_system_prompt},
                  {'role': 'user', 'content': _fallback_user}],
-                max_tokens=16384, temperature=0.65, retry_count=_fb_retry,
+                max_tokens=12000, temperature=0.65, retry_count=_fb_retry,
                 timeout=_fb_timeout,
             )
             if _fb_err:
@@ -10512,11 +10516,12 @@ def ai_outline_volume(book_id):
 输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。"""
             _l2_remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
             _l2_retry = 1 if _l2_remain > 60 else 0
-            _l2_timeout = min(90, max(25, _l2_remain))
+            # 轻量回退：精简求快，客户端给足 180s（上游慢但能成时别再被 25s 地板掐死）
+            _l2_timeout = min(180, max(45, _l2_remain))
             _l2_content, _l2_err = _call_llm(
                 [{'role': 'system', 'content': _light_system},
                  {'role': 'user', 'content': _light_user}],
-                max_tokens=16384, temperature=0.7, retry_count=_l2_retry,
+                max_tokens=10000, temperature=0.7, retry_count=_l2_retry,
                 timeout=_l2_timeout,
             )
             if _l2_err:
