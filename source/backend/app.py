@@ -10230,6 +10230,7 @@ def ai_outline_volume(book_id):
         _per_event_node_max = 5 if len(existing_main_events) >= 7 else 6
         shared_system_prompt = f"""你是番茄小说金番作者级别的情节节点设计师。
 任务：为第 {volume_index} 卷“{volume_title}”的一个主要剧情事件（main_event）生成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点（nodes）。
+【输出范围铁律】只允许输出第 {volume_index} 卷的内容。禁止在输出中复述、罗列、或带入任何其他卷（含上一卷、后续卷）的大纲/节点/剧情概要——这些仅供你推理衔接时参考，绝不写进输出。nodes 数组的 chapters 必须严格落在本卷 {_evt_start}-{_evt_end} 章区间。
 - 主要事件 ≤ 6 个 → 每个拆 5-10 个
 - 主要事件 ≥ 7 个 → 每个拆 4-8 个
 每个子节点 events 字段约支撑 2400 字正文。
@@ -10576,6 +10577,7 @@ def ai_outline_volume(book_id):
         # ===== 整卷生成模式（默认）：生成完整卷大纲+情节节点 =====
         system_prompt = f"""你是番茄小说金番作者级别的卷纲设计师。
 任务：为第 {volume_index} 卷“{volume_title}”生成详细大纲+情节节点。
+【输出范围铁律】只允许输出第 {volume_index} 卷的内容。禁止在输出中复述、罗列、或带入任何其他卷（含上一卷、后续卷）的大纲/节点/剧情概要——下方【已有剧情】仅供你推理衔接时参考，绝不写进输出。volume_index 必须等于 {volume_index}，nodes 的 chapters 必须从 {start_chapter} 开始连续编号，不得覆盖其他卷。
 
 【五幕模型对齐】本卷对应五幕中的“{current_act}”幕：{act_descriptions.get(current_act, '')}
 本卷情节设计必须服务于该幕的核心目标，不得脱离五幕结构。
