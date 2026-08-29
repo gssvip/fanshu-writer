@@ -2131,9 +2131,9 @@ def _split_multi_names_from_title(title):
 def _clean_character_name(name):
     """人物名清洗：描述性档案标题（如"核心人物档案：顾晨、顾曦与赵阔"）→ 提取名字区；
     超长 → 截断到 50（对齐生产库 characters.name varchar(50)，防止落库 StringDataRightTruncation）。"""
-    name = (name or '未命名').strip()
+    name = (name or '').strip()
     if not name:
-        return '未命名'
+        return ''
     if re.search(r'(?:档案|人物|角色|群像|人设)', name):
         names = _split_multi_names_from_title(name)
         if names:
@@ -2141,6 +2141,8 @@ def _clean_character_name(name):
         m = re.search(r'[:：]\s*(.+)', name)
         if m:
             name = m.group(1).strip()
+    # 防御：name 中不允许出现换行（会拼出 "未命名\n姜雪" 脏名）
+    name = name.split('\n', 1)[0].split('\r', 1)[0].strip()
     return name[:50]
 
 
@@ -2302,6 +2304,10 @@ def _parse_character_card(title, content):
             elif cur_field.startswith('__extra_'):
                 # 额外字段 → 存到 result_extra
                 result_extra[cur_field] = (result_extra.get(cur_field) or '') + v
+            elif cur_field == 'name':
+                # name 是唯一标识：覆盖初始 title/'未命名'，不做换行累加
+                # （否则 title 为空时会产生 "未命名\n林晚" 这类脏名）
+                result['name'] = v
             else:
                 prev = (result.get(cur_field) or '').strip()
                 result[cur_field] = (prev + '\n' + v).strip() if prev else v
