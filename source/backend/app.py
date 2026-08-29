@@ -10393,8 +10393,8 @@ def ai_outline_volume(book_id):
                     _content, _err = _call_llm(
                         [{'role': 'system', 'content': shared_system_prompt},
                          {'role': 'user', 'content': _per_event_user}],
-                        # 输出上限降到 10000：节点单事件输出通常 4-8K token，上限越高模型越爱拖长文拖慢上游→504
-                        max_tokens=10000, temperature=0.65, retry_count=_ev_retry,
+                        # max_tokens=0：不下发上限字段，自动适配模型默认最大输出，减少 400/超时
+                        max_tokens=0, temperature=0.65, retry_count=_ev_retry,
                         timeout=_ev_timeout,
                     )
                 if _err:
@@ -10492,7 +10492,7 @@ def ai_outline_volume(book_id):
             _l2_content, _l2_err = _call_llm(
                 [{'role': 'system', 'content': _light_system},
                  {'role': 'user', 'content': _light_user}],
-                max_tokens=6000, temperature=0.7, retry_count=_l2_retry,
+                max_tokens=0, temperature=0.7, retry_count=_l2_retry,
                 timeout=_l2_timeout,
             )
             # 规避"HTTP 200 但返回空串"：空内容也再补一次（换温度换采样），预算足够时值得一搏
@@ -10502,7 +10502,7 @@ def ai_outline_volume(book_id):
                     _l2_content2, _l2_err2 = _call_llm(
                         [{'role': 'system', 'content': _light_system},
                          {'role': 'user', 'content': _light_user}],
-                        max_tokens=6000, temperature=0.85, retry_count=1,
+                        max_tokens=0, temperature=0.85, retry_count=1,
                         timeout=min(180, max(45, _l2_budget2)),
                     )
                     if not _l2_err2 and _l2_content2 and _l2_content2.strip():
@@ -10537,7 +10537,7 @@ def ai_outline_volume(book_id):
             _fb_content, _fb_err = _call_llm(
                 [{'role': 'system', 'content': shared_system_prompt},
                  {'role': 'user', 'content': _fallback_user}],
-                max_tokens=12000, temperature=0.65, retry_count=_fb_retry,
+                max_tokens=0, temperature=0.65, retry_count=_fb_retry,
                 timeout=_fb_timeout,
             )
             if _fb_err:
@@ -10652,7 +10652,8 @@ def ai_outline_volume(book_id):
         # 整卷生成模式：一次性调用 LLM 生成完整卷大纲+情节节点
         content, err = _call_llm(
             [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
-            max_tokens=16384, temperature=0.65, retry_count=3
+            # max_tokens=0：特指"通用节点设计师"，全量卷纲+节点一次性生成，自动适配模型最大输出
+            max_tokens=0, temperature=0.65, retry_count=3
         )
         if err:
             return jsonify({'error': err}), 500
