@@ -10443,10 +10443,86 @@ def ai_outline_volume(book_id):
         for _ni, _n in enumerate(all_nodes, 1):
             _n['index'] = _ni
 
-        # 如果逐事件生成全部返回空节点，退回到单次请求模式（一次性生成所有事件）
+        # ===== 回退阶段（按"越轻量越先跑"排序，最易成功的兜底优先拿到最新鲜预算）=====
         # 【P2-7修复】放宽触发条件：无论 event_errors 是否为空，只要 all_nodes 为空就触发回退
+        # 1) 超轻量骨架回退：请求最精简、几乎必成，优先执行；单次全量请求最容易 504，留到最后。
         if not all_nodes:
-            # 用完整的上下文 + 所有 main_events 做一次生成
+            _light_system = f"""你是番茄小说金番作者级别的情节节点设计师。
+任务：为第 {volume_index} 卷“{volume_title}”的每个 main_event 生成 1-2 个情节子节点（nodes），输出务必精简、宁短勿长。
+【超轻量骨架模式】这是兜底回退，目标是"哪怕粗糙也要成功"：每个子节点 summary 用 30-60 字要点式一句话即可，禁止长篇，禁止展开细枝末节。
+
+【本卷 6 要素锚】核心人物：{vol_characters} | 时间：{vol_timeline_anchor} | 地点：{vol_location} | 境界：{vol_realm_change} | 年龄：{vol_age_change}
+
+【五幕模型对齐】本卷对应“{current_act}”幕：{act_descriptions.get(current_act, '')}
+
+【节点 6 要素铁律】每个节点必须包含：characters / events / time / location / realm_change / age_change
+
+【埋收标注】每个节点必须标注 bury（第XX章埋下）和 payoff（第XX章回收），无则空串。
+
+【输出格式】严格输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。不要输出任何注释或说明文字。
+
+{cohesion_constraint}
+
+【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
+【节点容量铁律】骨架模式下 summary 允许要点式（30-60字/节点），不必按章字数展开；chapters 仍须连续覆盖各自 main_event 的章节区间。"""
+
+            _light_user = f"""书名：{book.title}
+{_build_core_params_block(bb, book)}
+
+【本卷已有卷剧情】
+- 卷名：第{volume_index}卷“{volume_title}”
+- 总体剧情概要：{existing_summary or '（无）'}
+- 主线推进路径：{existing_main_plot or '（无）'}
+- 核心冲突：{existing_core_conflict or '（无）'}
+- 高潮：{existing_climax or '（无）'}
+- 结局/卷尾钩子：{existing_ending or '（无）'}
+- 新埋伏笔：{', '.join(existing_foreshadowing) if existing_foreshadowing else '（无）'}
+
+【上一卷结尾】{prev_volume_end_summary or '本卷为第一卷，无前文'}
+
+【所有 main_events】（请为每个事件生成 1-2 个骨架子节点，chapters 必须严格卡在各事件分配的区间内，全部节点合计覆盖 {_evt_start}-{_evt_end} 章，宁少勿缺）：
+{main_events_block}
+
+请为第 {volume_index} 卷的所有 main_events 各生成 1-2 个骨架情节子节点事件（nodes），宁短勿长，
+只输出 JSON 对象 {{"nodes": [...]}}，不要输出任何其他文字。"""
+            _l2_remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
+            _l2_retry = 2 if _l2_remain > 60 else 0
+            # 轻量回退：真正的兜底，必须小到几乎必成：输出 6K 上限、客户端给足 180s、可重试2次
+            _l2_timeout = min(180, max(45, _l2_remain))
+            _l2_content, _l2_err = _call_llm(
+                [{'role': 'system', 'content': _light_system},
+                 {'role': 'user', 'content': _light_user}],
+                max_tokens=6000, temperature=0.7, retry_count=_l2_retry,
+                timeout=_l2_timeout,
+            )
+            # 规避"HTTP 200 但返回空串"：空内容也再补一次（换温度换采样），预算足够时值得一搏
+            if not _l2_err and (not _l2_content or not _l2_content.strip()):
+                _l2_budget2 = max(5, int(_wall_deadline - _deadline_time.monotonic()))
+                if _l2_budget2 > 30:
+                    _l2_content2, _l2_err2 = _call_llm(
+                        [{'role': 'system', 'content': _light_system},
+                         {'role': 'user', 'content': _light_user}],
+                        max_tokens=6000, temperature=0.85, retry_count=1,
+                        timeout=min(180, max(45, _l2_budget2)),
+                    )
+                    if not _l2_err2 and _l2_content2 and _l2_content2.strip():
+                        _l2_content = _l2_content2
+                    elif _l2_err2:
+                        _l2_err = _l2_err2
+            if _l2_err:
+                event_errors.append(f'轻量回退也失败: {_l2_err}')
+            else:
+                _l2_parsed, _l2_json_err = _extract_json_from_llm(_l2_content, expect='object')
+                if _l2_json_err:
+                    event_errors.append(f'轻量回退JSON解析失败: {_l2_json_err}')
+                else:
+                    all_nodes = _l2_parsed.get('nodes', []) or []
+                    all_nodes.sort(key=_sort_key)
+                    for _ni3, _n3 in enumerate(all_nodes, 1):
+                        _n3['index'] = _ni3
+
+        # 2) 单次全量回退（最后手段）：一次性生成所有事件，质量最高但最容易超时
+        if not all_nodes:
             _fallback_user = f"""{shared_user_prefix}
 
 【所有 main_events】（请为每个事件分别展开成 {_per_event_node_count}-{_per_event_node_max} 个子节点，子节点 chapters 必须严格卡在各事件分配的区间内，全部节点合计覆盖 {_evt_start}-{_evt_end} 章）：
@@ -10476,69 +10552,6 @@ def ai_outline_volume(book_id):
                     all_nodes.sort(key=_sort_key)
                     for _ni2, _n2 in enumerate(all_nodes, 1):
                         _n2['index'] = _ni2
-
-        # 如果单次回退也失败（all_nodes 仍为空），尝试超轻量级回退：只传必需的上下文
-        # 【P2-7修复】第二回退：精简 prompt，只保留核心约束，避免大上下文导致超时
-        if not all_nodes:
-            _light_system = f"""你是番茄小说金番作者级别的情节节点设计师。
-任务：为第 {volume_index} 卷“{volume_title}”的每个 main_event 生成 1-2 个情节子节点（nodes），输出务必精简、宁短勿长。
-【超轻量骨架模式】这是兜底回退，目标是"哪怕粗糙也要成功"：每个子节点 summary 用 30-60 字要点式一句话即可，禁止长篇，禁止展开细枝末节。
-
-【本卷 6 要素锚】核心人物：{vol_characters} | 时间：{vol_timeline_anchor} | 地点：{vol_location} | 境界：{vol_realm_change} | 年龄：{vol_age_change}
-
-【五幕模型对齐】本卷对应“{current_act}”幕：{act_descriptions.get(current_act, '')}
-
-【节点 6 要素铁律】每个节点必须包含：characters / events / time / location / realm_change / age_change
-
-【埋收标注】每个节点必须标注 bury（第XX章埋下）和 payoff（第XX章回收），无则空串。
-
-【输出格式】严格输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。
-
-{cohesion_constraint}
-
-【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
-【节点容量铁律】骨架模式下 summary 允许要点式（30-60字/节点），不必按章字数展开；chapters 仍须连续覆盖各自 main_event 的章节区间。"""
-
-            _light_user = f"""书名：{book.title}
-{_build_core_params_block(bb, book)}
-
-【本卷已有卷剧情】
-- 卷名：第{volume_index}卷“{volume_title}”
-- 总体剧情概要：{existing_summary or '（无）'}
-- 主线推进路径：{existing_main_plot or '（无）'}
-- 核心冲突：{existing_core_conflict or '（无）'}
-- 高潮：{existing_climax or '（无）'}
-- 结局/卷尾钩子：{existing_ending or '（无）'}
-- 新埋伏笔：{', '.join(existing_foreshadowing) if existing_foreshadowing else '（无）'}
-
-【上一卷结尾】{prev_volume_end_summary or '本卷为第一卷，无前文'}
-
-【所有 main_events】（请为每个事件生成 1-2 个骨架子节点，chapters 必须严格卡在各事件分配的区间内，全部节点合计覆盖 {_evt_start}-{_evt_end} 章）：
-{main_events_block}
-
-请为第 {volume_index} 卷的所有 main_events 各生成 1-2 个骨架情节子节点事件（nodes），宁短勿长，
-输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。"""
-            _l2_remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
-            _l2_retry = 2 if _l2_remain > 60 else 0
-            # 轻量回退：真正的兜底，必须小到几乎必成：输出 6K 上限、客户端给足 180s、可重试2次
-            _l2_timeout = min(180, max(45, _l2_remain))
-            _l2_content, _l2_err = _call_llm(
-                [{'role': 'system', 'content': _light_system},
-                 {'role': 'user', 'content': _light_user}],
-                max_tokens=6000, temperature=0.7, retry_count=_l2_retry,
-                timeout=_l2_timeout,
-            )
-            if _l2_err:
-                event_errors.append(f'轻量回退也失败: {_l2_err}')
-            else:
-                _l2_parsed, _l2_json_err = _extract_json_from_llm(_l2_content, expect='object')
-                if _l2_json_err:
-                    event_errors.append(f'轻量回退JSON解析失败: {_l2_json_err}')
-                else:
-                    all_nodes = _l2_parsed.get('nodes', []) or []
-                    all_nodes.sort(key=_sort_key)
-                    for _ni3, _n3 in enumerate(all_nodes, 1):
-                        _n3['index'] = _ni3
 
         # 构建合并后的 content（供下游 _call_llm 之后的逻辑使用）
         _merged = {
