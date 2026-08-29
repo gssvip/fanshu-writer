@@ -1905,11 +1905,17 @@ def apply_card():
                     existing_list = []
 
             for char_data in char_list:
+                _role_raw = char_data.get('role') or ('protagonist' if '主角' in (title or '') or '主角' in content else 'supporting')
+                _role = _normalize_character_role(_role_raw, title, content)
+                _desc = char_data.get('identity') or ''
+                if _role_raw != _role:
+                    # 长角色定位并入 description（Text 无长度限制），保证内容不丢
+                    _desc = (_desc + '\n' + _role_raw).strip() if _desc else _role_raw
                 db.session.add(Character(
                     book_id=book_id,
                     name=_clean_character_name(char_data.get('name')) or '未命名',
-                    role=char_data.get('role') or ('protagonist' if '主角' in (title or '') or '主角' in content else 'supporting'),
-                    description=char_data.get('identity') or '',
+                    role=_role,
+                    description=_desc,
                     personality=char_data.get('personality') or '',
                     background=char_data.get('background') or '',
                 ))
@@ -2136,6 +2142,24 @@ def _clean_character_name(name):
         if m:
             name = m.group(1).strip()
     return name[:50]
+
+
+def _normalize_character_role(role_raw, title='', content=''):
+    """角色定位归一化：characters.role 是 varchar(50) 枚举语义（protagonist/antagonist/supporting）。
+
+    LLM 卡片"角色：xxx"常给一句长描述（如"前期的核心资源提款机与脑补反差源…"），
+    直接落库会触发 StringDataRightTruncation。超长时按上下文归类为简短枚举，
+    完整描述由调用方并入 description（Text 无长度限制），保证内容不丢。
+    """
+    role = (role_raw or '').strip()
+    if len(role) <= 50:
+        return role
+    ctx = role + ' ' + (title or '') + ' ' + (content or '')
+    if '反派' in ctx or '敌' in ctx or '对手' in ctx or 'boss' in ctx.lower() or '最大威胁' in ctx:
+        return 'antagonist'
+    if '主角' in ctx:
+        return 'protagonist'
+    return 'supporting'
 
 
 def _parse_character_card_multi(title, content):
