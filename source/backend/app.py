@@ -10384,7 +10384,8 @@ def ai_outline_volume(book_id):
                 with _sema:
                     import time as _time
                     # 按剩余总预算决定本事件可用时长：剩余越少，重试越少、单次超时越短
-                    _remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
+                    # 用 _fb_deadline（总截止前 120s）作为上限，给回退留足时间
+                    _remain = max(5, int(_fb_deadline - _deadline_time.monotonic()))
                     _ev_retry = 3 if _remain > 180 else (1 if _remain > 90 else 0)
                     # 【P3修复】客户端超时别比上游先放弃：上游 504 有时是"其实在算、只是慢"的假象。
                     # 预算已提到 460s，单次调用给足 150s（慢但能成功的请求别被我们 80s 掐死）。
@@ -10415,6 +10416,9 @@ def ai_outline_volume(book_id):
         # 故 worker 预算 460s + 合并落库 ≈ 470s，既不会超过 Render 500s 掐断，也不会被前端提前 abort。
         import time as _deadline_time
         _wall_deadline = _deadline_time.monotonic() + 460
+        # 【P4修复】给回退预留时间：逐事件阶段最多用到距总截止前 120s，
+        # 保证单次/轻量回退永远有足量预算可跑，不影响逐事件阶段的正常发挥。
+        _fb_deadline = _wall_deadline - 120
         with ThreadPoolExecutor(max_workers=min(2, len(_evt_alloc))) as _ex:
             _futures = {_ex.submit(_gen_event_worker, _alloc): _alloc for _alloc in _evt_alloc}
             for _fut in as_completed(_futures):
@@ -10477,8 +10481,8 @@ def ai_outline_volume(book_id):
         # 【P2-7修复】第二回退：精简 prompt，只保留核心约束，避免大上下文导致超时
         if not all_nodes:
             _light_system = f"""你是番茄小说金番作者级别的情节节点设计师。
-任务：为第 {volume_index} 卷“{volume_title}”的一个 main_event 生成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点（nodes）。
-每个子节点 events 约支撑 2400 字正文。
+任务：为第 {volume_index} 卷“{volume_title}”的每个 main_event 生成 1-2 个情节子节点（nodes），输出务必精简、宁短勿长。
+【超轻量骨架模式】这是兜底回退，目标是"哪怕粗糙也要成功"：每个子节点 summary 用 30-60 字要点式一句话即可，禁止长篇，禁止展开细枝末节。
 
 【本卷 6 要素锚】核心人物：{vol_characters} | 时间：{vol_timeline_anchor} | 地点：{vol_location} | 境界：{vol_realm_change} | 年龄：{vol_age_change}
 
@@ -10493,7 +10497,7 @@ def ai_outline_volume(book_id):
 {cohesion_constraint}
 
 【章型配额】M主线50%/C角色10%/W世界观10%/D日常20%/F伏笔10%
-【节点容量铁律】每个子节点 summary 必须足够支撑其 chapters 范围的字数容量（按每章2400字估算）。"""
+【节点容量铁律】骨架模式下 summary 允许要点式（30-60字/节点），不必按章字数展开；chapters 仍须连续覆盖各自 main_event 的章节区间。"""
 
             _light_user = f"""书名：{book.title}
 {_build_core_params_block(bb, book)}
@@ -10509,19 +10513,19 @@ def ai_outline_volume(book_id):
 
 【上一卷结尾】{prev_volume_end_summary or '本卷为第一卷，无前文'}
 
-【所有 main_events】（请为每个事件分别展开成 {_per_event_node_count}-{_per_event_node_max} 个子节点，子节点 chapters 必须严格卡在各事件分配的区间内，全部节点合计覆盖 {_evt_start}-{_evt_end} 章）：
+【所有 main_events】（请为每个事件生成 1-2 个骨架子节点，chapters 必须严格卡在各事件分配的区间内，全部节点合计覆盖 {_evt_start}-{_evt_end} 章）：
 {main_events_block}
 
-请为第 {volume_index} 卷的所有 main_events 分别展开成 {_per_event_node_count}-{_per_event_node_max} 个情节子节点事件（nodes），
+请为第 {volume_index} 卷的所有 main_events 各生成 1-2 个骨架情节子节点事件（nodes），宁短勿长，
 输出 JSON 对象 {{"nodes": [...]}}，不要包裹 markdown 代码块。"""
             _l2_remain = max(5, int(_wall_deadline - _deadline_time.monotonic()))
-            _l2_retry = 1 if _l2_remain > 60 else 0
-            # 轻量回退：精简求快，客户端给足 180s（上游慢但能成时别再被 25s 地板掐死）
+            _l2_retry = 2 if _l2_remain > 60 else 0
+            # 轻量回退：真正的兜底，必须小到几乎必成：输出 6K 上限、客户端给足 180s、可重试2次
             _l2_timeout = min(180, max(45, _l2_remain))
             _l2_content, _l2_err = _call_llm(
                 [{'role': 'system', 'content': _light_system},
                  {'role': 'user', 'content': _light_user}],
-                max_tokens=10000, temperature=0.7, retry_count=_l2_retry,
+                max_tokens=6000, temperature=0.7, retry_count=_l2_retry,
                 timeout=_l2_timeout,
             )
             if _l2_err:
