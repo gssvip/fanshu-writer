@@ -771,6 +771,142 @@ _DIM_KEY_CARD = {
     'foreshadowing': 'SAVE_FORESHADOW', 'locations': 'SAVE_LOCATION', 'style_guide': 'APPLY_STYLE',
 }
 
+# ============================================================================
+# 圆桌会议"创作模式"：作者要求"按讨论结果创作各维度/某维度"时，
+# 复用与"各维度生成"一致的格式（维度标签 + 卡片类型 + 生成长度上限），
+# 产出标准可采纳卡片（格式与用户直接在对应维度生成时完全一致）。
+# ============================================================================
+_RT_CREATE_DIMS = {
+    # key → (维维度标签, 卡片类型)
+    'concept':            ('核心构思', 'SAVE_CONCEPT'),
+    'key_rules':          ('核心规则', 'SAVE_RULE'),
+    'worldbuilding':      ('世界观', 'SAVE_WORLDSETTING'),
+    'character_profiles': ('人物档案', 'SAVE_CHARACTER'),
+    'plot_design':        ('剧情大纲', 'SAVE_OUTLINE_NODE'),
+    'timeline':           ('时间线', 'SAVE_PLOT'),
+    'foreshadowing':      ('伏笔', 'SAVE_FORESHADOW'),
+    'locations':          ('地点', 'SAVE_LOCATION'),
+    'style_guide':        ('文风指南', 'APPLY_STYLE'),
+}
+# 默认"全部维度"顺序（与用户在各维度面板看到的顺序一致）
+_RT_CREATE_ALL = ['concept', 'key_rules', 'worldbuilding', 'character_profiles',
+                  'plot_design', 'timeline', 'foreshadowing', 'locations', 'style_guide']
+
+# 各维度对应的 BB 字段（读已有内容 / 采纳时写入）
+_RT_CREATE_FIELD = {
+    'concept': 'concept', 'key_rules': 'key_rules', 'worldbuilding': 'worldbuilding',
+    'character_profiles': 'character_profiles', 'plot_design': 'plot_design',
+    'timeline': 'timeline', 'foreshadowing': 'foreshadowing',
+    'locations': 'locations', 'style_guide': 'style_guide',
+}
+
+
+def _rt_parse_create_dims(text: str):
+    """解析作者"按讨论结果创作…"指令，返回目标维度 key 列表。
+
+    - 命中"全部/各/所有/多维/来一遍" → 返回全部维度（_RT_CREATE_ALL）
+    - 命中具体维度关键词 → 只返回匹配的那些
+    - 完全没命中创作意图 → 返回 None（由调用方走普通圆桌流程）
+    """
+    t = (text or '').strip()
+    if not t:
+        return None
+    # 创作意图触发词（命中任一才进入创作模式）
+    trigger = re.search(r'(?:按|根据|基于|照|把|将)?\s*讨论\s*(?:的)?\s*(?:结果|共识|结论|收获|成果|建议)?\s*(?:创作|生成|产出|起草|落地|写|做|搞)|\b创作\s*(?:各|全部|所有|相应|对应)?\s*(?:维度|设定)|按讨论结果', t)
+    if not trigger:
+        return None
+    # 全部维度
+    if re.search(r'(?:创作|生成|产出|起草|落地|写|做|搞|整)\s*(?:全部|所有|全部维度|各维度|各|多维)|各维度|全部维度', t):
+        return list(_RT_CREATE_ALL)
+    # 具体维度关键词
+    kw_map = [
+        ('concept', r'(?:核心?构思|核心创意|点子|logline|一句话故事)'),
+        ('key_rules', r'(?:核心规则|核心设定|力量体系|规则|设定)'),
+        ('worldbuilding', r'(?:世界观|世界设定|世界背景)'),
+        ('character_profiles', r'(?:人物档案|人物设定|人物|角色)'),
+        ('plot_design', r'(?:剧情大纲|全书大纲|大纲|五幕)'),
+        ('timeline', r'(?:剧情线|时间线|剧情|情节|卷剧情)'),
+        ('foreshadowing', r'(?:伏笔|埋线)'),
+        ('locations', r'(?:地点|地图|地图设定|场景)'),
+        ('style_guide', r'(?:文风|文风指南|行文风格|写作风格)'),
+    ]
+    hit = []
+    for k, pat in kw_map:
+        if re.search(pat, t):
+            if k not in hit:
+                hit.append(k)
+    return hit  # 可能为空列表（命中创作意图但没识别出具体维度 → 由调用方按"全部"兜底）
+
+
+def _rt_create_dimension_system(dim_key: str, book, iron: str, consensus: str, existing: str) -> str:
+    """构造圆桌"创作模式"某维度的 system prompt。
+
+    复用/对齐与"各维度生成"一致的格式要求（concept/key_rules/worldbuilding/
+    character_profiles/plot_design 走详实分节铁律；timeline 走 JSON 卷数组；
+    style_guide/foreshadowing/locations 走结构化纯文本），
+    以圆桌讨论共识为核心素材，保证产出内容和直接在该维度生成时的格式一致。
+    """
+    parts = []
+    parts.append('你是资深网文创作副驾。现在要根据一场"圆桌专家讨论"得出的共识，为一部小说创作一个维度设定。')
+    parts.append('必须以圆桌共识为唯一取材依据，内容要具体可落地、可直接采纳进对应维度，禁止"待设定/后续再定"等空话。')
+    if iron:
+        parts.append(iron)
+    parts.append(f'\n【圆桌讨论共识（唯一取材来源）】\n{consensus[:14000]}')
+    if existing:
+        parts.append(f'\n【已有该维度内容（可在其基础上按共识完善，不要简单重复）】\n{existing[:2000]}')
+    _book_part = f'为小说《{book.title}》' if book else '为这部小说'
+    parts.append(f'\n请{_book_part}产出下列维度的完整内容。')
+
+    d = dim_key
+    if d == 'concept':
+        parts.append('''\n【核心构思铁律·禁止两句话】必须输出 10 节：
+①一句话故事核Logline ②主题曲线(起点→反诘→抉择→终局) ③核心冲突三角(主角×对手×世界规则)
+④目标分层(短/中/长/终极+失败代价) ⑤核心爽感机制(3-5种主爽点+触发→爆发→余波+卷1/3/5/终局排布)
+⑥金手指/外挂(类型+核心能力+分级+硬约束代价+贴合执念+终极风险)
+⑦主角魅力公式(记忆符号+三重反差+具体创伤+核心执念) ⑧对手/反派魅力(前/中/终局三级反派)
+⑨世界观3-5个独特卖点钩子 ⑩全书情感底色+读者定位+文风力向。
+总字数不少于 1200 字，每节必须写具体可落地内容。''')
+    elif d == 'key_rules':
+        parts.append('''\n【设定铁律·禁止只写境界表】必须输出 11 节：
+①力量总体系(2主1辅+克制) ②等级阶梯表(命名+战力差+突破门槛+社会地位+寿元) ③至少2主1偏的提升路径
+④功法/技能树(5类分级+代表性技能+配搭+获取) ⑤资源与货币体系(通用货币+等价物+10项价格表+产地)
+⑥装备/法宝/载具 ⑦至少2-3种副职业 ⑧硬约束+反噬代价 ⑨种族/职业/阵营总表+矛盾 ⑩至少8条世界硬规则禁忌
+⑪文明水平总览。总字数不少于 1500 字，必须有具体数字和例子。''')
+    elif d == 'worldbuilding':
+        parts.append('''\n【世界观铁律·禁止只写四大域】必须输出 15 节（最少 2000 字）：
+①世界总览 ②创世元史三段+至少3纪元大事 ③至少6大地理分块 ④气候天象体系 ⑤至少8大主要势力
+⑥完整阶级金字塔 ⑦政治律法 ⑧经济贸易 ⑨至少5个智慧种族 ⑩至少2正统+1邪教宗教信仰
+⑪语言文字度量衡历法 ⑫风俗礼仪服饰饮食建筑 ⑬军事体系 ⑭交通通讯 ⑮至少5个世界未解之谜/禁忌之地。''')
+    elif d == 'character_profiles':
+        parts.append('''\n【人物铁律·禁止只给姓名+一句话身份】至少写出 主角 + 1女主/重要女配 + 2核心配角 + 1前期反派 + 1中期反派：
+每个角色按 15 项写满（姓名/性别年龄/外貌特征含记忆符号/身份地位/性格三原色/核心价值观/人生三目标/
+深层动机/具体核心创伤/恐惧软肋/能力体系/战斗风格/背景故事/关键关系网/角色弧线）。
+每个角色至少 300 字，合计不少于 1800 字；纯中文按字段分行输出。''')
+    elif d == 'plot_design':
+        parts.append('''\n【大纲铁律·禁止只写几句话五幕】必须写满：
+五幕(立身/立足/立势/立威/立命)对应到连续卷号 + 每卷6项指标
+(①本卷爽点4小1大 ②人物方向 ③地点动线 ④修炼/事业/财富/关系/势力五项进展 ⑤伏笔主题方向 ⑥卷尾得到/失去/新任务)；
+结尾附【跨卷尾钩子承接总览】。总字数不少于 1500 字。''')
+    elif d == 'timeline':
+        parts.append('''\n【剧情线铁律】输出按卷组织的 JSON 数组（可直接写入剧情线维度）：
+每条卷对象含：卷名 volume、卷概要 summary(150-250字)、卷主线 main_plot(100-160字)、核心冲突 core_conflict、
+卷尾钩子 ending_hook、主要剧情事件 main_events[]（含 title/summary/bury/payoff）、情节节点 nodes[]（含 title/summary/chapters/type/爽点）。
+卷数必须与核心参数铁律一致，卷与卷之间尾钩自然承接。只输出 JSON，不要 markdown 代码块。''')
+    elif d == 'foreshadowing':
+        parts.append('''\n【伏笔铁律】按伏笔分组输出，每组：①伏笔名 ②埋设章/幕（含具体场景） ③引出的事件
+④预期回收章/幕 ⑤回收效果 ⑥状态（已埋/待收/已收）。覆盖主线、支线、人物、世界观几类，列表清晰可采纳。''')
+    elif d == 'locations':
+        parts.append('''\n【地点铁律】按地图/场景分组输出，每组：①地点名 ②隶属（地域/势力） ③地理描述
+④功能用途 ⑤关键剧情事件标注 ⑥出入限制/危险。至少覆盖主线涉及的核心场景，结构清晰。''')
+    elif d == 'style_guide':
+        parts.append('''\n【文风铁律】输出结构化文风指南，包含：①叙事视角与口吻 ②节奏控制（爽点/铺垫/爆点的章内排布）
+③描写偏好（环境/动作/心理/对话比例） ④修辞与语言调性 ⑤禁用习惯（AI味/书面腔/水字数句式）
+⑥对标参考风格。做成可直接指导写作的可执行规范。''')
+    else:
+        parts.append('\n【输出要求】结构化分节输出该维度完整设定，具体可采纳。')
+    parts.append('\n【排版】使用纯中文 markdown 层级输出，去掉 * 与 # 装饰符号。')
+    return '\n'.join(parts)
+
 # 安全提取卷号：接受 dict 或 str，返回 int 或 0
 def _extract_volume_index_safe(vol):
     """从卷字典或字符串中提取卷号。dict 时取 volume/volume_id 字段。"""
@@ -8403,12 +8539,76 @@ def chat_roundtable():
             #  resuming    —— 开会中途断连/手动停止，接着剩余回合开完既定轮数
             #  其余         —— 全新会议（两轮）
             N = len(_ROUNDTABLE_ORDER)
+            # 【创作模式】作者要求"按讨论结果创作各维度/某维度" → 直接产出可采纳卡片
+            _create_dims = _rt_parse_create_dims(topic) if (state and state.get('completed')) else None
+            create_mode = bool(_create_dims is not None)
             append_mode = bool(is_continue and state and state.get('completed'))
-            # 已完成 + 用户发的不是"继续"关键词而是自然反馈 → 进入调整阶段，复用上次议题与讨论上下文
-            adjust_mode = bool(not is_continue and state and state.get('completed') and (topic or '').strip())
+            # 已完成 + 用户发的不是"继续"/创作指令而是自然反馈 → 进入调整阶段，复用上次议题与讨论上下文
+            adjust_mode = bool(not is_continue and not create_mode and state and state.get('completed') and (topic or '').strip())
             resuming = bool(is_continue and state and state.get('active') and not state.get('completed'))
 
-            if append_mode:
+            if create_mode:
+                # ========== 创作模式：按讨论共识创作维度 → 产出标准可采纳卡片 ==========
+                try:
+                    from app import BookBible as _ModBookBible
+                    _bb = _ModBookBible.query.filter_by(book_id=book_id).first() if book_id else None
+                except Exception:
+                    _bb = None
+                # 讨论共识源：优先当前 state 全量讨论记录 + 最近落盘总结报告
+                _consensus = (state.get('discussion_history') or f'【议题】\n{topic}\n\n')
+                try:
+                    _hist_sum = ''
+                    for _m in reversed(history or []):
+                        if isinstance(_m, dict) and _m.get('role') == 'assistant' and '总结报告' in str(_m.get('content', '')):
+                            _hist_sum = str(_m.get('content', ''))[:8000]
+                            break
+                except Exception:
+                    _hist_sum = ''
+                if _hist_sum:
+                    _consensus = f'{_consensus}\n\n【最终总结报告】\n{_hist_sum}'
+                # 没有识别出具体维度 → 默认全部
+                if not _create_dims:
+                    _create_dims = list(_RT_CREATE_ALL)
+                _gw_c = LLMGateway(_bg, _kg, _mg)
+                _bb_existing = {}
+                if _bb:
+                    for _fk in _RT_CREATE_FIELD:
+                        try:
+                            _v = getattr(_bb, _RT_CREATE_FIELD[_fk], None)
+                            if _v and str(_v).strip():
+                                _bb_existing[_fk] = str(_v)
+                        except Exception:
+                            pass
+                _iron = _core_params_iron_block(_bb, book) if (book and _bb) else ''
+                for _dk in _create_dims:
+                    _label, _ctype = _RT_CREATE_DIMS.get(_dk, (_dk, 'SAVE_CONCEPT'))
+                    yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": f"\n\n📌 正在按讨论结果创作【{_label}】…\n\n"}, ensure_ascii=False)}\n\n'
+                    _sys = _rt_create_dimension_system(_dk, book, _iron, _consensus, _bb_existing.get(_dk, ''))
+                    _cre_full = []
+                    for _tk2, _tp2 in _rt_stream_turn(_gw_c, [
+                        {'role': 'system', 'content': _var_replace(_sys)},
+                        {'role': 'user', 'content': f'请按讨论结论创作《{"book_title" if book else "本书"}》的【{_label}】维度'},
+                    ], 0.7, _dim_max_tokens(_dk), attempts=2):
+                        # body 为正文增量；__done__ 是全文汇总，跳过避免重复
+                        if _tp2 is None or _tk2 == '__done__':
+                            continue
+                        if _tk2 == 'body':
+                            _cre_full.append(_tp2)
+                        yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": _tp2}, ensure_ascii=False)}\n\n'
+                    _content = ''.join(_cre_full).strip()
+                    _content = _clean_text_to_plain(_content)
+                    _card = {
+                        'id': str(uuid.uuid4())[:8],
+                        'type': _ctype,
+                        'title': f'{_label}（按圆桌讨论创作）',
+                        'content': _content,
+                        'target': _RT_CREATE_DIMS.get(_dk, (_dk, 'SAVE_CONCEPT'))[0],
+                    }
+                    yield f'data: {json.dumps({"type": "card", "card": _card, "session_id": session_id}, ensure_ascii=False)}\n\n'
+                yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator_summary"}, ensure_ascii=False)}\n\n'
+                yield f'data: {json.dumps({"type": "done", "session_id": session_id}, ensure_ascii=False)}\n\n'
+                return
+            elif append_mode:
                 # ========== 追加一轮：沿用上次议题与全部发言，继续开新一轮 ==========
                 state['completed'] = False
                 state['active'] = True
