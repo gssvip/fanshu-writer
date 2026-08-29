@@ -1736,7 +1736,7 @@ def list_characters(book_id):
 def create_character(book_id):
     data = request.json
     char = Character(
-        book_id=book_id, name=data.get('name', '新角色'),
+        book_id=book_id, name=(data.get('name', '新角色') or '新角色')[:50],
         role=data.get('role', 'supporting'), description=data.get('description', ''),
         appearance=data.get('appearance', ''), personality=data.get('personality', ''),
         background=data.get('background', '')
@@ -1756,6 +1756,8 @@ def update_character(book_id, char_id):
     for field in ['name', 'role', 'description', 'appearance', 'personality', 'background']:
         if field in data:
             setattr(char, field, data[field])
+    if 'name' in data:
+        char.name = (data['name'] or '')[:50]
     if 'relationships' in data:
         char.relationships_json = json.dumps(data['relationships'], ensure_ascii=False)
     db.session.commit()
@@ -2498,7 +2500,7 @@ def import_book_zip():
 
         for char_data in data.get('characters', []):
             char = Character(
-                book_id=book.id, name=char_data.get('name', ''),
+                book_id=book.id, name=(char_data.get('name', '') or '')[:50],
                 role=char_data.get('role', 'supporting'), description=char_data.get('description', ''),
                 appearance=char_data.get('appearance', ''), personality=char_data.get('personality', ''),
                 background=char_data.get('background', ''),

@@ -1907,7 +1907,7 @@ def apply_card():
             for char_data in char_list:
                 db.session.add(Character(
                     book_id=book_id,
-                    name=char_data.get('name') or '未命名',
+                    name=_clean_character_name(char_data.get('name')) or '未命名',
                     role=char_data.get('role') or ('protagonist' if '主角' in (title or '') or '主角' in content else 'supporting'),
                     description=char_data.get('identity') or '',
                     personality=char_data.get('personality') or '',
@@ -2101,6 +2101,43 @@ def apply_card():
                     **result_extra})
 
 
+def _split_multi_names_from_title(title):
+    """从描述性档案标题中提取多人名列表。
+
+    例："核心人物档案：顾晨、顾曦与赵阔" → ['顾晨','顾曦','赵阔']
+    非描述性标题（纯人名）返回 []。
+    """
+    if not title:
+        return []
+    t = title.strip()
+    m = re.search(r'(?:档案|人物|角色|群像|人设)(?:介绍|设定|合集)?\s*[:：]\s*(.+)$', t)
+    if not m:
+        m = re.search(r'[:：]\s*(.+)$', t)
+    if not m:
+        return []
+    names_part = m.group(1).strip()
+    parts = [p.strip() for p in re.split(r'[、，,/]|\s*和\s*|\s*与\s*', names_part) if p.strip()]
+    # 过滤明显不是人名的超长片段
+    parts = [p for p in parts if len(p) <= 20]
+    return parts if len(parts) >= 2 else []
+
+
+def _clean_character_name(name):
+    """人物名清洗：描述性档案标题（如"核心人物档案：顾晨、顾曦与赵阔"）→ 提取名字区；
+    超长 → 截断到 50（对齐生产库 characters.name varchar(50)，防止落库 StringDataRightTruncation）。"""
+    name = (name or '未命名').strip()
+    if not name:
+        return '未命名'
+    if re.search(r'(?:档案|人物|角色|群像|人设)', name):
+        names = _split_multi_names_from_title(name)
+        if names:
+            return names[0]
+        m = re.search(r'[:：]\s*(.+)', name)
+        if m:
+            name = m.group(1).strip()
+    return name[:50]
+
+
 def _parse_character_card_multi(title, content):
     """解析可能含多个人物的内容，返回人物字典列表。
 
@@ -2132,6 +2169,34 @@ def _parse_character_card_multi(title, content):
         tail = '\n'.join(cur_block).strip()
         if tail:
             blocks.append(tail)
+
+    # 策略2.5：标题含多人名（如"核心人物档案：顾晨、顾曦与赵阔"）→ 按【人名】/人名：/人名行切块
+    names_from_title = _split_multi_names_from_title(title)
+    if len(names_from_title) >= 2:
+        pname_re = re.compile(r'^(?:【|\[)?(' + '|'.join(re.escape(n) for n in names_from_title) + r')(?:】|\])?[:：]?\s*')
+        blocks_n = []
+        cur_n = []
+        for line in lines:
+            if pname_re.match(line.strip()) and cur_n:
+                blocks_n.append('\n'.join(cur_n).strip())
+                cur_n = []
+            cur_n.append(line)
+        if cur_n:
+            tail_n = '\n'.join(cur_n).strip()
+            if tail_n:
+                blocks_n.append(tail_n)
+        if len(blocks_n) >= 2:
+            result = []
+            for blk in blocks_n:
+                parsed = _parse_character_card('', blk)
+                first_line = blk.split('\n', 1)[0].strip()
+                mm = pname_re.match(first_line)
+                if mm:
+                    parsed['name'] = mm.group(1)
+                if parsed.get('name') and parsed['name'] != '未命名':
+                    result.append(parsed)
+            if len(result) >= 2:
+                return result
 
     # 若只拆出1块（或0块），回退为整段单人物
     if len(blocks) <= 1:
@@ -2183,7 +2248,7 @@ def _parse_character_card(title, content):
         '__extra_source_fn':  ['Silly Tavern 角色卡源文件名', '源文件名'],
     }
     result = {f: '' for f in fields}
-    result['name'] = title or '未命名'
+    result['name'] = _clean_character_name(title)
     result['role'] = ''
     result_extra: dict = {}
 
@@ -2195,7 +2260,7 @@ def _parse_character_card(title, content):
             if i < len(parts):
                 result[f] = parts[i]
         if result['name'] and title:
-            result['name'] = title
+            result['name'] = _clean_character_name(title)
         return result
 
     # 策略2/3：按行解析，匹配字段关键词
@@ -2255,9 +2320,9 @@ def _parse_character_card(title, content):
     _flush()
     if matched_any:
         if title and not result['name']:
-            result['name'] = title
+            result['name'] = _clean_character_name(title)
         elif not result['name'] or result['name'] == '未命名':
-            result['name'] = title or lines[0][:20]
+            result['name'] = _clean_character_name(title) or lines[0][:50]
         # 把额外字段（开场/对白示例风格/备注/源文件）合并到标准字段，避免写 DB 时丢失：
         #   abilities 字段追加 对白示例+说话风格
         if result_extra.get('__extra_first_line'):
@@ -2277,7 +2342,7 @@ def _parse_character_card(title, content):
         return result
 
     # 策略4：纯文本兜底
-    result['name'] = title or (lines[0][:20] if lines else '未命名')
+    result['name'] = _clean_character_name(title) or (lines[0][:50] if lines else '未命名')
     result['personality'] = text
     if '主角' in (title or '') or '主角' in text:
         result['role'] = '主角'
