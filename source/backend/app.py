@@ -10406,11 +10406,12 @@ def ai_outline_volume(book_id):
                 return _event_nodes, None
 
         # 并发执行所有事件的节点生成
-        # 【P1修复】整体 deadline：预留 30s 给合并落库，剩余预算分给并发请求。
-        # 即使个别事件单次超时+重试放大耗时，超过剩余预算的 worker 直接放弃（retry_count=0），
-        # 保证整个接口总时长 < 前端 300s 超时，杜绝 504。
+        # 【P1修复】整体 deadline：预留合并落库时间，剩余预算分给并发请求。
+        # 即使个别事件单次超时+重试放大耗时，超过剩余预算的 worker 直接放弃（retry_count=0）。
+        # 预算对齐：前端已把 aiOutlineVolume 超时提到 600s，Render 请求上限≈500s，
+        # 故 worker 预算 460s + 合并落库 ≈ 470s，既不会超过 Render 500s 掐断，也不会被前端提前 abort。
         import time as _deadline_time
-        _wall_deadline = _deadline_time.monotonic() + 250  # 300s 预算留 50s 余量
+        _wall_deadline = _deadline_time.monotonic() + 460
         with ThreadPoolExecutor(max_workers=min(2, len(_evt_alloc))) as _ex:
             _futures = {_ex.submit(_gen_event_worker, _alloc): _alloc for _alloc in _evt_alloc}
             for _fut in as_completed(_futures):

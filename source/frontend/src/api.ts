@@ -700,14 +700,16 @@ export const api = {
       body: JSON.stringify({ skill_pack_ids: skillPackIds || [], total_chapters: totalChapters || 300, chapters_per_volume: chaptersPerVolume || 50, volume_count: volumeCount }),
     }),
 
-  // 情节节点/大纲分卷：不走 fetchWithRetry 默认 60s 超时（节点设计是 Agent 管线，LLM 要生成 50-80 个节点+6要素，总耗时 80-180s，
-  // 60s 硬超时会被自动 abort → UI 上显示"情节节点设计失败：请求已取消"，实际用户根本没取消。与 aiContinue 一样用直接 fetch + 300s 保护）
+  // 情节节点/大纲分卷：不走 fetchWithRetry 默认 60s 超时（节点设计是 Agent 管线，LLM 要生成 50-80 个节点+6要素，
+  // 总耗时可达 80-180s+，60s 硬超时会被自动 abort → UI 上显示"情节节点设计失败：请求已取消"，实际用户根本没取消。
+  // 并发(2)+逐事件拆分的整体耗时可能逼近 5-7 分钟，且 Render 请求上限≈500s：
+  // 必须用直接 fetch + **600s** 长超时（> Render 500s），否则会在后端出结果前被客户端提前 abort，导致"节点设计静默失败无报错"。
   aiOutlineVolume: async (bookId: string, volumeIndex: number, volumeTitle?: string, skillPackIds?: string[], chaptersPerVolume?: number, nodeOnly?: boolean): Promise<{ volume_data: any; timeline: string; bible: any }> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000); // 300s 长超时，足够 50-80 节点 + 6 要素管线跑完
+    const timeoutId = setTimeout(() => controller.abort(), 600000); // 600s 长超时：> Render 500s 请求上限，避免后端未返回就先被客户端 abort
     try {
       const res = await fetch(`${getApiBaseUrl()}/books/${bookId}/ai-outline-volume`, {
         method: 'POST',
