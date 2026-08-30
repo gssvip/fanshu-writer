@@ -4780,6 +4780,23 @@ def smart_suggest():
     except Exception:
         pass
 
+    # 文风维度专属：把「行文文风」菜单注入多方案，要求每套方案点名采用哪种文风并提供差异化选择
+    style_extra = ''
+    if dim_key == 'style_guide':
+        try:
+            from app import CHAPTER_LANG_STYLES as _lang_styles
+        except Exception:
+            _lang_styles = {}
+        _style_menu_lines = [f'- {t[0]}：{t[1]}' for t in _lang_styles.values() if isinstance(t, (tuple, list)) and t[0] and t[1]]
+        _style_menu = '\n'.join(_style_menu_lines) if _style_menu_lines else '（通用/白描/幽默/爽文/古风…等）'
+        style_extra = f"""
+【文风维度专属要求·必须点名行文文风】本书提供以下「行文文风」菜单（可单选，也可选 2 种组合成"基调+点缀"）：
+{_style_menu}
+
+你生成的每一个方案 preview 必须**点名**该方案主用的「行文文风」（用上面菜单里的中文名，如"幽默+市井""冷硬白描""古风雅致""爽文节奏"），并具体说明这种文风如何落到本书的叙事口吻、节奏把控、对白密度里。
+3-5 个方案必须在「行文文风」上做出**明确差异**（不同文风组合=不同方案方向），严禁所有方案都用同一种文风。
+每个方案 preview 末尾固定追加一行「文风方案：XXX」，标出该方案所用的文风组合，方便作者一眼对比选择。"""
+
     # 预拼接块（Python 3.11 禁止 f-string 表达式内含反斜杠，故先算好再引用）
     _self_content_block = ("【当前维度已有内容（可在其基础上补充完善）】\n" + self_content) if self_content else ""
     _skill_note_block = ("【技能包指引】\n" + skill_note) if skill_note else ""
@@ -4798,7 +4815,7 @@ def smart_suggest():
 
 【作者需求】
 {requirement or f"请帮我生成{spec['label']}的设定"}
-{outline_extra}{af_alerts_suggest}{suggest_iron_rule}{preview_volume_req}
+{outline_extra}{af_alerts_suggest}{suggest_iron_rule}{preview_volume_req}{style_extra}
 
 {_skill_note_block}
 
