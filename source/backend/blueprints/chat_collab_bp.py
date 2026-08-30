@@ -533,11 +533,13 @@ def build_conception_rules(skill_pack_ids=None, mode='agent', extra_master_note:
 
 def build_writing_rules(book=None, skill_pack_ids=None, mode='agent',
                         extra_style_pack: str = '', extra_style_note: str = '') -> str:
-    """正文阶段专属规则：通用核心 + 行文规范 + 文风类(style)技能包。
+    """正文阶段专属规则：通用核心 + 行文规范 + 去AI味消杀 + 文风类(style)技能包。
     - book 必传：用于取已持久化文风包，并按 genre_target 匹配题材。
     - 文风技能包【只注入一次】：merged_ids = 请求传参 ids ∪ book.style_skill_ids（有序并集去重），
-      不再重复走 _get_enabled_style_pack 那条路径，避免同一包出现 2 遍。"""
-    parts = [GENERAL_CORE_RULES, WRITING_STYLE_RULES]
+      不再重复走 _get_enabled_style_pack 那条路径，避免同一包出现 2 遍。
+    - DEAI_ONLY_RULES（去AI味与行文消杀）在正文生成阶段也注入：DEAI_RULES 首句即"写作正文时主动规避"，
+      让模型从源头规避禁词/病句/副词，而非等审校阶段再做减法（审校仍会再次注入做兜底清洗）。"""
+    parts = [GENERAL_CORE_RULES, WRITING_STYLE_RULES, DEAI_ONLY_RULES]
     style_note = ''
     book_genre = getattr(book, 'genre', None) if book is not None else None
     try:
@@ -563,12 +565,12 @@ def build_chat_chapter_rules(book=None, skill_pack_ids=None, mode='agent',
                              extra_style_pack: str = '', extra_style_note: str = '') -> str:
     """智驾聊天里用户明确要求"写正文/写第X章/接着写"时的补充注入。
 
-    与 build_writing_rules 同源：注入正文行文规范 WRITING_STYLE_RULES + 文风类技能包，
+    与 build_writing_rules 同源：注入正文行文规范 WRITING_STYLE_RULES + 去AI味消杀 DEAI_ONLY_RULES + 文风类技能包，
     但【跳过 GENERAL_CORE_RULES】——因为 chat_smart 的 system prompt 已内置 GENERAL_CORE_RULES，
     这里再注入会造成同一段文字在 prompt 里出现两遍（用户感知"啰嗦重复"）。
     用于补齐 chat_smart 目前"只讨论不写正文"的缺口，保证在智驾里写正文同样命中行文/去AI硬卡。
     """
-    parts = [WRITING_STYLE_RULES]
+    parts = [WRITING_STYLE_RULES, DEAI_ONLY_RULES]
     style_note = ''
     book_genre = getattr(book, 'genre', None) if book is not None else None
     try:

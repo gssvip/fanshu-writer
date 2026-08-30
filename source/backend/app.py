@@ -7605,18 +7605,16 @@ def ai_continue(book_id):
         # 不再依赖技能包勾选；审查类(review)技能包作为增强叠加（build_review_rules 内部合并）。
         polished_content = draft_content
         review_notes = review_notes_prefix
-        deai_status = 'skipped'  # skipped / success / failed
+        deai_status = 'skipped'  # skipped / rules_ok / rules_missing / success / failed
         deai_rules_block = ''
         try:
-            from blueprints.chat_collab_bp import build_review_rules
-            deai_rules_block = build_review_rules(
-                skill_pack_ids, mode='agent',
-                prompt_keys_filter=['tomato_deai', 'de_ai_flavor', 'polish'], book=book)
+            deai_rules_block, _deai_build_status = _build_deai_rules_block(skill_pack_ids, book)
+            deai_status = 'rules_ok' if _deai_build_status == 'ok' else 'rules_missing'
         except Exception as _deai_e:
-            try:
-                app.logger.error(f'ai_continue 去AI规则构建失败: {_deai_e}')
-            except Exception:
-                pass
+            # helper 也兜不住（连 DEAI_ONLY_RULES import 都失败），显式标 missing 而非静默
+            app.logger.error(f'ai_continue 去AI规则构建失败: {_deai_e}')
+            print(f'[去AI] ai_continue 去AI规则构建失败: {_deai_e}', file=sys.stderr)
+            deai_status = 'rules_missing'
         if deai_rules_block:
             deai_system = ("你是番茄去AI味审查员。对以下刚写好的章节正文做去AI味审校，按规则修改后只输出修改后的正文。\n\n"
                            + deai_rules_block
@@ -8709,18 +8707,16 @@ def ai_continue_batch_stream(book_id):
                 # 2026-08-23 默认启用：内置统一去AI规则（build_review_rules）常驻，
                 # 不再依赖技能包勾选；审查类(review)技能包作为增强叠加。
                 # 字数校验通过→用修正版；字数异常/失败→回滚用初稿
-                deai_status = 'skipped'  # skipped / success / failed
+                deai_status = 'skipped'  # skipped / rules_ok / rules_missing / success / failed
                 deai_rules_block = ''
                 try:
-                    from blueprints.chat_collab_bp import build_review_rules
-                    deai_rules_block = build_review_rules(
-                        skill_pack_ids, mode='agent',
-                        prompt_keys_filter=['tomato_deai', 'de_ai_flavor', 'polish'], book=book)
+                    deai_rules_block, _deai_build_status = _build_deai_rules_block(skill_pack_ids, book)
+                    deai_status = 'rules_ok' if _deai_build_status == 'ok' else 'rules_missing'
                 except Exception as _deai_e:
-                    try:
-                        app.logger.error(f'ai_continue_batch_stream 去AI规则构建失败: {_deai_e}')
-                    except Exception:
-                        pass
+                    # helper 也兜不住（连 DEAI_ONLY_RULES import 都失败），显式标 missing 而非静默
+                    app.logger.error(f'ai_continue_batch_stream 去AI规则构建失败: {_deai_e}')
+                    print(f'[去AI] ai_continue_batch_stream 去AI规则构建失败: {_deai_e}', file=sys.stderr)
+                    deai_status = 'rules_missing'
                 if deai_rules_block:
                     # 推送心跳：去AI味审校中
                     yield f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在去AI味审校第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
@@ -8901,6 +8897,30 @@ def ai_continue_batch_stream(book_id):
     resp.headers['X-Accel-Buffering'] = 'no'
     resp.headers['Connection'] = 'keep-alive'
     return resp
+
+def _build_deai_rules_block(skill_pack_ids, book):
+    """统一构建去AI味审校规则块（单章 ai_continue 与批 ai_continue_batch_stream 共用）。
+
+    消除两处 7 行重复；同时解决"去AI规则构建失败/为空时静默跳过"的隐患：
+    - build_review_rules 内部已保证 parts 含 DEAI_ONLY_RULES（核心去AI表），技能包/import 异常只丢技能包；
+    - 此处再兜底：即便 build_review_rules 也抛异常或返回空串，也强制回退注入核心 DEAI_ONLY_RULES，
+      保证去AI审校环节永不因构建问题而静默缺失。
+    返回 (rules_block, status)：status = 'ok' / 'fallback'。
+    """
+    from blueprints.chat_collab_bp import build_review_rules, DEAI_ONLY_RULES
+    status = 'ok'
+    try:
+        block = build_review_rules(
+            skill_pack_ids, mode='agent',
+            prompt_keys_filter=['tomato_deai', 'de_ai_flavor', 'polish'], book=book)
+        if not block:
+            raise RuntimeError('build_review_rules 返回空串')
+    except Exception as _deai_e:
+        status = 'fallback'
+        app.logger.error(f'去AI味规则构建异常，已回退注入核心去AI表: {_deai_e}')
+        print(f'[去AI] 规则构建异常，已回退注入核心去AI表: {_deai_e}', file=sys.stderr)
+        block = DEAI_ONLY_RULES
+    return block, status
 
 def _extract_chapter_body(full_content: str) -> str:
     """从 LLM 完整输出中剥离 PRE_WRITE_CHECK、chapter_changes、【标题】标签，只保留正文。
