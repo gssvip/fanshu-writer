@@ -8761,7 +8761,9 @@ def chat_roundtable():
                 _iron = _core_params_iron_block(_bb, book) if (book and _bb) else ''
                 for _dk in _create_dims:
                     _label, _ctype = _RT_CREATE_DIMS.get(_dk, (_dk, 'SAVE_CONCEPT'))
-                    yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": f"\n\n📌 正在按讨论结果创作【{_label}】…\n\n"}, ensure_ascii=False)}\n\n'
+                    # 注意：f-string 表达式中不能含反斜杠（Python<3.12/PEP701 之前），故把 \n 预计算成变量
+                    _create_msg = "\n\n📌 正在按讨论结果创作【" + _label + "】…\n\n"
+                    yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": _create_msg}, ensure_ascii=False)}\n\n'
                     _sys = _rt_create_dimension_system(_dk, book, _iron, _consensus, _bb_existing.get(_dk, ''))
                     _cre_full = []
                     for _tk2, _tp2 in _rt_stream_turn(_gw_c, [

@@ -169,7 +169,11 @@ TOOLSPAGE_BASELINE = 1192
 #   - 通用聊天明确维度生成指令识别 + 维度格式铁律注入 + 落地卡片
 #   - 角色卡多人名拆分/name/role 归一化（防 varchar 截断与"未命名"脏名）
 #   - _dim_max_tokens 统一 131072；存量测试同步
-CHAT_COLLAB_BP_BASELINE = 9086
+# 2026-08-29 重校准（修复 Python<3.11 f-string 反斜杠语法错误）：
+#   - 圆桌"正在讨论结果创作"delta 帧原为 f-string 嵌套含 \n 反斜杠，
+#     3.12 前会 SyntaxError，导致 CI(3.11) pytest 全部 collection 失败 → 拆成变量拼接
+#   → 净增 2 行（9086→9088）
+CHAT_COLLAB_BP_BASELINE = 9088
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
