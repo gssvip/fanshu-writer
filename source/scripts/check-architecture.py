@@ -48,7 +48,11 @@ MAX_ROUTES_PER_FILE = 30
 #   - 文风铁律硬卡4追加：偷懒转场词替换公式（约10行）
 #   - 文风铁律追加：节奏温度·15%喘息段铁律（约9行）
 #   → 净增 33 行（14271→14304），属去AI味P0修复硬卡注入，不属业务膨胀
-APP_PY_BASELINE = 14304
+# 2026-08-29 重校准7（智驾维度生成/圆桌轮数可配/通用聊天维度格式/角色卡多角色落地与健壮性）：
+#   - apply_card 角色解析：多人名拆分、name/role 归一化与落库兜底（防 varchar 截断崩溃）
+#   - Character create/update/import 的 name/role 截断兜底及架构注释
+#   - 后端若干被豁免文件因真实功能增量而同步增加，随 app.py/chat_collab_bp.py 一并重校准
+APP_PY_BASELINE = 14618
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -56,7 +60,8 @@ FE_MAX_LINES = 1500
 
 # WritePage.tsx 基线行数：只能减不能增（前端巨石，防止继续膨胀）
 # 2026-08-18 重校准：版本号对比等细节+UI交互
-WRITEPAGE_BASELINE = 8899
+# 2026-08-29 重校准：随智驾功能增量同步至当前行数
+WRITEPAGE_BASELINE = 8902
 
 # ChatPanel.tsx 基线行数：只能减不能增（智驾面板巨石，防止继续膨胀）
 # 2026-08-18 重校准2（M9 技能包生效链路打通）：
@@ -86,7 +91,10 @@ WRITEPAGE_BASELINE = 8899
 #   - 新增 general Tab 工具栏（命中气泡+一键落卡+流水线入口）+ general Tab 独立 textarea 输入区
 #   - 新增爆款3步流水线浮层 Modal（Step1扫榜输入→Step2方案卡片→Step3世界观）+ 流式进度可视化
 #   → 净增 429 行（3262→3691），属用户明确要求P0功能交付（通用CHATBOX+爆款流水线UI），不属业务膨胀
-CHATPANEL_BASELINE = 3691
+# 2026-08-29 重校准（删除通用聊天顶部命中选择按钮 + 圆表格/维度生成前端配套）：
+#   - 移除顶部命中选择按钮渲染与 hitSuggestionPopups 等状态管理
+#   - 同步其余智驾面板功能增量至当前行数
+CHATPANEL_BASELINE = 4164
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
@@ -156,7 +164,12 @@ TOOLSPAGE_BASELINE = 1192
 #   - 新增 /api/ai/search-config GET/PUT 路由（存 AppPreference KV）+ _sync_search_keys_from_preference 助手
 #   - deep_think 由布尔改为程度档位(0/1/2)：temperature 0.7/0.5/0.3、max_tokens 4096/6144/8192、system 按档增强
 #   → 净增 80 行（7836→7916）
-CHAT_COLLAB_BP_BASELINE = 7916
+# 2026-08-29 重校准（圆桌轮数可配/通用聊天维度生成+角色落地健壮性）：
+#   - 圆桌讨论轮数解析（默认2轮，用户"讨论N轮"则按N轮）
+#   - 通用聊天明确维度生成指令识别 + 维度格式铁律注入 + 落地卡片
+#   - 角色卡多人名拆分/name/role 归一化（防 varchar 截断与"未命名"脏名）
+#   - _dim_max_tokens 统一 131072；存量测试同步
+CHAT_COLLAB_BP_BASELINE = 9086
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

@@ -86,18 +86,18 @@ class TestBuildSectionsRetryHint:
 
 class TestDimMaxTokens:
     def test_per_dimension_quotas(self):
-        """2026-08-21 按用户要求统一 27000（不再分档），模型上限由 llm_gateway 自动适配。"""
+        """配额统一给足 _DIM_MAX_TOKENS（按模型能力防任何维度截断），不再分档。"""
         from blueprints.chat_collab_bp import _dim_max_tokens
-        assert _dim_max_tokens('timeline') == 27000
-        assert _dim_max_tokens('worldbuilding') == 27000
-        assert _dim_max_tokens('character_profiles') == 27000
-        assert _dim_max_tokens('key_rules') == 27000
-        assert _dim_max_tokens('concept') == 27000
+        assert _dim_max_tokens('timeline') == 131072
+        assert _dim_max_tokens('worldbuilding') == 131072
+        assert _dim_max_tokens('character_profiles') == 131072
+        assert _dim_max_tokens('key_rules') == 131072
+        assert _dim_max_tokens('concept') == 131072
 
     def test_default_for_unknown_dim(self):
         from blueprints.chat_collab_bp import _dim_max_tokens
-        assert _dim_max_tokens('style_guide') == 27000
-        assert _dim_max_tokens('unknown_dim') == 27000
+        assert _dim_max_tokens('style_guide') == 131072
+        assert _dim_max_tokens('unknown_dim') == 131072
 
     def test_quota_covers_validator_min_chars(self):
         """配额必须 ≥ 校验器字数下限（中文 ≈1.0-1.5 token/字，取 2.5x 安全系数防截断）。"""
