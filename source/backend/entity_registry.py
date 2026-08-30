@@ -704,14 +704,28 @@ def _extract_generic_text_entities(text: str, buckets, ref: str, add_fn):
 
 def _word_boundary_replace(text: str, old: str, new: str) -> Tuple[str, int]:
     """整词替换（避免"林墨"匹配到"林墨儿"），返回 (新文本, 替换次数)。
-    中文用零宽断言近似整词边界：前后非字母数字汉字。"""
+
+    中文边界策略（兼容网文正文）：
+    - 前边界：开头或非字母数字与汉字 —— 防止匹配到前缀（"张三"不匹配"呃张三"前缀外的带字词首）
+    - 后边界：允许紧接汉字（否则"张三说/张三大步"这种正文常态永不替换，历史正文改名失效），
+      仅排除字母数字 和 常见中文名/词后缀续写字（儿/氏/姑娘/如姑娘/府/兄/弟/崖/谷等），
+      这样既能在"张三说：”“张三背起剑"时正确替换，又能避免"张三儿→李四儿”这类误替换。
+
+    注：中文无天然空格，任何正则都无法做到100%精确分词；此策略优先保证历史/新正文能改名，
+    对极少数"名字+特定后缀"组合做了保守排除。
+    """
     if not text or not old or old == new:
         return text, 0
+    _SUFFIX_CHARS = set(
+        '儿氏姑娘府兄弟丫头姐郎公先生同志子哥'  # 常见中文名后缀续写字，后接这些不视为独立词边界（防"张三儿/张三哥"误吞）
+    )
     # 转义正则元字符
     pattern = re.escape(old)
-    # 前边界：开头或非汉字字母数字
-    # 后边界：结尾或非汉字字母数字
-    full = r'(?<![A-Za-z0-9\u4e00-\u9fa5])' + pattern + r'(?![A-Za-z0-9\u4e00-\u9fa5])'
+    # 前边界：仅排除英文与数字（允许汉字前接，否则"只见张三/看到张三"这类正文常态永不替换）
+    # 后边界：结尾 或 非（字母数字 + 常见后缀字），其余（汉字/标点）均视为可接受边界
+    forbidden_after = _SUFFIX_CHARS.union(set('A-Za-z0-9'))
+    after_cls = '[' + re.escape(''.join(sorted(forbidden_after))) + ']'
+    full = r'(?<![A-Za-z0-9])' + pattern + r'(?!' + after_cls + r')'
     new_text, count = re.subn(full, new, text)
     return new_text, count
 
