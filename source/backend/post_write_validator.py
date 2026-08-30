@@ -146,7 +146,7 @@ def validate_chapter(content: str) -> ValidationResult:
     #     若有维度 <60 分则追加 warning，给具体改法，不扣现有总分（独立维度）。
     _check_style_alignment_score(text, cfg, result)
 
-    # 16. 硬卡4·整章量化双轨自检（每自然段句号≤2、以1句为主 / 段均字数比例 / 句均字数 / 段均句数）
+    # 16. 硬卡4·整章量化双轨自检（每自然段≤2句号，一般以每自然段1个句号为主 / 段均字数比例 / 句均字数 / 段均句数）
     #     对接 app.py 文风铁律硬卡4；任何一条严重违规则升级为 critical（作者必须修订）。
     _check_quantitative_hardcards(text, cfg, result)
 
