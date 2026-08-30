@@ -3372,9 +3372,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         '\n4. 严禁出现POV不认识的人物内心活动（只能通过POV观察推测他人）'
     )
 
-    mode_label = '续写' if mode == 'continue' else '润色'
-    yield sse({'type': 'delta', 'content': f'正在{mode_label}第 {target_chapter_num} 章…\n\n'})
-
+    # 开头提示帧已在函数顶部发出（防连接超时占位），此处不再重复发「正在写第X章」，避免前端出现两条相同提示
     if mode == 'polish':
         # 润色：按章节号定位原文（与前端 displayChapterNum 口径一致：优先标题解析，回退 order_index+1）
         cur = None
