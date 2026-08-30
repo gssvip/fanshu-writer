@@ -96,6 +96,7 @@ _SKILL_SUFFIXES = (
     '诀','法','术','招','式','阵','咒','印','功','心法','秘法','神通','武学','招式','斗技',
     '魔法','法术','咒文','奥义','禁术','玄功','灵诀','剑诀','刀诀','枪法','棍法','掌法','指法',
     '步法','身法','吐纳','冥想','锻体','炼体','拳','掌','腿','爪','指',
+    '经','典','录','解','真解','卷','篇','谱',  # 功法典籍类（"玄天九转经/枯荣真解/九幽噬魂典"）
 )
 
 # 时间/年龄/阶段/数字噪声关键词 —— 一旦在 label 或候选名字里出现，且带数字→直接视为噪声
@@ -106,6 +107,36 @@ _TIME_AGE_WORDS = (
 )
 # 章/卷/节/回/幕 序号噪声关键词
 _SECTION_WORDS = ('章','卷','节','回','幕','集','场','话','篇','部','册')
+# ===== 【A方向·类别词/伪实体词黑名单】=====
+# 命中即不是实体名，直接丢弃。解决"功法/技能/势力"这类类别词被当成实体、以及
+# "正文语句碎片"混入实体桶的噪声。命中优先级最高，不受形貌判定影响。
+_ENTITY_CATEGORY_WORDS = {
+    # 纯类别词（用户把"角色/功法/势力"当标签写，绝不能作为实体名入桶）
+    '角色', '人物', '名字', '姓名', '主角', '配角', '反派', '龙套', '男一', '女一', '男主', '女主',
+    '势力', '门派', '宗门', '宗派', '阵营', '家族', '商会', '军团', '联盟', '道统',
+    '地点', '区域', '地图', '城池', '秘境', '遗迹', '大陆', '山脉', '海域', '宗门驻地', '驻地',
+    '物品', '宝物', '法宝', '法器', '丹药', '灵药', '材料', '装备', '储物袋',
+    '功法', '技能', '术法', '神通', '秘法', '心法', '招式', '武学', '法术', '咒语', '战技', '斗技',
+    # 描述性/说明性伪实体词（独立成词时不是实体）
+    '身份', '职业', '性格', '外貌', '背景', '经历', '关系', '能力', '弱点', '目标', '任务',
+    '登场', '出场', '介绍', '说明', '概述', '简介', '备注', '总结', '标题', '章节', '章回',
+    # 泛称词（出现即丢，避免"众人/所有弟子/一名少年"入桶）
+    '众人', '大家', '所有人', '所有弟子', '一名少年', '一位老者', '一位少女', '一名女子',
+    '一名男子', '一个小孩', '一个人', '某人', '有人', '无人', '谁人', '众人皆', '全体',
+    # 常见疑问/陈述碎片（正文口语）
+    '什么', '为什么', '怎么回事', '怎么了', '怎么办', '如何', '怎样', '多少', '多久',
+    '没错', '当然', '好吧', '罢了', '是吗', '是吗？', '来了', '走了', '知道', '明白',
+    # 常用成语/熟语/白话碎片（独立成词即丢，防止被当人物/地点）
+    '时光荏苒', '岁月如梭', '光阴似箭', '白胡子老头', '白发苍苍', '一名老者', '一位老者',
+    '一名女子', '一名男子', '一个小孩', '少年模样', '老者模样', '来者不善', '善者不来',
+    '冥冥之中', '不知不觉', '一晃而过', '转瞬即逝', '人去楼空', '物是人非', '心照不宣',
+    '众所周知', '沉默片刻', '良久之后', '片刻之后',
+    '过了许久', '不知过了多久', '就在此时', '就在这时', '说时迟', '那时快', '一念之差',
+}
+# 实体名内若包含这些"描述性续接"特征，通常意味着把整句/整段描述塞进了名字：
+# 如"林墨（男·19岁）"已拆括号、"三品炼药师"带品级、"玄骨宗外门弟子" 这类"名+身份"混写。
+_ENTITY_DESCRIPTOR_MARKERS = ('的', '是', '为', '在', '与', '和', '及', '或', '之', '亦', '乃')
+
 # 明确的"不是名字"的停用词/说明词/虚词
 _STOP_WORDS = set('''我们 你们 他们 她们 它们 自己 咱们 大家 人家 别人 旁人
 一个 两个 三个 四个 五个 一些 有些 所有 全部 整个 部分 其中 之一 而已
@@ -144,6 +175,30 @@ def _is_valid_entity_name(name: str, allow_digit_ratio: float = 0.4) -> bool:
     name = name.strip()
     n = len(name)
     if n < 2 or n > 18:
+        return False
+    # 【A方向·类别词黑名单】独立成词即丢（"功法/势力/人物/主角"等标签词绝不入桶）
+    if name in _ENTITY_CATEGORY_WORDS:
+        return False
+    # 【A方向·描述性续接特征】"名+身份/描述"混写（如"玄骨宗外门弟子"）按"含强连接词且非专名尾缀"过滤：
+    # 仅当名字里带 2 个以上连接/描述词 或 带"为/乃/亦"这类明显谓语词 → 丢（防止"大衍之数为极"整句混入）
+    strong_pred = ('是', '为', '乃', '即', '属', '乃')
+    if n > 4 and sum(1 for ch in name if ch in strong_pred) >= 2:
+        return False
+    # 文言虚词+非尾缀专名：5 字以上字符串若同时含 文言虚词(之/其/此/以/于/者/也/焉/哉/乎) 且
+    # 不以 诀/功/法/宗/门/城/山 等专名尾缀收尾 → 更可能是描述句而非实体名 → 丢
+    WENYAN = ('之', '其', '此', '以', '于', '者', '也', '焉', '哉', '乎', '则', '乃')
+    if n >= 5 and any(ch in name for ch in WENYAN):
+        proper_suffix = any(name.endswith(s) for s in
+                            ('诀', '功', '法', '术', '经', '典', '录', '宗', '门', '派', '城', '山', '谷',
+                             '剑', '刀', '丹', '阵', '符', '印', '塔', '宫', '殿', '楼', '岛', '国', '州'))
+        if not proper_suffix:
+            return False
+    # 数量词/量词短语开头（"一座山/一缕烟/一柄剑/几个人"）→ 描述句碎片，丢
+    if re.match(r'^(一|两|三|几|这|那|某|每|各|全|所)[座缕柄把条匹件名位种群堆枚颗粒滴块面口把群](?!\s)', name):
+        return False
+    # 以描述性标记结尾的疑似句子（"……的"/"……了"/"……呢" 等口语尾巴）→ 丢
+    # 3 字及以上带这些尾巴即视为碎片（真实人名多为 2-3 字，且"林墨的"这类 3 字碎片必须拦）
+    if n > 2 and name[-1] in ('的', '了', '呢', '吗', '啊', '吧', '嘛', '哦'):
         return False
     # ① 整句标点噪声
     if any(ch in name for ch in '。？！；!?;…—-~') and n > 10:
@@ -235,6 +290,19 @@ def _looks_like_person_name(name: str) -> bool:
     return name[0] in _CHINESE_SURNAMES
 
 
+def _looks_like_family_surname(name: str) -> bool:
+    """判定"姓氏+家/氏"家族称谓（林家/姜家/王氏）：
+    仅当是 2-3 字、尾字为家/氏、且去掉尾字后剩余部分是常见姓氏。
+    用于"林家/姜家"这类既可能是家族势力、也可能是人物称谓时的保守双桶。"""
+    if not isinstance(name, str) or not (2 <= len(name) <= 3):
+        return False
+    if name.endswith('家') or name.endswith('氏'):
+        stem = name[:-1]
+        if stem in _CHINESE_SURNAMES or (len(stem) >= 2 and stem in _CHINESE_COMPOUND_SURNAMES):
+            return True
+    return False
+
+
 def _is_noise_label(label: str) -> bool:
     """判断行冒号前的 label 是否是"时间/年龄/阶段/序号/说明词"。
     如果是噪声 label → 这一行不要做任何默认塞桶，否则会出现 timeline 里 "16岁3个月：主角觉醒灵根"
@@ -275,18 +343,48 @@ def _is_noise_label(label: str) -> bool:
 
 def _categorize_candidate(name: str):
     """基于尾缀/形态猜测候选属于哪一 bucket，返回 categories 列表（可能性从高到低）。
-    若完全猜不出来且不像人名 → 返回空列表，调用方就不塞任何桶（核心：**不再默认塞角色**）。"""
+
+    【B方向·分类错置修复】采用"特异性优先 + 冲突裁决"，取代旧的"人名优先固定顺序"：
+    - 势力/地点/技能/物品尾缀都是**高度特异**的判定（"宗/门/派"必是势力，"诀/功/术"必是技能，
+      "剑/刀/丹"必是物品，"城/山/谷"必是地点），命中即进对应桶，绝不被"像人名"覆盖。
+    - 人物判定**最弱**：只有没有任何特异尾缀时才加入 characters。
+      这样"万剑宗/云中城/姜家/林家"这类"姓氏字+宗门/城池/家族尾缀"不会再被误当人物。
+    - 多桶共存仅限真正模糊的情况（如"林家"既是家族名也可能是人物姓氏用例，保守双桶）。
+    若完全猜不出来且不像人名 → 返回空列表，调用方就不塞任何桶（绝不默认塞角色）。
+    """
+    if not isinstance(name, str) or not name:
+        return []
+    # 双保险：先过统一合法性闸（黑名单/碎片/描述串），不合法绝不入任何桶
+    if not _is_valid_entity_name(name):
+        return []
+    # 【A方向·类别词黑名单】黑名单词绝不入任何桶（与 _is_valid_entity_name 保持一致）
+    if name in _ENTITY_CATEGORY_WORDS:
+        return []
     cats = []
-    if _looks_like_person_name(name):
-        cats.append('characters')
-    if _looks_like_faction(name):
+    is_faction = _looks_like_faction(name)
+    is_location = _looks_like_location(name)
+    is_skill = _looks_like_skill(name)
+    is_item = _looks_like_item(name)
+    # 特异尾缀命中 → 直接进对应桶（最高优先级，人物判定不参与覆盖）
+    if is_faction:
         cats.append('factions')
-    if _looks_like_location(name):
-        cats.append('locations')
-    if _looks_like_skill(name):
+    if is_skill:
         cats.append('skills')
-    if _looks_like_item(name):
+    if is_location:
+        cats.append('locations')
+    if is_item:
         cats.append('items')
+    # 冲突裁决：地点与势力/人物互斥场景
+    #   "云中城/落霞山"→location 优先于 characters（已由上面特异尾缀锁定，此处不再加人物）
+    #   "林家/姜家"→家族尾缀"家"判定为 faction，同时"林/姜"是姓氏可能指人 → 双桶（保守）
+    # 人物判定（最弱）：仅当没有任何特异尾缀命中，且形态像人名 → 才归为 characters
+    if not (is_faction or is_location or is_skill or is_item):
+        if _looks_like_person_name(name):
+            cats.append('characters')
+    elif is_faction and _looks_like_person_name(name):
+        # 家族/姓氏+家（"林家/姜家"）既可能是家族势力，也可能是人物称谓 → 保守追加 characters
+        if _looks_like_family_surname(name):
+            cats.append('characters')
     return cats
 
 
