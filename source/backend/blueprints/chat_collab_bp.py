@@ -559,6 +559,61 @@ def build_writing_rules(book=None, skill_pack_ids=None, mode='agent',
     return "\n\n".join(parts).strip()
 
 
+def build_chat_chapter_rules(book=None, skill_pack_ids=None, mode='agent',
+                             extra_style_pack: str = '', extra_style_note: str = '') -> str:
+    """智驾聊天里用户明确要求"写正文/写第X章/接着写"时的补充注入。
+
+    与 build_writing_rules 同源：注入正文行文规范 WRITING_STYLE_RULES + 文风类技能包，
+    但【跳过 GENERAL_CORE_RULES】——因为 chat_smart 的 system prompt 已内置 GENERAL_CORE_RULES，
+    这里再注入会造成同一段文字在 prompt 里出现两遍（用户感知"啰嗦重复"）。
+    用于补齐 chat_smart 目前"只讨论不写正文"的缺口，保证在智驾里写正文同样命中行文/去AI硬卡。
+    """
+    parts = [WRITING_STYLE_RULES]
+    style_note = ''
+    book_genre = getattr(book, 'genre', None) if book is not None else None
+    try:
+        from app import _get_skill_prompts_by_category, _resolve_skill_ids_by_category
+        if book is not None:
+            book_style_ids = _resolve_skill_ids_by_category(book, 'style')
+        else:
+            book_style_ids = []
+        merged_ids = list(dict.fromkeys(list(skill_pack_ids or []) + list(book_style_ids)))
+        style_note = _get_skill_prompts_by_category(merged_ids, 'style', mode=mode, book_genre=book_genre) or ''
+    except Exception:
+        style_note = ''
+    if extra_style_pack or extra_style_note:
+        extra = '\n\n'.join(s for s in [extra_style_pack, extra_style_note] if s).strip()
+        style_note = (style_note + ('\n\n' + extra if style_note else extra)).strip()
+    if style_note:
+        parts.append("【文风类·技能包专属规则】\n" + style_note)
+    return "\n\n".join(parts).strip()
+
+
+# 智驾聊天里判定用户是否明确要求"写正文/写第X章/接着写"——命中则需注入正文行文规范
+_WRITE_CHAPTER_INTENT_RE = None
+
+
+def _is_write_chapter_intent(text: str) -> bool:
+    """检测智驾聊天输入是否为明确的写正文意图（否则只在通用提示词下讨论，不注入行文规范）。
+
+    覆盖：写正文 / 写第N章 / 接着写 / 续写 / 继续写 / 写一章 / 把第N章写出来 / 开始写第N章 等。
+    命中返回 True；纯讨论（改设定/问走向/构思）不命中。
+    """
+    if not text:
+        return False
+    import re as _re
+    t = text.strip()
+    # 明确包含"写"+ 章节/正文对象，或"接着写/续写/继续写/写正文"动词
+    patterns = [
+        r'写\s*第\s*[0-9一二三四五六七八九十百千万]+',   # 写第N章 / 写第3卷
+        r'写.{0,4}(本章|正文|这一章|下一章|一章|新章节)',   # 写正文 / 写这一章
+        r'(接着|继续|往下)?(写|续写|码).{0,3}(正文|章节|本章|一章)',  # 接着写正文 / 续写本章
+        r'把\s*第\s*[0-9一二三四五六七八九十百千万]+\s*章.{0,4}(写|码|续)',
+        r'(开始|快?)写正文',
+    ]
+    return any(_re.search(p, t) for p in patterns)
+
+
 def build_review_rules(skill_pack_ids=None, mode='agent',
                        prompt_keys_filter=None, extra_review_note: str = '', book=None) -> str:
     """去AI/审稿阶段专属规则：通用核心 + 独立去AI手册 + 审查类(review)技能包。
@@ -1487,6 +1542,20 @@ def chat_smart():
     # 构建 system_prompt + 上下文（注入章节目录）
     toc_block = _build_toc_block(book_id)
     system_prompt = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block)
+
+    # ===== 写正文意图·注入正文行文规范 =====
+    # chat_smart（维度感知聊天）默认只注入 GENERAL_CORE_RULES，不注入 WRITING_STYLE_RULES（设计见
+    # build_chat_system_prompt。但当用户明确要"写第X章/写正文/接着写"时，若仍不注入行文规范，
+    # 产出的 SAVE_CHAPTER 正文卡会在没有任何行文/去AI硬卡约束下自由发挥 → AI特征居高不下。
+    # 这里命中写作意图则同源注入 build_chat_chapter_rules（WRITING_STYLE_RULES+文风技能包，跳过
+    # 已重复的 GENERAL_CORE_RULES），与正文 Tab(chat_smart_action) / ai_continue 保持一致。
+    if _is_write_chapter_intent(message):
+        try:
+            _chat_chapter_rules = build_chat_chapter_rules(book, mode='agent')
+            if _chat_chapter_rules:
+                system_prompt = system_prompt + '\n\n' + _chat_chapter_rules
+        except Exception:
+            pass  # 注入失败不阻断主流程，退回通用聊天提示词
 
     # 自动上下文注入：根据用户输入识别提及的章节/维度，将原文/维度内容作为"引用前言"前置到用户消息中
     # 同时生成命中信息，在 SSE 首个 meta 事件中回传给前端做"已定位"提示
@@ -4515,6 +4584,19 @@ def smart_general():
     extra_parts.append(dim_hint)
     extra_parts.append(PLAIN_TEXT_LAYOUT_RULES)
     sys_prompt = base_system + '\n\n' + '\n\n'.join(p for p in extra_parts if p)
+
+    # ===== 写正文意图·注入正文行文规范（与 chat_smart 同源）=====
+    # 设定通用Tab(smart_general)默认只注入构思规则(GENERAL_CORE_RULES+构思格式)，不注入
+    # WRITING_STYLE_RULES（设计见 build_chat_system_prompt）。但当用户在此 Tab 明确要求
+    # "写第X章/写正文/接着写"时，同样需要命中正文行文规范，否则产出的 SAVE_CHAPTER 正文卡
+    # 会脱离行文/去AI硬卡约束。与 chat_smart / chat_smart_action / ai_continue 保持同源注入。
+    if _is_write_chapter_intent(message):
+        try:
+            _general_chapter_rules = build_chat_chapter_rules(book, mode='agent')
+            if _general_chapter_rules:
+                sys_prompt = sys_prompt + '\n\n' + _general_chapter_rules
+        except Exception:
+            pass  # 注入失败不阻断主流程
 
     # ===== 自动上下文注入：章节原文/维度内容引用块前置 =====
     auto_ctx_block, auto_ctx_info = _build_auto_context_block(message, book_id, bb)
