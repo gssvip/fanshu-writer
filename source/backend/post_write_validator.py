@@ -146,7 +146,7 @@ def validate_chapter(content: str) -> ValidationResult:
     #     若有维度 <60 分则追加 warning，给具体改法，不扣现有总分（独立维度）。
     _check_style_alignment_score(text, cfg, result)
 
-    # 16. 硬卡4·整章量化双轨自检（段内句号≤2 / 段均字数比例 / 句均字数 / 段均句数）
+    # 16. 硬卡4·整章量化双轨自检（每自然段句号≤2、以1句为主 / 段均字数比例 / 句均字数 / 段均句数）
     #     对接 app.py 文风铁律硬卡4；任何一条严重违规则升级为 critical（作者必须修订）。
     _check_quantitative_hardcards(text, cfg, result)
 
@@ -1301,7 +1301,7 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
         return
     n_par = len(paragraphs)
 
-    # 4.1 段内句号/句终标点硬上限 ≤ 2；含 ≥ 3 句终标点的段数必须 = 0
+    # 4.1 段内句号/句终标点硬上限：每自然段 ≤ 2，一般以每自然段 1 个句号为主；含 ≥ 3 句终标点的段数必须 = 0
     # 4.1b 补充口径：段落字数（含标点）≤15 字的短段，句终标点必须 ≤ 1（短段绝对不允许塞 2 句完整话）
     over3_per_par = 0
     first_over3_idx = -1
@@ -1425,7 +1425,7 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
             count=over3_per_par,
             position=f'例如第 {first_over3_idx} 段含 {first_over3_count} 句；整章共 {over3_per_par} 段（占 {over3_ratio*100:.1f}%）',
             suggestion=(
-                f'文风铁律 4.1 规定每段 ≤ 2 个句号（=1–2 句完整话），'
+                f'文风铁律 4.1 规定每自然段 ≤ 2 个句号（一般以每自然段 1 个句号为主，=最多 2 句完整话），'
                 f'但本章有 {over3_per_par} 段堆了 ≥ 3 句小短句（漫画分镜脚本化是最浓 AI 味来源）。'
                 f'修复：把同 POV/同镜头/同动作链的 3+ 个小短句合并成 1–2 句完整中长句；'
                 f'绝不允许一句话硬剁成 3+ 个残切碎段。'
