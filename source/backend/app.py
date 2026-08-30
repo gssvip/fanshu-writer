@@ -7423,7 +7423,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
   5.3 被字句优先改主动：出现"被"字就问自己能不能把主语换成主动（"杯子被他捏碎了"→"他捏碎了杯子"），整章"被"字句 ≤ 1 处
   5.4 「X地」副词一律删或改动作：冷冷地/悄悄地/快速地/慢慢地/死死地 全部替换为动作/声音/触感描写
   5.5 分析报告术语必须 0 次：核心动机/信息边界/信息落差/利益最大化/底层逻辑/认知差/降维打击 —— 正文绝不能出现
-  5.6 惊讶标记词密度必须合规：仿佛/忽然/竟/竟然/猛地/猛然/不禁/宛如/蓦然/骤然 每 3000 字合计 ≤ 1 次（一章最多 1 次）"""
+  5.6 惊讶标记词密度必须合规：仿佛/忽然/竟/竟然/猛地/猛然/不禁/宛如/蓦然/骤然 每 2400 字合计 ≤ 1 次（一章最多 1 次）"""
 
     if enable_structured_tags and build_pre_write_check_prompt:
         system_prompt += build_pre_write_check_prompt(current_chapter_num, bb)
