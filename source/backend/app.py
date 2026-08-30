@@ -1854,29 +1854,6 @@ def add_daily_stats(book_id):
 
 # ==== Templates API ====
 
-def seed_builtin_templates():
-    """【已废弃】不再内置 5 个「经典三幕式/短篇/言情/玄幻/悬疑」固定结构模板。
-    原因：每个 genre 只给 1 套平均值目录骨架，会把同题材小说前 6 章的桥段/体量/节奏
-    全部框死（例如 10 章必须写完「宗门大比/误会波折/飞升仙界」），反而扼杀创作自由。
-
-    向后兼容：
-    - Template 表、GET/POST /api/templates、Book.template_id 字段完全保留；
-    - 用户仍可 POST /api/templates 自建自定义结构模板继续使用；
-    - 前端「模板」下拉框显示「不用模板」+ 用户自建模板，不再出现 5 个内置。
-    """
-    # 旧实现：seed_builtin_templates() 曾插入 5 条 is_builtin=True 的目录骨架。
-    # 为避免旧数据库残留，把已存在的 5 个内置模板标记为"非内置"，让 UI 不默认当"系统模板"强调展示。
-    try:
-        old_names = ('经典三幕式', '短篇小说模板', '都市言情模板', '玄幻修仙模板', '悬疑推理模板')
-        rows = Template.query.filter(Template.name.in_(old_names), Template.is_builtin.is_(True)).all()
-        for r in rows:
-            r.is_builtin = False
-        if rows:
-            db.session.commit()
-    except Exception:
-        db.session.rollback()
-    return
-
 # /api/health 已迁移到 blueprints/health_bp.py（Blueprint 示范）
 
 @app.route('/api/templates', methods=['GET'])
@@ -14541,7 +14518,6 @@ def init_db():
         # Migration M4b: 用户采纳的 prompt 补丁列表 + 忽略的失败 bucket
         _add_column('book_bible', 'prompt_patches_json TEXT')
         _add_column('book_bible', 'ignored_failure_buckets_json TEXT')
-        seed_builtin_templates()
         seed_prompt_templates()
         seed_skill_packs()
         # 版本落库：下次启动命中快速路径，跳过全部迁移与种子同步
