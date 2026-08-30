@@ -1289,6 +1289,8 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
       - 句子段内句数：段内「。！？」合计作为句号数（句终标点总计数）
       - 句均字数：按 _SENTENCE_END_PATTERN 拆句，单句字数=句内字符数（含标点）
       - 段均句数 = 全章句终标点数 / 段落数；段均句数比值越大越碎（目标 ≤ 1.8）
+    口径说明：与 chat_collab_bp.WRITING_STYLE_RULES 短段主导对齐——主力段落 10-50 字
+    （1-2 个逗号长句）、句均约 12-18 字。4.3 不再按旧"叙述句 20-35 字"口径把短段判碎。
     """
     # 1) 脱 <p> 等标签再统计（避免 html 化正文干扰空行计数）
     stripped = re.sub(r'</?[^>]+>', '', text)
@@ -1470,56 +1472,45 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
             suggestion='部分段落仍偏碎：把同 POV/同场景的相邻短段合并，降低段均句数。',
         ))
 
-    # 4.3 句均字数（叙述句口径：平均 18–28 字；叙述句主力=逗号长句 20-35 字串 1-2 个动作）
+    # 4.3 句均字数（叙述句口径，与 WRITING_STYLE_RULES 短段主导对齐：主力段落 10-50 字、句均约 12-18 字）
     if sent_lengths:
-        if avg_sent_len < 10:
+        if avg_sent_len < 8:
             result.add(ValidationIssue(
                 severity='critical',
                 category='硬卡4.3·句均字数过短（整章碎句）',
                 pattern='句均字数',
                 count=int(avg_sent_len * 10),
-                position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句；短碎句(<10字)占比 {short_shard_ratio*100:.0f}%（硬卡句均 18–28 字）',
-                suggestion='整章句子被切成了碎碎的几个字一句（像 AI 战报）。修复：连续 3 个 ＜12 字残句必须合并成逗号长句（整句 20-35 字、串 1-2 个动作单元收一个句号）；句内补连接词/状语使主谓齐全。',
+                position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句；短碎句(<10字)占比 {short_shard_ratio*100:.0f}%（短段主导句均约 12-18 字）',
+                suggestion='整章句子被切成了碎碎的几个字一句（像 AI 战报）。修复：连续 3 个 ＜10 字残句必须合并成完整句（逗号串联 1-2 个动作单元收一个句号）；句内补连接词/状语使主谓齐全。',
             ))
-        elif avg_sent_len < 18:
-            # 口径升级：句均 < 17 且样本句数足够多(≥80 叙述文本规模) → 升 critical（现在 17.7 字的漫画分镜碎句版直接判不合格打回重写）
-            if avg_sent_len < 17 and len(sent_lengths) >= 80:
-                result.add(ValidationIssue(
-                    severity='critical',
-                    category='硬卡4.3·句均字数过短（叙述主力是漫画分镜碎句）',
-                    pattern='句均字数',
-                    count=int(avg_sent_len * 10),
-                    position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句（硬卡 18–28 字；<17字=叙述主力被切成15字小句）',
-                    suggestion='叙述主力句全被切成了15字左右的漫画分镜短句（AI最爱写这个节奏，像解说员念脚本）。修复：把同 POV/同镜头/同动作链的相邻2–3个句号短句合并成逗号长句（整句20-35字，串1-2个动作单元收一个句号）；叙述句七成以上必须落到 20-35 字区间。',
-                ))
-            else:
-                result.add(ValidationIssue(
-                    severity='warning',
-                    category='硬卡4.3·句均字数偏短',
-                    pattern='句均字数',
-                    count=int(avg_sent_len * 10),
-                    position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句（硬卡 18–28 字，对白句天然短可放宽）',
-                    suggestion='叙述句偏碎：把同场景同动作链的相邻句号短句合并成逗号长句（"他踩进泥水。脚底滑过硬东西。"→"他踩进泥水，脚底滑过硬东西。"），让叙述句落到 20-35 字区间。',
-                ))
-        elif avg_sent_len > 32:
+        elif avg_sent_len < 11:
             result.add(ValidationIssue(
                 severity='warning',
-                category='硬卡4.3·句均字数偏长',
+                category='硬卡4.3·句均字数偏短（接近碎句）',
                 pattern='句均字数',
                 count=int(avg_sent_len * 10),
-                position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句（硬卡 18–28 字）',
-                suggestion='句子过长：在语义节点处拆成 2 句完整话（每句 20-35 字、逗号串 1-2 个动作），避免一大坨逗号串 3+ 个动作。',
+                position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句（短段主导句均约 12-18 字）',
+                suggestion='叙述句略偏碎：把同场景同动作链的相邻句号短句合并（"他踩进泥水。脚底滑过硬东西。"→"他踩进泥水，脚底滑过硬东西。"），让叙述句落到 12-18 字区间。',
+            ))
+        elif avg_sent_len > 26:
+            result.add(ValidationIssue(
+                severity='warning',
+                category='硬卡4.3·句均字数偏长（背离短段主导）',
+                pattern='句均字数',
+                count=int(avg_sent_len * 10),
+                position=f'句均 {avg_sent_len:.1f} 字 / 共 {len(sent_lengths)} 句（短段主导句均约 12-18 字）',
+                suggestion='句子过长、叙述主力偏长段：按语义节点拆成 1-2 个动作单元收尾的完整句，让主力段落回到 10-50 字区间。',
             ))
 
         # 短碎句占比过高也单独报
-        if short_shard_ratio >= 0.35:
+        if short_shard_ratio >= 0.30:
             result.add(ValidationIssue(
-                severity='warning' if short_shard_ratio < 0.55 else 'critical',
+                severity='warning' if short_shard_ratio < 0.45 else 'critical',
                 category='硬卡4.3·短碎句占比过高',
-                pattern='单句 < 10 字',
+                pattern='单句 < 8 字',
                 count=short_shards,
-                position=f'{short_shards}/{len(sent_lengths)} 句（{short_shard_ratio*100:.0f}%）为 <10 字残句',
-                suggestion='一堆「几字小句」拼起来最像 AI 战报。修复：按动作链/镜头合并残句，每 3–4 个残句拼成 1 句完整话。',
+                position=f'{short_shards}/{len(sent_lengths)} 句（{short_shard_ratio*100:.0f}%）为 <8 字残句',
+                suggestion='一大堆「几字小句」拼起来最像 AI 战报。修复：按动作链/镜头合并残句，每 3–4 个残句拼成 1 句完整话，落到 12-18 字区间。',
             ))
 
     # 4.2 段均字数比例
@@ -1530,7 +1521,7 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
             pattern='段字数 ≤ 70 字占比',
             count=int(le70_ratio * 100),
             position=f'{int(le70_ratio*100)}% 的段落 ≤ 70 字（硬卡 ≥ 70%）',
-            suggestion='段落普遍过长（>手机端三行）。修复：在场景切换/镜头切换/对白前后空行分段，把 80+ 字的长段从语义节点处拆成 2–3 段，每段 40–70 字。',
+            suggestion='段落普遍过长（>手机端三行）。修复：短段主导——在场景切换/镜头切换/对白前后空行分段，用力短段 10-50 字（1-2 个逗号长句）承载动作，把 80+ 字长段从语义节点拆成 2-3 段。',
         ))
     if lt40_ratio < 0.25:
         result.add(ValidationIssue(
