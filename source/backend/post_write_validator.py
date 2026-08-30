@@ -135,7 +135,7 @@ def validate_chapter(content: str) -> ValidationResult:
     # 12. 张力评分（借鉴 PlotPilot 张力心电图，量化叙事节奏）
     _check_tension_score(text, result)
 
-    # 13. 标准文风禁词扫描（critical，对接 STANDARD_WRITING_STYLE_PROMPT 禁词清单）
+    # 13. 标准文风禁词扫描（critical，对接 chat_collab_bp.DEAI_RULES 黑名单）
     _check_style_forbidden_words(text, result)
 
     # 14. 上帝视角/剧透式叙述/伏笔明写检测（critical，对接视角与信息控制铁律）
@@ -1036,7 +1036,7 @@ def _check_tension_score(text: str, result: ValidationResult):
         ))
 
 
-# 标准文风禁词清单（与 app.py STANDARD_WRITING_STYLE_PROMPT 保持一致）
+# 标准文风禁词清单（与 chat_collab_bp.DEAI_RULES 黑名单保持一致；废弃的 STANDARD_WRITING_STYLE_PROMPT 已退役）
 _STYLE_FORBIDDEN_WORDS = [
     '一股', '一抹', '不由得', '不禁', '随即', '旋即', '与此同时', '颇为', '甚为', '极为',
     '毫无疑问', '毋庸置疑', '不言而喻', '深吸一口气', '眼中闪过一丝', '心中暗想',
@@ -1055,7 +1055,7 @@ _STYLE_FORBIDDEN_WORDS = [
 
 
 def _check_style_forbidden_words(text: str, result: ValidationResult):
-    """标准文风禁词扫描（critical 级，对接 STANDARD_WRITING_STYLE_PROMPT 禁词清单）。
+    """标准文风禁词扫描（critical 级，对接 chat_collab_bp.DEAI_RULES 黑名单）。
     命中即报 critical，强制作者规避 AI 常用词和书面化表达。"""
     if not text:
         return
@@ -1080,7 +1080,7 @@ def _check_style_forbidden_words(text: str, result: ValidationResult):
 
 
 # ===== 视角与信息控制铁律：确定性检测 =====
-# 对接 STANDARD_WRITING_STYLE_PROMPT 中的“视角与信息控制铁律”小节
+# 对接视角与信息控制铁律（禁上帝视角/剧透式叙述/上帝点评/伏笔明写/伏笔过载等）
 # 检测上帝视角、剧透式叙述、上帝点评、伏笔明写、伏笔过载等违规
 
 # 上帝视角/剧透式叙述触发词（命中即 critical）
@@ -1120,7 +1120,7 @@ _VIEW_SWITCH_PATTERN = re.compile(r'(?:(?:他|她|它)(?:心想|心中暗想|心
 def _check_god_view_and_foreshadow_leak(text: str, result: ValidationResult):
     """视角与信息控制铁律检测（critical 级）。
     检测上帝视角、剧透式叙述、上帝点评、伏笔明写、伏笔过载、视角频繁切换。
-    对接 STANDARD_WRITING_STYLE_PROMPT 中的“视角与信息控制铁律”小节。"""
+    对接视角与信息控制铁律（禁上帝视角/剧透式叙述/上帝点评/伏笔明写/伏笔过载等）。"""
     if not text or len(text) < 20:
         return
 
