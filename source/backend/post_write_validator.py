@@ -1036,11 +1036,7 @@ def _check_tension_score(text: str, result: ValidationResult):
         ))
 
 
-<<<<<<< HEAD
-# 标准文风禁词清单（与 chat_collab_bp.DEAI_RULES 黑名单保持一致；废弃的 STANDARD_WRITING_STYLE_PROMPT 已退役）
-=======
 # 标准文风禁词清单（与 chat_collab_bp.DEAI_RULES 禁词库口径一致）
->>>>>>> b71a6ac (feat: 恢复决策链/爽点/金句限流/章法/视角铁律注入并清理旧常量引用)
 _STYLE_FORBIDDEN_WORDS = [
     '一股', '一抹', '不由得', '不禁', '随即', '旋即', '与此同时', '颇为', '甚为', '极为',
     '毫无疑问', '毋庸置疑', '不言而喻', '深吸一口气', '眼中闪过一丝', '心中暗想',
@@ -1059,11 +1055,7 @@ _STYLE_FORBIDDEN_WORDS = [
 
 
 def _check_style_forbidden_words(text: str, result: ValidationResult):
-<<<<<<< HEAD
-    """标准文风禁词扫描（critical 级，对接 chat_collab_bp.DEAI_RULES 黑名单）。
-=======
     """标准文风禁词扫描（critical 级，与 chat_collab_bp.DEAI_RULES 禁词库口径一致）。
->>>>>>> b71a6ac (feat: 恢复决策链/爽点/金句限流/章法/视角铁律注入并清理旧常量引用)
     命中即报 critical，强制作者规避 AI 常用词和书面化表达。"""
     if not text:
         return
@@ -1088,11 +1080,7 @@ def _check_style_forbidden_words(text: str, result: ValidationResult):
 
 
 # ===== 视角与信息控制铁律：确定性检测 =====
-<<<<<<< HEAD
-# 对接视角与信息控制铁律（禁上帝视角/剧透式叙述/上帝点评/伏笔明写/伏笔过载等）
-=======
 # 与 chat_collab_bp.WRITING_STYLE_RULES「视角与信息控制铁律」小节口径一致
->>>>>>> b71a6ac (feat: 恢复决策链/爽点/金句限流/章法/视角铁律注入并清理旧常量引用)
 # 检测上帝视角、剧透式叙述、上帝点评、伏笔明写、伏笔过载等违规
 
 # 上帝视角/剧透式叙述触发词（命中即 critical）
@@ -1132,11 +1120,7 @@ _VIEW_SWITCH_PATTERN = re.compile(r'(?:(?:他|她|它)(?:心想|心中暗想|心
 def _check_god_view_and_foreshadow_leak(text: str, result: ValidationResult):
     """视角与信息控制铁律检测（critical 级）。
     检测上帝视角、剧透式叙述、上帝点评、伏笔明写、伏笔过载、视角频繁切换。
-<<<<<<< HEAD
-    对接视角与信息控制铁律（禁上帝视角/剧透式叙述/上帝点评/伏笔明写/伏笔过载等）。"""
-=======
     与 chat_collab_bp.WRITING_STYLE_RULES「视角与信息控制铁律」小节口径一致。"""
->>>>>>> b71a6ac (feat: 恢复决策链/爽点/金句限流/章法/视角铁律注入并清理旧常量引用)
     if not text or len(text) < 20:
         return
 
