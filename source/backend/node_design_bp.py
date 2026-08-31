@@ -54,6 +54,19 @@ def _sweep():
             _ACTIVE.pop(k, None)
 
 
+def _safe_err(e):
+    """把 Python 异常转成面向用户的可读错误文本。
+
+    重点：KeyError('foo') 的 str 形式是 "'foo'"（含单引号），直接展示用户会摸不着头脑。
+    这里把它格式化为「缺少字段: foo」。其他异常按原文本截断输出。
+    """
+    if isinstance(e, KeyError):
+        args = e.args
+        key = args[0] if args else ''
+        return f'缺少字段: {key}'
+    return str(e)[:300]
+
+
 def _job_factory(**kw):
     return {
         'job_id': _uuid.uuid4().hex,
@@ -70,6 +83,11 @@ def _job_factory(**kw):
         'revise_node_index': None,
         'revise_feedback': '',
         'result': None,           # revise 完成后单节点回填
+        # runner 内部键（job['_*']）：在 factory 里预置并初始化为默认值，
+        # 彻底避免后台线程 job['_cancel']/job['_state'] 这类 KeyError 裸抛。
+        '_cancel': False,
+        '_state': None,
+        '_revise_node': None,
         **kw,
     }
 
@@ -412,26 +430,32 @@ def _run_node_job(job):
     """start 任务：按 main_event 逐段生成，段与段之间空出 0.35s，逐段写入 job.nodes。"""
     try:
         from app import db, _call_llm, _extract_json_from_llm
-        st = job['_state']
+        st = job.get('_state')
+        if st is None:
+            job['state'] = 'error'
+            job['error'] = '内部错误：任务缺少 state，请重新提交'
+            return
         st['cohesion'] = _build_cohesion(st)
         sys_prompt = _build_system_prompt(st)
-        allocs = st['evt_alloc']
+        allocs = st.get('evt_alloc') or []
         n = len(allocs)
         job['total'] = n
         new_nodes = []
-        index_seq = st['node_index_offset']
+        index_seq = st.get('node_index_offset') or 0
         for i, alloc in enumerate(allocs):
-            if job['_cancel']:
+            if job.get('_cancel'):
                 break
             user_prompt = _build_user_prompt(st, alloc, i == 0, i == n - 1)
-            job['current_segment'] = alloc['title'] or f'事件{alloc["me_index"]}'
-            job['message'] = f'正在生成子节点：{alloc["title"] or "事件" + str(alloc["me_index"])}…'
+            alloc_title = alloc.get('title') or ''
+            me_idx = alloc.get('me_index') or (i + 1)
+            job['current_segment'] = alloc_title or f'事件{me_idx}'
+            job['message'] = f'正在生成子节点：{alloc_title or "事件" + str(me_idx)}…'
             content, err = _call_llm(
                 [{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': user_prompt}],
                 max_tokens=0, temperature=0.65, retry_count=2, timeout=180,
             )
             if err:
-                job['error'] = f'事件“{alloc["title"] or alloc["me_index"]}”生成失败：{err}'
+                job['error'] = f'事件“{alloc_title or me_idx}”生成失败：{err}'
                 break
             parsed, jerr = _extract_json_from_llm(content, expect='object')
             nodes = []
@@ -440,27 +464,29 @@ def _run_node_job(job):
                 if not isinstance(nodes, list):
                     nodes = []
             elif jerr:
-                job['error'] = f'事件“{alloc["title"]}”JSON解析失败：{jerr}'
+                job['error'] = f'事件“{alloc_title}”JSON解析失败：{jerr}'
                 break
+            add_count = 0
             for nd in nodes:
                 if not isinstance(nd, dict):
                     continue
-                nd['main_event_index'] = alloc['me_index']
+                nd['main_event_index'] = me_idx
                 index_seq += 1
                 nd['index'] = index_seq if not nd.get('index') else nd['index']
                 new_nodes.append(nd)
-            job['nodes'] = list(job['nodes']) + list(new_nodes[-len(nodes):])
+                add_count += 1
+            job['nodes'] = list(job.get('nodes') or []) + list(new_nodes[-add_count:] if add_count else [])
             job['done'] = i + 1
             _time.sleep(0.35)
         if job.get('error') is None:
-            job['nodes'] = sorted(job['nodes'], key=lambda x: _node_sort_key(x))
+            job['nodes'] = sorted(job.get('nodes') or [], key=lambda x: _node_sort_key(x))
             job['state'] = 'done'
-            job['message'] = f'已完成，共生成 {len(job["nodes"])} 个情节节点。'
+            job['message'] = f'已完成，共生成 {len(job.get("nodes") or [])} 个情节节点。'
         else:
             job['state'] = 'error'
     except Exception as e:  # noqa: BLE001
         job['state'] = 'error'
-        job['error'] = str(e)[:300]
+        job['error'] = _safe_err(e)
     finally:
         try:
             from app import db
@@ -473,9 +499,16 @@ def _run_revise_job(job):
     """revise 任务：修改意见 → 重生成单个节点 → 存 job.result。"""
     try:
         from app import _call_llm, _extract_json_from_llm
-        st = job['_state']
+        st = job.get('_state')
+        orig = job.get('_revise_node')
+        feedback = job.get('revise_feedback') or ''
+        fidx = job.get('revise_node_index')
+        if st is None or not isinstance(orig, dict):
+            job['state'] = 'error'
+            job['error'] = '内部错误：任务缺少 state 或原节点数据，请重新提交'
+            return
         st['cohesion'] = ''
-        user_prompt = _build_revise_prompt(st, job['_revise_node'], job['revise_feedback'])
+        user_prompt = _build_revise_prompt(st, orig, feedback)
         job['message'] = '正在按修改意见重写节点…'
         content, err = _call_llm(
             [{'role': 'system', 'content': _build_system_prompt(st)}, {'role': 'user', 'content': user_prompt}],
@@ -491,10 +524,8 @@ def _run_revise_job(job):
             job['state'] = 'error'
             return
         new_node = parsed
-        fidx = job['revise_node_index']
         # 保持原 index / main_event_index / chapters（除非意见明确要求改）
-        orig = job['_revise_node']
-        if new_node.get('index') in (None, job['_revise_node'].get('index')):
+        if new_node.get('index') in (None, orig.get('index')):
             new_node['index'] = orig.get('index', fidx)
         if not new_node.get('main_event_index'):
             new_node['main_event_index'] = orig.get('main_event_index')
@@ -503,7 +534,7 @@ def _run_revise_job(job):
         job['message'] = '节点已按修改意见更新。'
     except Exception as e:  # noqa: BLE001
         job['state'] = 'error'
-        job['error'] = str(e)[:300]
+        job['error'] = _safe_err(e)
     finally:
         try:
             from app import db
@@ -738,7 +769,7 @@ def node_design_apply(book_id):
             db.session.rollback()
         except Exception:
             pass
-        return jsonify({'error': f'落地失败：{str(e)}'}), 500
+        return jsonify({'error': f'落地失败：{_safe_err(e)}'}), 500
 
 
 @node_design_bp.route('/api/books/<book_id>/node-design/cancel', methods=['POST'])
