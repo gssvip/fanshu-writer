@@ -9672,9 +9672,10 @@ def ai_outline_volume(book_id):
         _req_data = (request.get_json(silent=True) or {})
         yield "data: {\"type\":\"start\",\"message\":\"正在生成卷大纲与情节节点...\"}\n\n"
         try:
+            _hb_sse = 'data: {"type":"heartbeat","message":"正在生成卷大纲与情节节点（心跳保活中）..."}\n\n'
             payload, status = yield from _run_blocking_with_heartbeat(
                 lambda: _ai_outline_volume_impl(book_id, _req_data),
-                '正在生成卷大纲与情节节点...',
+                _hb_sse,
                 heartbeat_interval=8,
             )
             # _ai_outline_volume_impl 已 commit，payload/timeline/bible 均为可直接 JSON 化的数据
@@ -9683,7 +9684,12 @@ def ai_outline_volume(book_id):
             yield f'data: {json.dumps({"error": str(_sse_e)[:300]}, ensure_ascii=False)}\n\n'
         yield "data: [DONE]\n\n"
 
-    return app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
+    # 响应头禁缓存/禁代理缓冲（Cloudflare/Render 默认缓冲 SSE 致浏览器久收不到首字节而报 network error）
+    resp = app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['X-Accel-Buffering'] = 'no'
+    resp.headers['Connection'] = 'keep-alive'
+    return resp
 
 
 def _ai_outline_volume_impl(book_id, req_data):

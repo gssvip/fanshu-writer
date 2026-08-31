@@ -724,6 +724,22 @@ export const api = {
         const err = await resp.json().catch(() => ({ error: `请求失败 (HTTP ${resp.status})` }));
         throw new Error(err.error || `HTTP ${resp.status}`);
       }
+      // 防御性校验：后端必须返回 SSE 流式；若非则后端可能还是旧同步代码或网关拦截
+      const ct = resp.headers.get('Content-Type') || '';
+      if (!ct.includes('text/event-stream')) {
+        const snapshot = await resp.text().catch(() => '');
+        if (snapshot && snapshot.trim().startsWith('{')) {
+          try {
+            const legacy = JSON.parse(snapshot);
+            if (legacy && legacy.volume_data) {
+              onProgress?.({ type: 'finish' });
+              return { volume_data: legacy.volume_data, timeline: legacy.timeline || '', bible: legacy.bible };
+            }
+            if (legacy && legacy.error) throw new Error(legacy.error);
+          } catch { /* fallthrough */ }
+        }
+        throw new Error(`服务器未返回流式响应（Content-Type: ${ct || '空'}），请刷新页面重试`);
+      }
       if (!resp.body) {
         throw new Error('浏览器不支持流式响应，请更换浏览器或稍后重试');
       }
@@ -748,6 +764,10 @@ export const api = {
           try { payload = JSON.parse(payloadRaw); } catch { continue; }
           if (payload && payload.type === 'start') {
             onProgress?.({ type: 'start', message: payload.message });
+            continue;
+          }
+          if (payload && payload.type === 'heartbeat') {
+            onProgress?.({ type: 'heartbeat', message: payload.message });
             continue;
           }
           if (payload && payload.error) {
