@@ -413,7 +413,7 @@ def _run_node_job(job):
     try:
         from app import db, _call_llm, _extract_json_from_llm
         st = job['_state']
-        st['cohesion'] = _build_cohesion(job)
+        st['cohesion'] = _build_cohesion(st)
         sys_prompt = _build_system_prompt(st)
         allocs = st['evt_alloc']
         n = len(allocs)
@@ -520,12 +520,17 @@ def _node_sort_key(n):
 
 
 def _build_cohesion(st):
-    if st['volume_index'] > 1 and st['prev_vol_hook']:
-        return (f"""【卷间衔接铁律】（本卷为第{st['volume_index']}卷，必须严格承接第{st['volume_index']-1}卷）
-- 上一卷卷尾钩子：{st['prev_vol_hook']}
-- 上一卷核心主线：{(st['prev_vol_summary'] or '（无）')[:200]}
+    vi = st.get('volume_index') or 1
+    hook = st.get('prev_vol_hook') or ''
+    sc = st.get('start_chapter') or 1
+    pe = st.get('prev_vol_end_chapter') or 0
+    pv = (st.get('prev_vol_summary') or '')[:200]
+    if vi > 1 and hook:
+        return (f"""【卷间衔接铁律】（本卷为第{vi}卷，必须严格承接第{vi-1}卷）
+- 上一卷卷尾钩子：{hook}
+- 上一卷核心主线：{pv or '（无）'}
 - 本卷开头必须承接上一卷卷尾钩子的悬念/危机，不得凭空开启新场景
-- 本卷第一个情节节点的起始章号必须为 {st['start_chapter']}（上一卷结束于第{st['prev_vol_end_chapter']}章）""")
+- 本卷第一个情节节点的起始章号必须为 {sc}（上一卷结束于第{pe}章）""")
     return ""
 
 
