@@ -9711,7 +9711,12 @@ def ai_outline_volume(book_id):
         # 依赖 app context，必须显式包裹；impl 内部自行 commit。
         try:
             with app.app_context():
-                _payload, _status = _ai_outline_volume_impl(book_id, _req_data, user_id=_uid)
+                try:
+                    _payload, _status = _ai_outline_volume_impl(book_id, _req_data, user_id=_uid)
+                finally:
+                    # 连接卫生：任务结束务必归还后台线程持有的连接回池，
+                    # 否则长时间运行后连接被空闲回收，残留脏连接污染池。
+                    db.session.remove()
         except Exception as _je:
             _payload, _status = ({'error': str(_je)[:300]}, 500)
         with _job_lock:
@@ -10547,6 +10552,13 @@ def _ai_outline_volume_impl(book_id, req_data, user_id=None):
     # 必须回退到整卷生成模式，否则 content 未定义会导致 UnboundLocalError 500
     if not node_only or not current_vol_existing:
         # 整卷生成模式：一次性调用 LLM 生成完整卷大纲+情节节点
+        # 【连接释放】进入大 LLM 调用前先 commit，结束当前数据库事务并把连接还回池。
+        # 否则连接会从 impl 开头一路空闲持有到 _call_llm 结束（最坏 540s），
+        # 期间被 Render/Neon 托管 PG 空闲回收掐断 → 尾部 UPDATE 报
+        # "SSL connection has been closed unexpectedly"（已线上触发）。
+        # commit 只刷新 prompt 组装阶段的读操作，无 pending 写入；随后 _call_llm
+        # 期间不占用任何连接，LLM 之后首个 db 读（bb.timeline）会 pre_ping 借新连接。
+        db.session.commit()
         content, err = _call_llm(
             [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
             # max_tokens=0：特指"通用节点设计师"，全量卷纲+节点一次性生成，自动适配模型最大输出
