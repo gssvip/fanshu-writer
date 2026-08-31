@@ -38,6 +38,8 @@ interface AppStore {
   // 打开时预设的 Tab 与输入框内容（用于从其它入口跳转预填，如「修正正文」从防遗忘报告跳入）
   chatPanelPresetTab: 'setting' | 'chapter' | 'deai' | 'review' | null;
   chatPanelPresetInput: string | null;
+  // 节点设计师浮层（在智驾助手窗口内展示分段流式生成视图）
+  nodeDesignView: { volumeIndex: number; volumeTitle: string } | null;
   // 预设的修正任务清单（从防遗忘报告违规项带入，支持多章/多维度连续修正并追踪进度）
   chatPanelPresetFixTasks: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> | null;
 
@@ -55,6 +57,8 @@ interface AppStore {
   openChatPanel: (bookId: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
   setChatPanelSessionId: (sessionId: string | null) => void;
   closeChatPanel: () => void;
+  openNodeDesignView: (volumeIndex: number, volumeTitle: string) => void;
+  closeNodeDesignView: () => void;
   logout: () => void;
 }
 
@@ -100,6 +104,7 @@ export const useStore = create<AppStore>((set) => ({
   chatPanelFixSessionBound: false,
   chatPanelPresetTab: null,
   chatPanelPresetInput: null,
+  nodeDesignView: null,
   chatPanelPresetFixTasks: null,
 
   setBooks: (books) => set({ books }),
@@ -131,7 +136,9 @@ export const useStore = create<AppStore>((set) => ({
     chatPanelPresetFixTasks: preset?.fixTasks ?? null,
   }),
   setChatPanelSessionId: (sessionId) => set({ chatPanelSessionId: sessionId }),
-  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelFixSessionBound: false, chatPanelPresetTab: null, chatPanelPresetInput: null, chatPanelPresetFixTasks: null }),
+  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelFixSessionBound: false, chatPanelPresetTab: null, chatPanelPresetInput: null, chatPanelPresetFixTasks: null, nodeDesignView: null }),
+  openNodeDesignView: (volumeIndex, volumeTitle) => set({ nodeDesignView: { volumeIndex, volumeTitle } }),
+  closeNodeDesignView: () => set({ nodeDesignView: null }),
   logout: () => {
     localStorage.removeItem('fanshu-token');
     set({ currentUser: null, books: [], currentBook: null });

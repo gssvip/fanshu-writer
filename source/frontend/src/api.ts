@@ -781,6 +781,64 @@ export const api = {
     throw new Error('生成超时（15分钟），请稍后重新提交');
   },
 
+  // ====== 节点设计师：分段异步生成情节节点 ======
+  // submit: 秒回 job_id（action='start' 分段生成全部节点；action='revise' 重生成单个节点）
+  nodeDesignSubmit: async (bookId: string, volumeIndex: number, opts?: { action?: 'start' | 'revise'; sessionId?: string; nodeIndex?: number; feedback?: string }): Promise<{ ok: boolean; job_id?: string; session_id?: string; total?: number; kind?: string; error?: string }> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(`${getApiBaseUrl()}/books/${bookId}/node-design/submit`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        volume_index: volumeIndex,
+        action: opts?.action || 'start',
+        session_id: opts?.sessionId,
+        node_index: opts?.nodeIndex,
+        feedback: opts?.feedback,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `请求失败 (HTTP ${res.status})`);
+    return data;
+  },
+
+  // 轮询任务状态：running 时返回部分 nodes，不抛错（短请求，不触发网关超时）
+  nodeDesignStatus: async (bookId: string, jobId: string): Promise<{ state: string; done: number; total: number; nodes: any[]; result?: any; message?: string; error?: string; kind?: string; current_segment?: string | null }> => {
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    try {
+      const res = await fetch(`${getApiBaseUrl()}/books/${bookId}/node-design/status?job_id=${encodeURIComponent(jobId)}`, { headers, cache: 'no-store' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 403) throw new Error(data.error || '任务已失效，请重新提交');
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      return data;
+    } catch (e: any) {
+      // 单次轮询网络抖动：让调用方继续下一轮（不抛错打断整体进度）
+      if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
+        return { state: 'running', done: 0, total: 0, nodes: [], message: '…' };
+      }
+      throw e;
+    }
+  },
+
+  // 采纳落地：把生成节点按 index 合并进 book_bible.timeline 对应卷的 nodes
+  nodeDesignApply: (bookId: string, volumeIndex: number, nodes: any[]) =>
+    request<{ ok: boolean; volume_index?: number; node_count?: number; timeline?: string; error?: string }>(`/books/${bookId}/node-design/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ volume_index: volumeIndex, nodes }),
+    }),
+
+  // 取消进行中的生成任务
+  nodeDesignCancel: (bookId: string, jobId: string) =>
+    request<{ ok: boolean; error?: string }>(`/books/${bookId}/node-design/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ job_id: jobId }),
+    }),
+
   // 从大纲总纲一次性提取各卷剧情（替代逐卷循环，更稳定）
   extractVolumesFromOutline: (bookId: string, skillPackIds?: string[], volumeCount?: number) =>
     request<{ success: boolean; volumes: any[]; bible: any }>(`/books/${bookId}/ai-extract-volumes-from-outline`, {

@@ -4384,6 +4384,8 @@ function PlotPanel(props: {
   onOpenAiCreate: () => void;
 }) {
   const { bookId, bible, onBibleUpdate, totalVolumes, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept, onRefreshChapters } = props;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
+  const openNodeDesignView = useStore((s: any) => s.openNodeDesignView) as (volumeIndex: number, volumeTitle: string) => void;
   const [volumes, setVolumes] = useState<any[]>([]);
   const [editingVol, setEditingVol] = useState<string | null>(null);
   // editForm 持有完整卷对象的所有可编辑字段（main_plot/key_events/turning_points/climax/ending/foreshadowing）
@@ -4664,44 +4666,15 @@ function PlotPanel(props: {
     });
   }
 
-  // AI情节节点设计：基于总纲(若有)+卷剧情+设定，为指定卷生成5-8个情节节点（非强制，无总纲也能用）
-  const [nodeDesigning, setNodeDesigning] = useState<string>('');
-  const [nodeDesignMsg, setNodeDesignMsg] = useState<string>('');
-  async function handleDesignNodes(volId: string, volTitle: string, volIndex: number) {
-    // 节点拆分模式：仅当已有 main_events / key_events 结构化事件数组时
-    // 才走 node_only=True（逐事件拆子节点）；若只有 main_plot/core_goal 文本
-    // 但无事件数组，必须走整卷生成模式（后端单次 LLM 产出结构化事件+节点），
-    // 否则后端 _evt_alloc 为空直接报 400。
-    const targetVol = volumes.find((v: any) => (v.volume_id || '') === volId || v.volume === volTitle);
-    const meArr: any[] = targetVol?.main_events ?? [];
-    const keArr: any[] = targetVol?.key_events  ?? [];
-    const hasStructuredEvents = meArr.length > 0 || keArr.length > 0;
-    const hasVolPlotText = !!(targetVol && (targetVol.main_plot || targetVol.core_goal));
-    const nodeOnly = hasStructuredEvents;
-    const hint = nodeOnly
-      ? `将基于本卷「${volTitle}」已有卷剧情，详细拆分为情节节点（保留原卷主线/关键事件/转折点/高潮/结局/伏笔，仅细化节点）。每个节点会配置爽点类型/结构/衬托方式和章尾钩子。是否继续？`
-      : (hasVolPlotText
-        ? `「${volTitle}」已有卷剧情文本但还没有结构化事件数组，将一次性生成完整卷大纲+情节节点（会自动补全 main_events/key_events 并严格尊重已有 main_plot/核心冲突等卷级字段）。每个节点会配置爽点类型/结构/衬托方式和章尾钩子。是否继续？`
-        : `暂无五幕式总纲或本卷卷剧情文本，将基于设定+人物，为「${volTitle}」生成完整卷大纲+情节节点。是否继续？`);
-    showConfirm(hint, async () => {
-      setNodeDesigning(volId || volTitle);
-      setNodeDesignMsg('正在生成情节节点...');
-      try {
-        const result = await api.aiOutlineVolume(bookId, volIndex, volTitle, selectedSkillPackIds, 50, nodeOnly, (info) => {
-          if (info && info.message) setNodeDesignMsg(info.message);
-        });
-        if (result.bible) onBibleUpdate(result.bible);
-        alert(`情节节点设计完成！已为「${volTitle}」生成 ${result.volume_data?.nodes?.length || 0} 个情节节点`);
-      } catch (e: any) {
-        // 用户主动取消(AbortError/cancelled)或超时取消 → 不显示"失败"红警，避免误导
-        const isCancelled = e?.name === 'AbortError' || e?.cancelled === true || String(e?.message || '') === '请求已取消';
-        if (!isCancelled) {
-          alert('情节节点设计失败：' + (e?.message || '请检查AI配置或稍候重试'));
-        }
-      }
-      setNodeDesignMsg('');
-      setNodeDesigning('');
-    });
+  // AI情节节点设计：点击后弹出智驾助手窗口内的「节点设计师」分段流式界面
+  // （节点按 main_event 分段实时生成，可边看边采纳落地到剧情线，也可对单节点提出修改意见）
+  async function handleDesignNodes(_volId: string, volTitle: string, volIndex: number) {
+    if (!bookId) {
+      alert('请先打开作品后再进行节点设计');
+      return;
+    }
+    openChatPanel(bookId);
+    openNodeDesignView(volIndex, volTitle);
   }
 
   // AI协同创作
@@ -5453,8 +5426,8 @@ ${existingVols || '（暂无）'}
                 )}
                 {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                 <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                  <button className="btn-ghost-sm" onClick={() => handleDesignNodes(vol.volume_id || '', vol.volume || `第${idx + 1}卷`, vol.volume_index || (idx + 1))} disabled={nodeDesigning === (vol.volume_id || vol.volume)} title="AI设计此卷情节节点">
-                    {nodeDesigning === (vol.volume_id || vol.volume) ? `⏳ ${nodeDesignMsg || '节点中...'}` : '🎯 节点设计'}
+                  <button className="btn-ghost-sm" onClick={() => handleDesignNodes(vol.volume_id || '', vol.volume || `第${idx + 1}卷`, vol.volume_index || (idx + 1))} title="在智驾助手中分段流式设计此卷情节节点">
+                    🎯 节点设计
                   </button>
                   <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume) || !hasChapters} title={hasChapters ? 'AI识别此卷剧情' : '需要先创建章节才能AI识别'}>
                     {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}

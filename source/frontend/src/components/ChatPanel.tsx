@@ -10,6 +10,7 @@ import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible, AIConfig
 import CarLogo from './CarLogo';
 // Q1：直接复用现有实体管理弹窗（跨维度重命名/合并），不再在 ChatPanel 里重复造"动作影响预览"轮子
 import EntityRegistryModal from '../pages/EntityRegistryModal';
+import NodeDesignView from './NodeDesignView';
 // P1-2 Markdown 增强：CDN 注入 KaTeX/Highlight.js 样式（避免 Vite 静态 import 缺失导致部署白屏）
 (() => {
   if (typeof document === 'undefined') return;
@@ -1187,7 +1188,7 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
 // 主组件：AI 智驾
 // ============================================================================
 export default function ChatPanel() {
-  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetFixTasks, closeChatPanel } = useStore() as any;
+  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetFixTasks, closeChatPanel, nodeDesignView, closeNodeDesignView } = useStore() as any;
   const setChatPanelSessionId = useStore((s: any) => s.setChatPanelSessionId) as (id: string | null) => void;
   const [activeTab, setActiveTab] = useState<SmartTab>('setting');
   // 手机端折叠：折叠"设定"Tab 的维度按钮三排（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔 + 助手选择器），
@@ -2845,6 +2846,17 @@ export default function ChatPanel() {
 
   return (
     <>
+      {nodeDesignView && bookId && (
+        <NodeDesignView
+          bookId={bookId}
+          volumeIndex={nodeDesignView.volumeIndex}
+          volumeTitle={nodeDesignView.volumeTitle}
+          onClose={closeNodeDesignView}
+          onApplied={async () => {
+            try { const b = await api.getBible(bookId); setBible(b); } catch { /* 忽略刷新失败 */ }
+          }}
+        />
+      )}
       {chatPanelOpen && bookId && (
         <div className="chat-panel-overlay" data-build={__BUILD_TAG__}>
           <div className="chat-panel smart-panel">
