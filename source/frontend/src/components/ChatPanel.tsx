@@ -1620,7 +1620,7 @@ export default function ChatPanel() {
 
   // 正文写作默认要求（切到正文Tab且输入框为空/为旧默认值时自动填入）
   const CHAPTER_DEFAULT_INPUT =
-    '接上一章剧情，读取剧情维度里的「本章剧情节点」，保证ONE主钩子贯穿本章。禁止无目标流水账。';
+    '书接上文，读取剧情维度里的「本章剧情节点」，禁止超出本章剧情点创作。语句自然顺畅，写事为主，景一笔带过，非必要不用比喻/拟人等修辞。';
 
   // 切换 Tab 时清空选中章节（各Tab独立）；切到正文Tab时填入默认写作要求
   const switchTab = useCallback((tab: SmartTab) => {
@@ -2499,7 +2499,7 @@ export default function ChatPanel() {
       }
       return `输入要求直接生成或修改「${dimLabel}」（无需方案选择）…`;
     }
-    if (activeTab === 'chapter') return '接上一章剧情，读取剧情维度里的「本章剧情节点」，保证ONE主钩子贯穿本章。禁止无目标流水账。（可直接点「续写」，或追加要求，如：第3章 增加打斗细节）';
+    if (activeTab === 'chapter') return '书接上文，读取剧情维度里的「本章剧情节点」，禁止超出本章剧情点创作。语句自然顺畅，写事为主，景一笔带过，非必要不用比喻/拟人等修辞。（可直接点「续写」，或追加要求，如：第3章 增加打斗细节）';
     if (activeTab === 'deai') return '点击上方「开始去AI味」按钮即可…';
     if (activeTab === 'review') return '点击上方检查按钮即可…';
     return '和 AI 智驾聊聊…';
