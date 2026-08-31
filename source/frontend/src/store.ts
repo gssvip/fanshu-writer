@@ -38,8 +38,14 @@ interface AppStore {
   // 打开时预设的 Tab 与输入框内容（用于从其它入口跳转预填，如「修正正文」从防遗忘报告跳入）
   chatPanelPresetTab: 'setting' | 'chapter' | 'deai' | 'review' | null;
   chatPanelPresetInput: string | null;
-  // 节点设计师浮层（在智驾助手窗口内展示分段流式生成视图）
+  // 打开时预设的通用助手角色 id（如 "node_designer"），并可选择是否 autoSubmit 预设输入
+  chatPanelPresetRole: string | null;
+  chatPanelPresetAutoSubmit: boolean;
+  // 节点设计师浮层（在智驾助手窗口内展示分段流式生成视图）——保留兼容，实际不推荐
   nodeDesignView: { volumeIndex: number; volumeTitle: string } | null;
+  // 智驾采纳卡片落地 Bible 后，用这个通知外部（如 WritePage）重新拉取 Bible；
+  // 存单调递增序号，组件 effect 监听值变化就重新 getBible，避免旧 UI 看起来"采纳后还是空的"。
+  bibleDirtySeq: number;
   // 预设的修正任务清单（从防遗忘报告违规项带入，支持多章/多维度连续修正并追踪进度）
   chatPanelPresetFixTasks: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> | null;
 
@@ -54,11 +60,12 @@ interface AppStore {
   setRightPanel: (panel: 'ai' | 'characters' | 'outline' | 'stats' | null) => void;
   setRightPanelWidth: (width: number) => void;
   setLoading: (loading: boolean) => void;
-  openChatPanel: (bookId: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
+  openChatPanel: (bookId: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }>; role?: string; autoSubmit?: boolean }) => void;
   setChatPanelSessionId: (sessionId: string | null) => void;
   closeChatPanel: () => void;
   openNodeDesignView: (volumeIndex: number, volumeTitle: string) => void;
   closeNodeDesignView: () => void;
+  markBibleDirty: () => void;
   logout: () => void;
 }
 
@@ -104,7 +111,10 @@ export const useStore = create<AppStore>((set) => ({
   chatPanelFixSessionBound: false,
   chatPanelPresetTab: null,
   chatPanelPresetInput: null,
+  chatPanelPresetRole: null,
+  chatPanelPresetAutoSubmit: false,
   nodeDesignView: null,
+  bibleDirtySeq: 0,
   chatPanelPresetFixTasks: null,
 
   setBooks: (books) => set({ books }),
@@ -134,11 +144,14 @@ export const useStore = create<AppStore>((set) => ({
     chatPanelPresetTab: preset?.tab ?? null,
     chatPanelPresetInput: preset?.input ?? null,
     chatPanelPresetFixTasks: preset?.fixTasks ?? null,
+    chatPanelPresetRole: preset?.role ?? null,
+    chatPanelPresetAutoSubmit: !!preset?.autoSubmit,
   }),
   setChatPanelSessionId: (sessionId) => set({ chatPanelSessionId: sessionId }),
-  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelFixSessionBound: false, chatPanelPresetTab: null, chatPanelPresetInput: null, chatPanelPresetFixTasks: null, nodeDesignView: null }),
+  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelFixSessionBound: false, chatPanelPresetTab: null, chatPanelPresetInput: null, chatPanelPresetFixTasks: null, chatPanelPresetRole: null, chatPanelPresetAutoSubmit: false, nodeDesignView: null }),
   openNodeDesignView: (volumeIndex, volumeTitle) => set({ nodeDesignView: { volumeIndex, volumeTitle } }),
   closeNodeDesignView: () => set({ nodeDesignView: null }),
+  markBibleDirty: () => set(state => ({ bibleDirtySeq: (state.bibleDirtySeq || 0) + 1 })),
   logout: () => {
     localStorage.removeItem('fanshu-token');
     set({ currentUser: null, books: [], currentBook: null });

@@ -4384,8 +4384,8 @@ function PlotPanel(props: {
   onOpenAiCreate: () => void;
 }) {
   const { bookId, bible, onBibleUpdate, totalVolumes, chapters, hasChapters, showConfirm, skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks, concept, onRefreshChapters } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
-  const openNodeDesignView = useStore((s: any) => s.openNodeDesignView) as (volumeIndex: number, volumeTitle: string) => void;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }>; role?: string; autoSubmit?: boolean }) => void;
+  const bibleDirtySeq = useStore((s: any) => s.bibleDirtySeq) as number;
   const [volumes, setVolumes] = useState<any[]>([]);
   const [editingVol, setEditingVol] = useState<string | null>(null);
   // editForm 持有完整卷对象的所有可编辑字段（main_plot/key_events/turning_points/climax/ending/foreshadowing）
@@ -4477,6 +4477,12 @@ function PlotPanel(props: {
       setVolumes([]);
     }
   }, [bible?.timeline]);
+
+  // 智驾卡片采纳落地会让 bible 变脏，这里重新拉取最新 bible → volumes 自动刷新
+  useEffect(() => {
+    if (!bookId || !bibleDirtySeq) return;
+    api.getBible(bookId).then(b => { onBibleUpdate(b); }).catch(() => {});
+  }, [bookId, bibleDirtySeq]);
 
   async function saveVolumes(newVols: any[]) {
     setVolumes(newVols);
@@ -4666,17 +4672,22 @@ function PlotPanel(props: {
     });
   }
 
-  // AI情节节点设计：点击后弹出智驾助手窗口内的「节点设计师」分段流式界面
-  // （节点按 main_event 分段实时生成，可边看边采纳落地到剧情线，也可对单节点提出修改意见）
-  async function handleDesignNodes(_volId: string, volTitle: string, volIndex: number) {
+  // AI情节节点设计：切换到智驾助手的「节点设计师」助手，自动提交卷号，
+  // 在聊天面板里分段流式生成节点、可随时看到生成进度，生成完后卡片「采纳」落剧情线。
+  // 不再单独弹 NodeDesignView 浮层，保证体验和智驾其他助手一致。
+  async function handleDesignNodes(_volId: string, _volTitle: string, volIndex: number) {
     if (!bookId) {
       alert('请先打开作品后再进行节点设计');
       return;
     }
     // 归一为合法正整数，避免把 undefined/NaN 传给后端导致「缺少 volume_index」
     const safeVol = Math.max(1, Math.trunc(Number(volIndex)) || 1);
-    openChatPanel(bookId);
-    openNodeDesignView(safeVol, volTitle || `第${safeVol}卷`);
+    openChatPanel(bookId, undefined, {
+      tab: 'setting',        // 智驾第一排 Tab：里面有通用/构思/设定/世界观 + 助手选择器
+      role: 'node_designer',
+      input: `第${safeVol}卷`,
+      autoSubmit: true,
+    });
   }
 
   // AI协同创作

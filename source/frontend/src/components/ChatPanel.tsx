@@ -1188,7 +1188,7 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
 // 主组件：AI 智驾
 // ============================================================================
 export default function ChatPanel() {
-  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetFixTasks, closeChatPanel, nodeDesignView, closeNodeDesignView } = useStore() as any;
+  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetRole, chatPanelPresetAutoSubmit, chatPanelPresetFixTasks, closeChatPanel, nodeDesignView, closeNodeDesignView, markBibleDirty } = useStore() as any;
   const setChatPanelSessionId = useStore((s: any) => s.setChatPanelSessionId) as (id: string | null) => void;
   const [activeTab, setActiveTab] = useState<SmartTab>('setting');
   // 手机端折叠：折叠"设定"Tab 的维度按钮三排（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔 + 助手选择器），
@@ -1303,6 +1303,8 @@ export default function ChatPanel() {
   // 思考过程累积缓冲：后端以 meta(kind=reasoning) 单独推送（不混正文），前端累计到当前 AI 气泡可展开展示
   const reasoningBufferRef = useRef<string>('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // 预设 auto-submit 需要在 effect 里引用尚未声明的 handleGeneral，用 ref 中转
+  const handleGeneralRef = useRef<((opts?: { text?: string; truncateHistoryTo?: number }) => void | Promise<void>) | null>(null);
   // 追踪正在修改的章节（用于修改完成后自动标记任务清单 done）
   const polishingChapterIdRef = useRef<string | null>(null);
   // 追踪正在修正的设定维度（设定Tab修正完成后自动标记任务清单 done）
@@ -1532,11 +1534,22 @@ export default function ChatPanel() {
     })();
   }, [chatPanelOpen, bookId, chatPanelSessionId]);
 
-  // 应用预设：从其它入口（如「修正正文」）跳转进来时切到指定 Tab 并预填输入框/任务清单
+  // 应用预设：从其它入口（如「节点设计」「修正正文」）跳转进来时切到指定 Tab / 助手角色 / 预填输入框 / 自动提交
+  const appliedPresetRef = useRef<number>(0);
   useEffect(() => {
     if (!chatPanelOpen) return;
     if (chatPanelPresetTab) setActiveTab(chatPanelPresetTab);
     if (chatPanelPresetInput) setInput(chatPanelPresetInput);
+    // 切换预设角色（如 node_designer）到预会话占位 key，保证 handleGeneral 读到对应 role
+    if (chatPanelPresetRole) {
+      const _presetKey = chatGeneralSessionId || '__general_pending_session__';
+      setSessionRoleMap(m => {
+        if (m[_presetKey] === chatPanelPresetRole) return m;
+        return { ...m, [_presetKey]: chatPanelPresetRole };
+      });
+      // 节点设计师：强制切到通用维度，后续触发发送才能命中 handleGeneral 内的 node_designer 分支
+      setSelectedDim('general');
+    }
     if (Array.isArray(chatPanelPresetFixTasks) && chatPanelPresetFixTasks.length > 0) {
       setFixTasks(chatPanelPresetFixTasks.map((t: any) => ({
         location: String(t?.location ?? ''),
@@ -1551,7 +1564,22 @@ export default function ChatPanel() {
       // 防x.some is not a function：保证fixTasks始终是数组（外部store传null/object/string时重置为[]）
       setFixTasks([]);
     }
-  }, [chatPanelOpen, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetFixTasks]);
+  }, [chatPanelOpen, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetFixTasks, chatPanelPresetRole, chatGeneralSessionId]);
+
+  // 自动提交预设输入：必须在 role 已切换、input 已填充后再触发，
+  // 且只在每次"打开 chat / 或预设发生变化"时触发一次。
+  useEffect(() => {
+    if (!chatPanelOpen || !chatPanelPresetAutoSubmit || !chatPanelPresetInput) return;
+    const sig = (appliedPresetRef.current += 1);
+    const run = async () => {
+      // 等一个 tick，保证 sessionRoleMap / selectedDim 已同步到 React 状态
+      await new Promise(r => setTimeout(r, 30));
+      if (sig !== appliedPresetRef.current) return;
+      const send = (handleGeneralRef.current as any);
+      if (typeof send === 'function') send({ text: chatPanelPresetInput });
+    };
+    run();
+  }, [chatPanelOpen, chatPanelPresetAutoSubmit, chatPanelPresetInput]);
 
   // 把本地 sessionId 同步回 store，供修正入口复用同一会话（首次新建后后续复用）
   // 同步后立即更新 loadedSessionRef，避免 store 变化触发上面的加载 effect 重复加载当前会话
@@ -2333,6 +2361,12 @@ export default function ChatPanel() {
         return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...c, status: 'adopted' as const } : c) };
       }));
       refreshProgress();
+      if (card.type !== 'SAVE_CHAPTER') {
+        // 剧情/世界观/人物等 Bible 维度落地 → 通知 WritePage 重新拉取 Bible
+        markBibleDirty();
+        // ChatPanel 内部也刷新本地 bible，后续对话生成能读到最新节点
+        api.getBible(bookId).then(bb => setBible(bb)).catch(() => {});
+      }
       if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
         const ch = r as any;
         const actionLabel = ch.action === 'updated' ? '已覆盖同章号章节' : '已新建章节';
@@ -2349,13 +2383,18 @@ export default function ChatPanel() {
           setNextChapterNum(rr.next_chapter_num);
         }).catch(() => {});
         api.smartChapters(bookId).then(rr => setChapters(rr.chapters || [])).catch(() => {});
+      } else if (card.type === 'SAVE_PLOT') {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: '✅ 情节节点已采纳落地到剧情线。关闭聊天面板回到「剧情」Tab 即可看到本卷节点详细列表。',
+        }]);
       }
     } catch (e: any) {
       setStreamError(e.message || '落地失败');
     } finally {
       setApplyingCardId(null);
     }
-  }, [bookId, sessionId, refreshProgress]);
+  }, [bookId, sessionId, refreshProgress, markBibleDirty]);
 
   const handleEdit = useCallback(async (card: ActionCard, newContent: string) => {
     if (!bookId) return;
@@ -2536,42 +2575,122 @@ export default function ChatPanel() {
       const vi = _volMatch ? parseInt(_volMatch[1] || _volMatch[2] || _volMatch[3], 10) : 0;
       if (!vi || vi < 1) {
         // 不匹配卷号 → 提示用法
-        setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '🎯 **节点设计师**已就绪。请告诉我卷号，如：`第1卷`、`第一卷`、`1`\n\n系统将自动为该卷生成情节子节点，完成后可点击「采纳」落入剧情线。' }]);
+        setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '🎯 **节点设计师**已就绪。请告诉我卷号，如：`第1卷`、`第一卷`、`1`\n\n系统将自动按本卷 main_events 逐段生成情节子节点（类似圆桌会议分段发言），生成过程中你能实时看到节点冒出来；结束后点击下方卡片「采纳」即可落入对应卷的剧情线。' }]);
         return;
       }
-      // 匹配到卷号 → 走节点设计流程
-      setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '⏳ 正在为第' + vi + '卷设计情节节点…（逐事件分析，约 1-3 分钟，请等待）' }]);
-      setStreaming(true);
-      try {
-        const r = await api.aiOutlineVolume(bookId, vi, `第${vi}卷`, undefined, undefined, true);
-        const nodes = r?.volume_data?.nodes || [];
-        const timeline = r?.timeline || '';
-        const cardId = 'node-' + Math.random().toString(36).slice(2, 9);
-        let summary = '';
-        if (nodes.length > 0) {
-          const chRanges = nodes.map((n: any, i: number) => `${i+1}. ${n.title||'无标题'}（第${n.chapters||'?'}章）`).join('\n');
-          summary = `✅ 已为第${vi}卷生成 **${nodes.length}** 个情节子节点\n\n${chRanges}\n\n点击下方卡片「采纳」按钮，节点将落入第${vi}卷的剧情线。`;
-        } else {
-          summary = `⚠️ 第${vi}卷节点设计完成，但未生成有效节点。请检查该卷是否已有 main_events。`;
+      // 匹配到卷号 → 用 node-design/submit 分段异步 + 短轮询，边生成边在聊天气泡里实时刷新节点列表
+      const volTitle = `第${vi}卷`;
+      let cancelled = false;
+      // 构造一个渲染函数：把 progress+nodes 渲染成 markdown 文本
+      const renderSnapshot = (args: { phase: 'running' | 'done' | 'error' | 'cancelled'; nodes: any[]; done: number; total: number; current_segment?: string; message: string; error?: string; }): string => {
+        const { phase, nodes, done, total, current_segment, message, error } = args;
+        const header = `🎯 **节点设计师** · ${volTitle} · 分段流式生成\n`;
+        const segTotal = total > 0 ? total : (phase === 'done' ? done : 0);
+        const pct = segTotal > 0 ? Math.min(100, Math.round((done / segTotal) * 100)) : (phase === 'done' ? 100 : 0);
+        const pctLine = `\n进度：${pct}%（${done}${segTotal ? ` / ${segTotal}` : ''} 段）`;
+        const segLine = (phase === 'running' && current_segment) ? ` · 🔨 当前：${current_segment}` : '';
+        const statusLine = `\n状态：${phase === 'done' ? '✅ 已完成' : phase === 'error' ? '❌ 失败' : phase === 'cancelled' ? '⏸ 已取消' : '⏳ 生成中'}` + pctLine + segLine;
+        if (error) return `${header}${statusLine}\n\n❌ ${error}`;
+        if (nodes.length === 0 && phase === 'running') {
+          return `${header}${statusLine}\n\n💡 ${message || '正在读取卷剧情并拆分 main_events 成段，节点很快就会逐段冒出来…'}`;
         }
+        const lines = nodes.map((n: any, i: number) => {
+          const t = n?.type || '';
+          const tMap: Record<string,string> = { M: '主线', C: '角色', W: '世界观', D: '日常', F: '伏笔' };
+          const tStr = tMap[t] ? ` [${tMap[t]}]` : '';
+          const title = n?.title ? `**${n.title}**` : '（未命名节点）';
+          const ch = n?.chapters ? ` · 第${n.chapters}章` : '';
+          const idx = n?.index ?? i + 1;
+          const sum = n?.summary ? `\n   > ${String(n.summary).replace(/\n/g, ' ').slice(0, 80)}${String(n.summary).length > 80 ? '…' : ''}` : '';
+          return `  ${idx}.${tStr} ${title}${ch}${sum}`;
+        });
+        // done：在末尾追加"点击下方卡片采纳"提示，然后再挂载卡片
+        const tail = phase === 'done' ? `\n\n💫 已生成 ${nodes.length} 个情节子节点。请点击下方卡片的「采纳」按钮，节点将落入${volTitle}的剧情线；也可以告诉我具体修改意见（如"第3节点加强爽感"/"第8节点增加伏笔"）。` : '';
+        return `${header}${statusLine}\n\n${message || ''}\n${lines.join('\n')}${tail}`;
+      };
+
+      // 插入用户消息 + 初始空 AI 气泡
+      const initialNodes: any[] = [];
+      setMessages(prev => [...prev,
+        { role: 'user', content: text },
+        { role: 'assistant', content: renderSnapshot({ phase: 'running', nodes: initialNodes, done: 0, total: 0, message: '任务已创建，排队等待生成…' }) },
+      ]);
+      setStreaming(true);
+      let curDone = 0, curTotal = 0, curSeg = '';
+      let curMsg = '正在提交节点设计任务…';
+      let curNodes: any[] = [];
+      const updateAi = (patch: { phase?: 'running' | 'done' | 'error' | 'cancelled'; done?: number; total?: number; current_segment?: string; message?: string; nodes?: any[]; error?: string; }, cards?: any[]) => {
+        const phase = patch.phase || 'running';
+        if (patch.done !== undefined) curDone = patch.done;
+        if (patch.total !== undefined) curTotal = patch.total;
+        if (patch.current_segment !== undefined) curSeg = patch.current_segment;
+        if (patch.message !== undefined) curMsg = patch.message;
+        if (patch.nodes !== undefined) curNodes = patch.nodes;
         setMessages(prev => {
           const next = [...prev];
-          if (next[next.length-1]?.role === 'assistant') {
-            next[next.length-1] = { ...next[next.length-1], content: summary, cards: nodes.length > 0 ? [{
-              id: cardId, type: 'SAVE_PLOT' as const, title: `第${vi}卷情节节点`,
-              content: timeline, target: '剧情', status: 'pending' as const,
-            }] : [] };
+          const last = next[next.length - 1];
+          const content = renderSnapshot({
+            phase,
+            nodes: curNodes, done: curDone, total: curTotal,
+            current_segment: curSeg, message: curMsg, error: patch.error,
+          });
+          if (last && last.role === 'assistant') {
+            next[next.length - 1] = { ...last, content, cards: cards || last.cards || [] };
+          } else {
+            next.push({ role: 'assistant', content, cards: cards || [] });
           }
           return next;
         });
+      };
+      try {
+        const sub = await api.nodeDesignSubmit(bookId, vi, { action: 'start' });
+        if (cancelled) return;
+        if (!sub.ok) throw new Error(sub.error || '任务提交失败，请重试');
+        updateAi({ phase: 'running', total: sub.total || 0, message: sub.total ? `已提交，共 ${sub.total} 段，正在分段生成…` : '分段生成中…' });
+        const jobId = sub.job_id || '';
+        // 前端最多 12 分钟兜底，避免死循环
+        const startedAt = Date.now();
+        const MAX_MS = 12 * 60 * 1000;
+        while (!cancelled) {
+          if (Date.now() - startedAt > MAX_MS) throw new Error('生成超时（12分钟），请稍后重新提交');
+          const st = await api.nodeDesignStatus(bookId, jobId);
+          updateAi({
+            phase: (st.state === 'error' ? 'error' : st.state === 'done' ? 'done' : st.state === 'cancelled' ? 'cancelled' : 'running') as any,
+            done: st.done ?? curDone,
+            total: st.total ?? curTotal,
+            current_segment: st.current_segment ?? curSeg,
+            message: st.message ?? curMsg,
+            nodes: st.nodes?.length ? st.nodes : curNodes,
+            error: st.state === 'error' ? (st.error || undefined) : undefined,
+          });
+          if (st.state === 'done') {
+            const finalNodes = (st.nodes?.length ? st.nodes : curNodes) || [];
+            // 组装 SAVE_PLOT 卡片 content：按 timeline 模式要求提供 JSON 数组形式的整卷对象
+            // 必须包含 nodes 才能走 apply-card 里 _merge_volume 的 new_has_nodes=true 分支
+            const cardTimeline = JSON.stringify([{
+              volume_index: vi,
+              volume_id: String(vi),
+              volume: volTitle,
+              nodes: finalNodes,
+            }]);
+            const cardId = 'node-' + Math.random().toString(36).slice(2, 9);
+            const cards = finalNodes.length > 0 ? [{
+              id: cardId,
+              type: 'SAVE_PLOT' as const,
+              title: `${volTitle}情节节点（${finalNodes.length}个）`,
+              content: cardTimeline,
+              target: '剧情',
+              status: 'pending' as const,
+            }] : [];
+            // 最终 snapshot：phase=done 时会在气泡尾提示用户采纳
+            updateAi({ phase: 'done', message: st.message || `已完成，共生成 ${finalNodes.length} 个情节节点。` }, cards);
+            break;
+          }
+          if (st.state === 'error' || st.state === 'cancelled') break;
+          await new Promise(r => setTimeout(r, 1600));
+        }
       } catch (e: any) {
-        setMessages(prev => {
-          const next = [...prev];
-          if (next[next.length-1]?.role === 'assistant') {
-            next[next.length-1] = { ...next[next.length-1], content: '❌ 节点设计失败：' + (e?.message || '未知错误') };
-          }
-          return next;
-        });
+        updateAi({ phase: 'error', nodes: curNodes, error: e?.message || '未知错误' });
       } finally {
         setStreaming(false);
       }
@@ -2759,6 +2878,8 @@ export default function ChatPanel() {
       abortRef.current = null;
     }
   }, [input, bookId, streaming, sessionId, chatGeneralSessionId, appendUserAi, removeEmptyAi, consumeSSE, generalDeepThink, generalWebSearch]);
+  // 把 handleGeneral 暴露给（声明在它前面的）预设 auto-submit effect
+  handleGeneralRef.current = handleGeneral;
 
   // 主发送动作（设定Tab：通用走general，维度已有内容走dim-edit，否则走suggest）
   const handleMainSend = useCallback(() => {
