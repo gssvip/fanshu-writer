@@ -10163,9 +10163,14 @@ def _ai_outline_volume_impl(book_id, req_data, user_id=None):
         # 并发后总时长≈单个事件耗时，根治超时。
         all_nodes = []
         event_errors = []
-        # 【P0修复】_evt_alloc 为空时直接返回错误，避免静默保存空节点
+        # 【P0修复】_evt_alloc 为空时返回可操作的错误，避免前端静默 0 节点或 cryptic 报错。
+        # 注：前端 WritePage v2 之后已把 node_only=True 的前提收紧为「必须有
+        # main_events/key_events 结构化事件数组」，所以正常不会再触发此分支。
+        # 本检查仅作为直接 API 调用/旧前端缓存时的兜底。
         if not _evt_alloc:
-            err = '该卷没有 main_events 或 key_events 可供拆分为子节点，请先在卷剧情中生成主要剧情事件'
+            err = ('该卷还没有 main_events/key_events 结构化事件数组，无法按事件逐拆子节点。'
+                   '请先点本卷【🔍识别】生成结构化剧情事件（含 main_events/key_events 字段）'
+                   '后再点「🎯 节点设计」；或确认已升级到最新前端（Ctrl/Cmd+Shift+R 强制刷新）。')
             return ({'error': err}), 400
 
         import threading

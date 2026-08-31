@@ -4668,19 +4668,26 @@ function PlotPanel(props: {
   const [nodeDesigning, setNodeDesigning] = useState<string>('');
   const [nodeDesignMsg, setNodeDesignMsg] = useState<string>('');
   async function handleDesignNodes(volId: string, volTitle: string, volIndex: number) {
-    // 节点设计模式：若本卷已有卷剧情（main_plot 等），仅细化 nodes 不覆盖卷级字段
+    // 节点拆分模式：仅当已有 main_events / key_events 结构化事件数组时
+    // 才走 node_only=True（逐事件拆子节点）；若只有 main_plot/core_goal 文本
+    // 但无事件数组，必须走整卷生成模式（后端单次 LLM 产出结构化事件+节点），
+    // 否则后端 _evt_alloc 为空直接报 400。
     const targetVol = volumes.find((v: any) => (v.volume_id || '') === volId || v.volume === volTitle);
-    const hasVolPlot = !!(targetVol && (targetVol.main_plot || targetVol.core_goal || (targetVol.key_events && targetVol.key_events.length)));
-    const hint = hasVolPlot
+    const meArr: any[] = targetVol?.main_events ?? [];
+    const keArr: any[] = targetVol?.key_events  ?? [];
+    const hasStructuredEvents = meArr.length > 0 || keArr.length > 0;
+    const hasVolPlotText = !!(targetVol && (targetVol.main_plot || targetVol.core_goal));
+    const nodeOnly = hasStructuredEvents;
+    const hint = nodeOnly
       ? `将基于本卷「${volTitle}」已有卷剧情，详细拆分为情节节点（保留原卷主线/关键事件/转折点/高潮/结局/伏笔，仅细化节点）。每个节点会配置爽点类型/结构/衬托方式和章尾钩子。是否继续？`
-      : (bible?.plot_design && bible.plot_design.trim()
-        ? `将基于五幕式总纲+设定+人物，为「${volTitle}」生成完整卷大纲+情节节点（含章型配额/爽点/钩子）。是否继续？`
-        : `暂无五幕式总纲，将基于设定+人物，为「${volTitle}」生成完整卷大纲+情节节点。是否继续？`);
+      : (hasVolPlotText
+        ? `「${volTitle}」已有卷剧情文本但还没有结构化事件数组，将一次性生成完整卷大纲+情节节点（会自动补全 main_events/key_events 并严格尊重已有 main_plot/核心冲突等卷级字段）。每个节点会配置爽点类型/结构/衬托方式和章尾钩子。是否继续？`
+        : `暂无五幕式总纲或本卷卷剧情文本，将基于设定+人物，为「${volTitle}」生成完整卷大纲+情节节点。是否继续？`);
     showConfirm(hint, async () => {
       setNodeDesigning(volId || volTitle);
       setNodeDesignMsg('正在生成情节节点...');
       try {
-        const result = await api.aiOutlineVolume(bookId, volIndex, volTitle, selectedSkillPackIds, 50, hasVolPlot, (info) => {
+        const result = await api.aiOutlineVolume(bookId, volIndex, volTitle, selectedSkillPackIds, 50, nodeOnly, (info) => {
           if (info && info.message) setNodeDesignMsg(info.message);
         });
         if (result.bible) onBibleUpdate(result.bible);
