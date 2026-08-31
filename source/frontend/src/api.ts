@@ -705,96 +705,81 @@ export const api = {
   // 并发(2)+逐事件拆分的整体耗时可能逼近 5-7 分钟，且 Render 请求上限≈500s：
   // 必须用直接 fetch + **600s** 长超时（> Render 500s），否则会在后端出结果前被客户端提前 abort，导致"节点设计静默失败无报错"。
   aiOutlineVolume: async (bookId: string, volumeIndex: number, volumeTitle?: string, skillPackIds?: string[], chaptersPerVolume?: number, nodeOnly?: boolean, onProgress?: (info: { type: string; message?: string }) => void): Promise<{ volume_data: any; timeline: string; bible: any }> => {
-    // SSE 流式版：后端后台线程生成 + 心跳 keepalive，规避 Render 网关对长时同步 POST 的空闲/总时长超时（502）。
-    // 逐帧解析 data: 事件，最终 result/finish 事件携带 volume_data/timeline/bible，error 事件抛错。
+    // 后台异步任务 + 前端短轮询（2026-08-31 架构升级）：
+    // 生成整卷大纲需 2-5 分钟，任何长连接(同步POST/SSE)都会被 Cloudflare+Render
+    // 的双层代理在 ~100s 硬切（浏览器抛 "network error"）。故改为：
+    //   1) POST 秒回 {job_id}
+    //   2) 每 3s 轮询 GET /status，任务在后台守护线程解耦运行
+    //   3) 完成后 GET /status 返回 {state:done, volume_data, timeline, bible}
+    // 每次 HTTP 请求都 <50ms → 永不触发网关超时，同时根治 502 与 network error。
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    const controller = new AbortController();
-    // 1200s 上层兜底：整卷模式单次 LLM 180s×3次重试≈540s，留一倍余量防网络抖动
-    const timeoutId = setTimeout(() => controller.abort(), 1200000);
+    const base = getApiBaseUrl();
+
+    // 1) 提交任务，秒回 job_id
+    let jobId: string;
+    let submitResp: Response;
     try {
-      const resp = await fetch(`${getApiBaseUrl()}/books/${bookId}/ai-outline-volume`, {
+      submitResp = await fetch(`${base}/books/${bookId}/ai-outline-volume`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ volume_index: volumeIndex, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [], chapters_per_volume: chaptersPerVolume || 50, node_only: !!nodeOnly }),
-        signal: controller.signal,
       });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: `请求失败 (HTTP ${resp.status})` }));
-        throw new Error(err.error || `HTTP ${resp.status}`);
-      }
-      // 防御性校验：后端必须返回 SSE 流式；若非则后端可能还是旧同步代码或网关拦截
-      const ct = resp.headers.get('Content-Type') || '';
-      if (!ct.includes('text/event-stream')) {
-        const snapshot = await resp.text().catch(() => '');
-        if (snapshot && snapshot.trim().startsWith('{')) {
-          try {
-            const legacy = JSON.parse(snapshot);
-            if (legacy && legacy.volume_data) {
-              onProgress?.({ type: 'finish' });
-              return { volume_data: legacy.volume_data, timeline: legacy.timeline || '', bible: legacy.bible };
-            }
-            if (legacy && legacy.error) throw new Error(legacy.error);
-          } catch { /* fallthrough */ }
-        }
-        throw new Error(`服务器未返回流式响应（Content-Type: ${ct || '空'}），请刷新页面重试`);
-      }
-      if (!resp.body) {
-        throw new Error('浏览器不支持流式响应，请更换浏览器或稍后重试');
-      }
-      // 解析 text/event-stream
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        // 按 \n\n 切分 SSE 事件
-        let idx;
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const rawEvent = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          const dataLine = rawEvent.split('\n').find(l => l.startsWith('data:'));
-          if (!dataLine) continue;
-          const payloadRaw = dataLine.slice(5).trim();
-          if (!payloadRaw || payloadRaw === '[DONE]') continue;
-          let payload: any;
-          try { payload = JSON.parse(payloadRaw); } catch { continue; }
-          if (payload && payload.type === 'start') {
-            onProgress?.({ type: 'start', message: payload.message });
-            continue;
-          }
-          if (payload && payload.type === 'heartbeat') {
-            onProgress?.({ type: 'heartbeat', message: payload.message });
-            continue;
-          }
-          if (payload && payload.error) {
-            throw new Error(payload.error);
-          }
-          if (payload && payload.volume_data) {
-            // 最终结果事件
-            onProgress?.({ type: 'finish' });
-            return { volume_data: payload.volume_data, timeline: payload.timeline, bible: payload.bible };
-          }
-        }
-      }
-      throw new Error('生成未返回有效结果，请重试');
     } catch (e: any) {
-      if (e.name === 'AbortError') {
-        const err = new Error('请求已取消');
-        (err as any).name = 'AbortError';
-        (err as any).cancelled = true;
-        throw err;
-      }
       if (e.message === 'Failed to fetch' || e.message?.includes('NetworkError')) {
         throw new Error('无法连接到服务器，可能正在冷启动中。请稍等几秒后重试');
       }
       throw e;
-    } finally {
-      clearTimeout(timeoutId);
     }
+    if (!submitResp.ok) {
+      const err = await submitResp.json().catch(() => ({ error: `请求失败 (HTTP ${submitResp.status})` }));
+      throw new Error(err.error || `HTTP ${submitResp.status}`);
+    }
+    const submitted = await submitResp.json().catch(() => ({}));
+    if (!submitted.job_id) {
+      throw new Error(submitted.error || '任务提交失败，请重试');
+    }
+    jobId = submitted.job_id;
+
+    // 2) 每 3s 轮询任务状态（短请求，绝不长连）
+    onProgress?.({ type: 'start', message: '正在生成卷大纲与情节节点...' });
+    const deadline = Date.now() + 15 * 60 * 1000; // 15 分钟兜底
+    let lastMsg = '';
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 3000));
+      const elapsed = Math.round((Date.now() - (Date.now() - 3000)) / 1000); // 显示用
+      let sr: Response;
+      try {
+        sr = await fetch(`${base}/books/${bookId}/ai-outline-volume/status?job_id=${encodeURIComponent(jobId)}`, {
+          headers,
+          cache: 'no-store',
+        });
+      } catch {
+        // 单次状态轮询网络抖动：继续下一轮，不打断整体
+        continue;
+      }
+      if (!sr.ok) {
+        const jerr = await sr.json().catch(() => ({}));
+        // 404 job 过期等：直接报错
+        if (sr.status === 404 || sr.status === 403) throw new Error(jerr.error || '任务已失效，请重新提交');
+        continue;
+      }
+      const st = await sr.json().catch(() => ({}));
+      if (st.state === 'running') {
+        const msg = `正在生成卷大纲与情节节点...（后台处理中）`;
+        if (msg !== lastMsg) { lastMsg = msg; onProgress?.({ type: 'heartbeat', message: msg }); }
+        continue;
+      }
+      if (st.state === 'error') {
+        throw new Error(st.error || '生成失败，请重试');
+      }
+      if (st.state === 'done' && st.volume_data) {
+        onProgress?.({ type: 'finish' });
+        return { volume_data: st.volume_data, timeline: st.timeline || '', bible: st.bible };
+      }
+    }
+    throw new Error('生成超时（15分钟），请稍后重新提交');
   },
 
   // 从大纲总纲一次性提取各卷剧情（替代逐卷循环，更稳定）

@@ -9654,53 +9654,125 @@ def _split_volume_title(raw):
 @app.route('/api/books/<book_id>/ai-outline-volume', methods=['POST'])
 @login_required
 def ai_outline_volume(book_id):
-    """生成单卷详细大纲（滚动生成）：基于总纲+已完成章节，写入 timeline。
+    """生成单卷大纲+情节节点：**后台异步任务 + 前端短轮询** 架构。
 
-    SSE 流式版：后台线程执行完整生成逻辑，主线程周期性推送心跳+keepalive，
-    规避 Render 网关对长时同步 POST 的空闲/总时长超时断连（此前曾 502）。
-    每个 SSE 事件为 data: {..}\n\n，最后一个为 data: [DONE]\n\n。
+    ⚠️ 为什么放弃 SSE：mayi.chat 经 Cloudflare + Render 双层代理，对同一条
+    连接有硬性空闲/总时长限制（实测约 100s 即被中间层硬切）。LLM 生成整卷
+    大纲需 2-5 分钟，*任何*长连接（同步 POST、SSE+心跳）都会在出结果前被代理
+    掐断 → 浏览器端 ReadableStream.read() 抛 "TypeError: network error"，
+    中文错误事件根本送不到前端。此前 502→network error 的反复正是此根因。
 
-    登录铁律：@login_required 保证 request.current_user_id 有效；所有权校验
-    在 impl 内根据传入 user_id 执行，避免后台线程无 request context 时越权。
+    本方案：POST 秒回 `{job_id}`，后台守护线程跑完整生成（无关任何 HTTP
+    请求生命周期），前端每 3s 轮询短 GET /status 取结果。每个 HTTP 请求都
+    <50ms，永不触碰网关超时 → 同时根治 502 与 network error。
+
+    登录铁律：@login_required 保证 current_user_id；这里先同步做所有权预检
+    （404/403 秒回），后台线程仅负责真正耗时生成。
     """
-    from flask import stream_with_context
+    import uuid as _uuid
+    import threading as _threading
 
-    def generate():
-        def _result_to_event(payload, status):
-            if status == 200:
-                return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
-            # 非 200：payload 为 dict{error:..}
-            return f'data: {json.dumps({"error": payload.get("error", "请求失败")}, ensure_ascii=False)}\n\n'
+    _req_data = (request.get_json(silent=True) or {})
+    _uid = request.current_user_id
 
-        # 主线程读取请求体 + 身份，再进后台线程（后台线程无 request context）
-        _req_data = (request.get_json(silent=True) or {})
-        _uid = request.current_user_id  # 已由 @login_required 验证非空
-        yield "data: {\"type\":\"start\",\"message\":\"正在生成卷大纲与情节节点...\"}\n\n"
+    # —— 所有权/存在性预检：同步快速返回，避免无谓起线程 ——
+    _pb = Book.query.get(book_id)
+    if not _pb:
+        return jsonify({'error': 'Not found'}), 404
+    if str(_pb.user_id) != str(_uid):
+        return jsonify({'error': '无权操作此书'}), 403
+
+    # —— 一致性请求幂等：同卷、同 mode 且任务仍在跑/刚完成(缓存窗口内)则不重复起 ——
+    _mode_key = ('node_only' if _req_data.get('node_only') else 'full')
+    _dedupe = f'{book_id}:{_uid}:{_mode_key}'
+    with _job_lock:
+        _job_gc()
+        _existing = _job_active.get(_dedupe)
+        if _existing and _existing['state'] in ('running', 'done'):
+            # 复用进行中/刚完成的任务
+            return jsonify({'ok': True, 'job_id': _existing['job_id'], 'reused': True}), 202
+
+    _job_id = _uuid.uuid4().hex
+    with _job_lock:
+        _jobs[_job_id] = {
+            'job_id': _job_id,
+            'dedupe': _dedupe,
+            'owner': _uid,
+            'created': _time_now(),
+            'state': 'running',
+            'status': 0,
+            'payload': None,
+            'error': None,
+        }
+        _job_active[_dedupe] = _jobs[_job_id]
+
+    def _job_runner():
+        # 后台线程无 request context，但 _ai_outline_volume_impl 内 db.session
+        # 依赖 app context，必须显式包裹；impl 内部自行 commit。
         try:
-            _hb_sse = 'data: {"type":"heartbeat","message":"正在生成卷大纲与情节节点（心跳保活中）..."}\n\n'
-            payload, status = yield from _run_blocking_with_heartbeat(
-                lambda: _ai_outline_volume_impl(book_id, _req_data, user_id=_uid),
-                _hb_sse,
-                heartbeat_interval=3,  # 比 Cloudflare 100s idle 阈值密得多（3-6s一帧），防任何中间层断连
-            )
-            # _ai_outline_volume_impl 已 commit，payload/timeline/bible 均为可直接 JSON 化的数据
-            yield _result_to_event(payload, status)
-        except Exception as _sse_e:
-            yield f'data: {json.dumps({"error": str(_sse_e)[:300]}, ensure_ascii=False)}\n\n'
-        yield "data: [DONE]\n\n"
+            with app.app_context():
+                _payload, _status = _ai_outline_volume_impl(book_id, _req_data, user_id=_uid)
+        except Exception as _je:
+            _payload, _status = ({'error': str(_je)[:300]}, 500)
+        with _job_lock:
+            _j = _jobs.get(_job_id)
+            if _j is None:
+                return
+            _j['state'] = 'done' if _status == 200 else 'error'
+            _j['status'] = _status
+            _j['payload'] = _payload
 
-    # 响应头禁缓存/禁代理缓冲（Cloudflare/Render 默认缓冲 SSE 致浏览器久收不到首字节而报 network error）：
-    # - no-cache：HTTP 标准禁缓存
-    # - no-transform：Cloudflare 专用，禁止改写/压缩，否则 gzip 会攒完整段才发
-    # - X-Accel-Buffering: no：Render Nginx 禁缓冲
-    # - Content-Encoding: identity：显式声明不做 content-encoding（压测时发现 Render gzip 模块仍会无视 X-Accel 攒包）
-    # - Connection: keep-alive：TCP 保活
-    resp = app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
-    resp.headers['Cache-Control'] = 'no-cache, no-transform'
-    resp.headers['X-Accel-Buffering'] = 'no'
-    resp.headers['Content-Encoding'] = 'identity'
-    resp.headers['Connection'] = 'keep-alive'
-    return resp
+    _threading.Thread(target=_job_runner, daemon=True).start()
+    return jsonify({'ok': True, 'job_id': _job_id, 'reused': False}), 200
+
+
+# —— 节点设计异步任务注册表（进程内内存态：单实例 WEB_CONCURRENCY=1 足够）——
+import threading as _job_threading_mod
+import time as _time_mod
+_job_lock = _job_threading_mod.Lock()
+_jobs = {}
+_job_active = {}
+
+
+def _time_now():
+    return _time_mod.time()
+
+
+def _job_gc():
+    """清理超过 30 分钟的任务，防止内存泄漏。"""
+    global _job_active
+    now = _time_now()
+    keys_to_drop = [k for k, v in _jobs.items() if _v_is_expired(v, now)]
+    for _jid in keys_to_drop:
+        _jobs.pop(_jid, None)
+    _job_active = {k: v for k, v in _job_active.items() if v in _jobs.values()}
+
+
+def _v_is_expired(v, now):
+    return (now - v.get('created', now)) > 1800
+
+
+@app.route('/api/books/<book_id>/ai-outline-volume/status', methods=['GET'])
+@login_required
+def ai_outline_volume_status(book_id):
+    """短轮询：查节点设计后台任务状态（每次 <50ms，永不触发网关超时）。"""
+    _job_id = (request.args.get('job_id') or '').strip()
+    _uid = request.current_user_id
+    if not _job_id:
+        return jsonify({'error': '缺少 job_id'}), 400
+    with _job_lock:
+        _j = _jobs.get(_job_id)
+    if not _j:
+        return jsonify({'state': 'unknown', 'error': '任务不存在或已过期，请重新提交'}), 404
+    # 归属校验：只有任务的提交者能查询（防任意 job_id 越权读结果）
+    if _j.get('owner') is not None and str(_j.get('owner')) != str(_uid):
+        return jsonify({'error': '无权查看该任务'}), 403
+    if _j['state'] == 'running':
+        return jsonify({'state': 'running'}), 200
+    if _j['state'] == 'error':
+        return jsonify({'state': 'error', 'error': (_j.get('payload') or {}).get('error', '生成失败')}), 200
+    # done
+    return jsonify({'state': 'done', **_j['payload']}), 200
 
 
 def _ai_outline_volume_impl(book_id, req_data, user_id=None):
