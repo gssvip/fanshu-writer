@@ -9652,12 +9652,16 @@ def _split_volume_title(raw):
     return '', s
 
 @app.route('/api/books/<book_id>/ai-outline-volume', methods=['POST'])
+@login_required
 def ai_outline_volume(book_id):
     """生成单卷详细大纲（滚动生成）：基于总纲+已完成章节，写入 timeline。
 
     SSE 流式版：后台线程执行完整生成逻辑，主线程周期性推送心跳+keepalive，
     规避 Render 网关对长时同步 POST 的空闲/总时长超时断连（此前曾 502）。
     每个 SSE 事件为 data: {..}\n\n，最后一个为 data: [DONE]\n\n。
+
+    登录铁律：@login_required 保证 request.current_user_id 有效；所有权校验
+    在 impl 内根据传入 user_id 执行，避免后台线程无 request context 时越权。
     """
     from flask import stream_with_context
 
@@ -9668,13 +9672,14 @@ def ai_outline_volume(book_id):
             # 非 200：payload 为 dict{error:..}
             return f'data: {json.dumps({"error": payload.get("error", "请求失败")}, ensure_ascii=False)}\n\n'
 
-        # 主线程读取请求体后再进后台线程（后台线程无 request context）
+        # 主线程读取请求体 + 身份，再进后台线程（后台线程无 request context）
         _req_data = (request.get_json(silent=True) or {})
+        _uid = request.current_user_id  # 已由 @login_required 验证非空
         yield "data: {\"type\":\"start\",\"message\":\"正在生成卷大纲与情节节点...\"}\n\n"
         try:
             _hb_sse = 'data: {"type":"heartbeat","message":"正在生成卷大纲与情节节点（心跳保活中）..."}\n\n'
             payload, status = yield from _run_blocking_with_heartbeat(
-                lambda: _ai_outline_volume_impl(book_id, _req_data),
+                lambda: _ai_outline_volume_impl(book_id, _req_data, user_id=_uid),
                 _hb_sse,
                 heartbeat_interval=8,
             )
@@ -9692,16 +9697,20 @@ def ai_outline_volume(book_id):
     return resp
 
 
-def _ai_outline_volume_impl(book_id, req_data):
+def _ai_outline_volume_impl(book_id, req_data, user_id=None):
     """生成单卷详细大纲的核心实现（同步）。已由 __main__/测试直接调用时的原 ai_outline_volume。
     NOTE:
       - 由 SSE 路由在后台线程调用，内部 db.session 允许跨线程 commit。
       - req_data 已在主线程读取 request.json 后传入，避免后台线程读 request 抛
         'Working outside of request context'。
+      - user_id：在 SSE 路由主线程（有 request context）读取 current_user_id 后传入，
+        用于所有权校验（跨线程不可读 request.*）。None 时跳过校验，仅用于测试。
     """
     book = Book.query.get(book_id)
     if not book:
         return ({'error': 'Not found'}), 404
+    if user_id is not None and str(book.user_id) != str(user_id):
+        return ({'error': '无权操作此书'}), 403
     bb = BookBible.query.filter_by(book_id=book_id).first()
     if not bb:
         bb = BookBible(book_id=book_id)
