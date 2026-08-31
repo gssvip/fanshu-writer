@@ -748,7 +748,6 @@ export const api = {
     let lastMsg = '';
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 3000));
-      const elapsed = Math.round((Date.now() - (Date.now() - 3000)) / 1000); // 显示用
       let sr: Response;
       try {
         sr = await fetch(`${base}/books/${bookId}/ai-outline-volume/status?job_id=${encodeURIComponent(jobId)}`, {
