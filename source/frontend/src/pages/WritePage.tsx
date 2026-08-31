@@ -4673,8 +4673,10 @@ function PlotPanel(props: {
       alert('请先打开作品后再进行节点设计');
       return;
     }
+    // 归一为合法正整数，避免把 undefined/NaN 传给后端导致「缺少 volume_index」
+    const safeVol = Math.max(1, Math.trunc(Number(volIndex)) || 1);
     openChatPanel(bookId);
-    openNodeDesignView(volIndex, volTitle);
+    openNodeDesignView(safeVol, volTitle || `第${safeVol}卷`);
   }
 
   // AI协同创作

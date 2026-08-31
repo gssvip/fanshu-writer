@@ -784,6 +784,9 @@ export const api = {
   // ====== 节点设计师：分段异步生成情节节点 ======
   // submit: 秒回 job_id（action='start' 分段生成全部节点；action='revise' 重生成单个节点）
   nodeDesignSubmit: async (bookId: string, volumeIndex: number, opts?: { action?: 'start' | 'revise'; sessionId?: string; nodeIndex?: number; feedback?: string }): Promise<{ ok: boolean; job_id?: string; session_id?: string; total?: number; kind?: string; error?: string }> => {
+    // 强行归一为合法正整数：JSON.stringify 会把 undefined/NaN 的键整体丢弃，
+    // 一旦 volume_index 被丢弃，后端就会报「缺少 volume_index」。这里兜底。
+    const vol = Math.max(1, Math.trunc(Number(volumeIndex)) || 1);
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -791,7 +794,7 @@ export const api = {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        volume_index: volumeIndex,
+        volume_index: vol,
         action: opts?.action || 'start',
         session_id: opts?.sessionId,
         node_index: opts?.nodeIndex,
