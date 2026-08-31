@@ -2151,10 +2151,18 @@ ${chapterEditContent}`;
           bookId={bookId}
           onClose={() => setShowEntityRegistry(false)}
           onRenamed={async () => {
-            // 重命名后重新拉取 bible 与章节列表
+            // 重命名后重新拉取 bible 与章节列表，并刷新正文阅读区当前章内容
             try {
               const bb = await api.getBible(bookId);
               if (bb) setBible(bb);
+            } catch {}
+            try {
+              const list = await api.listChapters(bookId);
+              setChapters(list);
+              setActiveChapter(prev => {
+                if (!prev) return prev;
+                return list.find(c => c.id === prev.id) || prev;
+              });
             } catch {}
           }}
         />

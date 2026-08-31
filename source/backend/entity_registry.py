@@ -15,7 +15,7 @@
 """
 import json
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 # 需要扫描的 bible 文本字段（JSON 结构字段也加进来：当 JSON 解析失败时，它们可能仍是带实体的纯文本，
@@ -896,9 +896,95 @@ def rename_entity(bb, chapters_query, old_name: str, new_name: str, entity_type:
             summary['total_replacements'] += count
 
     summary['chapters_affected'] = chap_count
+
+    # 4. DynamicReport 表：正文生成会注入动态报告，替换 title/content 中的旧名
+    #    （延迟导入避免循环依赖；调用方需在同一 db.session 内并提交事务）
+    from app import DynamicReport
+    report_count = 0
+    for report in DynamicReport.query.filter_by(book_id=bb.book_id).all():
+        rep_title = report.title or ''
+        rep_content = report.content or ''
+        new_title, t_count = _word_boundary_replace(rep_title, old_name, new_name)
+        new_content, c_count = _word_boundary_replace(rep_content, old_name, new_name)
+        if t_count > 0 or c_count > 0:
+            report.title = new_title
+            report.content = new_content
+            report_count += 1
+            summary['total_replacements'] += t_count + c_count
+    if report_count > 0:
+        summary['fields_updated'].append('dynamic_reports')
+
+    # 5. EventLog（bb.event_log_json）：正文生成会注入事件，替换 actors/summary/location 中的旧名
+    ev_old_val = getattr(bb, 'event_log_json', '') or ''
+    if ev_old_val:
+        try:
+            events = json.loads(ev_old_val)
+            if isinstance(events, list):
+                ev_count = 0
+                for ev in events:
+                    if not isinstance(ev, dict):
+                        continue
+                    actors = ev.get('actors')
+                    if isinstance(actors, list):
+                        new_actors = []
+                        for a in actors:
+                            na, c = _word_boundary_replace(a or '', old_name, new_name)
+                            new_actors.append(na)
+                            ev_count += c
+                        ev['actors'] = new_actors
+                    for f in ('summary', 'location'):
+                        val = ev.get(f, '')
+                        if isinstance(val, str):
+                            nv, c = _word_boundary_replace(val, old_name, new_name)
+                            if c > 0:
+                                ev[f] = nv
+                            ev_count += c
+                if ev_count > 0:
+                    setattr(bb, 'event_log_json', json.dumps(events, ensure_ascii=False))
+                    summary['fields_updated'].append('event_log')
+                    summary['total_replacements'] += ev_count
+        except Exception:
+            ev_count = 0  # 解析失败则跳过，不阻塞其余字段替换
+
+    # 6. Character 表：正文生成会注入角色资料，更新 name 字段与 relationships_json 中的旧名
+    from app import Character as CharacterModel
+    name_updated = 0
+    for ch_row in CharacterModel.query.filter_by(book_id=bb.book_id, name=old_name).all():
+        ch_row.name = new_name
+        name_updated += 1
+    for ch_row in CharacterModel.query.filter_by(book_id=bb.book_id).all():
+        rel = ch_row.relationships_json or ''
+        if rel:
+            new_rel, c = _word_boundary_replace(rel, old_name, new_name)
+            if c > 0:
+                ch_row.relationships_json = new_rel
+                summary['total_replacements'] += c
+    if name_updated > 0:
+        summary['fields_updated'].append('character_table')
+
+    # 7. 实体注册表本身（bb.entity_registry_json）：把 old_name 键迁移到 new_name
+    bucket = _bucket_for_type(entity_type)
+    if bucket:
+        reg = _load_registry(bb)
+        if old_name in reg.get(bucket, {}):
+            reg[bucket][new_name] = reg[bucket].pop(old_name)
+            _save_registry(bb, reg)
+            summary['fields_updated'].append('entity_registry')
+
     summary['fields_updated'] = list(dict.fromkeys(summary['fields_updated']))  # 去重保序
-    summary['success'] = summary['total_replacements'] > 0
+    summary['success'] = summary['total_replacements'] > 0 or bool(summary['fields_updated'])
     return summary
+
+
+def _bucket_for_type(entity_type: str) -> Optional[str]:
+    """把前端 entity_type（character/location/faction/item/skill）映射到注册表 bucket。"""
+    return {
+        'character': 'characters',
+        'faction': 'factions',
+        'location': 'locations',
+        'item': 'items',
+        'skill': 'skills',
+    }.get(entity_type or 'character')
 
 
 def merge_entities(bb, chapters_query, main_name: str, alias_names: List[str], entity_type: str = 'character') -> Dict:

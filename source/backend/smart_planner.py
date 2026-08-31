@@ -361,17 +361,20 @@ class TaskRunner:
     def _exec_rename_entity(self, task: Task) -> Dict:
         if self.preview_mode:
             return {'preview_mode': True, 'note': '预览模式下不执行实体替换；实际应用时将整词替换 old→new（含JSON字段递归）'}
-        from app import BookBible, Chapter
+        from app import BookBible, Chapter, db
         from entity_registry import rename_entity
         bb = BookBible.query.filter_by(book_id=self.book_id).first()
         if not bb:
             return {'error': 'bible not found'}
         chapters = Chapter.query.filter_by(book_id=self.book_id, is_volume=False).all()
-        return rename_entity(
+        result = rename_entity(
             bb, chapters,
             task.args.get('old_name'), task.args.get('new_name'),
             task.args.get('entity_type', 'character')
         )
+        # 智驾触发的重命名必须显式提交，ensure 对 DynamicReport/Character/EventLog 等落库
+        db.session.commit()
+        return result
 
     def _exec_refresh_dim(self, task: Task) -> Dict:
         # 目前阶段：只做 DAG/结构重渲染，不调用 LLM 重写
