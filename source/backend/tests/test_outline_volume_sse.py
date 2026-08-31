@@ -114,11 +114,14 @@ class TestOutlineVolumeSse:
             ct = resp.headers.get('Content-Type', '')
             cc = resp.headers.get('Cache-Control', '')
             xab = resp.headers.get('X-Accel-Buffering', '')
+            ce = resp.headers.get('Content-Encoding', '')
             conn = resp.headers.get('Connection', '')
         assert ct.startswith('text/event-stream'), f'Content-Type={ct}'
-        assert 'no-cache' in cc.lower(),    f'Cache-Control={cc}'
-        assert xab.lower() == 'no',          f'X-Accel-Buffering={xab}'
-        assert 'keep-alive' in conn.lower(),f'Connection={conn}'
+        assert 'no-cache' in cc.lower(),        f'Cache-Control={cc}'
+        assert 'no-transform' in cc.lower(),    f'Cache-Control 缺 no-transform (Cloudflare 会攒包): {cc}'
+        assert xab.lower() == 'no',              f'X-Accel-Buffering={xab}'
+        assert ce.lower() == 'identity',         f'Content-Encoding 必须 identity 关 Render gzip，否则攒包: {ce}'
+        assert 'keep-alive' in conn.lower(),     f'Connection={conn}'
 
     # ---------- 事件流 ----------
     def test_sse_events_well_formed(self, app, client, _seed_auth):

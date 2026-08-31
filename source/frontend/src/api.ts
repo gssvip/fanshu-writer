@@ -711,8 +711,8 @@ export const api = {
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const controller = new AbortController();
-    // 600s 上层兜底：SSE 心跳会持续刷新连接活性，正常不会触发；仅防极端卡死
-    const timeoutId = setTimeout(() => controller.abort(), 600000);
+    // 1200s 上层兜底：整卷模式单次 LLM 180s×3次重试≈540s，留一倍余量防网络抖动
+    const timeoutId = setTimeout(() => controller.abort(), 1200000);
     try {
       const resp = await fetch(`${getApiBaseUrl()}/books/${bookId}/ai-outline-volume`, {
         method: 'POST',

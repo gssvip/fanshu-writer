@@ -9681,7 +9681,7 @@ def ai_outline_volume(book_id):
             payload, status = yield from _run_blocking_with_heartbeat(
                 lambda: _ai_outline_volume_impl(book_id, _req_data, user_id=_uid),
                 _hb_sse,
-                heartbeat_interval=8,
+                heartbeat_interval=3,  # 比 Cloudflare 100s idle 阈值密得多（3-6s一帧），防任何中间层断连
             )
             # _ai_outline_volume_impl 已 commit，payload/timeline/bible 均为可直接 JSON 化的数据
             yield _result_to_event(payload, status)
@@ -9689,10 +9689,16 @@ def ai_outline_volume(book_id):
             yield f'data: {json.dumps({"error": str(_sse_e)[:300]}, ensure_ascii=False)}\n\n'
         yield "data: [DONE]\n\n"
 
-    # 响应头禁缓存/禁代理缓冲（Cloudflare/Render 默认缓冲 SSE 致浏览器久收不到首字节而报 network error）
+    # 响应头禁缓存/禁代理缓冲（Cloudflare/Render 默认缓冲 SSE 致浏览器久收不到首字节而报 network error）：
+    # - no-cache：HTTP 标准禁缓存
+    # - no-transform：Cloudflare 专用，禁止改写/压缩，否则 gzip 会攒完整段才发
+    # - X-Accel-Buffering: no：Render Nginx 禁缓冲
+    # - Content-Encoding: identity：显式声明不做 content-encoding（压测时发现 Render gzip 模块仍会无视 X-Accel 攒包）
+    # - Connection: keep-alive：TCP 保活
     resp = app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
-    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['Cache-Control'] = 'no-cache, no-transform'
     resp.headers['X-Accel-Buffering'] = 'no'
+    resp.headers['Content-Encoding'] = 'identity'
     resp.headers['Connection'] = 'keep-alive'
     return resp
 
@@ -10472,7 +10478,8 @@ def _ai_outline_volume_impl(book_id, req_data, user_id=None):
         content, err = _call_llm(
             [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
             # max_tokens=0：特指"通用节点设计师"，全量卷纲+节点一次性生成，自动适配模型最大输出
-            max_tokens=0, temperature=0.65, retry_count=3
+            # timeout=180 + retry_count=2：最坏 540s < 前端 1200s，保证 LLM 层自己先把错误吐回来而不是前端超时杀
+            max_tokens=0, temperature=0.65, retry_count=2, timeout=180
         )
         if err:
             return ({'error': err}), 500
