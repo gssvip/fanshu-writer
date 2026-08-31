@@ -2982,10 +2982,35 @@ def _get_chapter_plot_node(timeline_raw, outline_hierarchy_raw, target_chapter_n
                         lines.append(f'卷主线：{str(v["main_plot"])[:80]}')
                     node_title = n.get('title', '未命名节点')
                     lines.append(f'所属情节节点：{node_title}（{ch_range}章）')
-                    summary = n.get('summary') or n.get('plot') or ''
-                    if summary:
-                        lines.append(f'节点概要：{summary}')
-                    if n.get('cool_type'):
+                    # ===== A方案：优先用章粒度 chapter_beats 切出"本章只推进的这一段" =====
+                    beats = n.get('chapter_beats') if isinstance(n.get('chapter_beats'), list) else []
+                    beat_for_this_chapter = ''
+                    if beats:
+                        for b in beats:
+                            if not isinstance(b, dict):
+                                continue
+                            try:
+                                if int(b.get('chapter')) == target_chapter_num:
+                                    beat_for_this_chapter = str(b.get('beat') or '')
+                                    break
+                            except (TypeError, ValueError):
+                                continue
+                    if beat_for_this_chapter:
+                        ch_lo, ch_hi = int(nums[0]), int(nums[-1])
+                        lines.append(f'本章剧情点：{beat_for_this_chapter}')
+                        if ch_lo < ch_hi:
+                            remaining = ch_hi - target_chapter_num
+                            if remaining > 0:
+                                lines.append(f'【边界约束】本节点横跨 {ch_lo}-{ch_hi} 章，本章只许推进上述剧情点；剩余 {remaining} 章的剧情（含高潮/反转/收尾/钩子）留到后续章，禁止在本章一次性写完。')
+                    else:
+                        # 无章粒度数据（旧数据/未填）：回退整段 summary，但补边界约束
+                        summary = n.get('summary') or n.get('plot') or ''
+                        if summary:
+                            lines.append(f'节点概要：{summary}')
+                            ch_lo, ch_hi = int(nums[0]), int(nums[-1])
+                            if ch_hi > ch_lo:
+                                lines.append(f'【边界约束】本节点横跨 {ch_lo}-{ch_hi} 章，本章只写其中与第 {target_chapter_num} 章对应的那一段；不得把整段起因→高潮→收尾→钩子一章写完，后续章内容须保留。')
+                    if n.get('cool_type') and not beat_for_this_chapter:
                         lines.append(f'爽点类型：{n["cool_type"]}')
                     if v.get('ending_hook') and int(nums[-1]) == target_chapter_num:
                         lines.append(f'卷尾钩子：{v["ending_hook"]}')
@@ -3294,6 +3319,10 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
             '【本章剧情·最高指令】书接上文，读取剧情维度里的「本章剧情节点」，禁止超出本章剧情节点创作，保证ONE主钩子贯穿本章、禁止无目标流水账。语句自然顺畅，写事为主，景一笔带过，非必要不用比喻/拟人等修辞。'
             f'\n\n本章必须写完且只写以下 {len([x for x in chapter_plot_ctx.splitlines() if x.strip()])} 个节点（顺序不得调换、不得跳过、不得新增）：'
             f'\n{chapter_plot_ctx}'
+            '\n\n【本章边界铁律·防超纲透支】本节点横跨多章时，本章只推进「本章剧情点」里指定的那一段：\n'
+            '  · 只写完本章对应推进内容，未到位的后续剧情（高潮/反转/收尾/钩子）一律留到节点跨度的后续章，禁止一章把所有节点剧情全程写完；\n'
+            '  · 若「本章剧情点」已给出，就严格按它写，不自行把 summary 整段拍进去；\n'
+            '  · 若只有「节点概要」（旧数据无按章细分），只写其中属于第 X 章的一段，因果链可在本章起始一笔交代前情，但后续关键推进必须保留到后续章节。'
             '\n\n【本章字数铁律】纯正文（不含标题）2300-2500字，全角中文标点；不足时扩事件对白/停顿情绪/推进动作，超了删枝节。（⚠️ 遵守【禁令0】不得凑字/超标。写事为主，景一笔带过，非必要不用比喻/拟人等修辞，宁可字数微欠也不靠剩料描写充数）'
         )
 
