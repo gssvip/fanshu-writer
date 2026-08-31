@@ -9653,10 +9653,49 @@ def _split_volume_title(raw):
 
 @app.route('/api/books/<book_id>/ai-outline-volume', methods=['POST'])
 def ai_outline_volume(book_id):
-    """生成单卷详细大纲（滚动生成）：基于总纲+已完成章节，写入 timeline"""
+    """生成单卷详细大纲（滚动生成）：基于总纲+已完成章节，写入 timeline。
+
+    SSE 流式版：后台线程执行完整生成逻辑，主线程周期性推送心跳+keepalive，
+    规避 Render 网关对长时同步 POST 的空闲/总时长超时断连（此前曾 502）。
+    每个 SSE 事件为 data: {..}\n\n，最后一个为 data: [DONE]\n\n。
+    """
+    from flask import stream_with_context
+
+    def generate():
+        def _result_to_event(payload, status):
+            if status == 200:
+                return f'data: {json.dumps(payload, ensure_ascii=False)}\n\n'
+            # 非 200：payload 为 dict{error:..}
+            return f'data: {json.dumps({"error": payload.get("error", "请求失败")}, ensure_ascii=False)}\n\n'
+
+        # 主线程读取请求体后再进后台线程（后台线程无 request context）
+        _req_data = (request.get_json(silent=True) or {})
+        yield "data: {\"type\":\"start\",\"message\":\"正在生成卷大纲与情节节点...\"}\n\n"
+        try:
+            payload, status = yield from _run_blocking_with_heartbeat(
+                lambda: _ai_outline_volume_impl(book_id, _req_data),
+                '正在生成卷大纲与情节节点...',
+                heartbeat_interval=8,
+            )
+            # _ai_outline_volume_impl 已 commit，payload/timeline/bible 均为可直接 JSON 化的数据
+            yield _result_to_event(payload, status)
+        except Exception as _sse_e:
+            yield f'data: {json.dumps({"error": str(_sse_e)[:300]}, ensure_ascii=False)}\n\n'
+        yield "data: [DONE]\n\n"
+
+    return app.response_class(stream_with_context(generate()), mimetype='text/event-stream')
+
+
+def _ai_outline_volume_impl(book_id, req_data):
+    """生成单卷详细大纲的核心实现（同步）。已由 __main__/测试直接调用时的原 ai_outline_volume。
+    NOTE:
+      - 由 SSE 路由在后台线程调用，内部 db.session 允许跨线程 commit。
+      - req_data 已在主线程读取 request.json 后传入，避免后台线程读 request 抛
+        'Working outside of request context'。
+    """
     book = Book.query.get(book_id)
     if not book:
-        return jsonify({'error': 'Not found'}), 404
+        return ({'error': 'Not found'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
     if not bb:
         bb = BookBible(book_id=book_id)
@@ -9665,7 +9704,7 @@ def ai_outline_volume(book_id):
     # 非强制：无总纲也能设计节点，基于已有卷剧情
     has_master = bool(bb.plot_design and bb.plot_design.strip())
 
-    data = request.json or {}
+    data = req_data or {}
     # 【P1-5修复】分卷大纲属于总创作阶段：从 book.master_skill_ids 读取（构思类）
     try:
         _split_legacy_skill_ids_to_categories(book)
@@ -10112,7 +10151,7 @@ def ai_outline_volume(book_id):
         # 【P0修复】_evt_alloc 为空时直接返回错误，避免静默保存空节点
         if not _evt_alloc:
             err = '该卷没有 main_events 或 key_events 可供拆分为子节点，请先在卷剧情中生成主要剧情事件'
-            return jsonify({'error': err}), 400
+            return ({'error': err}), 400
 
         import threading
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10325,7 +10364,8 @@ def ai_outline_volume(book_id):
         # 【P0修复】node_only 模式全部失败时必须返回错误（原代码 err 检查只在
         # 非 node_only 分支内，导致静默写入空 nodes → 前端看到"生成0个节点"假成功）
         if err:
-            return jsonify({'error': err}), 500
+            # node_only 模式全部失败必须报错（SSE 路由会把 error 转成 data 事件返回）
+            return ({'error': err}), 500
         # 设置 system_prompt 和 user_prompt 供下游 if err 判断后的逻辑使用
         system_prompt = ''
         user_prompt = content
@@ -10415,12 +10455,12 @@ def ai_outline_volume(book_id):
             max_tokens=0, temperature=0.65, retry_count=3
         )
         if err:
-            return jsonify({'error': err}), 500
+            return ({'error': err}), 500
 
     # 健壮 JSON 提取：处理 markdown 代码块、前后说明文字、尾随逗号等
     volume_data, json_err = _extract_json_from_llm(content, expect='object')
     if json_err:
-        return jsonify({'error': 'AI返回格式错误，无法解析JSON', 'raw': content[:500], 'detail': json_err}), 500
+        return ({'error': 'AI返回格式错误，无法解析JSON', 'raw': content[:500], 'detail': json_err}), 500
 
     volume_text = f"""【第{volume_index}卷：{volume_data.get('volume_title', volume_title)}】
 核心目标：{volume_data.get('core_goal', '')}
@@ -10487,7 +10527,7 @@ BOSS：{volume_data.get('boss', '')}
     _sync_foreshadowings_to_volumes(bb)  # 【P0修复】自动同步本卷伏笔到 foreshadowing_volumes
     db.session.commit()
 
-    return jsonify({'volume_data': volume_data, 'timeline': bb.timeline, 'bible': bb.to_dict()})
+    return ({'volume_data': volume_data, 'timeline': bb.timeline, 'bible': bb.to_dict()}), 200
 
 @app.route('/api/books/<book_id>/ai-extract-volumes-from-outline', methods=['POST'])
 def ai_extract_volumes_from_outline(book_id):

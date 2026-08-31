@@ -704,27 +704,65 @@ export const api = {
   // 总耗时可达 80-180s+，60s 硬超时会被自动 abort → UI 上显示"情节节点设计失败：请求已取消"，实际用户根本没取消。
   // 并发(2)+逐事件拆分的整体耗时可能逼近 5-7 分钟，且 Render 请求上限≈500s：
   // 必须用直接 fetch + **600s** 长超时（> Render 500s），否则会在后端出结果前被客户端提前 abort，导致"节点设计静默失败无报错"。
-  aiOutlineVolume: async (bookId: string, volumeIndex: number, volumeTitle?: string, skillPackIds?: string[], chaptersPerVolume?: number, nodeOnly?: boolean): Promise<{ volume_data: any; timeline: string; bible: any }> => {
+  aiOutlineVolume: async (bookId: string, volumeIndex: number, volumeTitle?: string, skillPackIds?: string[], chaptersPerVolume?: number, nodeOnly?: boolean, onProgress?: (info: { type: string; message?: string }) => void): Promise<{ volume_data: any; timeline: string; bible: any }> => {
+    // SSE 流式版：后端后台线程生成 + 心跳 keepalive，规避 Render 网关对长时同步 POST 的空闲/总时长超时（502）。
+    // 逐帧解析 data: 事件，最终 result/finish 事件携带 volume_data/timeline/bible，error 事件抛错。
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 600000); // 600s 长超时：> Render 500s 请求上限，避免后端未返回就先被客户端 abort
+    // 600s 上层兜底：SSE 心跳会持续刷新连接活性，正常不会触发；仅防极端卡死
+    const timeoutId = setTimeout(() => controller.abort(), 600000);
     try {
-      const res = await fetch(`${getApiBaseUrl()}/books/${bookId}/ai-outline-volume`, {
+      const resp = await fetch(`${getApiBaseUrl()}/books/${bookId}/ai-outline-volume`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ volume_index: volumeIndex, volume_title: volumeTitle, skill_pack_ids: skillPackIds || [], chapters_per_volume: chaptersPerVolume || 50, node_only: !!nodeOnly }),
         signal: controller.signal,
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
-        throw new Error(err.error || `HTTP ${res.status}`);
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: `请求失败 (HTTP ${resp.status})` }));
+        throw new Error(err.error || `HTTP ${resp.status}`);
       }
-      return await res.json();
+      if (!resp.body) {
+        throw new Error('浏览器不支持流式响应，请更换浏览器或稍后重试');
+      }
+      // 解析 text/event-stream
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // 按 \n\n 切分 SSE 事件
+        let idx;
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const rawEvent = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const dataLine = rawEvent.split('\n').find(l => l.startsWith('data:'));
+          if (!dataLine) continue;
+          const payloadRaw = dataLine.slice(5).trim();
+          if (!payloadRaw || payloadRaw === '[DONE]') continue;
+          let payload: any;
+          try { payload = JSON.parse(payloadRaw); } catch { continue; }
+          if (payload && payload.type === 'start') {
+            onProgress?.({ type: 'start', message: payload.message });
+            continue;
+          }
+          if (payload && payload.error) {
+            throw new Error(payload.error);
+          }
+          if (payload && payload.volume_data) {
+            // 最终结果事件
+            onProgress?.({ type: 'finish' });
+            return { volume_data: payload.volume_data, timeline: payload.timeline, bible: payload.bible };
+          }
+        }
+      }
+      throw new Error('生成未返回有效结果，请重试');
     } catch (e: any) {
       if (e.name === 'AbortError') {
-        // 区分：外部未主动取消但超时(300s到达)→提示超时；外部取消→保留AbortError语义不提示失败
         const err = new Error('请求已取消');
         (err as any).name = 'AbortError';
         (err as any).cancelled = true;
