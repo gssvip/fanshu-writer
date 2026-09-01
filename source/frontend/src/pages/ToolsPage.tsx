@@ -1344,9 +1344,61 @@ category：master
             <div style={{textAlign:'center',padding:30,color:'var(--text-muted)',fontSize:13}}>⏳ 加载榜单书籍…</div>
           )}
 
-          {/* 书籍列表表格 */}
+          {/* 书籍列表：窄屏卡片 + 宽屏表格 */}
           {!nrListLoading && nrList?.items?.length ? (
             <>
+              {/* 移动端友好卡片（≤719px 显示，宽屏隐藏） */}
+              <div className="rank-card-grid nr-mobile-only">
+                {nrList.items.map((b: any, i: number) => {
+                  const change = Number(b.rankChange) || 0;
+                  const n = Number(b.rankNo) || i + 1;
+                  const cat = [b.categoryName, b.categorySubName].filter(Boolean).join(' / ');
+                  const rawMetric = b.metricText ?? b.metricValue;
+                  const metricText = (rawMetric == null || rawMetric === '' || rawMetric === 0) ? '—' : String(rawMetric);
+                  return (
+                    <a
+                      key={i}
+                      href={b.bookUrl || undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rank-card"
+                    >
+                      <div className="rank-card-head">
+                        {n <= 3
+                          ? <span className={`rank-medal r${n}`}>{n}</span>
+                          : <span className="rank-no">{n}</span>}
+                        <span className={`rank-delta ${change >= 0 ? 'up' : 'down'}`}>
+                          {change > 0 ? `↑${change}` : change < 0 ? `↓${-change}` : '—'}
+                        </span>
+                        {b.statusText && <span className="rank-status">{b.statusText}</span>}
+                      </div>
+                      <div className="rank-card-main">
+                        {b.coverUrl ? (
+                          <img className="rank-cover" src={b.coverUrl} alt="" loading="lazy" />
+                        ) : (
+                          <div className="rank-cover-fallback">📚</div>
+                        )}
+                        <div className="rank-book-info">
+                          <div className="rank-card-title">{b.bookTitle || '未命名'}</div>
+                          {b.intro && <p className="rank-card-desc">{b.intro}</p>}
+                          {b.lastChapterTitle && (
+                            <div className="rank-card-sub">📝 {b.lastChapterTitle}{b.lastUpdateTimeText ? ` · ${b.lastUpdateTimeText}` : ''}</div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="rank-card-meta">
+                        <span><b>作者</b>{b.authorName || '—'}</span>
+                        {cat && <span><b>分类</b>{cat}</span>}
+                        {metricText !== '—' && (
+                          <span className="rank-metric"><em>{b.metricName ? `${b.metricName} ` : ''}{metricText}</em></span>
+                        )}
+                      </div>
+                    </a>
+                  );
+                })}
+              </div>
+
+              {/* 桌面端宽表格 */}
               <table className="rank-books-table" style={{
                 width:'100%',borderCollapse:'collapse',fontSize:13,
                 background:'var(--bg-secondary)',border:'1px solid var(--border-color)',borderRadius:8,overflow:'hidden',
