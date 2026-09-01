@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Template } from '../types';
 import { useStore } from '../store';
@@ -22,6 +22,7 @@ export default function Home() {
   const importFileRef = useRef<HTMLInputElement>(null);
   const [showExport, setShowExport] = useState(false);
   const [exportBookId, setExportBookId] = useState('');
+  const [exportType, setExportType] = useState<'full'|'single'>('full');
   const [exportFormat, setExportFormat] = useState('zip');
   const [exporting, setExporting] = useState(false);
 
@@ -71,6 +72,64 @@ export default function Home() {
 
   const doLogout = () => { try { localStorage.removeItem('fanshu-token'); } catch {} window.location.reload(); };
 
+  // ---- 首页导入作品 ----
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (importFileRef.current) importFileRef.current.value = '';
+    if (!file) return;
+    setImporting(true);
+    try {
+      if (/\.(zip)$/i.test(file.name)) {
+        const r = await api.importZip(file);
+        if (r?.error) throw new Error(r.error);
+        alert(`已导入备份包：《${r.title}》`);
+      } else {
+        const title = prompt('为这部新作品命名', file.name.replace(/\.[^.]+$/, ''));
+        if (!title) return;
+        const b = await api.importFiles([file], { title });
+        alert(`已导入《${b.title}》`);
+      }
+      setShowImport(false);
+      refresh();
+    } catch (e: any) { alert('导入失败: ' + (e?.message || '请检查文件格式')); }
+    setImporting(false);
+  }
+
+  // ---- 首页导出作品：带认证的文件下载 ----
+  async function handleExportDownload() {
+    if (!exportBookId) { alert('请选择要导出的作品'); return; }
+    setExporting(true);
+    try {
+      let url: string;
+      let fallback: string;
+      if (exportType === 'full') {
+        url = api.getExportFullUrl(exportBookId);
+        fallback = 'export.zip';
+      } else {
+        url = api.getExportUrl(exportBookId, exportFormat);
+        fallback = `export.${exportFormat}`;
+      }
+      const token = localStorage.getItem('fanshu-token');
+      const resp = await fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: '下载失败' }));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const disp = resp.headers.get('content-disposition') || '';
+      const m = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/);
+      const fileName = m ? decodeURIComponent(m[1]) : fallback;
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl; a.download = fileName;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+      setShowExport(false);
+    } catch (e: any) { alert('导出失败: ' + (e?.message || '请先登录')); }
+    setExporting(false);
+  }
+
   return (
     <div className="home-root">
       <header className="home-header">
@@ -103,6 +162,13 @@ export default function Home() {
           )}
         </div>
       </header>
+
+      {/* 首页快速操作：导入作品 / 导出作品 / 新建作品 一排 */}
+      <div className="home-quick-actions">
+        <button className="btn-primary" onClick={() => setShowImport(true)}>📥 导入作品</button>
+        <button className="btn-primary" onClick={() => setShowExport(true)} disabled={books.length === 0}>📤 导出作品</button>
+        <button className="btn-primary" onClick={() => setShowNew(true)}>+ 新建作品</button>
+      </div>
 
       <main className="home-main">
         {books.length===0 ? (
@@ -234,6 +300,61 @@ export default function Home() {
             )}
             <div className="form-actions" style={{marginTop:16}}>
               <button className="btn-secondary" onClick={()=>setShowAiPicker(false)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 导入作品 */}
+      {showImport && (
+        <div className="modal-overlay" onClick={()=>setShowImport(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:440}}>
+            <h2>📥 导入作品</h2>
+            <p className="text-muted" style={{fontSize:13,marginBottom:16}}>支持导入完整备份包（.zip，含书名/章节/人物/大纲等全部数据），或单个小说文本文件（.txt/.md/.docx，会作为新作品导入）。</p>
+            <input ref={importFileRef} type="file" accept=".zip,.txt,.md,.docx" onChange={handleImportFile} style={{marginBottom:8}} />
+            <div className="form-actions" style={{marginTop:16}}>
+              <button className="btn-secondary" onClick={()=>setShowImport(false)} disabled={importing}>取消</button>
+              <span className="text-muted" style={{fontSize:12}}>{importing ? '导入中...（请稍候）' : '选择文件后自动导入'}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 导出作品 */}
+      {showExport && (
+        <div className="modal-overlay" onClick={()=>setShowExport(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:460}}>
+            <h2>📤 导出作品</h2>
+            <div className="form-group" style={{marginTop:8}}>
+              <label>选择作品</label>
+              <select className="input" value={exportBookId} onChange={e=>setExportBookId(e.target.value)}>
+                <option value="">— 请选择作品 —</option>
+                {books.map((b:any) => <option key={b.id} value={b.id}>{b.title}（{b.word_count.toLocaleString()}字 · {b.chapter_count}章）</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>导出方式</label>
+              <select className="input" value={exportType} onChange={e=>setExportType(e.target.value as 'full'|'single')}>
+                <option value="full">📦 全量导出（推荐）：设定+章节打包为zip</option>
+                <option value="single">📄 单文件导出</option>
+              </select>
+            </div>
+            {exportType === 'single' && (
+              <div className="form-group">
+                <label>导出格式</label>
+                <select className="input" value={exportFormat} onChange={e=>setExportFormat(e.target.value)}>
+                  <option value="txt">纯文本 (.txt)</option>
+                  <option value="html">网页 (.html)</option>
+                  <option value="json">JSON数据 (.json)</option>
+                  <option value="zip">完整备份 (.zip)</option>
+                </select>
+              </div>
+            )}
+            <div className="form-actions" style={{marginTop:16}}>
+              <button className="btn-secondary" onClick={()=>setShowExport(false)}>取消</button>
+              <button className="btn-primary" onClick={handleExportDownload} disabled={!exportBookId || exporting}>
+                {exporting ? '⏳ 导出中...' : '开始导出'}
+              </button>
             </div>
           </div>
         </div>

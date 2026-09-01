@@ -205,6 +205,8 @@ export const api = {
     request<{ success: boolean }>(`/books/${bookId}/chapters/reorder`, { method: 'POST', body: JSON.stringify({ order }) }),
   rebinVolumes: (bookId: string) =>
     request<{ success: boolean; chapters: number; volumes: number }>(`/books/${bookId}/chapters/rebin-volumes`, { method: 'POST' }),
+  ghostSuggest: (bookId: string, chapterId: string, content: string) =>
+    request<{ suggestion: string; error?: string }>(`/books/${bookId}/chapters/ghost-suggest`, { method: 'POST', body: JSON.stringify({ chapter_id: chapterId, content }) }),
 
   // Characters
   listCharacters: (bookId: string) => request<Character[]>(`/books/${bookId}/characters`),
@@ -528,8 +530,8 @@ export const api = {
   },
 
   // AI Analyze Book
-  analyzeBook: (content: string) =>
-    request<AnalysisResult>('/analyze-book', { method: 'POST', body: JSON.stringify({ content }) }),
+  analyzeBook: (content: string, focus?: string) =>
+    request<AnalysisResult>('/analyze-book', { method: 'POST', body: JSON.stringify({ content, focus }) }),
 
   // Skill Packs
   listSkillPacks: (genre?: string, bookType?: string) => {

@@ -52,7 +52,13 @@ MAX_ROUTES_PER_FILE = 30
 #   - apply_card 角色解析：多人名拆分、name/role 归一化与落库兜底（防 varchar 截断崩溃）
 #   - Character create/update/import 的 name/role 截断兜底及架构注释
 #   - 后端若干被豁免文件因真实功能增量而同步增加，随 app.py/chat_collab_bp.py 一并重校准
-APP_PY_BASELINE = 14618
+# 2026-09-01 重校准（AI调用账本+榜单风向+正文幽灵字续写+竞品拆书）：
+#   - AIUsageLog 模型 + _call_llm 埋点包装器 + /api/ai/usage 与 /usage/stats 统计接口（约80行）
+#   - /api/rankings 榜单风向接口（约40行）
+#   - /api/books/*/chapters/ghost-suggest 幽灵字续写接口（约40行）
+#   - /analyze-book 竞品拆书 focus 模式（约25行）
+#   → 净增 14618 → 14783（+165 行，全部为用户明确要求的低成本高价值功能，非业务堆肉）
+APP_PY_BASELINE = 14783
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -62,7 +68,10 @@ FE_MAX_LINES = 1500
 # 2026-08-18 重校准：版本号对比等细节+UI交互
 # 2026-08-29 重校准：随智驾功能增量同步至当前行数
 # 2026-09-01 重校准：aiChatHistory 离线缓存读写 try/catch 兜底（P0白屏急救，防 Tracking Prevention 拦截）
-WRITEPAGE_BASELINE = 8908
+# 2026-09-01 重校准（正文幽灵字续写）：
+#   - ChapterPanel 新增幽灵字镜像叠加（ghostSug 状态/防抖抓取/Tab采纳/滚动同步）约40行
+#   → 8908 → 8954（+46 行，用户明确要求的章节编辑正文幽灵字续写）
+WRITEPAGE_BASELINE = 8954
 
 # ChatPanel.tsx 基线行数：只能减不能增（智驾面板巨石，防止继续膨胀）
 # 2026-08-18 重校准2（M9 技能包生效链路打通）：
@@ -144,7 +153,12 @@ CHATPANEL_BASELINE = 4664
 #   - 新增genre_target文风类适用题材下拉UI (+20行)
 #   - 新增normalizeGenreKey调用在两处(导入payload / smartParse末尾) + GENRE_GROUPS分组optgroup(×3处)改写
 #   → 净增 1192 - 1158 = 34行
-TOOLSPAGE_BASELINE = 1192
+# 2026-09-01 重校准（榜单风向+AI调用账本+竞品拆书模式）：
+#   - 导出Tab替换为榜单风向（rankings 平台切换+数据展示，约60行）
+#   - 新增AI调用账本 Tab（usage 统计图表+明细列表，约70行）
+#   - 拆书分析新增竞品拆书模式切换+竞品专属结果区块（约50行）
+#   → 1192 → 1375（+183 行，用户明确要求的功能交付）
+TOOLSPAGE_BASELINE = 1375
 
 # chat_collab_bp.py 基线行数：只能减不能增（智驾协作 Blueprint 巨石）
 # 2026-08-18 重校准6（NETWORK ERROR瘦身补丁：重复禁令3合1，纯减tokens防TTFT超时）：

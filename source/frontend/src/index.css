@@ -129,6 +129,9 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .home-brand{display:flex;align-items:center;gap:10px}
 .home-brand h1{font-size:17px;font-weight:700;margin:0;line-height:1.2}
 .home-subtitle{font-size:11px;color:var(--text-muted);margin:0;line-height:1.2}
+.home-quick-actions{display:flex;gap:10px;justify-content:center;padding:12px 16px 0;flex-wrap:wrap}
+.home-quick-actions .btn-primary{flex:0 1 auto;min-width:108px;justify-content:center;display:inline-flex;align-items:center;gap:6px}
+.home-quick-actions .btn-primary:disabled{opacity:.5;cursor:not-allowed}
 
 /* Page */
 .page{max-width:900px;margin:0 auto}
@@ -443,6 +446,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .review-section ul{margin-left:18px;font-size:13px;line-height:1.8}
 .review-section li{color:var(--text-secondary)}
 .golden-line{font-style:italic;color:var(--accent) !important}
+.compact-list{margin-left:18px;font-size:13px;line-height:1.7}
+.compact-list li{color:var(--text-secondary)}
+.competitor-pos{background:color-mix(in srgb, var(--accent) 8%, transparent);border-radius:var(--radius-sm);padding:10px 12px}
+.competitor-pos p{font-size:13px;line-height:1.7;margin-top:4px}
 
 /* Skill Packs */
 .skill-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
@@ -1076,6 +1083,13 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .chapter-format-btn:disabled{opacity:0.4;cursor:not-allowed}
 .chapter-edit-title-input{font-size:16px;font-weight:600;padding:10px 12px;flex-shrink:0}
 .chapter-edit-textarea{flex:1;min-height:0;font-size:15px;line-height:1.8;padding:12px;resize:none;font-family:inherit}
+/* 【正文幽灵字续写】镜像叠加：镜像在前显示正文+幽灵字，textarea 文字透明仅保留光标 */
+.chapter-ghost-wrap{position:relative;flex:1;min-height:0;display:flex;overflow:hidden}
+.chapter-ghost-wrap .chapter-edit-textarea{color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--text-primary);background:transparent;z-index:2}
+.chapter-ghost-mirror{position:absolute;top:0;left:0;right:0;font-size:15px;line-height:1.8;padding:12px;padding-right:28px;font-family:inherit;color:var(--text-primary);white-space:pre-wrap;word-wrap:break-word;pointer-events:none;will-change:transform;z-index:1}
+.chapter-ghost-mirror .ghost-suffix{color:rgba(140,140,155,0.42)}
+.chapter-ghost-mirror .ghost-real{white-space:pre-wrap;word-wrap:break-word}
+.ghost-busy-hint{position:absolute;right:14px;bottom:12px;font-size:11px;color:var(--text-muted);background:var(--bg-secondary);padding:2px 8px;border-radius:6px;z-index:3;pointer-events:none}
 .chapter-ai-loading{display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px;background:var(--bg-secondary);border-radius:var(--radius-sm)}
 .chapter-ai-loading p{font-size:13px;color:var(--text-muted)}
 

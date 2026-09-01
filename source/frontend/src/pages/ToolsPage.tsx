@@ -49,6 +49,8 @@ export default function ToolsPage() {
   const [analyzeInput, setAnalyzeInput] = useState('');
   const [analyzeResult, setAnalyzeResult] = useState<AnalysisResult | null>(null);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  // 竞品拆书模式：normal=普通拆书 / competitor=竞品对标拆解
+  const [analyzeMode, setAnalyzeMode] = useState<'normal' | 'competitor'>('normal');
   const [uploadFilename, setUploadFilename] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -295,6 +297,13 @@ export default function ToolsPage() {
     }));
   }
 
+  function updateWorkflowTemp(idx: number, temp: number) {
+    setSkillEditor(prev => ({
+      ...prev,
+      workflow: prev.workflow.map((w, i) => i === idx ? { ...w, temperature: temp } : w),
+    }));
+  }
+
   function removeWorkflowStep(idx: number) {
     setSkillEditor(prev => ({
       ...prev,
@@ -348,7 +357,7 @@ export default function ToolsPage() {
     if (!ok) return;
     setAnalyzeLoading(true);
     setAnalyzeResult(null);
-    try { const r = await api.analyzeBook(analyzeInput); setAnalyzeResult(r); }
+    try { const r = await api.analyzeBook(analyzeInput, analyzeMode === 'competitor' ? 'competitor' : undefined); setAnalyzeResult(r); }
     catch (e: any) { alert('分析失败: ' + e.message); }
     setAnalyzeLoading(false);
   }
@@ -869,19 +878,27 @@ category：master
                 </div>
 
                 <div className="form-field">
-                  <label>创作工作流步骤</label>
-                  <p className="text-muted" style={{fontSize:11}}>每个步骤对应创作中的一个环节，prompt_key 与下方提示词的键名对应</p>
-                  {skillEditor.workflow.map((step, idx) => (
-                    <div key={idx} className="workflow-editor-step">
-                      <span className="workflow-step-num">{idx + 1}</span>
-                      <input className="input" value={step.name} onChange={e => updateWorkflowStep(idx, 'name', e.target.value)} placeholder="步骤名称（如：设定构建）" />
-                      <input className="input" value={step.desc} onChange={e => updateWorkflowStep(idx, 'desc', e.target.value)} placeholder="步骤说明" />
-                      <input className="input" value={step.prompt_key} onChange={e => updateWorkflowStep(idx, 'prompt_key', e.target.value)} placeholder="prompt键名" />
-                      <button className="btn-icon" onClick={() => removeWorkflowStep(idx)}>✕</button>
-                    </div>
-                  ))}
-                  <button className="btn-secondary" onClick={addWorkflowStep}>+ 添加步骤</button>
-                </div>
+                    <label>创作工作流步骤（场景级：每步可独立设置温度）</label>
+                    <p className="text-muted" style={{fontSize:11}}>每个步骤对应创作中的一个环节，prompt_key 与下方提示词的键名对应。temperature 为该场景调用AI时的采样温度（0~2，缺省跟随全局配置）。</p>
+                    {skillEditor.workflow.map((step, idx) => (
+                      <div key={idx} className="workflow-editor-step" style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                        <span className="workflow-step-num">{idx + 1}</span>
+                        <input className="input" style={{flex:'1 1 120px'}} value={step.name} onChange={e => updateWorkflowStep(idx, 'name', e.target.value)} placeholder="步骤名称（如：设定构建）" />
+                        <input className="input" style={{flex:'1 1 160px'}} value={step.desc} onChange={e => updateWorkflowStep(idx, 'desc', e.target.value)} placeholder="步骤说明" />
+                        <input className="input" style={{flex:'1 1 100px'}} value={step.prompt_key} onChange={e => updateWorkflowStep(idx, 'prompt_key', e.target.value)} placeholder="prompt键名" />
+                        <label style={{display:'flex',alignItems:'center',gap:4,fontSize:12,minWidth:110}}>
+                          🌡 温度
+                          <input type="number" min={0} max={2} step={0.1}
+                            className="input" style={{width:52,padding:'4px 6px'}}
+                            value={step.temperature ?? ''}
+                            onChange={e => updateWorkflowTemp(idx, parseFloat(e.target.value))}
+                            placeholder="默认" />
+                        </label>
+                        <button className="btn-icon" onClick={() => removeWorkflowStep(idx)}>✕</button>
+                      </div>
+                    ))}
+                    <button className="btn-secondary" onClick={addWorkflowStep}>+ 添加步骤</button>
+                  </div>
 
                 <div className="form-field">
                   <label>提示词模板</label>
@@ -1016,6 +1033,22 @@ category：master
         <div className="tool-panel">
           <h3>📊 AI 拆书分析</h3>
           <p className="text-muted">导入作品文件或粘贴文本，分析文风/结构/节奏/人设，提炼可学习的创作方法论</p>
+          <div className="form-row" style={{alignItems:'center',gap:8,marginBottom:10}}>
+            <button
+              className={analyzeMode === 'normal' ? 'btn-primary' : 'btn-secondary'}
+              style={{fontSize:12,padding:'6px 14px'}}
+              onClick={() => setAnalyzeMode('normal')}
+            >📖 普通拆书</button>
+            <button
+              className={analyzeMode === 'competitor' ? 'btn-primary' : 'btn-secondary'}
+              style={{fontSize:12,padding:'6px 14px'}}
+              onClick={() => setAnalyzeMode('competitor')}
+              title="站在竞品对标角度，输出市场定位、核心优势、差异弱点与可复刻方案"
+            >⚔️ 竞品拆书</button>
+            {analyzeMode === 'competitor' && (
+              <span className="text-muted" style={{fontSize:11}}>分析竞品爆款，输出对标定位 · 核心优势 · 差异化机会 · 复刻方案</span>
+            )}
+          </div>
           <div className="form-row" style={{marginBottom:10}}>
             <input ref={fileInputRef} type="file" accept=".txt,.md,.docx,.zip,.json" onChange={handleUploadFile} style={{display:'none'}} id="analyze-file-input" />
             <label htmlFor="analyze-file-input" className="btn-secondary" style={{cursor:'pointer',padding:'8px 16px',borderRadius:'var(--radius-sm)',display:'inline-block'}}>
@@ -1053,6 +1086,22 @@ category：master
               </div>
               <div className="review-section"><h4>钩子技巧</h4><ul>{analyzeResult.hook_techniques?.map((h, i) => <li key={i}>{h}</li>)}</ul></div>
               <div className="review-section"><h4>可学习的方法</h4><ul>{analyzeResult.learnable_points?.map((p, i) => <li key={i}>{p}</li>)}</ul></div>
+              {analyzeMode === 'competitor' && analyzeResult.market_position && (
+                <div className="review-section competitor-pos"><h4>🎯 市场定位</h4><p>{analyzeResult.market_position}</p></div>
+              )}
+              {analyzeMode === 'competitor' && (analyzeResult.strengths?.length || analyzeResult.weaknesses?.length) && (
+                <div className="analyze-grid">
+                  {analyzeResult.strengths && analyzeResult.strengths.length > 0 && (
+                    <div className="analyze-item"><h4>💪 核心优势</h4><ul className="compact-list">{(analyzeResult.strengths as string[]).map((s, i) => <li key={i}>{s}</li>)}</ul></div>
+                  )}
+                  {analyzeResult.weaknesses && analyzeResult.weaknesses.length > 0 && (
+                    <div className="analyze-item"><h4>🕳 差异化机会（弱点切入）</h4><ul className="compact-list">{(analyzeResult.weaknesses as string[]).map((w, i) => <li key={i}>{w}</li>)}</ul></div>
+                  )}
+                </div>
+              )}
+              {analyzeMode === 'competitor' && analyzeResult.copy_plan && (
+                <div className="review-section"><h4>📝 复刻方案（借鉴爆点 + 规避同质化）</h4><p>{analyzeResult.copy_plan}</p></div>
+              )}
               {analyzeResult.golden_lines?.length > 0 && (
                 <div className="review-section"><h4>金句摘录</h4><ul>{analyzeResult.golden_lines.map((l, i) => <li key={i} className="golden-line">{l}</li>)}</ul></div>
               )}

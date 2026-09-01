@@ -237,6 +237,7 @@ export interface SkillPack {
 export interface WorkflowStep {
   step: number; name: string; desc: string;
   prompt_key: string;
+  temperature?: number;   // 场景级温度：该提示词调用时使用的采样温度（0~2），缺省用全局配置
 }
 
 // AI 调用账本
@@ -286,6 +287,11 @@ export interface AnalysisResult {
   genre_tags: string[];
   target_platform: string;
   learnable_points: string[];
+  // 竞品拆书模式专属（focus=competitor）
+  market_position?: string;
+  strengths?: string[];
+  weaknesses?: string[];
+  copy_plan?: string;
 }
 
 export interface BrainstormSuggestion {

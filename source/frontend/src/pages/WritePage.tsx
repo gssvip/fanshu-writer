@@ -2704,6 +2704,41 @@ function ChapterPanel(props: {
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [langStyleExpanded, setLangStyleExpanded] = useState(false);
+  // 【正文幽灵字续写】在章节编辑器中展示浅灰续写建议，按 Tab 一键采纳
+  const [ghostSug, setGhostSug] = useState('');
+  const [ghostBusy, setGhostBusy] = useState(false);
+  const ghostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const syncGhostScroll = useCallback(() => {
+    if (mirrorRef.current && taRef.current) {
+      mirrorRef.current.style.transform = `translateY(${-taRef.current.scrollTop}px)`;
+    }
+  }, []);
+  // 输入暂停后自动抓取幽灵字建议（防抖 700ms，仅章节编辑态且内容足够时触发）
+  useEffect(() => {
+    if (!chapterEditing) { setGhostSug(''); return; }
+    if (ghostTimer.current) clearTimeout(ghostTimer.current);
+    const text = chapterEditContent || '';
+    if (!bookId || !activeChapter || text.trim().length < 10) { setGhostSug(''); return; }
+    ghostTimer.current = setTimeout(async () => {
+      if (ghostBusy) return;
+      setGhostBusy(true);
+      try {
+        const r = await api.ghostSuggest(bookId, activeChapter.id, text);
+        setGhostSug(r?.suggestion ? (r.suggestion as string) : '');
+      } catch { setGhostSug(''); } finally { setGhostBusy(false); }
+    }, 700);
+    return () => { if (ghostTimer.current) clearTimeout(ghostTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterEditContent, chapterEditing, activeChapter, bookId]);
+  const handleGhostKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Tab' && ghostSug && !e.shiftKey) {
+      e.preventDefault();
+      onEditContent((chapterEditContent || '') + ghostSug);
+      setGhostSug('');
+    }
+  };
   const [expandedVolumes, setExpandedVolumes] = useState<Record<string, boolean>>({});
   // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
   const chapterCollapseInitRef = useRef(false);
@@ -3413,13 +3448,24 @@ function ChapterPanel(props: {
           onChange={e => onEditTitle(e.target.value)}
           placeholder="章节标题"
         />
-        <textarea
-          className="input chapter-edit-textarea"
-          value={chapterEditContent}
-          onChange={e => onEditContent(e.target.value)}
-          placeholder="开始写作..."
-          rows={20}
-        />
+        <div className="chapter-ghost-wrap">
+          <div className="chapter-ghost-mirror" ref={mirrorRef} aria-hidden="true">
+            <span className="ghost-real">{chapterEditContent}</span>{ghostSug && <span className="ghost-suffix">{ghostSug}</span>}
+          </div>
+          <textarea
+            ref={taRef}
+            className="input chapter-edit-textarea"
+            value={chapterEditContent}
+            onChange={e => onEditContent(e.target.value)}
+            onScroll={syncGhostScroll}
+            onKeyDown={handleGhostKey}
+            onBlur={() => syncGhostScroll()}
+            placeholder="开始写作..."
+            rows={20}
+            spellCheck={false}
+          />
+          {ghostBusy && <div className="ghost-busy-hint">⋯ 生成续写建议中</div>}
+        </div>
       </div>
     );
   }

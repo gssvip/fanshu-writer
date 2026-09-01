@@ -1707,6 +1707,42 @@ def reorder_chapters(book_id):
     db.session.commit()
     return jsonify({'success': True})
 
+@app.route('/api/books/<book_id>/chapters/ghost-suggest', methods=['POST'])
+def chapter_ghost_suggest(book_id):
+    """正文幽灵字续写：根据当前章节已写内容，返回一小段顺延的续写建议（幽灵字）。
+    前端在编辑器中以浅灰"幽灵字"形式展示，按 Tab 一键采纳。
+    """
+    ch = Chapter.query.filter_by(id=(request.json or {}).get('chapter_id', ''), book_id=book_id).first()
+    content = (request.json or {}).get('content', '')
+    tail = (content or '').strip()
+    if len(tail) < 8:
+        return jsonify({'suggestion': ''})  # 内容太短，不打扰
+    # 只取末尾一段（约最近 600 字）作为续写上下文，避免每次全量发送
+    ctx = tail[-600:]
+
+    title = ch.title if ch else ''
+
+    msgs = [
+        {'role': 'system', 'content': '你是资深网文续写助手。用户正在写作，请紧贴其行文风格、人物口吻与情节走向，顺延写出一小段续写（一段话，60~120字，省略号或自然断在最合适的句子处）。只输出续写内容本身，不要任何前缀、解释或引号。'},
+        {'role': 'user', 'content': f'章节标题：{title}\n\n当前已写内容（末尾）：\n{ctx}\n\n请从这段结尾处自然续写一小段。'}
+    ]
+    suggestion, err = _call_llm(
+        msgs,
+        max_tokens=120,
+        temperature=0.85,
+        task_type='creation',
+        scene_label='ghost_continue',
+        book_id=book_id,
+        chapter_id=ch.id if ch else None,
+    )
+    if err or not suggestion:
+        return jsonify({'suggestion': '', 'error': (err or '')[:200]})
+    suggestion = suggestion.strip()
+    # 去掉 AI 可能附加的引号/前缀
+    if suggestion.startswith('"') and suggestion.endswith('"'):
+        suggestion = suggestion[1:-1]
+    return jsonify({'suggestion': suggestion})
+
 @app.route('/api/books/<book_id>/chapters/rebin-volumes', methods=['POST'])
 @login_required
 def rebin_volumes(book_id):
@@ -4992,21 +5028,34 @@ def analyze_book():
     if not text.strip():
         return jsonify({'error': 'No content'}), 400
     text = text[:20000]
+    # 竞品拆书模式：focus=competitor 时输出更偏"对标与复刻方案"的深度结论
+    focus = request.json.get('focus', '')
 
-    system_prompt = """你是专业网文拆书分析师。分析提供的作品片段，严格按JSON格式输出。
+    base_prompt = """你是专业网文拆书分析师。分析提供的作品片段，严格按JSON格式输出。
 
 输出格式（严格JSON）：
 {"style_analysis": "文风特点(50字内)", "structure_analysis": "结构特点(50字内)", "rhythm_analysis": "节奏特点(50字内)",
 "character_design_analysis": "人设特点(50字内)", "hook_techniques": ["钩子技巧1","钩子技巧2"],
 "golden_lines": ["金句1","金句2"], "genre_tags": ["标签1","标签2","标签3"],
 "target_platform": "番茄/起点/七猫/知乎盐选", "learnable_points": ["可学习的点1","可学习的点2","可学习的点3"]}"""
+    competitor_prompt = """你是资深竞品拆书顾问，服务于网文作者的竞品对标分析。分析竞品作品片段，站在"如何复刻/拉开差异化"的角度，严格按JSON格式输出。
 
+输出格式（严格JSON）：
+{"style_analysis": "文风特点(50字内)", "structure_analysis": "结构特点(50字内)", "rhythm_analysis": "节奏特点(50字内)",
+"character_design_analysis": "人设卖点(50字内，强调主角辨识度与记忆点)", "hook_techniques": ["钩子技巧1","钩子技巧2","钩子技巧3"],
+"golden_lines": ["金句1","金句2"], "genre_tags": ["标签1","标签2","标签3"],
+"target_platform": "番茄/起点/七猫/知乎盐选",
+"learnable_points": ["可直接借鉴的点1","可直接借鉴的点2","可直接借鉴的点3"],
+"market_position": "该竞品的市场定位与受众画像(60字内)",
+"strengths": ["核心优势1","核心优势2"],
+"weaknesses": ["可切入的弱点/差异化机会1","可切入的弱点/差异化机会2"],
+"copy_plan": "若你写同题材，如何借鉴其爆点同时规避同质化的一页可执行方案(150字内)"}"""
+    system_prompt = competitor_prompt if focus == 'competitor' else base_prompt
+    payload = {'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':text}],
+               'temperature': 0.3, 'max_tokens': 1800, 'response_format': {'type': 'json_object'}}
     try:
         resp = requests.post(f'{base_url}/chat/completions',
-            headers=build_auth_headers(api_key),
-            json={'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':text}],
-                  'temperature': 0.3, 'max_tokens': 1500, 'response_format': {'type': 'json_object'}},
-            timeout=120)
+            headers=build_auth_headers(api_key), json=payload, timeout=120)
         result = resp.json()
         return jsonify(json.loads(result['choices'][0]['message']['content']))
     except Exception as e:
