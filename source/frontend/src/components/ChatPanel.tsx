@@ -1265,13 +1265,14 @@ export default function ChatPanel() {
   const [sessionModelMap, setSessionModelMap] = useState<Record<string, string>>({});
   const [showModelPicker, setShowModelPicker] = useState(false);
   // P1-3 内置角色 persona：6款常用人格（仅通用聊天生效），选中后发送给后端作为system persona前缀
+  // 顺序即助手面板上的排列顺序：0=默认助手 · 1=圆桌会议 · 2=节点设计师 · 3=润色编辑 · 4=毒舌读者 · 5=剧情架构师 · 6=世界观策划 · 7=爆款编辑 · 8=深度采访
   const BUILTIN_ROLES = [
     { id: 'default',    name: '默认助手', emoji: '🧠', brief: '正常智驾回答，不附加人格' },
     { id: 'roundtable', name: '圆桌会议', emoji: '🪑', brief: '6位专家Agent围坐开会，两轮轮流发言后产出总结报告' },
+    { id: 'node_designer', name: '节点设计师', emoji: '🎯', brief: '按卷生成情节节点（1章=1节点+资源滚动+人物关系），结果可采纳落入剧情线' },
     { id: 'polish',     name: '润色编辑', emoji: '✍️', brief: '擅长文字润色，指出语病、节奏、结构问题，给出具体改写对比' },
     { id: 'toxic_critic', name: '毒舌读者', emoji: '🔥', brief: '极度挑剔的读者视角，不留情面，专挑AI味和套路化' },
     { id: 'architect',  name: '剧情架构师', emoji: '🧱', brief: '擅长分卷结构、张力曲线、伏笔回收、CDL角色三角' },
-    { id: 'node_designer', name: '节点设计师', emoji: '🎯', brief: '按卷生成情节节点（main_event→子节点+章节分配+精确埋收），结果可采纳落入剧情线' },
     { id: 'worldbuilder', name: '世界观策划', emoji: '🗺️', brief: '擅长能量体系、势力地图、科技树/修炼树、经济体系自洽' },
     { id: 'marketeer',  name: '爆款编辑', emoji: '📈', brief: '从书名/一句话梗/前3章钩子的工业化爆款视角把关' },
     { id: 'interviewer', name: '深度采访', emoji: '🎙️', brief: '连续追问直到挖透设定矛盾和人物动机，擅长逼出冰山' },
