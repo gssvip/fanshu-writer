@@ -575,10 +575,10 @@ def _run_node_job(job):
         index_seq = st.get('node_index_offset') or 0
 
         # ================ 整卷超时预算管控 ================
-        # 目标：整卷总墙钟时长严格 < 前端 ChatPanel.MAX_MS(=12min / soon 15min)，永远由后端主动先收束
+        # 目标：整卷总墙钟时长严格 < 前端 ChatPanel.MAX_MS(=15min)，永远由后端主动先收束
         # 成高质量占位，绝不把控制权交给前端报错。
-        TOTAL_BUDGET_S = 10 * 60           # 整卷墙钟预算 = 10 分钟（留 2+ 分钟余量给 JSON 写库/返回）
-        MARGIN_SAFE_S = 60                 # 最后 60s 视为"安全边际区"：进入后只做 1 轮主生成，不补漏，retry=0
+        TOTAL_BUDGET_S = 10 * 60           # 整卷墙钟预算 = 10 分钟（留 5 分钟余量给冷启动 + 网络波动）
+        MARGIN_SAFE_S = 90                 # 最后 90s 视为"安全边际区"：只 1 轮 + timeout≤60s + retry=0
         started_at = _time.time()
 
         def _budget_left() -> float:
@@ -598,7 +598,11 @@ def _run_node_job(job):
             segs_left = max(1, n - i)
             seg_budget = _budget_left() / segs_left
             # --- 按预算自适应 timeout / retry / 补漏轮数 ---
-            # 基础配置：8章子段输出 JSON ≈ 3k tokens → 单次 60~90s 足够；超过 = LLM 队列卡住/慢了，重试没用
+            # LLM 对 8 章子段（输出 JSON ≈ 3k tokens）：
+            #   - 冷启动 + 推理好天气 ~ 30~60 s
+            #   - 偶发速率/拥塞 ~ 60~120 s
+            #   - 180 s 以上基本是 LLM 队列卡住/掉包，再等无意义
+            # 因此 timeout 不要低于 60 s（否则首段 37s 直接判死），上限 120 s。
             if seg_budget <= 0:
                 # 已超总预算 → 本段直接 0 次 LLM，用高质量占位（后置修复器 100% 兜底章不漏 + summary≥80字）
                 job['message'] = f'[已收束] 总预算用尽，本段用占位补齐（第{s_alloc}-{e_alloc}章）…'
@@ -611,29 +615,29 @@ def _run_node_job(job):
                 job['done'] = i + 1
                 continue
 
-            # 本段每轮 LLM 超时：均分预算 / 期望轮数，但夹在 [30, 120] 之间
-            per_round_budget = seg_budget / 2.0  # 期望最多 2 轮（1主 + 1补）就能齐
-            per_call_timeout = int(max(30, min(90, per_round_budget)))
-            # retry_count：预算少 → 不重试，失败直接下一轮 / 占位
-            if seg_budget < 80:
+            # 【timeout】：基于 seg_budget 直接给（不再除 2 惩罚），夹 [60, 120]
+            per_call_timeout = int(max(60, min(120, seg_budget)))
+            # 【retry_count】：预算宽裕才 2 次重试，中段 1 次；紧张段 0 次（但仍用补漏轮当"二次机会"）
+            if seg_budget < 70:
                 retry_count = 0
-            elif seg_budget < 150:
+            elif seg_budget < 140:
                 retry_count = 1
             else:
                 retry_count = 2
-            # 补漏轮数：预算紧张只 1 主 + 0 补；中等 1 主 + 1 补；宽裕 1 主 + 2 补
-            if seg_budget < 90:
-                max_rounds = 1
-            elif seg_budget < 200:
+            # 【补漏轮数 max_rounds】：紧张段只 1+1=2 轮（1主+1补漏，相当于 2 次"主生成机会"）；
+            # 为什么 seg_budget<60 仍给 2 轮？因为第 1 轮 LLM 超时就判死太亏（你刚遇到），
+            # 补漏轮会把"本段全部 missing_chs"再跑一次 —— 本质就是低成本重试。
+            if seg_budget < 60:
                 max_rounds = 2
-            else:
+            elif seg_budget < 180:
                 max_rounds = 3
-            # 进入安全边际区（最后 60s）：强制只 1 轮，绝不补漏，绝不 retry
+            else:
+                max_rounds = 3  # 上限 3 轮（1 主 + 2 补）
+            # 安全边际区（最后 90s）：强制 2 轮，timeout 最多 60s，retry=0
             if _budget_left() < MARGIN_SAFE_S:
-                max_rounds = min(max_rounds, 1)
+                max_rounds = min(max_rounds, 2)
                 retry_count = 0
-                per_call_timeout = min(per_call_timeout, 45)
-            # 把当前预算/超时/轮次配置写进 job.message（便于你从日志看预算动态）
+                per_call_timeout = min(per_call_timeout, 60)
             job['budget'] = {
                 'total_s': TOTAL_BUDGET_S,
                 'left_s': round(_budget_left(), 1),
@@ -645,6 +649,7 @@ def _run_node_job(job):
 
             # --- 本轮子段的累计节点：主生成 + 最多 max_rounds-1 轮补漏 ---
             round_nodes_accum: list = []
+            all_missing_chs_for_retry: list = list(range(s_alloc, e_alloc + 1))  # 第2轮若主生成全空，missing=全集 → 等于"重试"
 
             def _missing_in_alloc(have_nodes):
                 covered = set()
@@ -658,22 +663,23 @@ def _run_node_job(job):
                 return sorted(full - covered)
 
             do_rounds = 0
-            segment_error = None
+            segment_error_first = None  # 只记录首次错误（用于日志，不直接中断）
+            segment_had_any_ok = False
             while do_rounds < max_rounds and not job.get('_cancel') and _budget_left() > 5:
                 do_rounds += 1
                 if do_rounds == 1:
                     job['message'] = (f'[1/{max_rounds}] 生成子节点：{alloc_title or "事件" + str(me_idx)}（第{s_alloc}-{e_alloc}章）'
-                                      f' ⏱剩余{round(_budget_left(),0)}s timeout={per_call_timeout}s')
+                                      f' ⏱剩{round(_budget_left(),0)}s t/o={per_call_timeout}s retry={retry_count}')
                     prompt = user_prompt
                     temperature = 0.65
                 else:
                     missing = _missing_in_alloc(round_nodes_accum)
                     if not missing:
                         break  # 本段全齐，提前结束
-                    # 补漏轮：只针对 missing 章号清单请求 LLM
+                    all_missing_chs_for_retry = missing
                     job['message'] = (f'[{do_rounds}/{max_rounds}] 为 {alloc_title or "事件"+str(me_idx)} 补 {len(missing)} 章 '
                                       f'（{",".join(str(c) for c in missing[:8])}{"…" if len(missing)>8 else ""}）'
-                                      f' ⏱剩余{round(_budget_left(),0)}s timeout={per_call_timeout}s')
+                                      f' ⏱剩{round(_budget_left(),0)}s t/o={per_call_timeout}s retry={retry_count}')
                     prompt, _ch_list = _build_fillgap_prompt(st, alloc, missing, round_nodes_accum)
                     if not prompt:
                         break
@@ -683,22 +689,22 @@ def _run_node_job(job):
                     max_tokens=0, temperature=temperature,
                     retry_count=retry_count, timeout=per_call_timeout,
                 )
-                if err:
-                    segment_error = f'事件“{alloc_title or me_idx}”第{do_rounds}轮生成失败：{err}'
-                    if do_rounds == 1:
-                        # 主生成失败 → 段级报错退出（补漏轮也救不回来），但不整卷终止 — 先记为 error 再让后段继续用占位
-                        break
-                    continue
-                parsed, jerr = _extract_json_from_llm(content, expect='object')
                 nodes_this_round: list = []
-                if not jerr and isinstance(parsed, dict):
-                    nr = parsed.get('nodes') or []
-                    if isinstance(nr, list):
-                        nodes_this_round = nr
-                elif jerr and do_rounds == 1:
-                    segment_error = f'事件“{alloc_title}”JSON解析失败：{jerr}'
-                    break
-                # 合并入累计：相同 chapters 以新的覆盖（补漏轮可覆盖之前的"残留"）
+                if err:
+                    if segment_error_first is None:
+                        segment_error_first = f'第{do_rounds}轮：{err}'
+                else:
+                    parsed, jerr = _extract_json_from_llm(content, expect='object')
+                    if jerr:
+                        if segment_error_first is None:
+                            segment_error_first = f'第{do_rounds}轮JSON解析失败：{jerr}'
+                    elif isinstance(parsed, dict):
+                        nr = parsed.get('nodes') or []
+                        if isinstance(nr, list):
+                            nodes_this_round = nr
+                            if len(nodes_this_round) > 0:
+                                segment_had_any_ok = True
+                # 合并入累计：相同 chapters 以新的覆盖
                 def _key_ch(nd):
                     r = _parse_chapters_field(nd.get('chapters'))
                     return r[0] if r else None
@@ -709,11 +715,12 @@ def _run_node_job(job):
                         continue
                     existing_by_ch[k] = nd
                 round_nodes_accum = list(existing_by_ch.values())
-                _time.sleep(0.15)
-            # 总预算耗尽时：不再把 segment_error 当致命错误（可能只是 LLM 超时一轮），仅当主生成 JSON 完全解析失败才记 error，
-            # 否则用后置修复器高质量占位兜底，保证章不漏、用户拿到结果。
-            if segment_error and not round_nodes_accum and (_budget_left() > MARGIN_SAFE_S):
-                job['error'] = segment_error
+                _time.sleep(0.1)
+            # 全部轮次结束：只要"有过一次 LLM 非空输出"或"预算已到边际区"，就不抛 error；
+            # 用后置修复器把缺章用高质量占位补齐，保证用户拿到完整结果（可单节点人工修订）。
+            # 仅当：① 有报错 ② 累计全空 ③ 预算仍充足（>安全边际） 才判整卷失败。
+            if segment_error_first is not None and len(round_nodes_accum) == 0 and _budget_left() > MARGIN_SAFE_S:
+                job['error'] = f'事件“{alloc_title or me_idx}”生成失败：{segment_error_first}'
                 break
             fixed_nodes, index_seq = _repair_nodes_to_one_ch_per_node(
                 round_nodes_accum, s_alloc, e_alloc, me_idx, index_seq
@@ -721,7 +728,7 @@ def _run_node_job(job):
             new_nodes.extend(fixed_nodes)
             job['nodes'] = list(job.get('nodes') or []) + list(fixed_nodes)
             job['done'] = i + 1
-            _time.sleep(0.15)
+            _time.sleep(0.1)
         if job.get('error') is None:
             final_nodes = sorted(job.get('nodes') or [], key=lambda x: _node_sort_key(x))
             # 整卷终态校验：最终节点必须覆盖 [start_chapter, evt_end] 全 cpv 章，缺就补
