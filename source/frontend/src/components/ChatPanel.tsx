@@ -2648,11 +2648,12 @@ export default function ChatPanel() {
         if (!sub.ok) throw new Error(sub.error || '任务提交失败，请重试');
         updateAi({ phase: 'running', total: sub.total || 0, message: sub.total ? `已提交，共 ${sub.total} 段，正在分段生成…` : '分段生成中…' });
         const jobId = sub.job_id || '';
-        // 前端最多 12 分钟兜底，避免死循环
+        // 前端最多 15 分钟兜底（与 aiOutlineVolume 15 分钟保持一致），避免死循环；
+        // 后端 TOTAL_BUDGET = 10 分钟会先主动收束，因此这里实际上只是最后一道保险。
         const startedAt = Date.now();
-        const MAX_MS = 12 * 60 * 1000;
+        const MAX_MS = 15 * 60 * 1000;
         while (!cancelled) {
-          if (Date.now() - startedAt > MAX_MS) throw new Error('生成超时（12分钟），请稍后重新提交');
+          if (Date.now() - startedAt > MAX_MS) throw new Error('生成超时（15分钟），请稍后重新提交');
           const st = await api.nodeDesignStatus(bookId, jobId);
           updateAi({
             phase: (st.state === 'error' ? 'error' : st.state === 'done' ? 'done' : st.state === 'cancelled' ? 'cancelled' : 'running') as any,

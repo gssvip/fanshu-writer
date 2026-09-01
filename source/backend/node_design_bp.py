@@ -557,7 +557,8 @@ title / type / characters / events / conflict / time / location / realm_change /
 # 分段生成执行（守护线程跑，不占请求连接）
 # ----------------------------------------------------------------------------
 def _run_node_job(job):
-    """start 任务：按 main_event 逐段生成，段与段之间空出 0.35s，逐段写入 job.nodes。"""
+    """start 任务：按 main_event 逐段生成，段与段之间空出 0.25s，逐段写入 job.nodes。
+    全局采用"整卷预算管控"，确保 < 前端 MAX_MS 阈值（默认 12/15 分钟），不会因串行 3×重试 × 3 轮放大到数小时。"""
     try:
         from app import db, _call_llm, _extract_json_from_llm
         st = job.get('_state')
@@ -572,6 +573,18 @@ def _run_node_job(job):
         job['total'] = n
         new_nodes = []
         index_seq = st.get('node_index_offset') or 0
+
+        # ================ 整卷超时预算管控 ================
+        # 目标：整卷总墙钟时长严格 < 前端 ChatPanel.MAX_MS(=12min / soon 15min)，永远由后端主动先收束
+        # 成高质量占位，绝不把控制权交给前端报错。
+        TOTAL_BUDGET_S = 10 * 60           # 整卷墙钟预算 = 10 分钟（留 2+ 分钟余量给 JSON 写库/返回）
+        MARGIN_SAFE_S = 60                 # 最后 60s 视为"安全边际区"：进入后只做 1 轮主生成，不补漏，retry=0
+        started_at = _time.time()
+
+        def _budget_left() -> float:
+            """剩余预算（秒），永远 >=0。"""
+            return max(0.0, TOTAL_BUDGET_S - (_time.time() - started_at))
+
         for i, alloc in enumerate(allocs):
             if job.get('_cancel'):
                 break
@@ -581,7 +594,56 @@ def _run_node_job(job):
             s_alloc, e_alloc = int(alloc['s']), int(alloc['e'])
             job['current_segment'] = alloc_title or f'事件{me_idx}'
 
-            # --- 本轮子段的累计节点：主生成 + 最多 2 轮补漏 ---
+            # 按剩余预算 × 剩余段数，均分得到本段可用预算
+            segs_left = max(1, n - i)
+            seg_budget = _budget_left() / segs_left
+            # --- 按预算自适应 timeout / retry / 补漏轮数 ---
+            # 基础配置：8章子段输出 JSON ≈ 3k tokens → 单次 60~90s 足够；超过 = LLM 队列卡住/慢了，重试没用
+            if seg_budget <= 0:
+                # 已超总预算 → 本段直接 0 次 LLM，用高质量占位（后置修复器 100% 兜底章不漏 + summary≥80字）
+                job['message'] = f'[已收束] 总预算用尽，本段用占位补齐（第{s_alloc}-{e_alloc}章）…'
+                _time.sleep(0.05)
+                fixed_nodes, index_seq = _repair_nodes_to_one_ch_per_node(
+                    [], s_alloc, e_alloc, me_idx, index_seq
+                )
+                new_nodes.extend(fixed_nodes)
+                job['nodes'] = list(job.get('nodes') or []) + list(fixed_nodes)
+                job['done'] = i + 1
+                continue
+
+            # 本段每轮 LLM 超时：均分预算 / 期望轮数，但夹在 [30, 120] 之间
+            per_round_budget = seg_budget / 2.0  # 期望最多 2 轮（1主 + 1补）就能齐
+            per_call_timeout = int(max(30, min(90, per_round_budget)))
+            # retry_count：预算少 → 不重试，失败直接下一轮 / 占位
+            if seg_budget < 80:
+                retry_count = 0
+            elif seg_budget < 150:
+                retry_count = 1
+            else:
+                retry_count = 2
+            # 补漏轮数：预算紧张只 1 主 + 0 补；中等 1 主 + 1 补；宽裕 1 主 + 2 补
+            if seg_budget < 90:
+                max_rounds = 1
+            elif seg_budget < 200:
+                max_rounds = 2
+            else:
+                max_rounds = 3
+            # 进入安全边际区（最后 60s）：强制只 1 轮，绝不补漏，绝不 retry
+            if _budget_left() < MARGIN_SAFE_S:
+                max_rounds = min(max_rounds, 1)
+                retry_count = 0
+                per_call_timeout = min(per_call_timeout, 45)
+            # 把当前预算/超时/轮次配置写进 job.message（便于你从日志看预算动态）
+            job['budget'] = {
+                'total_s': TOTAL_BUDGET_S,
+                'left_s': round(_budget_left(), 1),
+                'seg_budget_s': round(seg_budget, 1),
+                'per_call_timeout_s': per_call_timeout,
+                'retry_count': retry_count,
+                'max_rounds': max_rounds,
+            }
+
+            # --- 本轮子段的累计节点：主生成 + 最多 max_rounds-1 轮补漏 ---
             round_nodes_accum: list = []
 
             def _missing_in_alloc(have_nodes):
@@ -596,12 +658,12 @@ def _run_node_job(job):
                 return sorted(full - covered)
 
             do_rounds = 0
-            max_rounds = 3  # 1 主生成 + 最多 2 轮补漏
             segment_error = None
-            while do_rounds < max_rounds and not job.get('_cancel'):
+            while do_rounds < max_rounds and not job.get('_cancel') and _budget_left() > 5:
                 do_rounds += 1
                 if do_rounds == 1:
-                    job['message'] = f'[1/3] 生成子节点：{alloc_title or "事件" + str(me_idx)}（第{s_alloc}-{e_alloc}章）…'
+                    job['message'] = (f'[1/{max_rounds}] 生成子节点：{alloc_title or "事件" + str(me_idx)}（第{s_alloc}-{e_alloc}章）'
+                                      f' ⏱剩余{round(_budget_left(),0)}s timeout={per_call_timeout}s')
                     prompt = user_prompt
                     temperature = 0.65
                 else:
@@ -609,20 +671,22 @@ def _run_node_job(job):
                     if not missing:
                         break  # 本段全齐，提前结束
                     # 补漏轮：只针对 missing 章号清单请求 LLM
-                    job['message'] = (f'[{do_rounds}/3] 正在为 {alloc_title or "事件" + str(me_idx)} 补齐 {len(missing)} 个缺失章 '
-                                      f'（{",".join(str(c) for c in missing[:8])}{"…" if len(missing)>8 else ""}）…')
+                    job['message'] = (f'[{do_rounds}/{max_rounds}] 为 {alloc_title or "事件"+str(me_idx)} 补 {len(missing)} 章 '
+                                      f'（{",".join(str(c) for c in missing[:8])}{"…" if len(missing)>8 else ""}）'
+                                      f' ⏱剩余{round(_budget_left(),0)}s timeout={per_call_timeout}s')
                     prompt, _ch_list = _build_fillgap_prompt(st, alloc, missing, round_nodes_accum)
                     if not prompt:
                         break
                     temperature = 0.75 + (do_rounds - 1) * 0.05
                 content, err = _call_llm(
                     [{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': prompt}],
-                    max_tokens=0, temperature=temperature, retry_count=2, timeout=180,
+                    max_tokens=0, temperature=temperature,
+                    retry_count=retry_count, timeout=per_call_timeout,
                 )
                 if err:
                     segment_error = f'事件“{alloc_title or me_idx}”第{do_rounds}轮生成失败：{err}'
                     if do_rounds == 1:
-                        # 主生成失败 → 后面补漏也没意义，直接段级报错
+                        # 主生成失败 → 段级报错退出（补漏轮也救不回来），但不整卷终止 — 先记为 error 再让后段继续用占位
                         break
                     continue
                 parsed, jerr = _extract_json_from_llm(content, expect='object')
@@ -632,7 +696,6 @@ def _run_node_job(job):
                     if isinstance(nr, list):
                         nodes_this_round = nr
                 elif jerr and do_rounds == 1:
-                    # 主生成 JSON 解析失败 → 段级报错（由补漏轮尝试救一下也可以，但为了一致性直接断）
                     segment_error = f'事件“{alloc_title}”JSON解析失败：{jerr}'
                     break
                 # 合并入累计：相同 chapters 以新的覆盖（补漏轮可覆盖之前的"残留"）
@@ -646,19 +709,19 @@ def _run_node_job(job):
                         continue
                     existing_by_ch[k] = nd
                 round_nodes_accum = list(existing_by_ch.values())
-                # 每轮后再 sleep 一下，别冲太快
-                _time.sleep(0.2)
-            if segment_error:
+                _time.sleep(0.15)
+            # 总预算耗尽时：不再把 segment_error 当致命错误（可能只是 LLM 超时一轮），仅当主生成 JSON 完全解析失败才记 error，
+            # 否则用后置修复器高质量占位兜底，保证章不漏、用户拿到结果。
+            if segment_error and not round_nodes_accum and (_budget_left() > MARGIN_SAFE_S):
                 job['error'] = segment_error
                 break
-            # 全部轮结束后，交给 A+C 后置门禁 修一次 → 最终本段 = 严格区间 [s_alloc,e_alloc] 全章单节点
             fixed_nodes, index_seq = _repair_nodes_to_one_ch_per_node(
                 round_nodes_accum, s_alloc, e_alloc, me_idx, index_seq
             )
             new_nodes.extend(fixed_nodes)
             job['nodes'] = list(job.get('nodes') or []) + list(fixed_nodes)
             job['done'] = i + 1
-            _time.sleep(0.25)
+            _time.sleep(0.15)
         if job.get('error') is None:
             final_nodes = sorted(job.get('nodes') or [], key=lambda x: _node_sort_key(x))
             # 整卷终态校验：最终节点必须覆盖 [start_chapter, evt_end] 全 cpv 章，缺就补
@@ -671,7 +734,10 @@ def _run_node_job(job):
                 )
             job['nodes'] = final_nodes
             job['state'] = 'done'
-            job['message'] = f'已完成，共生成 {len(final_nodes)} 个情节节点（对应第{sc}-{ec}章，共{cpv}章）。'
+            left = round(_budget_left(), 0)
+            placeholders = sum(1 for n in final_nodes if '补齐' in str(n.get('title','')) or '占位' in str(n.get('title','')))
+            note = f'；其中高质量占位 {placeholders}/{cpv} 个（剩余预算{left}s，可人工编辑或单独修改意见重生成）' if placeholders > 0 else ''
+            job['message'] = f'已完成，共生成 {len(final_nodes)} 个情节节点（对应第{sc}-{ec}章，共{cpv}章，耗时{round(TOTAL_BUDGET_S - left,0)}s）{note}。'
         else:
             job['state'] = 'error'
     except Exception as e:  # noqa: BLE001
