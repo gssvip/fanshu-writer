@@ -62,6 +62,7 @@ export default function ToolsPage() {
   const [nrRankType, setNrRankType] = useState<string>('');
   const [nrGender, setNrGender] = useState<string>('');
   const [nrCategoryCode, setNrCategoryCode] = useState<string>('__all__');
+  const [nrSubCategoryCode, setNrSubCategoryCode] = useState<string>('');
   const [nrFilters, setNrFilters] = useState<NRFilters | null>(null);
   const [nrFiltersLoading, setNrFiltersLoading] = useState(false);
   const [nrList, setNrList] = useState<NRListResult | null>(null);
@@ -100,10 +101,11 @@ export default function ToolsPage() {
   }, []);
 
   useEffect(() => {
-    // category 变化 → 第一页重拉
-    loadNrBooks(nrCategoryCode, nrRankType, nrGender, 1, nrKeyword);
+    // category / 主题子类 变化 → 第一页重拉（子类优先覆盖父类）
+    const eff = nrSubCategoryCode || nrCategoryCode;
+    loadNrBooks(eff, nrRankType, nrGender, 1, nrKeyword);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nrCategoryCode]);
+  }, [nrCategoryCode, nrSubCategoryCode]);
 
   useEffect(() => { setNrPage(1); }, [nrKeyword]);
 
@@ -111,6 +113,7 @@ export default function ToolsPage() {
   useEffect(() => {
     (async () => {
       setNrFiltersLoading(true);
+      setNrSubCategoryCode('');
       try {
         const f = await api.nrListFilters(nrPlatform, { rankType: nrRankType || undefined, gender: nrGender || undefined });
         setNrFilters(f);
@@ -140,7 +143,7 @@ export default function ToolsPage() {
         categoryCode: catCode === '__all__' ? undefined : catCode,
         keyword: kw || undefined,
         page,
-        pageSize: 50,
+        pageSize: 20,
         force,
       });
       setNrList(r);
@@ -159,7 +162,7 @@ export default function ToolsPage() {
     setNrCrawling(true);
     try {
       await api.nrForceCrawl(sid);
-      await loadNrBooks(nrCategoryCode, nrRankType, nrGender, nrPage, nrKeyword, true);
+      await loadNrBooks(nrSubCategoryCode || nrCategoryCode, nrRankType, nrGender, nrPage, nrKeyword, true);
     } catch (e: any) { alert('刷新失败：' + (e?.message || String(e))); }
     finally { setNrCrawling(false); }
   }
@@ -1163,8 +1166,7 @@ category：master
 
       {activeTab === 'rankings' && (
         <div className="tool-panel">
-          <h3>📈 榜单风向（移植自 easy-writing: NovelRank）</h3>
-          <p className="text-muted">对齐 easy-writing 的 2 平台 × 232 分类 × 83 榜单源：番茄/起点，抓真实榜单数据，实时查看赛道热度与热门题材（七猫已下线）</p>
+          <h3>📈 榜单风向</h3>
 
           {/* 1. 平台 Tab */}
           <div className="fusion-card" style={{marginBottom:12}}>
@@ -1244,7 +1246,7 @@ category：master
                     <span
                       key={c.id}
                       className={`filter-tag ${nrCategoryCode === c.code ? 'filter-tag-active' : ''}`}
-                      onClick={() => setNrCategoryCode(c.code)}
+                      onClick={() => { setNrCategoryCode(c.code); setNrSubCategoryCode(''); }}
                       title={c.scope==='all'?'平台总榜':`分类榜：${c.name}`}
                       style={{cursor:'pointer'}}
                     >
@@ -1253,22 +1255,43 @@ category：master
                   ))}
                 </div>
               </div>
+              {/* 主题子类（起点等二级分类） */}
+              {(() => {
+                const subs = (nrFilters?.subcategories || []).filter((s: NRCategory) => s.parentCode === nrCategoryCode);
+                if (!subs.length) return null;
+                return (
+                  <div style={{marginTop:8}}>
+                    <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:6}}>主题细化：</div>
+                    <div className="tags-content" style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                      <span
+                        className={`filter-tag ${!nrSubCategoryCode ? 'filter-tag-active' : ''}`}
+                        onClick={() => setNrSubCategoryCode('')}
+                        style={{cursor:'pointer'}}
+                        title="全部该分类下的小说"
+                      >
+                        全部
+                      </span>
+                      {subs.map((s: NRCategory) => (
+                        <span
+                          key={s.id}
+                          className={`filter-tag ${nrSubCategoryCode === s.code ? 'filter-tag-active' : ''}`}
+                          onClick={() => setNrSubCategoryCode(s.code === nrSubCategoryCode ? '' : s.code)}
+                          title={`主题分类：${s.name}`}
+                          style={{cursor:'pointer'}}
+                        >
+                          {s.name || s.code}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
-          {/* Banner：热门标签 / 上升关键词 / 创作建议 */}
+          {/* Banner：热门标签 / 上升关键词 */}
           {rankBanner && (
             <div className="rank-result" style={{marginTop:4,marginBottom:16}}>
-              <div className="rank-platform-banner" style={{
-                display:'flex',alignItems:'center',gap:12,padding:12,background:'linear-gradient(135deg,var(--accent),var(--accent-hover))',
-                color:'#fff',borderRadius:'var(--radius-sm)',marginBottom:10,
-              }}>
-                <span style={{fontSize:22}}>{rankBanner.icon}</span>
-                <div>
-                  <div style={{fontSize:15,fontWeight:700}}>{rankBanner.platform} · {rankBanner.note}</div>
-                  <div style={{fontSize:11,opacity:.92}}>📌 风向 {rankBanner.trend_marker.label} · {rankBanner.trend_marker.tone}</div>
-                </div>
-              </div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:10}}>
                 <div className="rank-block" style={{margin:0}}>
                   <h4 style={{fontSize:12,marginBottom:6}}>🔥 热门标签</h4>
@@ -1285,9 +1308,6 @@ category：master
                       <span key={i} style={{padding:'3px 9px',borderRadius:12,background:'color-mix(in srgb, var(--accent) 12%, transparent)',border:'1px solid color-mix(in srgb, var(--accent) 40%, transparent)',fontSize:11,color:'var(--accent)'}}>{k}</span>
                     ))}
                   </div>
-                </div>
-                <div className="rank-block" style={{margin:0,gridColumn:'1 / -1'}}>
-                  <div style={{fontSize:13,lineHeight:1.7}}>💡 <strong>创作建议：</strong>{rankBanner.advice}</div>
                 </div>
               </div>
             </div>
@@ -1459,7 +1479,7 @@ category：master
                 <div style={{display:'flex',gap:6}}>
                   <button
                     className="chat-send ghost"
-                    onClick={() => {const p = Math.max(1,nrList.page-1); setNrPage(p); loadNrBooks(nrCategoryCode,nrRankType,nrGender,p,nrKeyword); }}
+                    onClick={() => {const p = Math.max(1,nrList.page-1); setNrPage(p); loadNrBooks(nrSubCategoryCode || nrCategoryCode,nrRankType,nrGender,p,nrKeyword); }}
                     disabled={nrList.page <= 1 || nrListLoading}
                     style={{padding:'4px 12px',minHeight:26,fontSize:12}}
                   >
@@ -1467,7 +1487,7 @@ category：master
                   </button>
                   <button
                     className="chat-send ghost"
-                    onClick={() => {const p = nrList.page + 1; setNrPage(p); loadNrBooks(nrCategoryCode,nrRankType,nrGender,p,nrKeyword); }}
+                    onClick={() => {const p = nrList.page + 1; setNrPage(p); loadNrBooks(nrSubCategoryCode || nrCategoryCode,nrRankType,nrGender,p,nrKeyword); }}
                     disabled={(nrList.page * (nrList.pageSize||50)) >= (nrList.total || 0) || nrListLoading}
                     style={{padding:'4px 12px',minHeight:26,fontSize:12}}
                   >
