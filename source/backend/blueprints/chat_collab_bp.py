@@ -1999,31 +1999,67 @@ def apply_card():
                 except (json.JSONDecodeError, ValueError, TypeError):
                     existing_vols = []
 
+                def _volume_field_nonempty(v):
+                    """判断卷字段是否"有有效值"：空字符串/空列表/None/false/零 volume_index 不算。"""
+                    if v is None: return False
+                    if isinstance(v, str): return bool(v.strip())
+                    if isinstance(v, (list, tuple, set, dict)): return len(v) > 0
+                    if isinstance(v, bool): return v
+                    if isinstance(v, (int, float)):
+                        # volume_index=0 视为空，其他数值有效
+                        return v != 0
+                    return True  # 未知类型按非空处理
+
                 def _merge_volume(old_v: dict, new_v: dict) -> dict:
-                    """同卷合并：新结构覆盖大部分字段，但保留旧卷已有的 nodes（新卷自带非空 nodes 除外）。
-                       并保证向后兼容：summary → main_plot，end_hook → ending_hook，核心字段不空。"""
+                    """同卷合并：仅用 NEW 中非空字段覆盖旧字段，其余卷级字段一律从 OLD 保留。
+                       节点设计卡片（NEW 只带 nodes）不应把卷的 main_plot/core_conflict/main_events 等抹空。
+                       同时保证向后兼容：summary → main_plot，end_hook → ending_hook。"""
                     if not isinstance(new_v, dict):
                         return new_v
-                    merged = dict(new_v)
-                    # 保留旧 nodes（节点设计结果不被上层重新生成 timeline 覆盖丢失）
-                    if isinstance(old_v, dict):
-                        new_has_nodes = isinstance(merged.get('nodes'), list) and len(merged['nodes']) > 0
-                        old_has_nodes = isinstance(old_v.get('nodes'), list) and len(old_v['nodes']) > 0
-                        if old_has_nodes and not new_has_nodes:
-                            merged['nodes'] = old_v['nodes']
+                    # 所有已知卷级字段：NEW 有非空就用 NEW，否则从 OLD 继承
+                    VOL_FIELDS = (
+                        'volume_id', 'volume', 'volume_title', 'volume_index',
+                        'summary', 'main_plot', 'core_conflict', 'plot_summary',
+                        'ending_hook', 'end_hook', 'ending',
+                        'main_events', 'nodes', 'chapter_beats',
+                        'characters', 'timeline_anchor', 'location', 'locations',
+                        'realm_change', 'age_change', 'target_audience',
+                        'bury', 'payoff', 'cool_type', 'cool_level',
+                        'state', 'status', 'progress', 'notes',
+                    )
+                    merged: dict = {}
+                    old_is_dict = isinstance(old_v, dict)
+                    for k in VOL_FIELDS:
+                        new_val = new_v.get(k)
+                        old_val = old_is_dict and old_v.get(k)
+                        # NEW 有非空有效值 → 优先 NEW；否则 OLD（若是dict）→ 否则跳过
+                        if _volume_field_nonempty(new_val):
+                            merged[k] = new_val
+                        elif _volume_field_nonempty(old_val):
+                            merged[k] = old_val
+                    # 保留 NEW 中额外未知自定义字段（但仅当 OLD 里没有，避免覆盖未知保留字段）
+                    for k, vv in new_v.items():
+                        if k in VOL_FIELDS:
+                            continue
+                        if k not in merged:
+                            merged[k] = vv
+                    # 保留 OLD 中额外未知保留字段（NEW 未声明）避免被擦除
+                    if old_is_dict:
+                        for k, vv in old_v.items():
+                            if k not in merged:
+                                merged[k] = vv
                     # 向后兼容：summary → main_plot（旧代码/旧 UI 只认 main_plot）
                     if (not merged.get('main_plot') or not str(merged['main_plot']).strip()) and merged.get('summary'):
                         merged['main_plot'] = str(merged['summary'])
-                    # 核心冲突/结尾钩子兜底：用 summary/end_hook 填，避免空
-                    if (not merged.get('core_conflict') or not str(merged['core_conflict']).strip()) and isinstance(old_v, dict):
-                        merged['core_conflict'] = old_v.get('core_conflict') or merged.get('core_conflict') or ''
+                    # 核心冲突兜底：用 main_plot 的首 200 字再撑一下
+                    if not merged.get('core_conflict') or not str(merged['core_conflict']).strip():
+                        merged['core_conflict'] = str(merged.get('main_plot') or '')[:200]
+                    # 结尾钩子兜底：end_hook → ending → old.ending_hook
                     if not merged.get('ending_hook'):
-                        merged['ending_hook'] = merged.get('end_hook') or merged.get('ending') or (isinstance(old_v, dict) and old_v.get('ending_hook')) or ''
-                    # main_events 缺字段兜底：保证 main_events 是数组，元素至少含 index/title
+                        merged['ending_hook'] = merged.get('end_hook') or merged.get('ending') or (old_is_dict and old_v.get('ending_hook')) or ''
+                    # main_events 兜底：保证是数组，元素至少含 index/title/summary
                     me = merged.get('main_events')
-                    if not isinstance(me, list) and isinstance(old_v, dict) and isinstance(old_v.get('main_events'), list):
-                        merged['main_events'] = old_v['main_events']
-                    elif isinstance(me, list):
+                    if isinstance(me, list):
                         cleaned = []
                         for idx, ev in enumerate(me):
                             if not isinstance(ev, dict):
@@ -2035,9 +2071,20 @@ def apply_card():
                             ev.setdefault('payoff', '')
                             cleaned.append(ev)
                         merged['main_events'] = cleaned
-                    # nodes 兜底：确保至少空数组
+                    else:
+                        merged['main_events'] = []
+                    # nodes 兜底：保证数组
                     if not isinstance(merged.get('nodes'), list):
-                        merged['nodes'] = (isinstance(old_v, dict) and isinstance(old_v.get('nodes'), list) and old_v['nodes']) or []
+                        merged['nodes'] = []
+                    # volume_index 绝不能为空
+                    if merged.get('volume_index') in (None, ''):
+                        merged['volume_index'] = old_is_dict and old_v.get('volume_index') or _extract_volume_index_safe(merged) or 1
+                    try:
+                        merged['volume_index'] = int(float(merged['volume_index']))
+                    except (TypeError, ValueError):
+                        merged['volume_index'] = 1
+                    if not merged.get('volume'):
+                        merged['volume'] = f"第{merged['volume_index']}卷"
                     return merged
 
                 # 按 volume_index upsert（覆盖同卷时走 _merge_volume 保字段）

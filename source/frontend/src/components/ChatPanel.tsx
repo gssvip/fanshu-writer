@@ -2665,14 +2665,33 @@ export default function ChatPanel() {
           });
           if (st.state === 'done') {
             const finalNodes = (st.nodes?.length ? st.nodes : curNodes) || [];
-            // 组装 SAVE_PLOT 卡片 content：按 timeline 模式要求提供 JSON 数组形式的整卷对象
-            // 必须包含 nodes 才能走 apply-card 里 _merge_volume 的 new_has_nodes=true 分支
-            const cardTimeline = JSON.stringify([{
-              volume_index: vi,
-              volume_id: String(vi),
-              volume: volTitle,
-              nodes: finalNodes,
-            }]);
+            // 组装 SAVE_PLOT 卡片 content：按 timeline 模式提供 JSON 数组形式的整卷对象。
+            // 防御性：先从 chatPanel 本地 bible 取出目标卷当前已有的卷级字段（summary/main_plot/
+            // core_conflict/main_events 等），和新生成的 nodes 一起打包进卡片。哪怕后端
+            // apply-card 出 bug，也不会把卷级大纲/冲突/事件因为卡片只传 nodes 而抹空。
+            let existingVol: any = null;
+            try {
+              const tlRaw = (bible as any)?.timeline || '';
+              if (typeof tlRaw === 'string' && tlRaw.trim()) {
+                const fence = tlRaw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+                const txt = fence ? fence[1].trim() : tlRaw.trim();
+                const arr = JSON.parse(txt);
+                if (Array.isArray(arr)) {
+                  for (const v of arr) {
+                    if (!v || typeof v !== 'object') continue;
+                    const vIdxRaw = (v as any).volume_index ?? (String((v as any).volume || '').match(/第?\s*(\d+)/) || [])[1];
+                    const vIdx = vIdxRaw !== '' && vIdxRaw !== undefined && vIdxRaw !== null ? Number(vIdxRaw) : NaN;
+                    if (Number.isFinite(vIdx) && Number(vIdx) === vi) { existingVol = v; break; }
+                  }
+                }
+              }
+            } catch { /* 解析失败就忽略，后端 _merge_volume 会兜底 */ }
+            const volPayload: any = { ...(existingVol || {}) };
+            volPayload.volume_index = vi;
+            volPayload.volume_id = volPayload.volume_id || String(vi);
+            volPayload.volume = volPayload.volume || volTitle;
+            volPayload.nodes = finalNodes;
+            const cardTimeline = JSON.stringify([volPayload]);
             const cardId = 'node-' + Math.random().toString(36).slice(2, 9);
             const cards = finalNodes.length > 0 ? [{
               id: cardId,

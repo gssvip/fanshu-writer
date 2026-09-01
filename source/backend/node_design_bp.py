@@ -145,8 +145,12 @@ def _load_volume_context(book_id, volume_index, req_data, rv, act_descriptions):
             target = v
             break
 
-    total_volumes = _get_total_volumes(bb, book)
-    cpv = _get_chapters_per_volume(bb, book)
+    total_volumes = _get_total_volumes(bb, book) or 1
+    cpv_raw = _get_chapters_per_volume(bb, book)
+    # 12万字/卷口径默认值：单卷目标 50 章 × 2400±100字/章 = 12万字
+    cpv = int(cpv_raw or 0)
+    if cpv < 1:
+        cpv = 50
     if not target:
         volume_title = (req_data.get('volume_title') or '').strip() or f'第{volume_index}卷'
     else:
@@ -336,18 +340,36 @@ _NODE_SCHEMA = """{
 
 
 def _build_system_prompt(st):
-    """分段节点生成系统提示词（加固输出范围的卷隔离铁律）。"""
-    per_count = 3 if st['me_count'] >= 7 else 4
-    per_max = 5 if st['me_count'] >= 7 else 6
+    """分段节点生成系统提示词（方案A 章粒度 + 方案C 边界硬约束）。
+
+    - A 章粒度：每个情节子节点 chapters 必须是【单章】形式 X（或等价 X-X），
+      必须严格对应且只覆盖那一章，绝不跨多章合并成一个节点。
+    - C 边界硬约束：所有节点的 chapters 并集必须 = [alloc.s, alloc.e]，
+      无重叠、无越界、无跳章，且本卷首节点为 start_chapter、末节点为 evt_end，
+      合计节点数 = cpv = 本卷设定总章数（默认 50 章/卷），单章对应单节点
+      才能支撑"每章正文 2400±100 字 × 50 章 = 12 万字/卷"容量需求。
+    """
+    cpv = int(st.get('cpv') or 50)
+    sc = int(st.get('start_chapter') or 1)
+    ec = int(st.get('evt_end') or (sc + cpv - 1))
     return f"""你是番茄小说金番作者级别的情节节点设计师。
-任务：为第 {st['volume_index']} 卷“{st['volume_title']}”的【一个】主要剧情事件（main_event）生成 {per_count}-{per_max} 个情节子节点（nodes）。
-【输出范围铁律】只允许输出本卷（第{st['volume_index']}卷）内容。禁止在输出中复述/罗列/带入任何其他卷的大纲/节点/剧情概要——仅供你推理衔接参考，绝不写进输出。nodes 的 chapters 必须严格落在本卷 {st['start_chapter']}-{st['evt_end']} 章区间内。
+【容量规模铁律】：本卷目标 {cpv} 章、按每章正文 2400±100 字 = 约 12 万字/卷。
+  → 每个"情节子节点（node）"必须且只能对应【1 章】，chapters 必须写成单章号（如 "第{sc}章"的 chapters: {sc} 或 {sc}-{sc}）。
+  → 绝不允许把 2 章及以上内容压进 1 个 node 合并写，哪怕内容看起来再短；也不得一章多节点重复覆盖。
+  → 最终交付时本卷所有节点 chapters 的并集必须精确等于 [{sc}, {sc+1}, …, {ec}]，合计节点数严格等于 cpv（{cpv} 个），差一个都算失败。
+【方案C · 边界硬约束】（本生成任务的门禁级条件）
+  1) 章节归属锁死本卷：任何节点 chapters 必须落在 {sc}–{ec} 区间内，不得出现 < {sc}（越到上一卷）或 > {ec}（越到下一卷）。
+  2) 无重叠：任意两个节点的 chapters 交集必须为空。
+  3) 无跳章：[alloc.s, alloc.e] 内每一章都必须有且只有一个节点覆盖。
+  4) 逐 main_event 分段生成时：本 main_event 分配章节 [alloc.s-alloc.e] 内每一章都必须在本轮被覆盖，不得把本事件的章"扔给下个事件"由下个事件生成，也不得抢下个事件的章（尤其最后一章 ec）。
+  5) 首末门禁：本卷第一个子节点 chapters 必须从 {sc} 起；本卷最后一个子节点 chapters 必须以 {ec} 终；末节点必须埋下与 ending_hook 对齐的卷尾钩子。
+【方案A · 章粒度铁律】：单章 = 单节点。
+  节点章节表达：chapters 字段统一写单章正整数或 X-X 等价形式；chapter_beats 只允许长度为 1 数组（就是本章的正文推进节拍），不得写成多章数组。
+【输出范围铁律】只允许输出本卷（第{st['volume_index']}卷）内容。禁止在输出中复述/罗列/带入任何其他卷的大纲/节点/剧情概要——仅供你推理衔接参考，绝不写进输出。
 【模式说明】本卷已有卷剧情，你的任务是为 user prompt 指定的这一个 main_event 生成子节点。
 - 不修改本卷 summary/main_plot/main_events/core_conflict/ending_hook 等卷级字段，只输出 nodes。
 - 各子节点之间剧情连贯：上一节点末尾自然衔接到下一节点开头。
-- 本卷第一个子节点承接上一卷卷尾钩子；本卷最后一个子节点须埋下卷尾钩子承接本卷 ending_hook。
 - 子节点必须严格归属到本 main_event，不得脱离自创剧情。
-- 子节点 chapters 要连续不重叠，恰好覆盖本 main_event 被分派的章节区间。
 {st['cohesion']}
 【五幕模型对齐】本卷对应五幕中的“{st['current_act']}”幕：{st['act_desc']}
 节点设计必须服务于该幕的核心目标。
@@ -355,21 +377,27 @@ def _build_system_prompt(st):
 【节点要素铁律】每个节点只许包含以下结构要素（剧情调度卡，不是正文/抒情）：
 time / location / events / conflict / characters / hook；埋收 bury/payoff 精确到章。
 【负清单】禁止环境物象描写、比喻拟人排比工整对仗、动作细节链与形容词堆砌、心理情绪铺陈；summary 只用动词+名词推进梗概。
-【章粒度】节点 chapters 是多章区间时，必须按每章一条拆出 chapter_beats（数组长度=区间章数，第i条对应该区间第i章），每条 beat 只能推进本章内容，不透支下一章。
+【章节匹配检查项】生成后请自行逐条核对：
+  ✅ 本事件 [alloc.s-alloc.e] 区间每一章都对应恰好一个 node；总数 = (e - s + 1)
+  ✅ 每个 node.chapters 是单章（或 X-X）；未出现跨多章合并
+  ✅ 无章号 < alloc.s 或 > alloc.e
+  ✅ 无任何章重复覆盖
 【伏笔埋收】每个子节点标注 bury（真埋才写）/payoff（真收才写），与所属 main_event 对齐，跨卷 payoff 指明第X卷。
 【输出格式】严格输出以下 JSON（不要 markdown 代码块，不要注释），nodes 为数组：
 {_NODE_SCHEMA}
 【章型配额】M主线50% / C角色10% / W世界观10% / D日常20% / F伏笔10%
 【小故事闭环】新事件→困难→金手指破局→暴露新信息→打脸收尾→钩子
-【节点容量】每个子节点 summary 须足以支撑其 chapters 区间（按每章2400字估算），不得简略。"""
+【节点容量】因为 1 个 node = 1 章（约 2400±100 字正文），每个 node 的 summary 必须足以撑起整章：至少包含开场场景→核心事件→冲突转折→收尾/钩子 4 段节拍，不能过于简略。"""
 
 
 def _build_user_prompt(st, alloc, is_first_alloc, is_last_alloc):
-    """单个 main_event 的生成用户提示词（一个分段）。"""
+    """单个 main_event 的生成用户提示词（一个分段，严格按 1章=1节点生成。）"""
     _me = alloc['raw']
+    ec = alloc['e'] - alloc['s'] + 1   # 本事件应交付的章节数 = 节点数
     main_block = (
-        f"  · 事件{alloc['me_index']}《{alloc['title']}》（应分配章节：{alloc['s']}-{alloc['e']}，共 {alloc['e']-alloc['s']+1} 章，支撑 ec={alloc['ec']} 章）\n"
-        f"    概要：{str(_me.get('summary',''))[:300]}\n"
+        f"  · 事件{alloc['me_index']}《{alloc['title']}》\n"
+        f"    📚 章区间：第{alloc['s']}章 – 第{alloc['e']}章（共 {ec} 章 → 必须产出【恰好 {ec} 个节点】，1 个节点对应且只对应 1 章）\n"
+        f"    📝 概要：{str(_me.get('summary',''))[:300]}\n"
         f"    ·人物：{_me.get('characters','')}\n"
         f"    ·事件：{_me.get('events','')}\n"
         f"    ·时间：{_me.get('time','')}\n"
@@ -379,9 +407,17 @@ def _build_user_prompt(st, alloc, is_first_alloc, is_last_alloc):
         + (f"\n    埋：{_me.get('bury','')}" if _me.get('bury') else '')
         + (f"\n    收：{_me.get('payoff','')}" if _me.get('payoff') else '')
     )
-    first_rule = (f"\n本卷第一个子节点的起始章号必须为 {st['start_chapter']}。"
-                  + (f"\n承接上一卷卷尾钩子：{st['prev_vol_hook']}" if st['prev_vol_hook'] else '')) if is_first_alloc else ''
-    last_rule = (f"\n本卷最后一个子节点必须埋下卷尾钩子，承接本卷 ending_hook：{st['target_ending'][:120]}") if is_last_alloc else ''
+    sc = st.get('start_chapter') or 1
+    first_rule = ''
+    if is_first_alloc:
+        first_rule += f"\n【首段门禁】：本次第一个节点 chapters 必须精确为 {sc}（绝不能是 {sc+1}，否则整卷首章漏节点）。"
+        if st.get('prev_vol_hook'):
+            first_rule += f"\n【卷间衔接】：第{sc}章必须承接上一卷卷尾钩子：{st['prev_vol_hook']}。"
+    last_rule = ''
+    if is_last_alloc:
+        last_rule += f"\n【末段门禁】：本次最后一个节点 chapters 必须精确为 {st.get('evt_end')}（绝不能提前收尾），且 hook 字段必须与本卷 ending_hook 对齐：{str(st.get('target_ending') or '')[:160]}"
+    # 列清单：本事件每一章的期待章号 + 索引位，降低模型"数错章"概率
+    ch_list = '、'.join(str(c) for c in range(alloc['s'], alloc['e'] + 1))
     return f"""书名：{st['title']}
 {st['core_params']}
 【五幕式总纲】（仅供衔接参考）
@@ -395,15 +431,24 @@ def _build_user_prompt(st, alloc, is_first_alloc, is_last_alloc):
 - 境界变化：{(st['target'] or {}).get('realm_change','') or '（无）'}
 - 年龄变化：{(st['target'] or {}).get('age_change','') or '（无）'}
 - 核心冲突：{(st['target'] or {}).get('core_conflict','') or '（无）'}
-- 卷尾钩子：{st['target_ending'] or '（无）'}
+- 卷尾钩子：{st.get('target_ending') or '（无）'}
 【世界观设定】{st['worldbuilding_ctx'] or '（暂无）'}
 【核心规则】{st['key_rules_ctx'] or '（暂无）'}
 【人物档案】{st['characters_ctx'] or '（暂无）'}
 
-【本次生成的 main_event 详情】（请严格按此事件展开为 3-6 个子节点，子节点 chapters 必须严格卡在 {alloc['s']}-{alloc['e']} 区间内）：
-{main_block}{first_rule}{last_rule}
+【本次生成的 main_event · A+C 约束清单】{main_block}{first_rule}{last_rule}
 
-请为第 {st['volume_index']} 卷 main_event.{alloc['me_index']}《{alloc['title']}》设计子节点，所有子节点 chapters 严格卡在 {alloc['s']}-{alloc['e']} 区间。"""
+✅ 本事件章号清单（必须逐章对应 1 个 node，nodes 数组顺序必须与下面章号顺序一致）：
+  章号：{ch_list}
+  节点数：必须恰好 {ec} 个（不得多、不得少），第 k 个 node 的 chapters = 第 k 个章号。
+
+【门禁级输出要求】：
+  1) nodes.length == {ec}；
+  2) nodes[i].chapters 解析后单章号 == 章号清单第 i 项（i 从 0 开始）；
+  3) 无任何单章跨多章（chapters 为单数字或 X-X，不得 X-Y 且 X≠Y），无多章合并，无重复章；
+  4) 每个 node.summary 至少 80 字，能支撑该章 2400±100 字正文创作。
+
+请严格围绕以上条件输出 JSON。"""
 
 
 def _build_revise_prompt(st, node, feedback):
@@ -466,22 +511,28 @@ def _run_node_job(job):
             elif jerr:
                 job['error'] = f'事件“{alloc_title}”JSON解析失败：{jerr}'
                 break
-            add_count = 0
-            for nd in nodes:
-                if not isinstance(nd, dict):
-                    continue
-                nd['main_event_index'] = me_idx
-                index_seq += 1
-                nd['index'] = index_seq if not nd.get('index') else nd['index']
-                new_nodes.append(nd)
-                add_count += 1
-            job['nodes'] = list(job.get('nodes') or []) + list(new_nodes[-add_count:] if add_count else [])
+            # === 方案A+C 后置门禁修复：无论 LLM 输出怎样，本段输出必须严格
+            # === 1 节点=1 章，覆盖 [alloc.s, alloc.e] 全区间，无重叠无跳章
+            fixed_nodes, index_seq = _repair_nodes_to_one_ch_per_node(
+                nodes, alloc['s'], alloc['e'], me_idx, index_seq
+            )
+            new_nodes.extend(fixed_nodes)
+            job['nodes'] = list(job.get('nodes') or []) + list(fixed_nodes)
             job['done'] = i + 1
             _time.sleep(0.35)
         if job.get('error') is None:
-            job['nodes'] = sorted(job.get('nodes') or [], key=lambda x: _node_sort_key(x))
+            final_nodes = sorted(job.get('nodes') or [], key=lambda x: _node_sort_key(x))
+            # 整卷终态校验：最终节点必须覆盖 [start_chapter, evt_end] 全 cpv 章，缺就补
+            sc = int(st.get('start_chapter') or 1)
+            ec = int(st.get('evt_end') or (sc + int(st.get('cpv') or 50) - 1))
+            cpv = int(st.get('cpv') or 50)
+            if len(final_nodes) < cpv:
+                final_nodes, _ = _repair_nodes_to_one_ch_per_node(
+                    final_nodes, sc, ec, 0, 0
+                )
+            job['nodes'] = final_nodes
             job['state'] = 'done'
-            job['message'] = f'已完成，共生成 {len(job.get("nodes") or [])} 个情节节点。'
+            job['message'] = f'已完成，共生成 {len(final_nodes)} 个情节节点（对应第{sc}-{ec}章，共{cpv}章）。'
         else:
             job['state'] = 'error'
     except Exception as e:  # noqa: BLE001
@@ -541,6 +592,104 @@ def _run_revise_job(job):
             db.session.remove()
         except Exception:
             pass
+
+
+def _parse_chapters_field(v):
+    """把节点 chapters 字段解析成 (start_ch, end_ch) 整数对，始终 start≤end。"""
+    if v is None:
+        return None
+    if isinstance(v, int):
+        if v <= 0: return None
+        return v, v
+    if isinstance(v, list):
+        if not v: return None
+        flat = []
+        for x in v:
+            r = _parse_chapters_field(x)
+            if r: flat.extend(range(r[0], r[1] + 1))
+        if not flat: return None
+        return min(flat), max(flat)
+    s = str(v).strip()
+    if not s: return None
+    # "第3章", "Chapter 10" → 先剥前缀
+    m = _re.search(r'(\d+)\s*[-–~～—到至]\s*(\d+)', s)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        return (a, b) if a <= b else (b, a)
+    m = _re.search(r'(\d+)', s)
+    if m:
+        a = int(m.group(1))
+        return a, a
+    return None
+
+
+def _repair_nodes_to_one_ch_per_node(nodes, alloc_s, alloc_e, me_index, index_offset_start):
+    """方案 A+C 的后置"门禁修复器"：无论模型输出如何，保证：
+       - 返回节点数 = ec = alloc_e - alloc_s + 1
+       - 每个 chapters 精确为该区间内唯一单章，无重叠无跳章
+       - 返回 (nodes_list, next_index_offset_after)
+    """
+    ec = alloc_e - alloc_s + 1
+    if ec <= 0:
+        return [], index_offset_start
+    # 从每个原节点中抽"有效章号列表"（平铺展开），尽量保留原内容
+    per_chapter = {}  # ch -> node dict 拷贝
+    for nd in nodes or []:
+        if not isinstance(nd, dict):
+            continue
+        rng = _parse_chapters_field(nd.get('chapters'))
+        if not rng:
+            continue
+        a, b = rng
+        # 只保留本事件区间内的章
+        for ch in range(max(a, alloc_s), min(b, alloc_e) + 1):
+            if ch in per_chapter:
+                continue
+            cp = dict(nd)
+            # 该节点修复为单章
+            cp['chapters'] = ch
+            cp['chapter_beats'] = [cp.get('chapter_beats') or cp.get('summary') or '']
+            if isinstance(cp['chapter_beats'], list) and len(cp['chapter_beats']) == 0:
+                cp['chapter_beats'] = [cp.get('summary') or '']
+            elif isinstance(cp['chapter_beats'], str):
+                cp['chapter_beats'] = [cp['chapter_beats']]
+            # 截短多章 beats 到第 1 条（本章）
+            cp['chapter_beats'] = [str(cp['chapter_beats'][0])[:600]]
+            # 若原 summary 太短，把 beat 塞进去
+            if len(str(cp.get('summary') or '')) < 60:
+                cp['summary'] = str(cp['chapter_beats'][0])
+            per_chapter[ch] = cp
+    # 按章号清单补齐缺失章（用占位节点）
+    next_idx = int(index_offset_start)
+    ordered = []
+    for ch in range(alloc_s, alloc_e + 1):
+        if ch not in per_chapter:
+            # 占位节点：标注为自动补齐，后续可人工修改
+            per_chapter[ch] = {
+                'chapters': ch,
+                'title': f'第{ch}章（自动补齐占位）',
+                'type': 'M',
+                'summary': f'第{ch}章：承接上一章推进主线，需在正式创作前人工补齐该章的冲突转折。',
+                'chapter_beats': [f'第{ch}章占位：请人工编辑'],
+                'events': '',
+                'conflict': '',
+                'characters': '',
+                'location': '',
+                'time': '',
+                'hook': '',
+                'bury': '',
+                'payoff': '',
+            }
+        nd = per_chapter[ch]
+        nd.setdefault('main_event_index', me_index)
+        nd.setdefault('title', f'第{ch}章节点')
+        # 保证 index 连续且唯一（即使原有 index 重复）
+        next_idx += 1
+        nd['index'] = next_idx
+        if not isinstance(nd.get('chapter_beats'), list) or len(nd['chapter_beats']) < 1:
+            nd['chapter_beats'] = [str(nd.get('summary') or '')]
+        ordered.append(nd)
+    return ordered, next_idx
 
 
 def _node_sort_key(n):
