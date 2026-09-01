@@ -14480,7 +14480,12 @@ def _print_db_diagnosis():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_frontend(path):
-    """托管前端 SPA：所有非 /api 请求都返回静态文件或 index.html"""
+    """托管前端 SPA：所有非 /api 请求都返回静态文件或 index.html。
+    缓存策略（根治"后端/后端版本对不上，前端浏览器还是旧文件"）：
+      - assets/*（文件名带内容 hash：index-XXXX.js / index-XXXX.css / 字体 ttf woff2）→ 1 年长缓存 immutable
+      - index.html / version.json / *.json（无内容 hash）→ no-store 每次重新校验，不进 HTTP 磁盘缓存
+    """
+    import re as _re_frontend
     # 前端构建产物目录：优先 frontend/dist，其次 backend/static
     dist_dir = FRONTEND_DIST
     if not dist_dir.exists() or not (dist_dir / 'index.html').exists():
@@ -14496,20 +14501,39 @@ def serve_frontend(path):
             else:
                 return jsonify({'error': '前端构建产物未找到，请先运行 npm run build'}), 404
 
+    _HASHED_ASSET = _re_frontend.compile(r'^assets/[^/]+-(?:[A-Za-z0-9_-]{6,16})\.(?:js|css|ttf|woff2?|otf|eot|png|jpg|jpeg|svg|webp|gif|ico)$')
     # 如果请求的是具体文件且存在，直接返回
     if path:
         file_path = dist_dir / path
         if file_path.is_file():
-            return send_from_directory(dist_dir, path)
+            resp = send_from_directory(dist_dir, path)
+            if _HASHED_ASSET.match(path):
+                # 文件名含内容哈希：永久缓存 immutable，不用再校验
+                resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+                resp.headers['X-Content-Hash'] = 'v1'
+            else:
+                # 无 hash 的文件（manifest.json / version.json / 图片图标等）：每次重校验
+                resp.headers['Cache-Control'] = 'no-cache, must-revalidate, max-age=0'
+                resp.headers['Pragma'] = 'no-cache'
+            return resp
 
     # 其他情况返回 index.html（SPA 路由回退）
     index_file = dist_dir / 'index.html'
     if index_file.exists():
         resp = send_from_directory(dist_dir, 'index.html')
+        # index.html 坚决不缓存，每次都从服务器拿最新（防 Service Worker / PWA / GitHub Pages CDN 长时间抱旧）
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
         # 强制浏览器清除 HTTP 缓存和 Service Worker 注册（解决 PWA 死锁缓存问题）
-        # 不清除 cookies 和 storage，避免用户登出/丢失数据
-        resp.headers['Clear-Site-Data'] = '"cache", "serviceworkers"'
-        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        resp.headers['Clear-Site-Data'] = '"cache", "cookies", "storage", "executionContexts"'
+        # 精确版本号：让 index.html 哪怕被缓，也知道该换新的
+        try:
+            v = json.loads((dist_dir / 'version.json').read_text(encoding='utf-8'))
+            resp.headers['X-Fanshu-Version'] = str(v.get('v', ''))[:64]
+            resp.headers['X-Fanshu-Build'] = str(v.get('t', ''))[:32]
+        except Exception:
+            pass
         return resp
     return jsonify({'error': 'index.html not found'}), 404
 
