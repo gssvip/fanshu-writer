@@ -210,8 +210,19 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .home-action-desc{font-size:9px;opacity:0.6;letter-spacing:0.3px}
 .home-action-import{background:var(--bg-secondary);border-color:var(--border-color);color:var(--text-primary)}
 .home-action-import:hover{border-color:#7cb89e;background:linear-gradient(135deg,rgba(124,184,158,0.06) 0%,rgba(91,163,168,0.04) 100%)}
+.home-action-export{background:var(--bg-secondary);border-color:var(--border-color);color:var(--text-primary)}
+.home-action-export:hover{border-color:#b29ad8;background:linear-gradient(135deg,rgba(178,154,216,0.08) 0%,rgba(133,173,234,0.06) 100%)}
 .home-action-new{background:var(--bg-secondary);border-color:var(--border-color);color:var(--text-primary)}
 .home-action-new:hover{border-color:#7cb89e;background:linear-gradient(135deg,rgba(124,184,158,0.06) 0%,rgba(91,163,168,0.04) 100%)}
+
+/* 手机端（≤719px）快捷操作严格等分：三个按钮一排 */
+@media (max-width: 719px) {
+  .home-quick-actions { gap: 8px; margin: 0 14px 14px; padding: 10px 0 0; }
+  .home-quick-actions > .home-action-btn { flex: 1 1 0; min-width: 0; padding: 12px 4px; }
+  .home-action-icon { font-size: 20px; }
+  .home-action-label { font-size: 12px; }
+  .home-action-desc { font-size: 8.5px; }
+}
 
 /* 首页作品列表 */
 .home-book-list{display:flex;flex-direction:column;gap:8px}
