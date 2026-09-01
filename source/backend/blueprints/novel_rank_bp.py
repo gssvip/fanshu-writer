@@ -369,11 +369,91 @@ def _parse_cn(s: str) -> int:
     return int(round(v * f))
 
 
+# ---- 共享 requests 会话（TLSv1.2 minimum 兜底 + 连接复用）----
+try:  # 兼容老版本 ssl / urllib3
+    import ssl as _ssl
+
+    _HAS_TLS_MIN = hasattr(_ssl, 'TLSVersion')
+except Exception:  # pragma: no cover
+    _ssl = None  # type: ignore
+    _HAS_TLS_MIN = False
+
+_FQ_SESSION_LOCK = threading.Lock()
+_FQ_SESSION: requests.Session | None = None
+_REQ_SESSION: requests.Session | None = None
+
+
+def _build_tls_session() -> requests.Session:
+    """构造强制 TLSv1.2 以上的 requests Session，修复部分运行环境（Python3.14+沙箱）默认 TLS 握手出现 SSLEOFError。"""
+    s = requests.Session()
+    s.headers.update({'User-Agent': REQ_HEADERS.get('User-Agent') or ''})
+    if _ssl is None or not _HAS_TLS_MIN:
+        return s
+    try:
+        from requests.adapters import HTTPAdapter as _HTTPAdapter
+        from urllib3.util.ssl_ import create_urllib3_context as _create_urllib3_context  # type: ignore
+
+        class _TLS12Adapter(_HTTPAdapter):
+            def init_poolmanager(self, *args: Any, **kwargs: Any):
+                ctx = _create_urllib3_context(cert_reqs=_ssl.CERT_REQUIRED, ssl_version=_ssl.PROTOCOL_TLS_CLIENT)
+                ctx.minimum_version = _ssl.TLSVersion.TLSv1_2
+                kwargs['ssl_context'] = ctx
+                return super().init_poolmanager(*args, **kwargs)
+
+        s.mount('https://', _TLS12Adapter())
+        s.mount('http://', _TLS12Adapter())
+    except Exception:
+        pass
+    return s
+
+
+def _get_req_session() -> requests.Session:
+    global _REQ_SESSION
+    if _REQ_SESSION is None:
+        with _FQ_SESSION_LOCK:
+            if _REQ_SESSION is None:
+                _REQ_SESSION = _build_tls_session()
+    return _REQ_SESSION
+
+
+def _get_fq_session(referer: str | None = None) -> requests.Session:
+    """返回已预热的番茄抓取 Session（尽量共享，避免 TLS 重连导致服务端风控 / 握手失败）"""
+    global _FQ_SESSION
+    if _FQ_SESSION is None:
+        with _FQ_SESSION_LOCK:
+            if _FQ_SESSION is None:
+                sess = _build_tls_session()
+                try:
+                    # 预热：访问番茄首页 + 任一榜单页，按真实浏览器顺序建立可信连接
+                    sess.get(
+                        'https://fanqienovel.com/',
+                        headers={'Accept-Language': 'zh-CN,zh;q=0.9', **{k: v for k, v in REQ_HEADERS.items() if k != 'User-Agent'}},
+                        timeout=20,
+                    )
+                    sess.get(
+                        'https://fanqienovel.com/rank/1_1',
+                        headers={'Accept-Language': 'zh-CN,zh;q=0.9'},
+                        timeout=20,
+                    )
+                except Exception:
+                    pass
+                _FQ_SESSION = sess
+    sess = _FQ_SESSION
+    if referer:
+        sess.headers['Referer'] = referer
+    return sess
+
+
 def _rank_fetch(url: str, referer: str | None = None, timeout: int = 20) -> str:
+    # 番茄域名走预热过的会话（TLSv1.2 兜底 + 连接池复用 + Referer 匹配）；其它域名走通用 TLS 适配会话
+    if 'fanqienovel.com' in url:
+        sess = _get_fq_session(referer or 'https://fanqienovel.com/')
+    else:
+        sess = _get_req_session()
     h = dict(REQ_HEADERS)
     if referer:
         h['Referer'] = referer
-    r = requests.get(url, headers=h, timeout=timeout)
+    r = sess.get(url, headers=h, timeout=timeout)
     r.raise_for_status()
     return r.text
 
@@ -395,15 +475,17 @@ def parse_fanqie_html(html: str, category_name: str | None = None) -> dict[str, 
     page_title = _decode_fq(header.select_one('h1').get_text(' ', strip=True)) if header else ''
     cutoff = _decode_fq(header.select_one('p').get_text(' ', strip=True)) if header and header.select_one('p') else ''
 
-    # __INITIAL_STATE__ 里拿封面映射
+    # __INITIAL_STATE__ 里拿封面映射 + 完整 book_list（SSR HTML 只有前10条，state 里通常有 20 条）
     cover_map: dict[str, str] = {}
+    state_items: list[dict[str, Any]] = []
     m = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\})\s*</script>', html, re.S)
     if m:
         try:
             state = json.loads(m.group(1))
-            for item in state.get('rank', {}).get('book_list', []) or []:
-                bid = str(item.get('bookId') or '').strip()
-                thumb = str(item.get('thumbUri') or '').strip()
+            raw_items = (state.get('rank', {}).get('book_list') or state.get('rank', {}).get('bookList') or [])
+            for item in raw_items:
+                bid = str(item.get('bookId') or item.get('book_id') or '').strip()
+                thumb = str(item.get('thumbUri') or item.get('cover') or '').strip()
                 if bid and thumb:
                     if thumb.startswith('//'):
                         cover_map[bid] = 'https:' + thumb
@@ -411,6 +493,8 @@ def parse_fanqie_html(html: str, category_name: str | None = None) -> dict[str, 
                         cover_map[bid] = thumb
                     else:
                         cover_map[bid] = 'https://' + thumb.lstrip('/')
+            # state 条目作为主数据（若 SSR 不完整），只取字段能映射的基础信息，保留 SSR 的详情优先
+            state_items = list(raw_items)
         except Exception:
             pass
 
@@ -495,19 +579,302 @@ def parse_fanqie_html(html: str, category_name: str | None = None) -> dict[str, 
             'categoryName': category_name,
         })
 
+    # --- state book_list 补全：SSR 只有前 10 条，state 通常有 20 条，逐本合并/补齐 ---
+    if state_items:
+        exist_ids: set[str] = {str(it['bookId'] or '') for it in items if it.get('bookId')}
+        for si in state_items:
+            bid = str(si.get('bookId') or si.get('book_id') or '').strip()
+            if not bid or bid in exist_ids:
+                continue
+            # 书名/作者：番茄 state 里 bookName/author 是字体编码（反爬），但 SSR 里没有超过10号之后的内容。
+            # 先取可读字段：书名 bookName（若可解）/ 作者 author / 分类 categoryName / 在读 reading
+            title_raw = _clean(_decode_fq(si.get('bookName') or si.get('title') or ''))
+            if not title_raw:
+                continue
+            author_raw = _clean(_decode_fq(si.get('author') or '')) or None
+            reading_raw = si.get('readingCount') or si.get('reading_num') or si.get('reading')
+            if reading_raw is None:
+                reading_text = None
+            else:
+                reading_text = str(reading_raw)
+            cover = cover_map.get(bid, '')
+            thumb = str(si.get('thumbUri') or si.get('cover') or '').strip()
+            if not cover and thumb:
+                if thumb.startswith('//'): cover = 'https:' + thumb
+                elif thumb.startswith('http'): cover = thumb
+                else: cover = 'https://' + thumb.lstrip('/')
+            book_path = si.get('url') or si.get('book_url') or f'/page/{bid}'
+            if isinstance(book_path, str) and book_path.startswith('/'):
+                book_url = 'https://fanqienovel.com' + book_path
+            else:
+                book_url = str(book_path or '')
+            intro_raw = _clean(_decode_fq(si.get('introduction') or si.get('intro') or '')) or None
+            last_ch_raw = _clean(_decode_fq(si.get('lastChapterTitle') or si.get('last_chapter') or '')) or None
+            items.append({
+                'rankNo': len(items) + 1,
+                'rankChange': 0,
+                'bookTitle': title_raw,
+                'bookId': bid,
+                'bookUrl': book_url,
+                'authorName': author_raw,
+                'coverUrl': cover,
+                'intro': intro_raw,
+                'statusText': _clean(_decode_fq(si.get('statusText') or si.get('status') or '')) or None,
+                'readingText': reading_text,
+                'readingCount': _parse_cn(reading_text or ''),
+                'metricName': '在读',
+                'metricText': reading_text,
+                'metricValue': _parse_cn(reading_text or ''),
+                'lastChapterTitle': last_ch_raw,
+                'lastChapterUrl': None,
+                'lastUpdateTimeText': None,
+                'categoryName': category_name or _clean(_decode_fq(si.get('categoryName') or si.get('category') or '')),
+            })
+            exist_ids.add(bid)
+
     # 乱码熔断：书名半数以上乱码则报错跳过（继承老服务端同款保护）
     if len(items) >= 3 and (sum(1 for it in items if _pua_count(it['bookTitle']) >= 2) / len(items) > 0.5):
         raise RuntimeError('番茄字体解码失败（疑似目标站更换字体），本次不返回脏数据')
     return {'pageTitle': page_title, 'cutoffText': cutoff, 'items': items}
 
 
-def crawl_fanqie(url: str, category_name: str | None = None, max_pages: int = 1) -> dict[str, Any]:
-    # SSR 只给首屏约 20 条，最多请求首屏（与当前 app.py 旧实现口径一致；多页需浏览器懒加载，留给后续窗口版）
-    html = _rank_fetch(url, referer='https://fanqienovel.com/')
-    parsed = parse_fanqie_html(html, category_name=category_name)
-    if not parsed['items']:
-        raise RuntimeError('番茄榜单未解析到条目（页面结构可能变更）')
-    return parsed
+def _map_fq_api_book(b: dict[str, Any], category_name: str | None, metric_name: str = '在读') -> dict[str, Any] | None:
+    """番茄 /api/rank/category/list 返回的 book_list 对象 → 统一 books item。字体解码与 SSR 保持一致。"""
+    bid = str(b.get('bookId') or b.get('book_id') or '').strip()
+    title_raw = _clean(_decode_fq(b.get('bookName') or b.get('book_name') or b.get('title') or ''))
+    if not bid or not title_raw:
+        return None
+    author_raw = _clean(_decode_fq(b.get('author') or '')) or None
+    # category: 优先入参的分类名，其次接口字段
+    cat = category_name or _clean(_decode_fq(b.get('categoryName') or b.get('category') or b.get('categoryV2') or '')) or None
+    read_raw = b.get('readingCount') or b.get('reading_count') or b.get('read_count') or b.get('readCount') or b.get('reading')
+    if read_raw is None or read_raw == '':
+        reading_text = None
+    else:
+        reading_text = str(read_raw)
+    thumb = str(b.get('thumbUri') or b.get('cover') or '').strip()
+    cover = ''
+    if thumb:
+        if thumb.startswith('//'): cover = 'https:' + thumb
+        elif thumb.startswith('http'): cover = thumb
+        else: cover = 'https://' + thumb.lstrip('/')
+    last_ch = _clean(_decode_fq(b.get('lastChapterTitle') or b.get('last_chapter') or '')) or None
+    last_upd_ts = b.get('lastChapterUpdateTime') or b.get('last_update_time') or b.get('updateTime')
+    last_upd_text = None
+    if last_upd_ts:
+        try:
+            t = int(last_upd_ts)
+            if t > 1_000_000_000:
+                last_upd_text = time.strftime('%Y-%m-%d', time.localtime(t))
+        except Exception:
+            last_upd_text = str(last_upd_ts)[:20]
+    intro = _clean(_decode_fq(b.get('abstract') or b.get('introduction') or b.get('intro') or '')) or None
+    word_num = b.get('wordNumber') or b.get('word_count') or None
+    word_text = None
+    if word_num not in (None, ''):
+        try:
+            w = int(word_num)
+            if w >= 10000:
+                word_text = f'{w / 10000:.1f}万字'
+            else:
+                word_text = f'{w}字'
+        except Exception:
+            word_text = str(word_num)
+    return {
+        'rankNo': 0,
+        'rankChange': 0,
+        'bookTitle': title_raw,
+        'bookId': bid,
+        'bookUrl': f'https://fanqienovel.com/page/{bid}',
+        'authorName': author_raw,
+        'coverUrl': cover,
+        'intro': intro,
+        'statusText': _clean(_decode_fq(b.get('creationStatusText') or b.get('status') or '')) or None,
+        'readingText': reading_text,
+        'readingCount': _parse_cn(reading_text or ''),
+        'metricName': metric_name,
+        'metricText': reading_text,
+        'metricValue': _parse_cn(reading_text or ''),
+        'lastChapterTitle': last_ch,
+        'lastChapterUrl': None,
+        'lastUpdateTimeText': last_upd_text,
+        'categoryName': cat,
+        'wordText': word_text,
+    }
+
+
+def _parse_fq_rank_url(url: str) -> dict[str, Any] | None:
+    """从番茄 rank URL 解析 (gender_int, rankMold_int, category_id|None).
+    URL 形如：https://fanqienovel.com/rank/{a}_{b}[_{c}]
+      - b==1 新书榜(new),  b==2 阅读榜(reading)  — 真实 SSR 与 RANK_SOURCES 约定一致
+      - a==1 男频,  a==0 女频
+      - c 为分类 ID（可选）
+    返回 dict 或 None（无法解析）。
+    """
+    try:
+        m = re.search(r'/rank/([0-9]+)_([0-9]+)(?:_([0-9]+))?/?(?:\?|#|$)', url or '')
+        if not m:
+            return None
+        a, b, c = m.group(1), m.group(2), m.group(3)
+        gender_int = 1 if a == '1' else 2  # 1=male, 2=female
+        rank_mold_int = 2 if b == '2' else 1  # 1=new, 2=reading
+        rank_list_type = 3  # 客户端 SSR 接口固定值（来自 Home.js / muye_a2c8e2a7.js）
+        rank_type = 'reading' if b == '2' else 'new'
+        metric_name = '在读'
+        return {
+            'gender': gender_int,
+            'rankMold': rank_mold_int,
+            'rank_list_type': rank_list_type,
+            'category_id': int(c) if c else None,
+            'rank_type': rank_type,
+            'metricName': metric_name,
+        }
+    except Exception:
+        return None
+
+
+def _crawl_fq_api(url: str, category_name: str | None, limit: int = 20) -> list[dict[str, Any]]:
+    """番茄 rank-category JSON API 最佳努力抓取（app_id=1967 服务端口径）。
+    返回：最多 limit 本书，失败或空列表时返回 []。"""
+    info = _parse_fq_rank_url(url)
+    if not info:
+        return []
+    try:
+        sess = _get_fq_session(referer=url)
+        # 以当前 rank 详情页为 referer 再请求一次，提升命中真实 cookie 的概率
+        try:
+            sess.get(url, headers={'Accept-Language': 'zh-CN,zh;q=0.9'}, timeout=20)
+        except Exception:
+            pass
+        params: dict[str, Any] = {
+            'app_id': 1967,
+            'rank_list_type': info['rank_list_type'],
+            'offset': 0,
+            'limit': max(int(limit or 0) or 50, 50),
+            'gender': info['gender'],
+            'rankMold': info['rankMold'],
+        }
+        if info['category_id'] is not None:
+            params['category_id'] = info['category_id']
+        # app_id 2503 也试一次（客户端口径）。优先1967若返回空则回退。
+        api_url = 'https://fanqienovel.com/api/rank/category/list'
+        headers = {
+            'Referer': url,
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+        }
+        results: list[dict[str, Any]] = []
+        metric_name = info.get('metricName') or '在读'
+        # category_id 缺省（“全部”综合榜）时传真实首个分类 ID 兜底 — 否则 API 返回 “分类类型错误”
+        try_ids: list[int | None] = [params.get('category_id')]
+        try_app_ids: list[int] = [1967, 2503]
+        need_category_fallback = (info['category_id'] is None)
+        data_bl: list[dict[str, Any]] | None = None
+        for app_id in try_app_ids:
+            params['app_id'] = app_id
+            cid_list = list(try_ids)
+            if need_category_fallback:
+                # 全部榜：客户端代码默认取第一个分类 id 作为 actual 过滤 id 传给 API。
+                # 这里先用 None（若返回 分类类型错误），再尝试 1014/246（男/女频 热类）
+                cid_list = [None, 1014 if info['gender'] == 1 else 246]
+            for cid in cid_list:
+                if cid is None:
+                    p = {k: v for k, v in params.items() if k != 'category_id'}
+                else:
+                    p = dict(params)
+                    p['category_id'] = cid
+                try:
+                    r = sess.get(api_url, params=p, headers=headers, timeout=18)
+                    if r.status_code != 200:
+                        continue
+                    d = r.json() if (r.headers.get('Content-Type') or '').lower().startswith('application/json') or (r.text.lstrip()[:1] in '[{') else None
+                    if not d:
+                        continue
+                    if int(d.get('code') or -1) != 0:
+                        continue
+                    data = d.get('data') or {}
+                    bl = data.get('book_list') or []
+                    if not bl:
+                        continue
+                    data_bl = list(bl)
+                    break
+                except Exception:
+                    continue
+            if data_bl:
+                break
+        if not data_bl:
+            return []
+        seen_ids: set[str] = set()
+        for raw in data_bl:
+            if not isinstance(raw, dict):
+                continue
+            it = _map_fq_api_book(raw, category_name=category_name, metric_name=metric_name)
+            if not it:
+                continue
+            key = str(it.get('bookId') or '')
+            if not key or key in seen_ids:
+                continue
+            seen_ids.add(key)
+            results.append(it)
+            if len(results) >= limit:
+                break
+        # 乱码熔断（同 SSR）
+        if results and (sum(1 for it in results if _pua_count(str(it.get('bookTitle') or '')) >= 2) / len(results)) > 0.5:
+            return []
+        return results
+    except Exception:
+        return []
+
+
+def crawl_fanqie(url: str, category_name: str | None = None, max_pages: int = 1, limit: int = 20) -> dict[str, Any]:
+    # 策略：SSR HTML 必走（稳定 10 条左右）+ 分类 JSON API 补齐（最多 limit 条），按 bookId 去重合并后截断到 limit。
+    # 番茄 SSR 不分页（?page=2 仍返回第 1 页 DOM），因此 max_pages 不再循环请求多页，仅用于兼容；
+    # 若 __INITIAL_STATE__.rank.book_list 有超过 SSR DOM 条数的条目，parse_fanqie_html 会自动合并。
+    parsed_page_title = ''
+    parsed_cutoff = ''
+    items: list[dict[str, Any]] = []
+    try:
+        html = _rank_fetch(url, referer='https://fanqienovel.com/')
+        parsed = parse_fanqie_html(html, category_name=category_name)
+        items.extend(parsed.get('items') or [])
+        parsed_page_title = parsed.get('pageTitle') or ''
+        parsed_cutoff = parsed.get('cutoffText') or ''
+    except Exception as first_err:
+        ssr_err = first_err
+    else:
+        ssr_err = None
+
+    # SSR 失败或缺条目时，尝试 JSON API 作为保底 / 补齐
+    need = max(0, int(limit or 20) - len(items))
+    if need > 0 or ssr_err is not None:
+        extra_limit = max(int(limit or 20) * 2, need)
+        api_items = _crawl_fq_api(url, category_name=category_name, limit=extra_limit)
+        if ssr_err is not None and not items and not api_items:
+            raise ssr_err  # SSR + API 全失败才抛
+        # 合并去重
+        seen: set[str] = {str(it.get('bookId') or '').strip() for it in items if it.get('bookId')}
+        seen_titles: set[str] = {str(it.get('bookTitle') or '').strip() for it in items}
+        for ai in api_items:
+            bid = str(ai.get('bookId') or '').strip()
+            title = str(ai.get('bookTitle') or '').strip()
+            if (bid and bid in seen) or (title and title in seen_titles):
+                continue
+            items.append(ai)
+            if bid: seen.add(bid)
+            if title: seen_titles.add(title)
+            if len(items) >= int(limit or 20):
+                break
+
+    if not items:
+        raise RuntimeError('番茄榜单未解析到条目（页面结构可能变更 / 网络异常）')
+
+    # 最终截断到 limit 并重新续排 rankNo
+    if limit and limit > 0:
+        items = items[:limit]
+    for idx, it in enumerate(items):
+        it['rankNo'] = idx + 1
+
+    return {'pageTitle': parsed_page_title, 'cutoffText': parsed_cutoff, 'items': items}
 
 
 def parse_qimao_json(payload: Any) -> list[dict[str, Any]]:
@@ -795,8 +1162,8 @@ def _find_source(legacy_id: Any):
     return None
 
 
-def crawl_rank_source(source_id: int, force: bool = False, limit: int = 100) -> dict[str, Any]:
-    """按榜单源 id 抓取并返回统一结构。"""
+def crawl_rank_source(source_id: int, force: bool = False, limit: int = 20) -> dict[str, Any]:
+    """按榜单源 id 抓取并返回统一结构。默认 limit=20，与参考站「单榜20本」一致。"""
     src = _find_source(source_id)
     if not src:
         raise ValueError('榜单源不存在')
@@ -813,6 +1180,8 @@ def crawl_rank_source(source_id: int, force: bool = False, limit: int = 100) -> 
     site = src['siteCode']
     meta = src.get('meta') or {}
     max_pages = int(meta.get('maxPages') or 1)
+    # 每个榜单默认最多抓取并缓存 20 条；若调用方 limit>20，则向上取整到 20 的页数
+    fetch_limit = max(20, int(limit or 20))
     result: dict[str, Any] = {
         'sourceId': src['legacyId'],
         'siteCode': site,
@@ -826,7 +1195,8 @@ def crawl_rank_source(source_id: int, force: bool = False, limit: int = 100) -> 
     try:
         if site == 'fanqie':
             cat = _find_category(src.get('categoryLegacyId'))
-            parsed = crawl_fanqie(src['url'], category_name=cat['name'] if cat else None, max_pages=max_pages)
+            parsed = crawl_fanqie(src['url'], category_name=cat['name'] if cat else None,
+                                  max_pages=max_pages, limit=fetch_limit)
             result['pageTitle'] = parsed.get('pageTitle', '')
             result['cutoffText'] = parsed.get('cutoffText', '')
             result['items'] = parsed.get('items', [])
@@ -1057,10 +1427,11 @@ def api_rank_list():
         page = max(1, int(request.args.get('page', 1)))
     except Exception:
         page = 1
+    # 默认单榜 20 本（与参考站一致），若前端没传 pageSize 就按 20 切；上限仍 200
     try:
-        page_size = min(200, max(10, int(request.args.get('pageSize', 50))))
+        page_size = min(200, max(5, int(request.args.get('pageSize', 20))))
     except Exception:
-        page_size = 50
+        page_size = 20
 
     force = request.args.get('force', '0') == '1'
 
@@ -1134,7 +1505,8 @@ def api_rank_list():
         source_id = int(src['legacyId'])
 
     force = request.args.get('force', '0') == '1'
-    data = crawl_rank_source(source_id, force=force, limit=200)
+    # 参考站：单榜固定 20 本；先一次拉 100 条入缓存以便关键词搜索时能切到匹配项，实际分页仍按 page_size=20 返回
+    data = crawl_rank_source(source_id, force=force, limit=max(100, page_size))
     items = list(data.get('items') or [])
 
     # 关键词搜索（书名 / 作者 / 分类）

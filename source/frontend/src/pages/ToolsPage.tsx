@@ -1165,12 +1165,12 @@ category：master
       )}
 
       {activeTab === 'rankings' && (
-        <div className="tool-panel">
+        <div className="tool-panel nr-root">
           <h3>📈 榜单风向</h3>
 
           {/* 1. 平台 Tab */}
           <div className="fusion-card" style={{marginBottom:12}}>
-            <div style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
+            <div className="nr-platform-tabs" style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
               {(nrPlatforms.length ? nrPlatforms : [
                 {code:'fanqie',name:'番茄小说网'},
                 {code:'qidian',name:'起点中文网'},
@@ -1204,8 +1204,8 @@ category：master
             </div>
 
             {/* 2. 榜单类型 & 男女频 & 分类 */}
-            <div style={{marginTop:12}}>
-              <div style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center',marginBottom:8}}>
+            <div className="nr-filter-section" style={{marginTop:12}}>
+              <div className="nr-filter-row" style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center',marginBottom:8}}>
                 <span className="filter-label" style={{fontSize:13,color:'var(--text-muted)'}}>榜单类型：</span>
                 {nrFiltersLoading && <span style={{fontSize:12,color:'var(--text-muted)'}}>加载中…</span>}
                 {!nrFiltersLoading && (!nrFilters?.rankTypes?.length) && <span style={{fontSize:12,color:'var(--text-muted)'}}>暂无类型</span>}
@@ -1220,7 +1220,7 @@ category：master
                   </span>
                 ))}
               </div>
-              <div style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center',marginBottom:8}}>
+              <div className="nr-filter-row" style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center',marginBottom:8}}>
                 <span className="filter-label" style={{fontSize:13,color:'var(--text-muted)'}}>类型：</span>
                 <span
                   className={`filter-tag ${(!nrFilters?.genders?.length || nrFilters.genders.includes('male')) && nrGender !== 'female' ? 'filter-tag-active' : ''}`}
@@ -1314,7 +1314,7 @@ category：master
           )}
 
           {/* 搜索框 */}
-          <div className="search-toolbar fusion-card" style={{padding:'10px 12px',marginBottom:12,display:'flex',gap:8,alignItems:'center'}}>
+          <div className="search-toolbar nr-search-toolbar fusion-card" style={{padding:'10px 12px',marginBottom:12,display:'flex',gap:8,alignItems:'center'}}>
             <div style={{fontSize:13,whiteSpace:'nowrap',color:'var(--text-muted)'}}>
               📋 {nrList?.rankTitle ? nrList.rankTitle : '榜单'}
               {nrList?.pageTitle ? <span className="text-muted"> · {nrList.pageTitle}</span> : null}
@@ -1471,8 +1471,8 @@ category：master
                 </tbody>
               </table>
 
-              {/* 分页：简单上一页/下一页（默认 50/页） */}
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:10}}>
+              {/* 分页：简单上一页/下一页（单榜20条；若搜索有更多则翻页） */}
+              <div className="nr-pagination" style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:10,flexWrap:'wrap',gap:8}}>
                 <span style={{fontSize:12,color:'var(--text-muted)'}}>
                   第 {nrList.page} 页 · 共 {nrList.total} 条
                 </span>
