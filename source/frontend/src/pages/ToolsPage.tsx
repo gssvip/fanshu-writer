@@ -71,6 +71,7 @@ export default function ToolsPage() {
   const [nrKeyword, setNrKeyword] = useState('');
   const [nrPage, setNrPage] = useState(1);
   const [nrCrawling, setNrCrawling] = useState(false);
+  const [nrCategoryCollapsed, setNrCategoryCollapsed] = useState(false); // 手机端主题分类折叠
   // 保留原 getRankings 返回的旧结构作为 banner
   const [rankBanner, setRankBanner] = useState<RankingData | null>(null);
   // #6 手动抓取控制：筛选/分类/关键词变化时不自动抓，仅点击「抓取本榜」/ 搜索按钮 / 分页 才抓
@@ -1423,16 +1424,43 @@ category：master
               </div>
             </div>
 
-            {/* 3. 主题分类：美化排版（更饱满 padding, grid 多行） (#4 均匀对齐) */}
+            {/* 3. 主题分类：美化排版 + 手机端右侧折叠按钮收起分类网格 */}
             <div className="nr-row-category" style={{marginTop:14, display:'flex',gap:8, alignItems:'flex-start'}}>
-              <span className="filter-label nr-filter-label nr-label-fixed"
-                    style={{fontSize:13,color:'var(--text-muted)',fontWeight:600,
-                            minWidth:72,width:72,flex:'0 0 72px',paddingTop:6,
-                            textAlign:'right',paddingRight:8,boxSizing:'border-box'}}>主题分类</span>
-              <div className="tags-content nr-category-tags"
-                   style={{flex:'1 1 0',minWidth:0,
-                           display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(86px,1fr))',
-                           gap:'8px 8px'}}>
+              <span className="filter-label nr-filter-label nr-label-fixed nr-category-label-row"
+                    style={{
+                      // 桌面端：label 固定宽 72px 右对齐；手机端：100% 宽左右布局（折叠按钮在右侧）
+                      display:'flex', justifyContent:'space-between', alignItems:'center',
+                      fontSize:13,color:'var(--text-muted)',fontWeight:600,
+                      minWidth:72,width:'100%',flex:'0 0 100%',paddingTop:6,
+                      textAlign:'left',paddingRight:8,boxSizing:'border-box'
+                    }}>
+                <span style={{display:'inline-block'}}>主题分类</span>
+                <button
+                  type="button"
+                  className="nr-category-collapse-toggle"
+                  onClick={() => setNrCategoryCollapsed(v => !v)}
+                  aria-expanded={!nrCategoryCollapsed}
+                  style={{
+                    // 手机端显示；桌面端默认隐藏
+                    display:'inline-flex', alignItems:'center', justifyContent:'center',
+                    fontSize:11.5, fontWeight:600,
+                    padding:'2px 10px', borderRadius: 999,
+                    background:'color-mix(in srgb, var(--accent) 10%, transparent)',
+                    color:'var(--accent)',
+                    border:'1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
+                    whiteSpace:'nowrap', cursor:'pointer', lineHeight:1.2,
+                    flexShrink:0,
+                  }}
+                >{nrCategoryCollapsed ? '展开 ▽' : '收起 △'}</button>
+              </span>
+              <div className={`tags-content nr-category-tags nr-category-body ${nrCategoryCollapsed ? 'is-collapsed' : ''}`}
+                   style={{
+                     flex:'1 1 0',minWidth:0,
+                     display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(86px,1fr))',
+                     gap:'8px 8px',
+                     transition:'max-height .35s ease, opacity .25s ease, margin .25s ease',
+                     overflow:'hidden',
+                   }}>
                 {nrFiltersLoading && <span style={{fontSize:12,color:'var(--text-muted)',gridColumn:'1 / -1'}}>加载分类中…</span>}
                 {!nrFiltersLoading && (!nrFilters?.categories?.length) && <span style={{fontSize:12,color:'var(--text-muted)',gridColumn:'1 / -1'}}>暂无分类</span>}
                 {!nrFiltersLoading && nrFilters?.categories?.map((c: NRCategory) => {
@@ -1461,7 +1489,9 @@ category：master
               </div>
             </div>
 
-            {/* 主题子类（起点等二级分类） */}
+            {/* 主题子类（起点等二级分类） — 跟主题分类网格一起折叠 */}
+            <div className={`nr-category-body nr-sub-wrap ${nrCategoryCollapsed ? 'is-collapsed' : ''}`}
+                 style={{transition:'max-height .35s ease, opacity .25s ease, margin .25s ease',overflow:'hidden'}}>
             {(() => {
               const subs = (nrFilters?.subcategories || []).filter((s: NRCategory) => s.parentCode === nrCategoryCode);
               if (!subs.length) return null;
@@ -1515,6 +1545,7 @@ category：master
                 </div>
               );
             })()}
+            </div>
           </div>
 
           {/* Banner：热门标签 / 上升关键词（#4 手机端各一行；桌面端两栏并排） */}

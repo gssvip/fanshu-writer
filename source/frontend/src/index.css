@@ -3034,6 +3034,24 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   }
   .rank-books-table td { word-break: break-word; }
   .nr-platform-tabs { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  /* 桌面端：隐藏手机端折叠按钮；主题分类 label 保持 72px 右对齐不占满 */
+  .nr-category-collapse-toggle { display: none !important; }
+  .nr-row-category > .nr-category-label-row {
+    width: 72px !important;
+    min-width: 72px !important;
+    max-width: 72px !important;
+    flex: 0 0 72px !important;
+    display: inline-block !important;
+    text-align: right !important;
+    padding: 6px 8px 0 0 !important;
+  }
+  /* 桌面端分类收起动画 always 展开 */
+  .nr-category-body.is-collapsed {
+    max-height: none !important;
+    opacity: 1 !important;
+    margin: 0 !important;
+    pointer-events: auto !important;
+  }
 }
 
 /* --- 手机端 (≤767px) 专属：所有容器 box-sizing=border-box，根治横溢 --- */
@@ -3327,6 +3345,105 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   /* Banner 两栏单栏 */
   .rank-result > div:first-child { grid-template-columns: 1fr !important; }
   .rank-block { overflow: hidden; }
+
+  /* ======== 新增：手机端 榜单类型 / 频道 一行 label+标签，两胶囊等分间距 ======== */
+  .nr-row-rank-type,
+  .nr-row-gender {
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 6px !important;
+    margin-bottom: 4px !important;
+    padding: 0 !important;
+    height: auto !important;
+  }
+  .nr-row-rank-type > .filter-label,
+  .nr-row-rank-type > .nr-filter-label,
+  .nr-row-rank-type > .nr-label-fixed,
+  .nr-row-gender > .filter-label,
+  .nr-row-gender > .nr-filter-label,
+  .nr-row-gender > .nr-label-fixed {
+    width: 68px !important;
+    min-width: 68px !important;
+    max-width: 68px !important;
+    flex: 0 0 68px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    text-align: left !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    line-height: 1.2 !important;
+    height: auto !important;
+    min-height: 28px !important;
+    position: static !important;
+    float: none !important;
+  }
+  .nr-row-rank-type > div,
+  .nr-row-gender > div {
+    flex: 1 1 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    gap: 8px !important;
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+  }
+  /* 胶囊按钮等分：阅读榜/新书榜 或 男频/女频，各自 50% 撑满剩余，视觉等分 */
+  .nr-row-rank-type > div > span,
+  .nr-row-rank-type > div > .filter-tag,
+  .nr-row-gender > div > span,
+  .nr-row-gender > div > .filter-tag {
+    flex: 1 1 0 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    justify-content: center !important;
+    text-align: center !important;
+    padding: 6px 8px !important;
+    font-size: 12.5px !important;
+    margin: 0 !important;
+    height: 32px !important;
+    min-height: 32px !important;
+    line-height: 1 !important;
+    border-radius: 999px !important;
+  }
+
+  /* ======== 主题分类：手机端 label 100% 宽 + 右侧「折叠/展开」按钮 ======== */
+  .nr-row-category > .nr-category-label-row {
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    width: 100% !important;
+    flex: 0 0 auto !important;
+    min-width: 0 !important;
+    padding: 0 2px 4px 0 !important;
+    margin: 0 !important;
+    height: auto !important;
+    min-height: 24px !important;
+  }
+  .nr-category-collapse-toggle {
+    display: inline-flex !important;
+  }
+  /* 收起动画：分类网格 + 主题细化行一起塌缩 */
+  .nr-category-body.is-collapsed {
+    max-height: 0 !important;
+    opacity: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    pointer-events: none !important;
+  }
+  .nr-category-body {
+    max-height: 4000px !important;   /* 展开高度足够，溢出时 hidden 被 transition 控制 */
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+  .nr-sub-wrap.is-collapsed { margin-top: 0 !important; }
 }
 
 /* ≥1100px 大屏：tool-panel 固定居中宽度；表格指标/状态列略宽 */
