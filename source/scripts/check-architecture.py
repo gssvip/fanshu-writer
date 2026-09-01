@@ -116,7 +116,27 @@ WRITEPAGE_BASELINE = 8908
 #     · 顺带把节点设计师 brief 同步成"1章=1节点+资源滚动+人物关系"（与最新 persona 口径对齐）
 #   → 4388 → 4389（+1 行，纯排序+注释）
 #   → 4384 → 4388（+4 行，P0 用户明确要求的节点字段补齐，属同一 prompt 自然扩张）
-CHATPANEL_BASELINE = 4389
+# 2026-09-01（P0：A+B 组合方案·中途半拉子卡片门禁 + 工具栏进度条+一键继续）：
+#   · ActionCardView：新增 SAVE_PLOT 半截卡片判断（nodes.length<chapter_count）→ 隐藏"采纳"按钮，
+#     替换成中途进度快照条（pct%、一键⏭️继续、💾分批临时保存(不推荐)、编辑覆盖、忽略快照）
+#     约 +155 行（useMemo savePlotInfo 解析 + halfwayBar 渲染 + chat-card-actions 分支替换）
+#   · interface CardViewProps 新增 onQuickContinue 字段；interface MessageBubbleProps 同步新增；
+#     ActionCardView & MessageBubble 调用处透传 onQuickContinue，新增约 8 行
+#   · 新增 parseNodeDesignerProgress(messages, defaultCPV) useCallback（约 82 行）：
+#     从 assistant.content 扫「第X章」+ SAVE_PLOT 卡片 nodes.chapters 双路解析最大章号/卷号/cpv，
+#     支持全局章号转卷内号，保证进度条不超 100%
+#   · 新增 handleQuickContinue useCallback（约 13 行，在 handleGeneral 之后声明避免闭包空）：
+#     补进度上下文 prompt（当前卷、已完成、从Y+1继续、收尾吐全卷合并卡片）后走 handleGeneral 发送
+#   · 通用Tab助手切换区后追加节点设计师专属进度条浮条（约 75 行，命中 role=node_designer 才显示）：
+#     完成度 44%（22/50）· 蓝紫色进度条 · 【⏭️继续生成】主按钮 · 【🔄重来第1卷】次按钮；done===0 显示用法提示，完成>=cpv 自动切绿色"✅ 节点设计全卷完成"
+#   → 4389 → 4664（+275 行，P0 用户明确要求的 A+B 节点续会门禁+进度条：
+#     A. 主方案：隐藏半途半截卡片的"采纳"按钮，避免用户把只含 22 章的半截卡片点采纳入库，
+#        只等整卷写完后由"全卷合并版统一采纳卡片"完整落库；
+#     B. 兜底方案：半截卡片上保留次级【💾分批临时保存(不推荐)】逃生按钮，走 apply-card 的
+#        _merge_volume_nodes_incremental 按章节号增量合并，不会覆盖已存在章节节点。
+#     和 ActionCardView / parseNodeDesignerProgress / 通用助手切换浮条 / handleQuickContinue
+#     深度绑定，无法独立抽组件而不破坏现有数据流。下一步：拆 ActionCardView 到独立文件。）
+CHATPANEL_BASELINE = 4664
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
@@ -239,7 +259,34 @@ TOOLSPAGE_BASELINE = 1192
 #     _repair_nodes_to_one_ch_per_node 在章循环里调用滚动 + 补齐缺失字段
 #   → 9732 → 9748（+16 行，chat_collab_bp 只涨 prompt 扩展 16 行，主实现落在 node_design_bp，
 #     不属于 chat_collab_bp 巨石继续膨胀堆肉）
-CHAT_COLLAB_BP_BASELINE = 9748
+# 2026-09-01（P0：A+B 组合方案·中途段禁卡片门禁 + 收尾段自动拼全卷合并卡片兜底）≈ +222 行：
+#   A. _PERSONAS['node_designer'] 续会规则改写（约 22 行）：
+#      · 中途段门禁（本轮续写写不到末章）：绝对禁止输出半截 SAVE_PLOT 卡片；写完只吐中文进度快照：
+#        「✅ 中途进度快照：已完成第Y+1~第Z章，累计完成 N / cpv。随时发『继续』接着生成，整卷完成后给统一采纳卡片。」
+#      · 收尾段门禁（会写到末章 cpv 章）：必须输出一张全卷合并版 SAVE_PLOT 卡片，nodes 含 1~cpv 全章节点；
+#        绝对禁止只输出"本轮新续写的后半段"半截卡片。
+#   B. _nd_build_continue_user_injection 重写（约 48 行）：
+#      · 新增 is_final_leg 判定（剩余章节 ≤ 30 或 last_ch ≥ 70% cpv = 收尾段，否则=中途段）
+#      · 中途段：注入「中途段禁卡片+预计写到Z章+写进度快照」的铁律上下文
+#      · 收尾段：注入「必须输出全卷合并版卡片 nodes 1~cpv 全章+前面所有续会段节点必须汇总进去」的铁律上下文
+#   C. 新增 _nd_collect_all_save_plot_volumes + _nd_build_full_volume_card 辅助（约 140 行）：
+#      · 从历史会话所有 assistant.cards + 当前 complete 里的 SAVE_PLOT 卡片，搜集出现过的全部 volume 对象，
+#        解析 volume_index / chapter_count；
+#      · 按章号 {ch: node} 做增量合并（后者覆盖前者），再调用 node_design_bp._repair_nodes_to_one_ch_per_node
+#        补齐缺章（自动补齐高质量占位），构建出一张 nodes 完整覆盖 [1, cpv] 的全卷统一卡片。
+#   D. chat_general_stream 流结束 parse_cards(complete) 之后补门禁（约 50 行）：
+#      · last_ch >= cpv（整卷写完）但 SAVE_PLOT 卡片 nodes 节点总数 < cpv 或干脆没卡片 →
+#        自动调用 C 步骤的合并，把历史所有分段卡片（+本次）合并出一张全卷统一采纳卡片 append 到 cards；
+#        如果 cards 里已经有一张完整全卷卡片（nodes>=cpv 且 volume_index 匹配）则不重复追加。
+#   这些改动和 chat_general_stream / _PERSONAS / apply-card 强耦合，无法抽新 Blueprint：
+#   - chat_general 的 enriched / 流结束的 cards 处理都在 chat_collab_bp；
+#   - 依赖 _merge_volume_nodes_incremental / _repair_volume_nodes_safe 的分层 A+C 修复体系；
+#   - 抽独立 nd_utils.py 会引入循环 import（要用到 chat_general 的 history/messages_history 结构）。
+#   下一步拆分：把 _PERSONAS + nd_* helpers（续会工具、卡片聚合门禁）抽 nd_helpers.py（不改本次P0）。
+#   → 9748 → 9970（+222 行，P0 用户实锤 A+B 续会门禁需求：防止 LLM 在中途段乱吐半截卡片让用户误点，
+#     以及 last_ch=收尾但模型忘了给卡片/给卡片不完整的终极兜底合并卡。属于续会机制的必做门禁，
+#     不属于堆肉，和 chat_general/apply-card 基础设施深度绑定，后续按上条拆 nd_helpers.py 减压。）
+CHAT_COLLAB_BP_BASELINE = 9970
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

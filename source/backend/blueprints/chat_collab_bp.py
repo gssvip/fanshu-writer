@@ -132,8 +132,15 @@ _PERSONAS = {
      · 不要重新写已经输出过的 第1章~第Y章 任何内容、标题、字段、节点；禁止复述、禁止重复
      · 从上次最后写完的章节的下一章开始写（即「第 Y+1 章 → 最后一章」区间内的节点）
      · 开场白可以只说一句"继续第Y+1章起节点设计："，不要重复啰嗦卷级设定/容量规模/爽点规则（前面已经说过）
-     · 【关键】落地卡片 [[CARD:SAVE_PLOT|...]] 的 nodes **只列本次新续写的节点**（只包含第Y+1章~最后一章的节点，不要把 1~Y 章再塞进卡片）；
-       volume_index/chapter_count/start_chapter/end_chapter 等卷级字段照全卷填，后端会按章节号自动把新旧节点合并成一张完整卷
+     · 【门禁 · 中途段 vs 收尾段】：
+        a) 若本轮续写不会写到本卷最后一章（第 cpv 章）= 中途段：
+           ❗绝对禁止输出任何 [[CARD:SAVE_PLOT|...]] 落地卡片（违者=生成不合格）
+           本轮续写的节点写完后，只需要输出一行进度快照：
+           「✅ 中途进度快照：已完成第 Y+1 ~ 第 Z 章，累计完成 N / cpv。随时发『继续』接着写，整卷全部完成后我会给出一张【全卷合并版统一采纳卡片】。」
+           不要输出半截 SAVE_PLOT 卡片，不要复述前面章节的内容。
+        b) 若本轮续写会写到本卷最后一章（第 cpv 章）= 收尾段 / 首次生成整卷刚好完整 1~cpv 章：
+           ❗必须在节点全部写完后，输出一张【全卷合并版】SAVE_PLOT 卡片，nodes 必须包含第 1 章 ~ 第 cpv 章的全部 cpv 个情节子节点（**禁止只列本轮新续写的后半段**）；前面各续会段输出过的节点必须完整汇总到这张卡片里（后端同时会做二次合并兜底，不怕漏）。
+           volume_index / summary / main_plot / core_conflict / ending_hook / chapter_count / start_chapter / end_chapter 等卷级字段照全卷填。
      · 仍然遵守 A+C 门禁（单章单节点、无重叠无跳章、chapters 不越卷区间）
      · 如果已经到全卷最后一章，就不要再重复写，直接告诉作者："本卷X个情节子节点已经全部完成，需要改某章对我说『第X章改XXX』即可"
    - 如果作者发了新的「第N卷 节点设计/情节节点」明确指令（与上次续会的卷号不同），视为开新卷任务：
@@ -406,8 +413,150 @@ def _nd_clear_state(session, db) -> None:
         pass
 
 
+def _nd_collect_all_save_plot_volumes(session_history: list, current_text: str) -> tuple[list[dict], int | None, int | None]:
+    """从历史会话 messages + 当前 AI 输出 complete 里，搜集所有出现过的 SAVE_PLOT 卡片的 volume 对象。
+    返回 ([volume_dict,...], detected_vi, detected_cpv)。"""
+    vols: list[dict] = []
+    # 1) 当前 complete 里的 cards
+    try:
+        for c in parse_cards(current_text) if callable(parse_cards) else []:
+            if not isinstance(c, dict) or c.get('type') != 'SAVE_PLOT':
+                continue
+            content = c.get('content') or ''
+            if content.startswith('['):
+                try:
+                    arr = json.loads(content)
+                    if isinstance(arr, list):
+                        vols.extend(v for v in arr if isinstance(v, dict))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # 2) 历史会话里所有 assistant.cards 里的 SAVE_PLOT
+    try:
+        if isinstance(session_history, list):
+            for m in session_history:
+                if not isinstance(m, dict) or m.get('role') != 'assistant':
+                    continue
+                cards_list = m.get('cards') or []
+                if isinstance(cards_list, list):
+                    for c in cards_list:
+                        if not isinstance(c, dict):
+                            continue
+                        if c.get('type') != 'SAVE_PLOT':
+                            continue
+                        content = c.get('content') or ''
+                        if content.startswith('['):
+                            try:
+                                arr = json.loads(content)
+                                if isinstance(arr, list):
+                                    vols.extend(v for v in arr if isinstance(v, dict))
+                            except Exception:
+                                pass
+    except Exception:
+        pass
+    # 3) 解析 volume_index / cpv
+    vi_set: set[int] = set()
+    cpv_set: set[int] = set()
+    for v in vols:
+        vi = v.get('volume_index')
+        if isinstance(vi, int) and 1 <= vi <= 99:
+            vi_set.add(vi)
+        cc = v.get('chapter_count')
+        if isinstance(cc, int) and 10 <= cc <= 200:
+            cpv_set.add(cc)
+    detected_vi = next(iter(vi_set)) if len(vi_set) == 1 else None
+    detected_cpv = next(iter(cpv_set)) if len(cpv_set) == 1 else None
+    return vols, detected_vi, detected_cpv
+
+
+def _nd_build_full_volume_card(vols_list: list[dict], vi: int, cpv: int) -> dict | None:
+    """把 vols_list 里的所有 volume（可能来自多张续会卡片）按章节号增量合并，构建一张完整的全卷卡片：
+      nodes 覆盖 [1, cpv]（按 volume_index=vi 的卷内章序 1..cpv），
+      如果所有分段加起来仍然缺章，调用 node_design_bp._repair_nodes_to_one_ch_per_node 补齐。
+    返回 SAVE_PLOT 卡片字典 {id, type:'SAVE_PLOT', title, content:JSON 字符串} 或 None。"""
+    try:
+        from node_design_bp import _repair_nodes_to_one_ch_per_node, _parse_chapters_field
+        # 汇总所有 nodes，按章节号做 {ch: node} 合并（后者覆盖前者）
+        ch_map: dict[int, dict] = {}
+        summary_holder: dict = {}
+        main_plot = core_conflict = ending_hook = ''
+        key_events = []
+        vol_title = f'第{vi}卷'
+        vol_id = str(vi)
+        for v in vols_list:
+            if not isinstance(v, dict):
+                continue
+            # 取卷级字段（非空才覆盖）
+            if v.get('volume'):
+                vol_title = str(v['volume'])
+            if v.get('volume_id'):
+                vol_id = str(v['volume_id'])
+            s = v.get('summary')
+            if isinstance(s, str) and len(s) > len(summary_holder.get('summary', '')):
+                summary_holder['summary'] = s
+            if v.get('main_plot'):
+                main_plot = v['main_plot'] or main_plot
+            if v.get('core_conflict'):
+                core_conflict = v['core_conflict'] or core_conflict
+            if v.get('ending_hook'):
+                ending_hook = v['ending_hook'] or ending_hook
+            if isinstance(v.get('key_events'), list) and len(v['key_events']) >= len(key_events):
+                key_events = list(v['key_events'])
+            nodes = v.get('nodes')
+            if not isinstance(nodes, list):
+                continue
+            for n in nodes:
+                if not isinstance(n, dict):
+                    continue
+                chs = _parse_chapters_field(n.get('chapters'))
+                if not chs:
+                    continue
+                a, b = chs
+                for ch in range(a, b + 1):
+                    cp = dict(n)
+                    cp['chapters'] = ch
+                    ch_map[ch] = cp
+        # 如果章节都在 vi 卷区间外（全局号），转换到卷内编号 1..cpv
+        # 尝试：若所有 ch >= 1+(vi-1)*50 → 按全局号减去偏移
+        start_global_guess = 1 + (vi - 1) * cpv
+        if ch_map and all(k >= start_global_guess for k in ch_map.keys()):
+            new_map = {}
+            for g, nd in ch_map.items():
+                local = g - (start_global_guess - 1)
+                if 1 <= local <= cpv:
+                    nd['chapters'] = local
+                    new_map[local] = nd
+            ch_map = new_map
+        # 补齐并修复 A+C
+        nodes_flat = list(ch_map.values())
+        repaired, _ = _repair_nodes_to_one_ch_per_node(nodes_flat, 1, cpv, vi, 0)
+        final_vol = {
+            'volume_id': vol_id,
+            'volume': vol_title,
+            'volume_index': vi,
+            'volume_title': vol_title,
+            'summary': summary_holder.get('summary', ''),
+            'main_plot': main_plot,
+            'core_conflict': core_conflict,
+            'key_events': key_events,
+            'ending_hook': ending_hook,
+            'chapter_count': cpv,
+            'start_chapter': 1 + (vi - 1) * cpv,
+            'end_chapter': vi * cpv,
+            'nodes': repaired,
+        }
+        content = json.dumps([final_vol], ensure_ascii=False)
+        title = f'第{vi}卷情节节点（{cpv}个）· 全卷合并版统一采纳卡片'
+        card_id = 'SAVE_PLOT_' + str(vi) + '_' + str(int(__import__('time').time()))
+        return {'id': card_id, 'type': 'SAVE_PLOT', 'title': title, 'content': content, 'target': 'plot'}
+    except Exception:
+        return None
+
+
 def _nd_build_continue_user_injection(state: dict) -> str:
-    """命中续会时，拼一段『已完成第1~last_ch章，从last_ch+1开始不要重复』的用户消息补充上下文。"""
+    """命中续会时，拼一段『已完成第1~last_ch章，从last_ch+1开始不要重复』的用户消息补充上下文。
+    同时按区间判断：中途段→禁止吐SAVE_PLOT卡片；收尾段（next_ch+剩余<≈1.2*cpv 保守判断=大概率写得完尾）→ 要求吐全卷合并版卡片。"""
     vi = int(state.get('volume_index') or 0)
     cpv = int(state.get('cpv') or 50)
     last_ch = int(state.get('last_ch') or 0)
@@ -419,15 +568,38 @@ def _nd_build_continue_user_injection(state: dict) -> str:
                 f"第{vi}卷（共{total}章）已经完成到第{last_ch}章=整卷写完。"
                 "请直接告诉作者：「这一卷50章已经全部设计完成啦。需要改某一章直接对我说『第X章改XXX』就行。」"
                 "不要再重复输出已写完的章节节点。\n")
+    # 判定是不是收尾段：剩余章节数 ≤ 30（约占 cpv 60%以内），或 last_ch ≥ total*0.7
+    remaining = total - last_ch
+    is_final_leg = (remaining <= 30) or (last_ch >= int(total * 0.7))
+    if not is_final_leg:
+        # 中途段门禁
+        return (
+            f"\n【系统续会上下文】作者说「继续」，这是节点设计续会。请严格按如下规则："
+            f"\n· 当前卷：第{vi}卷（共{total}章，章号 {1 + (vi-1)*total}~{vi*total}，卷内编号 {1}~{total}）"
+            f"\n· 已输出完成：第{1}章~第{last_ch}章（共{last_ch}个情节子节点）"
+            f"\n· 本轮只输出：第{next_ch}章~预计第{min(last_ch+30, total)}章左右（写不完没关系，下一轮作者发『继续』会从你写到的最后一章接着续）"
+            f"\n· ❗门禁·中途段：本轮不会写到第{total}章（本卷最后一章），属于中途进度段："
+            f"\n   · ❌ 绝对禁止输出任何 [[CARD:SAVE_PLOT|...]] 落地卡片。任何半截卡片都不允许，违者生成不合格。"
+            f"\n   · ✅ 本轮续写的所有节点写完后，只需要在末尾写一行中文进度快照："
+            f"\n     「✅ 中途进度快照：已完成第{next_ch}章~第<本轮实际写到的最后一章号>章，累计完成<N>/{total}。随时发『继续』接着生成，整卷{total}章全部设计完成后，会给出一张全卷合并版统一采纳卡片。」"
+            f"\n· ❗铁律：绝对不要重复写 第1章~第{last_ch}章 的任何内容、标题、字段、节点；任何形式的复述都不允许。"
+            f"\n· 输出顺序仍然按：章节号递增 → 开场白可省略或只说一句「继续第{next_ch}章起节点」即可，不再啰嗦卷级设定。"
+            f"\n· 爽点/五幕/节奏仍然按整卷规则对齐，但只写剩余章。"
+            f"\n· 仍然遵守 A+C 铁律：单章单节点、无重叠无跳章、chapters 严格落在卷区间内。\n"
+        )
+    # 收尾段门禁
     return (
         f"\n【系统续会上下文】作者说「继续」，这是节点设计续会。请严格按如下规则："
         f"\n· 当前卷：第{vi}卷（共{total}章，章号 {1 + (vi-1)*total}~{vi*total}，卷内编号 {1}~{total}）"
         f"\n· 已输出完成：第{1}章~第{last_ch}章（共{last_ch}个情节子节点）"
-        f"\n· 本轮必须只输出：第{next_ch}章~第{total}章（剩余 {total-last_ch} 个情节子节点）"
-        f"\n· ❗铁律：绝对不要重复写 第1章~第{last_ch}章 的任何内容、标题、字段、节点；任何形式的复述都不允许。"
-        f"\n· 输出顺序仍然按：章节号递增 → 开场白可省略或只说一句「继续第{next_ch}章起节点」即可，不再啰嗦卷级设定。"
-        f"\n· 最终 SAVE_PLOT 卡片的 JSON：volume_index 仍为 {vi}；nodes 字段只包含这次新输出的 第{next_ch}章~第{total}章 对应的节点（不要带1~{last_ch}章），"
-        "后端会按章节号自动增量合并到旧卷。"
+        f"\n· 本轮必须只输出：第{next_ch}章~第{total}章（剩余 {remaining} 个情节子节点）"
+        f"\n· ❗门禁·收尾段：本轮会写到最后一章（第{total}章），请务必完整写到末尾；全卷写完后："
+        f"\n   · ❌ 不要输出只包含『第{next_ch}~第{total}章』的半截 SAVE_PLOT 卡片！"
+        f"\n   · ✅ 必须输出一张【全卷合并版统一采纳卡片】[[CARD:SAVE_PLOT|...]]："
+        f"\n     · nodes 字段必须包含第 1 章 ~ 第 {total} 章的全部 {total} 个情节子节点（把你前面所有续会段已经输出的第1~{last_ch}章节点，和这次新写的第{next_ch}~第{total}章节点，按章节号升序完整整理进这一张卡片）。"
+        f"\n     · 任何一个章号对应的节点缺失都不行；差一章=卡片不合格。后端也会从历史分段卡片自动做二次合并兜底，不怕你漏节点。"
+        f"\n     · volume_index={vi}、chapter_count={total}、start_chapter={1 + (vi-1)*total}、end_chapter={vi*total}。"
+        f"\n· ❗铁律：写第{next_ch}~第{total}章正文节点时，仍然不许复述前面已写章节；只是在最后输出卡片的 JSON 汇总时，把前面所有章节的节点完整合进去。"
         f"\n· 爽点/五幕/节奏仍然按整卷规则对齐，但只写剩余章。"
         f"\n· 仍然遵守 A+C 铁律：单章单节点、无重叠无跳章、chapters 严格落在卷区间内。\n"
     )
@@ -9136,6 +9308,56 @@ def chat_general():
                 c['content'] = _clean_text_to_plain(c.get('content', ''))
                 if c.get('title'):
                     c['title'] = _clean_text_to_plain(c['title'])
+            # ======= 节点设计师：全卷已收尾(last_ch>=cpv) 但模型没吐完整全卷卡片 → 后端自动从历史所有分段卡片合并一张全卷统一采纳卡片 =======
+            if _nd_is_node_role and _nd_meta_for_closure:
+                try:
+                    _vi = int(_nd_meta_for_closure.get('volume_index') or 1)
+                    _cpv = max(10, int(_nd_meta_for_closure.get('cpv') or 50))
+                    _final_lc = int(_parse_last_chapter_from_text(complete) or _nd_meta_for_closure.get('last_ch') or 0)
+                    _is_full = _final_lc >= _cpv
+                    # 若模型卡片的 nodes 不完整也同样兜底补齐：检查 cards 中 SAVE_PLOT 的总节点数
+                    _existing_nodes_count = 0
+                    for c in cards:
+                        if c.get('type') != 'SAVE_PLOT':
+                            continue
+                        try:
+                            arr = json.loads(c.get('content') or '[]')
+                            if isinstance(arr, list):
+                                for v in arr:
+                                    if isinstance(v, dict) and isinstance(v.get('nodes'), list):
+                                        _existing_nodes_count += len(v['nodes'])
+                        except Exception:
+                            pass
+                    if _is_full and (_existing_nodes_count < _cpv or not cards):
+                        # 收集所有历史分段卡片 + 本次 complete 里的卡片 → 合并成全卷统一卡片
+                        all_vols, dvi, dcpv = _nd_collect_all_save_plot_volumes(history, complete)
+                        vi_for_build = dvi or _vi
+                        cpv_for_build = dcpv or _cpv
+                        if all_vols or _is_full:
+                            # 即使 all_vols 为空，只要 _is_full 并且 nodes 数 < cpv，也兜底：把 complete 里的节点再解析一次（走 _build_full_volume → A+C 修复自动补齐占位）
+                            built = _nd_build_full_volume_card(all_vols, vi_for_build, cpv_for_build)
+                            if built:
+                                # 把这张兜底卡片追加到 cards（放在最末，前面模型给的卡片如果节点数不够也保留，不会冲突）
+                                built['content'] = _clean_text_to_plain(built.get('content', ''))
+                                if built.get('title'):
+                                    built['title'] = _clean_text_to_plain(built['title'])
+                                # 为避免重复：如果 cards 里已经有一张 SAVE_PLOT 节点数=cpv 并且 volume_index=vi_for_build → 不追加
+                                _already_full = False
+                                for c in cards:
+                                    if c.get('type') != 'SAVE_PLOT':
+                                        continue
+                                    try:
+                                        arr = json.loads(c.get('content') or '[]')
+                                        if isinstance(arr, list) and len(arr) == 1 and isinstance(arr[0], dict):
+                                            if int(arr[0].get('volume_index') or 0) == int(vi_for_build) and len(arr[0].get('nodes') or []) >= int(cpv_for_build):
+                                                _already_full = True
+                                                break
+                                    except Exception:
+                                        pass
+                                if not _already_full:
+                                    cards.append(built)
+                except Exception:
+                    pass
             for card in cards:
                 yield f'data: {json.dumps({"type": "card", "card": card, "session_id": session_id}, ensure_ascii=False)}\n\n'
 

@@ -201,6 +201,8 @@ interface CardViewProps {
   onBibleUpdate?: (nextBible: any) => void;
   selectedSkillPackIds?: string[];
   chaptersPerVolume?: number;
+  // 节点设计师中途半截卡片：一键发送『继续』
+  onQuickContinue?: () => void;
 }
 
 const CARD_ICON: Record<string, string> = {
@@ -562,7 +564,8 @@ const AdoptedCardCollapsed = memo(function AdoptedCardCollapsed({ card }: { card
 
 const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
   const { card, onAdopt, onEdit, onIgnore, applying, onReplaceChapter,
-    bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume } = props;
+    bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume,
+    onQuickContinue } = props;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(card.content);
   // node 设计后卡片内容会被 TimelineCardBody 异步改写，draft / content 都要同步
@@ -583,6 +586,26 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
     card.type === 'SAVE_PLOT' ||
     card.type === 'SAVE_OUTLINE_NODE'
   );
+
+  // ========== 【方案A+B · A(主)隐藏半拉子卡片采纳按钮+进度+继续；B(次级兜底)分批临时保存】
+  // SAVE_PLOT 中途半截卡片判定：读取 JSON 里 nodes.length vs 所在卷 chapter_count（或 chaptersPerVolume 或 50）
+  const savePlotInfo = useMemo(() => {
+    if (card.type !== 'SAVE_PLOT') return null;
+    try {
+      const content = (draft || card.content || '').trim();
+      if (!content.startsWith('[')) return null;
+      const arr = JSON.parse(content);
+      if (!Array.isArray(arr) || !arr.length) return null;
+      const v: any = arr[0] || {};
+      const nodes = Array.isArray(v.nodes) ? v.nodes : [];
+      const cc = (typeof v.chapter_count === 'number' && v.chapter_count > 0) ? v.chapter_count : (chaptersPerVolume || 50);
+      const vi = typeof v.volume_index === 'number' ? v.volume_index : null;
+      return { nodes, cc, vi };
+    } catch {
+      return null;
+    }
+  }, [card.type, card.content, draft, chaptersPerVolume]);
+  const isHalfwaySavePlot = !!(savePlotInfo && savePlotInfo.nodes.length > 0 && savePlotInfo.nodes.length < savePlotInfo.cc);
 
   const handleSaveEdit = () => {
     if (!draft.trim()) return;
@@ -623,6 +646,76 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
     }
     return <div className="chat-card-body">{bodyContent}</div>;
   };
+
+  const halfwayBar = isHalfwaySavePlot && savePlotInfo ? (() => {
+    const { nodes, cc, vi } = savePlotInfo;
+    const done = Math.min(cc, nodes.length);
+    const pct = Math.max(0, Math.min(100, Math.round((done / cc) * 100)));
+    return (
+      <div style={{
+        margin: '10px 2px 2px',
+        padding: '10px 12px',
+        borderRadius: 8,
+        background: 'linear-gradient(180deg,#eff6ff 0%,#f5f3ff 100%)',
+        border: '1px solid #bfdbfe',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+          <strong style={{ color: '#1d4ed8' }}>🎯 中途节点进度快照</strong>
+          <span style={{ fontSize: 13, color: '#374151' }}>
+            {vi ? `第${vi}卷 · ` : ''}共 <strong>{cc}</strong> 个节点，卡片含 <strong>{done}</strong> 个节点（{pct}%）
+          </span>
+          <span style={{ flex: 1 }} />
+          <button
+            className="chat-card-btn primary"
+            style={{ padding: '4px 12px', minHeight: 28 }}
+            onClick={() => onQuickContinue?.()}
+            disabled={!onQuickContinue}
+          >
+            ⏭️ 继续生成
+          </button>
+        </div>
+        <div style={{
+          height: 8,
+          background: '#e5e7eb',
+          borderRadius: 99,
+          overflow: 'hidden',
+          marginBottom: 10,
+        }}>
+          <div style={{
+            height: '100%',
+            width: `${pct}%`,
+            background: 'linear-gradient(90deg,#3b82f6 0%,#8b5cf6 100%)',
+            transition: 'width .4s ease',
+          }} />
+        </div>
+        <div style={{ fontSize: 12, color: '#4b5563', lineHeight: 1.7 }}>
+          💡 整卷 <strong>{cc} 章</strong> 全部设计完成后，会自动给出一张<strong style={{ color: '#16a34a' }}>全卷合并版统一采纳卡片</strong>，
+          点一次即可完整落库。随时发送<strong>「继续」</strong>或点上面的按钮接着写。
+          <br/>
+          <span style={{ color: '#9ca3af' }}>如果想先把这 {done} 个节点临时存库（不推荐，后续还需再合并），可点下方「💾 分批临时保存」——后端会自动按章节号增量合并到已有节点，不会覆盖已存在章节。</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+          {isReplaceMode ? null : (
+            <button
+              className="chat-card-btn"
+              style={{ fontSize: 12, background: '#fef3c7', borderColor: '#fcd34d', color: '#92400e' }}
+              onClick={() => onAdopt({ ...card, content: draft || card.content })}
+              disabled={applying}
+              title="把当前半截卡片的节点按章节号增量合并到卷里（不会覆盖已存在章节的节点）。推荐整卷写完后再统一采纳。"
+            >
+              💾 分批临时保存（不推荐）
+            </button>
+          )}
+          <button className="chat-card-btn ghost" onClick={() => setEditing(true)} disabled={applying}>
+            编辑后覆盖
+          </button>
+          <button className="chat-card-btn ghost" onClick={() => onIgnore(card)} disabled={applying}>
+            忽略此快照
+          </button>
+        </div>
+      </div>
+    );
+  })() : null;
 
   return (
     <div className="chat-card">
@@ -670,23 +763,25 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
       ) : (
         <>
           {renderBody(draft || card.content)}
-          <div className="chat-card-actions">
-            {isReplaceMode ? (
-              <button className="chat-card-btn primary" onClick={() => onReplaceChapter!(card, cardMeta)} disabled={applying}>
-                {applying ? '替换中…' : '替换本章正文'}
+          {halfwayBar ? halfwayBar : (
+            <div className="chat-card-actions">
+              {isReplaceMode ? (
+                <button className="chat-card-btn primary" onClick={() => onReplaceChapter!(card, cardMeta)} disabled={applying}>
+                  {applying ? '替换中…' : '替换本章正文'}
+                </button>
+              ) : (
+                <button className="chat-card-btn primary" onClick={() => onAdopt({ ...card, content: draft || card.content })} disabled={applying}>
+                  {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '采纳(覆盖同章)' : '采纳')}
+                </button>
+              )}
+              <button className="chat-card-btn" onClick={() => setEditing(true)} disabled={applying}>
+                编辑后覆盖
               </button>
-            ) : (
-              <button className="chat-card-btn primary" onClick={() => onAdopt({ ...card, content: draft || card.content })} disabled={applying}>
-                {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '采纳(覆盖同章)' : '采纳(追加)')}
+              <button className="chat-card-btn ghost" onClick={() => onIgnore(card)} disabled={applying}>
+                忽略
               </button>
-            )}
-            <button className="chat-card-btn" onClick={() => setEditing(true)} disabled={applying}>
-              编辑后覆盖
-            </button>
-            <button className="chat-card-btn ghost" onClick={() => onIgnore(card)} disabled={applying}>
-              忽略
-            </button>
-          </div>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -754,12 +849,14 @@ interface MessageBubbleProps {
   onBibleUpdate?: (next: any) => void;
   selectedSkillPackIds?: string[];
   chaptersPerVolume?: number;
+  // 节点设计师中途半截卡片：一键发送『继续』
+  onQuickContinue?: () => void;
 }
 
 // 长按计时器
 const LONG_PRESS_MS = 500;
 
-const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onEdit, onIgnore, applyingCardId, streaming, onReplaceChapter, onEditMessage, onDeleteMessage, onRegenerate, bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onEdit, onIgnore, applyingCardId, streaming, onReplaceChapter, onEditMessage, onDeleteMessage, onRegenerate, bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume, onQuickContinue }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isRoundtable = !isUser && message.roundtable !== undefined;
   const [collapsed, setCollapsed] = useState(true);
@@ -986,6 +1083,7 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
                 onBibleUpdate={onBibleUpdate}
                 selectedSkillPackIds={selectedSkillPackIds}
                 chaptersPerVolume={chaptersPerVolume}
+                onQuickContinue={onQuickContinue}
               />
             ))}
           </div>
@@ -2462,6 +2560,91 @@ export default function ChatPanel() {
     }
   }, [bookId, sessionId]);
 
+  // ========== 节点设计师进度解析（工具栏进度条 + 中途半截卡片复用）
+  const parseNodeDesignerProgress = useCallback((msgs: AIMessage[], defaultCPV = 50): { last_ch: number; cpv: number; vi: number | null; from_card: boolean } => {
+    let lastCh = 0;
+    let cpv = defaultCPV;
+    let vi: number | null = null;
+    let fromCard = false;
+    const chapterRE = /第[零一二三四五六七八九十百千万\d〇两]{1,8}[章节回话卷]/g;
+    const toNumber = (s: string): number | null => {
+      if (/^\d+$/.test(s)) return parseInt(s, 10);
+      const map: Record<string, number> = { '零': 0, '〇': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
+      if (s.length === 1) return map[s] ?? null;
+      if (s.startsWith('十')) {
+        const rest = s.slice(1);
+        return 10 + (rest ? (map[rest] ?? NaN) : 0);
+      }
+      if (s.includes('十')) {
+        const [a, b] = s.split('十');
+        const tens = map[a];
+        const ones = b ? (map[b] ?? 0) : 0;
+        if (typeof tens === 'number') return tens * 10 + ones;
+      }
+      if (/百/.test(s)) {
+        const m = s.match(/^([一二三四五六七八九两])百([一二三四五六七八九十零〇两]{0,3})$/);
+        if (m) {
+          const h = map[m[1]];
+          let tail = 0;
+          if (m[2]) {
+            const n = toNumber(m[2]);
+            if (n) tail = n;
+          }
+          return h * 100 + tail;
+        }
+      }
+      return null;
+    };
+    for (const m of msgs) {
+      if (m.role === 'assistant' && m.content) {
+        const matches = m.content.match(chapterRE) || [];
+        for (const raw of matches) {
+          const head = raw.replace(/[章节回话卷]/g, '').replace(/^第/, '');
+          if (!head) continue;
+          const n = toNumber(head);
+          if (typeof n === 'number' && n <= 1000 && n > lastCh) lastCh = n;
+        }
+      }
+      // SAVE_PLOT 卡片里的 nodes 章号汇总（更精准）
+      if (Array.isArray(m.cards)) {
+        for (const c of m.cards) {
+          if ((c as any).type !== 'SAVE_PLOT') continue;
+          try {
+            const content = ((c as any).content || '').trim();
+            if (!content.startsWith('[')) continue;
+            const arr = JSON.parse(content);
+            if (Array.isArray(arr) && arr[0]) {
+              const v: any = arr[0];
+              if (typeof v.volume_index === 'number') vi = v.volume_index;
+              if (typeof v.chapter_count === 'number' && v.chapter_count > 0) {
+                cpv = v.chapter_count;
+                fromCard = true;
+              }
+              if (Array.isArray(v.nodes)) {
+                for (const n of v.nodes) {
+                  const chs = n?.chapters;
+                  if (typeof chs === 'number' && chs > lastCh) lastCh = chs;
+                  if (Array.isArray(chs) && typeof chs[0] === 'number' && typeof chs[1] === 'number') {
+                    if (chs[1] > lastCh) lastCh = chs[1];
+                  }
+                }
+              }
+            }
+          } catch { /* ignore */ }
+        }
+      }
+    }
+    // 如果 lastCh 明显是全局章号（>=100、没有卡片），就按 vi 推断：lastCh - (vi-1)*cpv
+    if (lastCh >= 100 && vi) {
+      const local = lastCh - (vi - 1) * cpv;
+      if (local >= 1 && local <= cpv) lastCh = local;
+    } else if (lastCh > cpv && !fromCard && !vi) {
+      // 解析可能偏严（比如 cpv=50 但 lastCh 是全局 55 章=第2卷第5章），这种情况没 vi 的话先模 50，保证进度条不超 100%
+      lastCh = Math.min(cpv, lastCh % cpv);
+    }
+    return { last_ch: lastCh, cpv, vi, from_card: fromCard };
+  }, []);
+
   // ========== 历史会话 ==========
   const handleSelectSession = useCallback(async (sid: string) => {
     if (streaming) stopStream();
@@ -2973,6 +3156,20 @@ export default function ChatPanel() {
   // 把 handleGeneral 暴露给（声明在它前面的）预设 auto-submit effect
   handleGeneralRef.current = handleGeneral;
 
+  // 一键继续（节点设计师用）：补进度上下文，直接走 handleGeneral 发送
+  const handleQuickContinue = useCallback(() => {
+    if (streaming) return;
+    const prog = parseNodeDesignerProgress(messages, 50);
+    const { last_ch, vi } = prog;
+    const viLabel = vi ?? 1;
+    if (last_ch <= 0) {
+      handleGeneral({ text: '继续' });
+      return;
+    }
+    const promptText = `继续节点设计。当前卷：第${viLabel}卷。已完成：第1章~第${last_ch}章。本轮请从第${last_ch + 1}章开始继续输出后续章节点，**绝对不要重复写第1~${last_ch}章的任何内容**，收尾时 SAVE_PLOT 卡片 nodes 必须是全卷合并版 1~50 全章，中途段禁止吐卡片。`;
+    handleGeneral({ text: promptText });
+  }, [streaming, messages, parseNodeDesignerProgress, handleGeneral]);
+
   // 主发送动作（设定Tab：通用走general，维度已有内容走dim-edit，否则走suggest）
   const handleMainSend = useCallback(() => {
     if (activeTab !== 'setting' || !selectedDim) return;
@@ -3187,11 +3384,88 @@ export default function ChatPanel() {
                   </div>
                   {/* 通用维度：顶部"助手切换"（折叠式选择器，视感对齐技能包，含联网搜索Key配置）；其他维度保持技能包选择 */}
                   {selectedDim === 'general' ? (
-                    <GeneralAssistantSelector
-                      roles={BUILTIN_ROLES}
-                      currentId={sessionRoleMap[chatGeneralSessionId || '__general_pending_session__'] || 'default'}
-                      onSelect={(id) => setSessionRoleMap(m => ({ ...m, [chatGeneralSessionId || '__general_pending_session__']: id }))}
-                    />
+                    <>
+                      <GeneralAssistantSelector
+                        roles={BUILTIN_ROLES}
+                        currentId={sessionRoleMap[chatGeneralSessionId || '__general_pending_session__'] || 'default'}
+                        onSelect={(id) => setSessionRoleMap(m => ({ ...m, [chatGeneralSessionId || '__general_pending_session__']: id }))}
+                      />
+                      {/* 【P1 增强】节点设计师工具栏：进度条 + 一键继续按钮（命中 node_designer 角色才显示） */}
+                      {(sessionRoleMap[chatGeneralSessionId || '__general_pending_session__'] || 'default') === 'node_designer' && (() => {
+                        const prog = parseNodeDesignerProgress(messages, 50);
+                        const { last_ch, cpv, vi } = prog;
+                        const done = Math.max(0, Math.min(cpv, last_ch));
+                        const pct = cpv > 0 ? Math.max(0, Math.min(100, Math.round((done / cpv) * 100))) : 0;
+                        const isDone = done >= cpv;
+                        return (
+                          <div style={{
+                            marginTop: 10,
+                            padding: '10px 14px',
+                            borderRadius: 10,
+                            background: isDone
+                              ? 'linear-gradient(180deg,#ecfdf5 0%,#f0fdf4 100%)'
+                              : 'linear-gradient(180deg,#eff6ff 0%,#f5f3ff 100%)',
+                            border: `1px solid ${isDone ? '#a7f3d0' : '#bfdbfe'}`,
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                              <strong style={{ color: isDone ? '#047857' : '#1d4ed8', fontSize: 13 }}>
+                                {isDone ? '✅ 节点设计全卷完成' : `🎯 节点设计进度（${vi ? `第${vi}卷` : '当前卷'}）`}
+                              </strong>
+                              <span style={{ fontSize: 12, color: '#374151' }}>
+                                {done} / {cpv} 章 · {pct}%
+                              </span>
+                              <span style={{ flex: 1 }} />
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button
+                                  className="chat-send primary"
+                                  style={{ padding: '4px 12px', minHeight: 26, fontSize: 13 }}
+                                  onClick={handleQuickContinue}
+                                  disabled={streaming || isDone}
+                                  title={isDone ? '整卷已完成，如需修改某章直接说「第X章改XXX」' : '一键从写到的最后一章继续生成（等同于发送「继续」）'}
+                                >
+                                  {isDone ? '全卷已完成' : '⏭️ 继续生成'}
+                                </button>
+                                {!isDone && (
+                                  <button
+                                    className="chat-send ghost"
+                                    style={{ padding: '4px 10px', minHeight: 26, fontSize: 12 }}
+                                    onClick={() => {
+                                      const n = vi || 1;
+                                      handleGeneral({ text: `第${n}卷 节点设计` });
+                                    }}
+                                    disabled={streaming}
+                                    title={`重新从第${vi || 1}卷第1章开始生成（覆盖当前进度）`}
+                                  >
+                                    🔄 重来第{vi || 1}卷
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <div style={{
+                              height: 8,
+                              marginTop: 10,
+                              background: '#e5e7eb',
+                              borderRadius: 99,
+                              overflow: 'hidden',
+                            }}>
+                              <div style={{
+                                height: '100%',
+                                width: `${pct}%`,
+                                background: isDone
+                                  ? 'linear-gradient(90deg,#10b981 0%,#22c55e 100%)'
+                                  : 'linear-gradient(90deg,#3b82f6 0%,#8b5cf6 100%)',
+                                transition: 'width .5s ease',
+                              }} />
+                            </div>
+                            {!isDone && done === 0 && (
+                              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>
+                                💡 还没开始生成，可以直接发「第N卷 节点设计」或点节点设计按钮从剧情面板带卷号进入，AI 会流式直出整卷节点。
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </>
                   ) : (
                     <SkillPackSelector packs={skillPacks.filter(p => p.category === 'master')} selected={settingPacks} onToggle={(id) => toggleSkillPack('setting', id)} onPreview={(pack) => setPreviewPack(pack)} compact />
                   )}
@@ -3857,6 +4131,7 @@ export default function ChatPanel() {
                   onBibleUpdate={setBible}
                   selectedSkillPackIds={activeTab === 'deai' ? deaiPacks_selected : activeTab === 'chapter' ? chapterPacks : settingPacks}
                   chaptersPerVolume={50}
+                  onQuickContinue={handleQuickContinue}
                 />
               ))}
               {streamError && <div className="chat-error">{streamError}</div>}
