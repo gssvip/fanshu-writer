@@ -23,6 +23,14 @@ from typing import Any
 import requests
 from flask import Blueprint, jsonify, request
 
+try:
+    import warnings as _warnings
+    from urllib3.exceptions import InsecureRequestWarning as _InsecureRequestWarning  # type: ignore
+    _warnings.filterwarnings('ignore', category=_InsecureRequestWarning)
+except Exception:  # pragma: no cover
+    _warnings = None  # type: ignore
+    _InsecureRequestWarning = None  # type: ignore
+
 # ---------------------------------------------------------------------------
 # Blueprint 实例
 # ---------------------------------------------------------------------------
@@ -369,7 +377,7 @@ def _parse_cn(s: str) -> int:
     return int(round(v * f))
 
 
-# ---- 共享 requests 会话（TLSv1.2 minimum 兜底 + 连接复用）----
+# ---- 共享 requests 会话（TLSv1.2 minimum 兜底 + 连接复用 + Retry + verify 兜底）----
 try:  # 兼容老版本 ssl / urllib3
     import ssl as _ssl
 
@@ -378,33 +386,144 @@ except Exception:  # pragma: no cover
     _ssl = None  # type: ignore
     _HAS_TLS_MIN = False
 
+
+def _ca_bundle_path() -> str | bool:
+    """Render / 企业 / 自签 MITM 环境常会在 certifi / 系统 CA 包下发代理根证书，
+    这里按优先级返回一个可验证的 CA 包路径。全失败则返回 True（requests 默认行为）。"""
+    import os as _os
+    candidates: list[str] = []
+    for env_k in ('FANSHU_CA_BUNDLE', 'REQUESTS_CA_BUNDLE', 'CURL_CA_BUNDLE', 'SSL_CERT_FILE'):
+        v = (_os.environ.get(env_k) or '').strip()
+        if v:
+            candidates.append(v)
+    try:
+        import certifi as _certifi  # type: ignore
+        candidates.append(_certifi.where())
+    except Exception:
+        pass
+    for p in ('/etc/ssl/certs/ca-certificates.crt',
+              '/etc/pki/tls/certs/ca-bundle.crt',
+              '/etc/ssl/cert.pem'):
+        candidates.append(p)
+    for c in candidates:
+        if not c:
+            continue
+        try:
+            if Path(c).is_file() and Path(c).stat().st_size > 0:
+                return c
+        except Exception:
+            continue
+    return True
+
+
+_CA_BUNDLE: str | bool = _ca_bundle_path()
+
 _FQ_SESSION_LOCK = threading.Lock()
 _FQ_SESSION: requests.Session | None = None
 _REQ_SESSION: requests.Session | None = None
 
 
-def _build_tls_session() -> requests.Session:
-    """构造强制 TLSv1.2 以上的 requests Session，修复部分运行环境（Python3.14+沙箱）默认 TLS 握手出现 SSLEOFError。"""
+def _build_retry_adapter(base_adapter_cls: Any, total_retries: int = 3) -> Any:
+    """在给定 HTTPAdapter 子类基础上，挂上 Retry 策略并返回实例。"""
+    try:
+        from requests.adapters import HTTPAdapter as _HTTPAdapter  # noqa: F401
+        from urllib3.util.retry import Retry as _Retry
+        retry = _Retry(
+            total=total_retries,
+            backoff_factor=0.8,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=('GET', 'HEAD'),
+            raise_on_status=False,
+        )
+        adapter = base_adapter_cls(max_retries=retry, pool_connections=20, pool_maxsize=40)
+    except Exception:
+        adapter = base_adapter_cls()
+    return adapter
+
+
+def _build_tls_session(verify: str | bool | None = None) -> requests.Session:
+    """构造强制 TLSv1.2 以上的 requests Session，修复：
+       (a) Python 3.14+ 沙箱默认握手 SSLEOFError；
+       (b) Render 出口存在自签 MITM 代理导致 SSLCertVerificationError（证书链中自签证书）。
+    策略：
+       1. verify 默认 _CA_BUNDLE（certifi/系统/自定义 CA 包路径），最严格验证；
+       2. 挂 Retry(total=3, backoff=0.8) 应对握手抖动与 429/5xx；
+       3. 若仍 SSL 失败，调用方 _rank_fetch 会用 verify=False 做终极兜底（InsecureRequestWarning 已静默）。"""
+    verify_eff = _CA_BUNDLE if verify is None else verify
     s = requests.Session()
+    s.verify = verify_eff
     s.headers.update({'User-Agent': REQ_HEADERS.get('User-Agent') or ''})
-    if _ssl is None or not _HAS_TLS_MIN:
-        return s
+
     try:
         from requests.adapters import HTTPAdapter as _HTTPAdapter
         from urllib3.util.ssl_ import create_urllib3_context as _create_urllib3_context  # type: ignore
 
         class _TLS12Adapter(_HTTPAdapter):
             def init_poolmanager(self, *args: Any, **kwargs: Any):
-                ctx = _create_urllib3_context(cert_reqs=_ssl.CERT_REQUIRED, ssl_version=_ssl.PROTOCOL_TLS_CLIENT)
-                ctx.minimum_version = _ssl.TLSVersion.TLSv1_2
-                kwargs['ssl_context'] = ctx
+                try:
+                    cert_reqs = _ssl.CERT_REQUIRED if _ssl else 2
+                    ssl_version = _ssl.PROTOCOL_TLS_CLIENT if _ssl else None
+                    ctx = _create_urllib3_context(cert_reqs=cert_reqs, ssl_version=ssl_version)
+                    if _ssl and _HAS_TLS_MIN:
+                        ctx.minimum_version = _ssl.TLSVersion.TLSv1_2
+                    # 显式把 CA 包注入 SSLContext（某些环境 Session.verify 路径不会传递到底层）
+                    cafile: str | None = None
+                    capath: str | None = None
+                    if isinstance(verify_eff, str) and Path(verify_eff).is_file():
+                        cafile = verify_eff
+                    elif isinstance(verify_eff, bool) and verify_eff:
+                        for p in ('/etc/ssl/certs', '/etc/pki/tls/certs'):
+                            if Path(p).is_dir():
+                                capath = p
+                                break
+                    if _ssl:
+                        try:
+                            ctx.load_verify_locations(cafile=cafile, capath=capath)
+                        except Exception:
+                            pass
+                except Exception:
+                    ctx = None  # type: ignore
+                if ctx is not None:
+                    kwargs['ssl_context'] = ctx
                 return super().init_poolmanager(*args, **kwargs)
 
-        s.mount('https://', _TLS12Adapter())
-        s.mount('http://', _TLS12Adapter())
+        s.mount('https://', _build_retry_adapter(_TLS12Adapter, total_retries=3))
+        s.mount('http://',  _build_retry_adapter(_HTTPAdapter,   total_retries=3))
     except Exception:
-        pass
+        try:
+            from requests.adapters import HTTPAdapter as _HTTPAdapter2
+            s.mount('https://', _build_retry_adapter(_HTTPAdapter2, total_retries=3))
+            s.mount('http://',  _build_retry_adapter(_HTTPAdapter2, total_retries=3))
+        except Exception:
+            pass
     return s
+
+
+def _is_ssl_error(e: Exception) -> bool:
+    """判断异常是否为证书链 / SSL 握手错误（Render 自签 MITM 属于 CERTIFICATE_VERIFY_FAILED）。"""
+    msg = f'{type(e).__name__}:{e}'
+    for kw in ('CERTIFICATE_VERIFY_FAILED', 'SSL', 'TLS', 'certificate verify',
+               'self-signed certificate', 'CERTIFICATE_CHAIN', 'SSLCertVerificationError',
+               'SSLError', 'UNSAFE_LEGACY_RENEGOTIATION', 'handshake failure'):
+        if kw in msg:
+            return True
+    return False
+
+
+def _session_get(sess: requests.Session, url: str, *,
+                 headers: dict[str, str] | None = None,
+                 params: dict[str, Any] | None = None,
+                 timeout: int = 20,
+                 allow_verify_fallback: bool = True) -> requests.Response:
+    """session.get 包装：正常（verify=CA/严格）→ 若遇到 SSL/CERT 错误 → 自动 fallback 一次 verify=False。
+    Render / 企业代理自签环境时，首次严格握手会命中 SSLCertVerificationError；fallback 后即可过。"""
+    try:
+        return sess.get(url, headers=headers, params=params, timeout=timeout)
+    except Exception as e:
+        if allow_verify_fallback and _is_ssl_error(e):
+            # verify=False 终极兜底（InsecureRequestWarning 已在模块开头被静默）
+            return sess.get(url, headers=headers, params=params, timeout=timeout, verify=False)
+        raise
 
 
 def _get_req_session() -> requests.Session:
@@ -417,20 +536,22 @@ def _get_req_session() -> requests.Session:
 
 
 def _get_fq_session(referer: str | None = None) -> requests.Session:
-    """返回已预热的番茄抓取 Session（尽量共享，避免 TLS 重连导致服务端风控 / 握手失败）"""
+    """返回已预热的番茄抓取 Session（尽量共享，避免 TLS 重连导致服务端风控 / 握手失败）。
+    预热阶段同样走 verify=False 自动兜底，防止 Render 出口自签 MITM 在预热阶段就挂掉。"""
     global _FQ_SESSION
     if _FQ_SESSION is None:
         with _FQ_SESSION_LOCK:
             if _FQ_SESSION is None:
                 sess = _build_tls_session()
                 try:
-                    # 预热：访问番茄首页 + 任一榜单页，按真实浏览器顺序建立可信连接
-                    sess.get(
+                    _session_get(
+                        sess,
                         'https://fanqienovel.com/',
                         headers={'Accept-Language': 'zh-CN,zh;q=0.9', **{k: v for k, v in REQ_HEADERS.items() if k != 'User-Agent'}},
                         timeout=20,
                     )
-                    sess.get(
+                    _session_get(
+                        sess,
                         'https://fanqienovel.com/rank/1_1',
                         headers={'Accept-Language': 'zh-CN,zh;q=0.9'},
                         timeout=20,
@@ -453,7 +574,7 @@ def _rank_fetch(url: str, referer: str | None = None, timeout: int = 20) -> str:
     h = dict(REQ_HEADERS)
     if referer:
         h['Referer'] = referer
-    r = sess.get(url, headers=h, timeout=timeout)
+    r = _session_get(sess, url, headers=h, timeout=timeout)
     r.raise_for_status()
     return r.text
 
@@ -743,7 +864,7 @@ def _crawl_fq_api(url: str, category_name: str | None, limit: int = 20) -> list[
         sess = _get_fq_session(referer=url)
         # 以当前 rank 详情页为 referer 再请求一次，提升命中真实 cookie 的概率
         try:
-            sess.get(url, headers={'Accept-Language': 'zh-CN,zh;q=0.9'}, timeout=20)
+            _session_get(sess, url, headers={'Accept-Language': 'zh-CN,zh;q=0.9'}, timeout=20)
         except Exception:
             pass
         params: dict[str, Any] = {
@@ -784,7 +905,7 @@ def _crawl_fq_api(url: str, category_name: str | None, limit: int = 20) -> list[
                     p = dict(params)
                     p['category_id'] = cid
                 try:
-                    r = sess.get(api_url, params=p, headers=headers, timeout=18)
+                    r = _session_get(sess, api_url, params=p, headers=headers, timeout=18)
                     if r.status_code != 200:
                         continue
                     d = r.json() if (r.headers.get('Content-Type') or '').lower().startswith('application/json') or (r.text.lstrip()[:1] in '[{') else None
@@ -1040,18 +1161,19 @@ def _qidian_session() -> requests.Session:
     注意：必须访问 /rank 页才能拿到 _csrfToken cookie；首页只下发 abPolicies，
     此时直接请求 majax/rank/xxx 会返回 {"code":1,"msg":"失败"}。
     """
-    s = requests.Session()
+    # 复用 TLS 适配 + Retry + verify 兜底会话（起点同番茄也可能在 Render 出口被自签 MITM 拦截）
+    s = _build_tls_session()
     s.headers.update(REQ_HEADERS)
     s.headers['User-Agent'] = _QIDIAN_MOBILE_UA
     try:
-        s.get('https://m.qidian.com/rank', timeout=15)
+        _session_get(s, 'https://m.qidian.com/rank', timeout=15)
     except Exception:
         pass
     # 兜底：如果 /rank 也没写入 cookie，再请求一次首页；部分网络环境首页优先设置基础域 cookie 后 /rank 的 set-cookie 才生效
     if not s.cookies.get('_csrfToken'):
         try:
-            s.get('https://m.qidian.com/', timeout=15)
-            s.get('https://m.qidian.com/rank', timeout=15)
+            _session_get(s, 'https://m.qidian.com/', timeout=15)
+            _session_get(s, 'https://m.qidian.com/rank', timeout=15)
         except Exception:
             pass
     return s
@@ -1142,8 +1264,8 @@ def crawl_qidian_api(rank_type: str, gender: str = 'male', category_code: str | 
         if sub_ids:
             params['subCatIds'] = ','.join(str(x) for x in sub_ids)
         try:
-            r = session.get(f'{_QIDIAN_API}/majax/rank/{api_name}', params=params,
-                            headers={'Referer': 'https://m.qidian.com/rank/'}, timeout=20)
+            r = _session_get(session, f'{_QIDIAN_API}/majax/rank/{api_name}', params=params,
+                             headers={'Referer': 'https://m.qidian.com/rank/'}, timeout=20)
             payload = r.json()
         except Exception:
             if page == 1:
@@ -1157,7 +1279,7 @@ def crawl_qidian_api(rank_type: str, gender: str = 'male', category_code: str | 
                 if token2 and token2 != token:
                     params2 = dict(params)
                     params2['_csrfToken'] = token2
-                    r2 = session2.get(f'{_QIDIAN_API}/majax/rank/{api_name}', params=params2,
+                    r2 = _session_get(session2, f'{_QIDIAN_API}/majax/rank/{api_name}', params=params2,
                                       headers={'Referer': 'https://m.qidian.com/rank/'}, timeout=20)
                     payload = r2.json()
                     session = session2
