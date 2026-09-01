@@ -57,3 +57,4 @@ npm-debug.log*
 *.zip
 *.tar.gz
 *.rar
+.ew-tmp/

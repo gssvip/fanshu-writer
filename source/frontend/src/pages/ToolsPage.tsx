@@ -2,10 +2,10 @@ import { useState, useEffect, useContext, useRef } from 'react';
 import * as yaml from 'js-yaml';
 import { api } from '../api';
 import { AuthContext } from '../App';
-import type { Book, SkillPack, ReviewResult, AnalysisResult, WorkflowStep, RankingData, AIUsageStats, AIUsageLogItem } from '../types';
+import type { Book, SkillPack, ReviewResult, AnalysisResult, WorkflowStep, RankingData } from '../types';
 import { GENRES, GENRE_GROUPS, normalizeGenreKey } from '../constants';
 
-type ToolTab = 'review' | 'skills' | 'analyze' | 'rankings' | 'ledger';
+type ToolTab = 'review' | 'skills' | 'analyze' | 'rankings';
 
 interface SkillEditorState {
   id: string | null;
@@ -61,13 +61,6 @@ export default function ToolsPage() {
   const [rankData, setRankData] = useState<RankingData | null>(null);
   const [rankLoading, setRankLoading] = useState(false);
 
-  // 【AI 调用账本】
-  const [usageStats, setUsageStats] = useState<AIUsageStats | null>(null);
-  const [usageLogs, setUsageLogs] = useState<AIUsageLogItem[]>([]);
-  const [usageLoading, setUsageLoading] = useState(false);
-  const [usageDays, setUsageDays] = useState(7);
-  const [usageOnlyFail, setUsageOnlyFail] = useState(false);
-
   // 拆书分析同步到作品
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncBookId, setSyncBookId] = useState('');
@@ -87,29 +80,11 @@ export default function ToolsPage() {
   // 加载榜单风向（默认平台）
   useEffect(() => { loadRankings('fanqie'); }, []);
 
-  // 加载 AI 调用账本
-  useEffect(() => { loadUsage(); }, []);
-
   async function loadRankings(platform: string) {
     setRankLoading(true);
     try { const r = await api.getRankings(platform); setRankData(r); }
     catch (e: any) { setRankData(null); }
     setRankLoading(false);
-  }
-
-  async function loadUsage(days?: number, onlyFail?: boolean) {
-    const d = days ?? usageDays;
-    const of = onlyFail ?? usageOnlyFail;
-    setUsageLoading(true);
-    try {
-      const [stats, logs] = await Promise.all([
-        api.getAiUsageStats(d),
-        api.getAiUsage({ limit: 50, onlyFail: of }),
-      ]);
-      setUsageStats(stats);
-      setUsageLogs(logs.items);
-    } catch (e: any) { /* 后台未配置时静默 */ }
-    setUsageLoading(false);
   }
 
   async function handleReview() {
@@ -574,7 +549,6 @@ export default function ToolsPage() {
     { key: 'skills' as ToolTab, label: '技能包', icon: '📦', desc: '15+题材工作流套件' },
     { key: 'analyze' as ToolTab, label: '拆书分析', icon: '📊', desc: '导入文件分析提炼方法论' },
     { key: 'rankings' as ToolTab, label: '榜单风向', icon: '📈', desc: '各平台排行榜趋势洞察' },
-    { key: 'ledger' as ToolTab, label: 'AI调用账本', icon: '🧾', desc: '每次AI调用的成本与成败' },
   ];
 
   return (
@@ -1140,9 +1114,53 @@ category：master
                   <div style={{fontSize:16,fontWeight:700}}>{rankData.platform} · {rankData.note}</div>
                   <div style={{fontSize:12,opacity:.9}}>📌 风向 {rankData.trend_marker.label} · {rankData.trend_marker.tone}</div>
                 </div>
+                <div style={{marginLeft:'auto',fontSize:11,opacity:.9,padding:'3px 8px',background:'rgba(255,255,255,.18)',borderRadius:6}}>
+                  {rankData.source || (rankData.fetch_ok ? '实时抓取' : '内置精选')} · {rankData.books?.length || 0} 本
+                </div>
               </div>
 
-              <div className="rank-block">
+              {/* 真实榜单书籍 */}
+              {Array.isArray(rankData.books) && rankData.books.length > 0 && (
+                <div className="rank-block">
+                  <h4 style={{fontSize:14,marginBottom:8}}>📖 实时榜单 Top{rankData.books.length}</h4>
+                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                    {rankData.books.map((b, i) => (
+                      <a
+                        key={i}
+                        href={b.bookUrl || undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rank-book-row"
+                        style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'var(--bg-secondary)',border:'1px solid var(--border-color)',borderRadius:8,textDecoration:'none',color:'inherit'}}
+                      >
+                        <span className="rank-no" style={{minWidth:24,fontWeight:800,fontSize:14,color:i<3?'#e67e22':'var(--text-muted)'}}>{b.rankNo ?? i+1}</span>
+                        {b.coverUrl ? (
+                          <img src={b.coverUrl} alt="" style={{width:30,height:40,borderRadius:4,objectFit:'cover',background:'var(--bg-tertiary)'}} />
+                        ) : (
+                          <span style={{width:30,height:40,borderRadius:4,background:'var(--bg-tertiary)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>📚</span>
+                        )}
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontWeight:600,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.title || b.point}</div>
+                          <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                            {[b.author, b.category, b.words, b.status, b.updateTime].filter(Boolean).join(' · ')}
+                          </div>
+                        </div>
+                        {!!b.metric && (
+                          <span style={{fontSize:12,fontWeight:700,color:'var(--accent)',whiteSpace:'nowrap'}}>{b.metric}</span>
+                        )}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {!rankData.fetch_ok && rankData.fetch_error && (
+                <div className="rank-block" style={{marginTop:8,padding:'8px 10px',background:'#fdecec',borderRadius:8,fontSize:12,color:'#c0392b'}}>
+                  ⚠️ 实时抓取失败（{rankData.fetch_error}），已展示内置精选榜单
+                </div>
+              )}
+
+              <div className="rank-block" style={{marginTop:12}}>
                 <h4 style={{fontSize:13,marginBottom:6}}>🔥 热门标签</h4>
                 <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
                   {rankData.hot_tags.map((t, i) => (
@@ -1175,106 +1193,6 @@ category：master
               <div className="rank-advice" style={{marginTop:12,padding:12,background:'color-mix(in srgb, var(--accent) 8%, transparent)',borderRadius:'var(--radius-sm)',fontSize:13,lineHeight:1.7}}>
                 💡 <strong>创作建议：</strong>{rankData.advice}
               </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'ledger' && (
-        <div className="tool-panel">
-          <h3>🧾 AI 调用账本</h3>
-          <p className="text-muted">记录每一次AI调用的场景、模型、字数、耗时与成败，便于审计和成本掌控</p>
-
-          <div className="form-row" style={{alignItems:'flex-end',gap:8}}>
-            <div style={{flex:1}}>
-              <label className="input-label">统计周期</label>
-              <select className="input" value={usageDays} onChange={e => { const d = Number(e.target.value); setUsageDays(d); loadUsage(d, usageOnlyFail); }}>
-                <option value={7}>近 7 天</option>
-                <option value={30}>近 30 天</option>
-                <option value={90}>近 90 天</option>
-              </select>
-            </div>
-            <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13}}>
-              <input type="checkbox" checked={usageOnlyFail} onChange={e => { const of = e.target.checked; setUsageOnlyFail(of); loadUsage(usageDays, of); }} /> 仅看失败
-            </label>
-            <button className="btn-primary" onClick={() => loadUsage()} disabled={usageLoading}>{usageLoading ? '加载中...' : '刷新'}</button>
-          </div>
-
-          {usageStats && (
-            <>
-              <div className="ledger-cards" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginTop:16}}>
-                <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
-                  <div style={{fontSize:22,fontWeight:800,color:'var(--accent)'}}>{usageStats.total_calls}</div>
-                  <div style={{fontSize:12,color:'var(--text-muted)'}}>总调用（{usageStats.days}天）</div>
-                </div>
-                <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
-                  <div style={{fontSize:22,fontWeight:800,color:'#27ae60'}}>{usageStats.success_rate}%</div>
-                  <div style={{fontSize:12,color:'var(--text-muted)'}}>成功率（失败{usageStats.failed}）</div>
-                </div>
-                <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
-                  <div style={{fontSize:22,fontWeight:800}}>{(usageStats.total_output_chars / 10000).toFixed(2)}万字</div>
-                  <div style={{fontSize:12,color:'var(--text-muted)'}}>累计输出字数</div>
-                </div>
-                <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
-                  <div style={{fontSize:22,fontWeight:800}}>{(usageStats.total_duration_ms / 60000 / 60).toFixed(1)}h</div>
-                  <div style={{fontSize:12,color:'var(--text-muted)'}}>累计耗时时长</div>
-                </div>
-              </div>
-
-              {usageStats.by_scene.length > 0 && (
-                <div className="ledger-block" style={{marginTop:16}}>
-                  <h4 style={{fontSize:14,marginBottom:8}}>📌 按场景分布</h4>
-                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                    {usageStats.by_scene.map((s, i) => {
-                      const max = Math.max(...usageStats.by_scene.map(x => x.count), 1);
-                      return (
-                        <div key={i} style={{display:'flex',alignItems:'center',gap:8,fontSize:13}}>
-                          <span style={{width:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.scene}</span>
-                          <div style={{flex:1,background:'var(--bg-tertiary)',borderRadius:4,height:14,overflow:'hidden'}}>
-                            <div style={{width:`${(s.count / max) * 100}%`,height:'100%',background:'var(--accent)',borderRadius:4}} />
-                          </div>
-                          <span style={{minWidth:24,textAlign:'right',fontWeight:600}}>{s.count}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {usageLogs.length > 0 && (
-                <div className="ledger-block" style={{marginTop:16}}>
-                  <h4 style={{fontSize:14,marginBottom:8}}>🗒️ 最近调用明细</h4>
-                  <div style={{maxHeight:300,overflowY:'auto',border:'1px solid var(--border-color)',borderRadius:8}}>
-                    <table style={{width:'100%',fontSize:12,borderCollapse:'collapse'}}>
-                      <thead>
-                        <tr style={{background:'var(--bg-tertiary)',textAlign:'left'}}>
-                          <th style={{padding:8}}>场景</th><th style={{padding:8}}>模型</th><th style={{padding:8}}>输出字</th>
-                          <th style={{padding:8}}>耗时</th><th style={{padding:8}}>状态</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {usageLogs.map(log => (
-                          <tr key={log.id} style={{borderTop:'1px solid var(--border-color)'}}>
-                            <td style={{padding:'6px 8px',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={log.scene}>{log.scene}</td>
-                            <td style={{padding:'6px 8px',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={log.model}>{log.model}</td>
-                            <td style={{padding:'6px 8px'}}>{log.output_chars}</td>
-                            <td style={{padding:'6px 8px'}}>{log.duration_ms}ms</td>
-                            <td style={{padding:'6px 8px'}}>
-                              {log.success ? <span style={{color:'#27ae60'}}>✓</span> : <span style={{color:'#e74c3c'}}>✗ {log.error_message.slice(0,20)}</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {!usageStats && (
-            <div className="empty-state" style={{padding:24,marginTop:12}}>
-              <p>暂无AI调用记录。完成一次AI创作/修正后，这里会自动记录。</p>
             </div>
           )}
         </div>

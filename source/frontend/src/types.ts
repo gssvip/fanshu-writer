@@ -259,12 +259,23 @@ export interface AIUsageStats {
 
 // 榜单风向
 export interface RankingExample { title: string; tag: string; point: string }
+export interface RankBook {
+  rankNo: number; title: string; author: string; bookId: string;
+  bookUrl: string; coverUrl: string; metric: string; metricValue: number;
+  status: string; category: string; words: string;
+  lastChapter: string; updateTime: string; category2: string;
+  point?: string;
+}
 export interface RankingData {
   platform: string; icon: string; note: string;
   trend_marker: { label: string; tone: string };
   hot_tags: string[]; rising_keywords: string[]; hot_genres: string[];
   examples: RankingExample[];
   advice: string;
+  books: RankBook[];
+  fetch_ok?: boolean;
+  source?: string;
+  fetch_error?: string;
 }
 
 export interface ReviewResult {

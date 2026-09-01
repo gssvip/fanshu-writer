@@ -2,6 +2,7 @@ import os, sys
 if __name__ == '__main__': sys.modules.setdefault('app', sys.modules[__name__])  # 防双加载
 import re
 import json
+import time
 import uuid
 import shutil
 import zipfile
@@ -14524,6 +14525,202 @@ def ai_usage_stats():
 # ============================================================
 # 【榜单风向】各平台排行榜趋势数据
 # ============================================================
+# 真实榜单抓取：移植自 easy-writing（客户端本地爬虫）的核心逻辑到服务端。
+#  - 七猫：官方 JSON 接口，结构化字段最完整（title/author/热度/字数/分类）
+#  - 番茄：抓榜单页 SSR 首屏 HTML，私用区反爬字体解码书名/作者
+#  - 起点：全站 probe.js 反爬，服务端直连必被拦截 → 回退内置精选榜
+# 结果按平台内存缓存 1 小时（榜单每日仅小幅变化），避免频繁打源站。
+_RANK_CACHE: Dict[str, Any] = {}
+_RANK_CACHE_TS: Dict[str, float] = {}
+_RANK_CACHE_TTL = 3600
+
+# 番茄私用区字体解码字典（码点字符串 → 字符），从 fanqie-font-dict.json 加载
+_fq_dict: Dict[str, str] = {}
+try:
+    _fqp = Path(__file__).parent / 'fanqie_font_dict.json'
+    if _fqp.exists():
+        _fq_dict = json.loads(_fqp.read_text(encoding='utf-8'))
+except Exception:
+    _fq_dict = {}
+_FQ_DICT = _fq_dict
+
+def _clean(value):
+    return re.sub(r'\s+', ' ', str(value or '')).strip()
+
+
+_RANK_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+}
+
+
+def _rank_fetch(url, referer=None, timeout=20):
+    headers = dict(_RANK_HEADERS)
+    if referer:
+        headers['Referer'] = referer
+    resp = requests.get(url, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    return resp.text
+
+
+def _decode_fq(text):
+    if not text:
+        return ''
+    out = []
+    for ch in text:
+        out.append(_FQ_DICT.get(str(ord(ch)), ch))
+    return ''.join(out)
+
+
+def _parse_cn_number(s):
+    m = re.search(r'([\d.]+)\s*([万亿]?)', s or '')
+    if not m:
+        return 0
+    try:
+        v = float(m.group(1))
+    except ValueError:
+        return 0
+    u = m.group(2)
+    f = 100000000 if u == '亿' else (10000 if u == '万' else 1)
+    return int(round(v * f))
+
+
+# 番茄抓取：支持多分类榜单（阅读榜/新书榜），合并去重
+FANQIE_RANK_URLS = [
+    # 合并多分类阅读榜，覆盖各热门赛道
+    'https://fanqienovel.com/rank/1_2_1014',  # 都市高武
+    'https://fanqienovel.com/rank/1_2_257',   # 玄幻脑洞
+    'https://fanqienovel.com/rank/1_2_8',     # 科幻末世
+    'https://fanqienovel.com/rank/1_2_261',   # 都市日常
+    'https://fanqienovel.com/rank/1_2_124',   # 都市修真
+    'https://fanqienovel.com/rank/1_2_751',   # 悬疑灵异
+]
+
+
+def _crawl_fanqie(max_books=40):
+    books, seen = [], set()
+    for url in FANQIE_RANK_URLS:
+        try:
+            html = _rank_fetch(url, referer='https://fanqienovel.com/')
+        except Exception:
+            continue
+        for block in html.split('rank-book-item')[1:]:
+            rm = re.search(r'book-item-index"><h1>(\d+)</h1><p><span class="(up|down)"></span>(\d+)', block)
+            tm = re.search(r'title"><a href="/page/(\d+)"[^>]*>([^<]+)</a>', block)
+            if not tm:
+                continue
+            book_id, _title = tm.group(1), _decode_fq(tm.group(2))
+            if book_id in seen:
+                continue
+            seen.add(book_id)
+            am = re.search(r'author"><a[^>]*><span[^>]*>([^<]+)</span></a>', block)
+            cm = re.search(r'book-cover-img[^>]*src="//([^"]+)"', block)
+            ctm = re.search(r'book-item-count">在读：(?:<!--\s*-->)?\s*([^<]+)</span>', block)
+            stm = re.search(r'book-item-footer-status">([^<]+)</span>', block)
+            cm2 = cm.group(1) if cm else ''
+            metric = _decode_fq(ctm.group(1)).strip() if ctm else ''
+            books.append({
+                'rankNo': int(rm.group(1)) if rm else len(books) + 1,
+                'title': _title,
+                'author': _decode_fq(am.group(1)).strip() if am else '',
+                'bookId': book_id,
+                'bookUrl': f'https://fanqienovel.com/page/{book_id}',
+                'coverUrl': ('https://' + cm2) if cm2 else '',
+                'metric': metric,
+                'metricValue': _parse_cn_number(metric),
+                'status': _decode_fq(stm.group(1)).strip() if stm else '',
+                'category': '',
+            })
+            if len(books) >= max_books:
+                break
+        if len(books) >= max_books:
+            break
+    if not books:
+        raise RuntimeError('番茄榜单抓取超时或页面结构变更')
+    return books
+
+
+QIMAO_RANK_URLS = [
+    'https://www.qimao.com/qimaoapi/api/rank/book-list?is_girl=0&rank_type=1&date_type=1&page={p}',
+    'https://www.qimao.com/qimaoapi/api/rank/book-list?is_girl=0&rank_type=3&date_type=1&page={p}',
+]
+
+
+def _crawl_qimao(max_books=40):
+    books, seen = [], set()
+    for base in QIMAO_RANK_URLS:
+        for page in (1, 2):
+            try:
+                url = base.format(p=page)
+                html = _rank_fetch(url, referer='https://www.qimao.com/rank/')
+                payload = json.loads(html)
+            except Exception:
+                continue
+            table = ((payload.get('data') or {}).get('table_data')) or []
+            for row in table:
+                book_id = str(row.get('book_id') or '').strip()
+                title = _clean(row.get('title'))
+                if not title or not book_id:
+                    continue
+                key = book_id or title
+                if key in seen:
+                    continue
+                seen.add(key)
+                num = _clean(row.get('number'))
+                unit = _clean(row.get('unit'))
+                metric = f'{num}{unit}'.strip()
+                books.append({
+                    'rankNo': len(books) + 1,
+                    'title': title,
+                    'author': _clean(row.get('author')),
+                    'bookId': book_id,
+                    'bookUrl': row.get('book_url') or f'https://www.qimao.com/shuku/{book_id}/',
+                    'coverUrl': _clean(row.get('image_link')),
+                    'metric': metric,
+                    'metricValue': _parse_cn_number(metric),
+                    'status': '已完结' if str(row.get('is_over')) == '1' else '连载中',
+                    'category': f"{_clean(row.get('category1_name'))} {_clean(row.get('category2_name'))}".strip(),
+                    'words': _clean(row.get('words_num')),
+                    'lastChapter': _clean(row.get('latest_chapter_title')),
+                    'updateTime': _clean(row.get('update_time')),
+                })
+                if len(books) >= max_books:
+                    return books
+    if not books:
+        raise RuntimeError('七猫榜单接口无数据')
+    return books
+
+
+# 起点反爬不可直抓：内置精选榜单（保留趋势分析，标注抓取状态）
+def _crawl_qidian(max_books=40):
+    raise RuntimeError('起点站点启用探针反爬，服务端无法直连抓取')  # 交给回退
+
+
+def _rank_fallback_books(platform):
+    ex = _RANKING_DATA.get(platform, {}).get('examples') or []
+    return [{'rankNo': i + 1, 'title': e['title'], 'author': '', 'bookUrl': '',
+             'metric': '', 'metricValue': 0, 'status': '', 'category': e.get('tag', ''),
+             'point': e.get('point', '')} for i, e in enumerate(ex)]
+
+
+def _get_rank_books(platform):
+    now = time.time()
+    if platform in _RANK_CACHE and (now - _RANK_CACHE_TS.get(platform, 0)) < _RANK_CACHE_TTL:
+        return _RANK_CACHE[platform]
+    crawlers = {
+        'fanqie': _crawl_fanqie,
+        'qimao': _crawl_qimao,
+        'qidian': _crawl_qidian,
+    }
+    func = crawlers.get(platform)
+    books = func() if func else None
+    if books:
+        _RANK_CACHE[platform] = books
+        _RANK_CACHE_TS[platform] = now
+    return books
+
+
 _RANKING_DATA = {
     'qidian': {
         'platform': '起点中文网', 'icon': '🏯', 'note': '男频传统市场风向',
@@ -14569,11 +14766,32 @@ _RANKING_DATA = {
 
 @app.route('/api/rankings', methods=['GET'])
 def rankings_analyse():
-    """获取平台榜单风向（趋势、热点标签、上升关键词、参考作品、创作建议）。"""
+    """获取平台榜单风向：趋势分析下钻 + 真实榜单书籍列表（实时抓取）。"""
     platform = request.args.get('platform', 'fanqie')
-    data = _RANKING_DATA.get(platform)
+    data = dict(_RANKING_DATA.get(platform))
     if not data:
         return jsonify({'error': '未知平台'}), 400
+    data['books'] = []
+    data['fetch_ok'] = False
+    try:
+        books = _get_rank_books(platform)
+        if books:
+            data['books'] = books
+            data['fetch_ok'] = True
+            data['source'] = '实时抓取' if platform != 'qidian' else '内置精选'
+        else:
+            data['books'] = _rank_fallback_books(platform)
+            data['source'] = '内置精选'
+    except Exception as e:
+        data['books'] = _rank_fallback_books(platform)
+        data['source'] = '内置精选'
+        data['fetch_error'] = str(e)
+    # 有真实榜单时，用榜单热门题材反哺趋势标签，让风向更贴近当下
+    if data['books']:
+        cats = [b.get('category', '') for b in data['books'][:20] if b.get('category')]
+        cat_tags = [c for c in dict.fromkeys(cats) if c][:8]
+        if len(cat_tags) >= 2:
+            data['hot_tags'] = cat_tags
     return jsonify(data)
 
 

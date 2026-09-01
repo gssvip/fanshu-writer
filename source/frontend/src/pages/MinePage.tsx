@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { api, getApiBaseUrl, setApiBaseUrl } from '../api';
 import { AuthContext } from '../App';
 import type { AIConfig } from '../types';
-import type { Book } from '../types';
+import type { Book, AIUsageStats, AIUsageLogItem } from '../types';
 
 export default function MinePage() {
   const { currentUser, theme, customColors, setTheme, setCustomColors, setCurrentUser, logout } = useStore() as any;
@@ -17,6 +17,13 @@ export default function MinePage() {
   const [activeSection, setActiveSection] = useState('');
   const [stats, setStats] = useState({ totalBooks: 0, totalWords: 0, totalChapters: 0 });
   const [writingHist, setWritingHist] = useState({ todayWords: 0, streak: 0 });
+
+  // AI 调用账本
+  const [usageStats, setUsageStats] = useState<AIUsageStats | null>(null);
+  const [usageLogs, setUsageLogs] = useState<AIUsageLogItem[]>([]);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageDays, setUsageDays] = useState(7);
+  const [usageOnlyFail, setUsageOnlyFail] = useState(false);
 
   // AI 模型拉取与测试连接
   const [fetchingModels, setFetchingModels] = useState(false);
@@ -139,6 +146,22 @@ export default function MinePage() {
       // 兼容旧后端：list 接口不存在时回退到单配置接口
       api.getAIConfig().then(setAIConfig).catch(() => {});
     });
+  }
+
+  // AI 调用账本
+  async function loadUsage(days?: number, onlyFail?: boolean) {
+    const d = days ?? usageDays;
+    const of = onlyFail ?? usageOnlyFail;
+    setUsageLoading(true);
+    try {
+      const [statsData, logs] = await Promise.all([
+        api.getAiUsageStats(d),
+        api.getAiUsage({ limit: 50, onlyFail: of }),
+      ]);
+      setUsageStats(statsData);
+      setUsageLogs(logs.items);
+    } catch (e: any) { /* 后台未配置时静默 */ }
+    setUsageLoading(false);
   }
 
   // 切换激活配置：切换后立即重新加载该配置详情
@@ -318,6 +341,7 @@ export default function MinePage() {
   const SECTIONS = [
     { key: 'server', label: '服务器', icon: '🌐' },
     { key: 'ai', label: 'AI 配置', icon: '🤖' },
+    { key: 'ledger', label: 'AI调用账本', icon: '🧾' },
     { key: 'storage', label: '本地存储', icon: '💾' },
     { key: 'theme', label: '主题', icon: '🎨' },
     { key: 'account', label: '账户安全', icon: '🔐' },
@@ -326,6 +350,7 @@ export default function MinePage() {
 
   function toggleSection(key: string) {
     setActiveSection(prev => prev === key ? '' : key);
+    if (key === 'ledger') loadUsage();
   }
 
   function handleSaveStorage() {
@@ -696,6 +721,106 @@ export default function MinePage() {
               <div className={`test-result ${testResult.success ? 'success' : 'error'}`}>
                 <span className="test-result-icon">{testResult.success ? '✅' : '❌'}</span>
                 <span className="test-result-msg">{testResult.msg}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeSection === 'ledger' && (
+          <div className="tool-panel">
+            <h3>🧾 AI 调用账本</h3>
+            <p className="text-muted">记录每一次AI调用的场景、模型、字数、耗时与成败，便于审计和成本掌控</p>
+
+            <div className="form-row" style={{alignItems:'flex-end',gap:8}}>
+              <div style={{flex:1}}>
+                <label className="input-label">统计周期</label>
+                <select className="input" value={usageDays} onChange={e => { const d = Number(e.target.value); setUsageDays(d); loadUsage(d, usageOnlyFail); }}>
+                  <option value={7}>近 7 天</option>
+                  <option value={30}>近 30 天</option>
+                  <option value={90}>近 90 天</option>
+                </select>
+              </div>
+              <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13}}>
+                <input type="checkbox" checked={usageOnlyFail} onChange={e => { const of = e.target.checked; setUsageOnlyFail(of); loadUsage(usageDays, of); }} /> 仅看失败
+              </label>
+              <button className="btn-primary" onClick={() => loadUsage()} disabled={usageLoading}>{usageLoading ? '加载中...' : '刷新'}</button>
+            </div>
+
+            {usageStats && (
+              <>
+                <div className="ledger-cards" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginTop:16}}>
+                  <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
+                    <div style={{fontSize:22,fontWeight:800,color:'var(--accent)'}}>{usageStats.total_calls}</div>
+                    <div style={{fontSize:12,color:'var(--text-muted)'}}>总调用（{usageStats.days}天）</div>
+                  </div>
+                  <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
+                    <div style={{fontSize:22,fontWeight:800,color:'#27ae60'}}>{usageStats.success_rate}%</div>
+                    <div style={{fontSize:12,color:'var(--text-muted)'}}>成功率（失败{usageStats.failed}）</div>
+                  </div>
+                  <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
+                    <div style={{fontSize:22,fontWeight:800}}>{(usageStats.total_output_chars / 10000).toFixed(2)}万字</div>
+                    <div style={{fontSize:12,color:'var(--text-muted)'}}>累计输出字数</div>
+                  </div>
+                  <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
+                    <div style={{fontSize:22,fontWeight:800}}>{(usageStats.total_duration_ms / 60000 / 60).toFixed(1)}h</div>
+                    <div style={{fontSize:12,color:'var(--text-muted)'}}>累计耗时时长</div>
+                  </div>
+                </div>
+
+                {usageStats.by_scene.length > 0 && (
+                  <div className="ledger-block" style={{marginTop:16}}>
+                    <h4 style={{fontSize:14,marginBottom:8}}>📌 按场景分布</h4>
+                    <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                      {usageStats.by_scene.map((s, i) => {
+                        const max = Math.max(...usageStats.by_scene.map(x => x.count), 1);
+                        return (
+                          <div key={i} style={{display:'flex',alignItems:'center',gap:8,fontSize:13}}>
+                            <span style={{width:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.scene}</span>
+                            <div style={{flex:1,background:'var(--bg-tertiary)',borderRadius:4,height:14,overflow:'hidden'}}>
+                              <div style={{width:`${(s.count / max) * 100}%`,height:'100%',background:'var(--accent)',borderRadius:4}} />
+                            </div>
+                            <span style={{minWidth:24,textAlign:'right',fontWeight:600}}>{s.count}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {usageLogs.length > 0 && (
+                  <div className="ledger-block" style={{marginTop:16}}>
+                    <h4 style={{fontSize:14,marginBottom:8}}>🗒️ 最近调用明细</h4>
+                    <div style={{maxHeight:300,overflowY:'auto',border:'1px solid var(--border-color)',borderRadius:8}}>
+                      <table style={{width:'100%',fontSize:12,borderCollapse:'collapse'}}>
+                        <thead>
+                          <tr style={{background:'var(--bg-tertiary)',textAlign:'left'}}>
+                            <th style={{padding:8}}>场景</th><th style={{padding:8}}>模型</th><th style={{padding:8}}>输出字</th>
+                            <th style={{padding:8}}>耗时</th><th style={{padding:8}}>状态</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {usageLogs.map(log => (
+                            <tr key={log.id} style={{borderTop:'1px solid var(--border-color)'}}>
+                              <td style={{padding:'6px 8px',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={log.scene}>{log.scene}</td>
+                              <td style={{padding:'6px 8px',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={log.model}>{log.model}</td>
+                              <td style={{padding:'6px 8px'}}>{log.output_chars}</td>
+                              <td style={{padding:'6px 8px'}}>{log.duration_ms}ms</td>
+                              <td style={{padding:'6px 8px'}}>
+                                {log.success ? <span style={{color:'#27ae60'}}>✓</span> : <span style={{color:'#e74c3c'}}>✗ {log.error_message.slice(0,20)}</span>}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {!usageStats && (
+              <div className="empty-state" style={{padding:24,marginTop:12}}>
+                <p>暂无AI调用记录。完成一次AI创作/修正后，这里会自动记录。</p>
               </div>
             )}
           </div>
