@@ -73,6 +73,22 @@ export default function ToolsPage() {
   const [nrCrawling, setNrCrawling] = useState(false);
   // 保留原 getRankings 返回的旧结构作为 banner
   const [rankBanner, setRankBanner] = useState<RankingData | null>(null);
+  // #6 手动抓取控制：筛选/分类/关键词变化时不自动抓，仅点击「抓取本榜」/ 搜索按钮 / 分页 才抓
+  const [nrFetchKey, setNrFetchKey] = useState(0); // 递增：触发一次请求
+  // #3 移动端自动折叠：工具箱 + 选择作品 在 activeTab=rankings 时收起
+  const [toolsCollapsedMobile, setToolsCollapsedMobile] = useState<boolean | null>(null); // null=未初始化
+
+  // 工具类型 Tab 切换 → 移动端自动展开/折叠工具箱与作品选择
+  useEffect(() => {
+    const isMobile = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
+    if (!isMobile) { setToolsCollapsedMobile(false); return; }
+    if (activeTab === 'rankings') {
+      // 需求 3：手机端点击榜单风向，选择作品上面的（工具箱 + 选择作品）自动折叠
+      setToolsCollapsedMobile(true);
+    } else if (toolsCollapsedMobile !== false) {
+      setToolsCollapsedMobile(false);
+    }
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 拆书分析同步到作品
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -90,7 +106,7 @@ export default function ToolsPage() {
       .then(setSkillPacks).catch(() => {});
   }, [skillGenreFilter, skillTypeFilter]);
 
-  // 加载榜单风向：平台列表 + 默认筛选 + 书籍列表 + 旧 banner
+  // 加载榜单风向：平台列表 + 默认筛选（仅首次进榜单 Tab 触发一次抓取 + 移动端加载默认源）
   useEffect(() => {
     (async () => {
       try {
@@ -100,16 +116,7 @@ export default function ToolsPage() {
     })();
   }, []);
 
-  useEffect(() => {
-    // category / 主题子类 变化 → 第一页重拉（子类优先覆盖父类）
-    const eff = nrSubCategoryCode || nrCategoryCode;
-    loadNrBooks(eff, nrRankType, nrGender, 1, nrKeyword);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nrCategoryCode, nrSubCategoryCode]);
-
-  useEffect(() => { setNrPage(1); }, [nrKeyword]);
-
-  // 平台/榜单类型/男女频变化 → 刷新 filters + 自动重置 category，然后拉书
+  // 平台/榜单类型/男女频变化 → 只刷新 filters 与默认 category/rankType/gender，**不自动抓书**（#6 手动抓取才拉）
   useEffect(() => {
     (async () => {
       setNrFiltersLoading(true);
@@ -119,18 +126,34 @@ export default function ToolsPage() {
         setNrFilters(f);
         if (f.rankTypes.length && !f.rankTypes.find(r => r.value === nrRankType)) {
           setNrRankType(f.rankTypes[0].value);
-          // rankType 会触发 useEffect，这里直接返回
-          return;
+          return; // 下一个 effect 会继续修正 filters 但仍不自动抓
         }
         const all = f.categories.find((c: NRCategory) => c.code === '__all__') || f.categories[0];
         const code = (all ? all.code : '__all__');
         if (code !== nrCategoryCode) setNrCategoryCode(code);
-        await loadNrBooks(code, nrRankType, nrGender, 1, nrKeyword);
       } catch {}
       finally { setNrFiltersLoading(false); }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nrPlatform, nrRankType, nrGender]);
+
+  // #6 真正抓书：只有 nrFetchKey 递增（点击「抓取本榜」/搜索/分页）才会执行一次 loadNrBooks
+  useEffect(() => {
+    if (!activeTab || nrFetchKey === 0) return; // 0 代表尚未点击抓取
+    loadNrBooks(nrSubCategoryCode || nrCategoryCode, nrRankType, nrGender, nrPage, nrKeyword, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nrFetchKey, activeTab]);
+
+  // 进入榜单 Tab 首次：自动拉一次默认平台的默认榜单给用户看，同时填好 banner 热词
+  const _didInitialFetchRef = useRef(false);
+  useEffect(() => {
+    if (activeTab !== 'rankings') return;
+    if (_didInitialFetchRef.current) return;
+    _didInitialFetchRef.current = true;
+    // filters 先加载 → 然后触发首次抓取（仅一次，用 ref 保证不再重复）
+    const t = window.setTimeout(() => setNrFetchKey(k => k + 1), 180);
+    return () => window.clearTimeout(t);
+  }, [activeTab]);
 
   async function loadNrBooks(catCode: string, rt: string, gd: string, page = 1, kw = '', force = false) {
     setNrListLoading(true);
@@ -149,19 +172,30 @@ export default function ToolsPage() {
       setNrList(r);
     } catch (e: any) { setNrListError(e?.message || '加载失败'); setNrList(null); }
     finally { setNrListLoading(false); }
-    // 异步拉 banner（热门标签/创作建议）——与 V2 钻取并行展示
+    // 异步拉 banner（热门标签/上升关键词）——与 V2 钻取并行展示（#4手机端两栏各一行）
     try {
       const b = await api.getRankings(nrPlatform);
       setRankBanner(b);
     } catch { /* banner 失败不阻塞主视图 */ }
   }
 
+  function triggerNrFetch(resetPage = false) {
+    // 统一入口：点击「抓取本榜」 / 搜索按钮 / Enter 搜索 都走这个
+    if (resetPage) setNrPage(1);
+    // useLayoutEffect 前保证 state 都落盘后再触发：用 microtask 后 setNrFetchKey
+    Promise.resolve().then(() => {
+      setNrFetchKey(k => k + 1);
+    });
+  }
+
   async function handleNrCrawlNow() {
-    const sid = nrList?.sourceId;
-    if (!sid) return;
+    // #6「抓取本榜」：即使没有 sourceId（未选中过榜单），也要根据当前筛选条件去爬一次（force=true 强制不走缓存）
     setNrCrawling(true);
     try {
-      await api.nrForceCrawl(sid);
+      const sid = nrList?.sourceId;
+      if (sid) {
+        try { await api.nrForceCrawl(sid); } catch { /* 某些精选源无法 force，fallback 继续拉一次 force=nrListBooks 即可 */ }
+      }
       await loadNrBooks(nrSubCategoryCode || nrCategoryCode, nrRankType, nrGender, nrPage, nrKeyword, true);
     } catch (e: any) { alert('刷新失败：' + (e?.message || String(e))); }
     finally { setNrCrawling(false); }
@@ -637,25 +671,42 @@ export default function ToolsPage() {
         <h1>工具箱</h1>
       </header>
 
-      <div className="tools-grid">
-        {TOOL_TABS.map(tab => (
-          <button key={tab.key} className={`tool-card ${activeTab === tab.key ? 'active' : ''}`} onClick={() => setActiveTab(tab.key)}>
-            <span className="tool-card-icon">{tab.icon}</span>
-            <div className="tool-card-info">
-              <div className="tool-card-name">{tab.label}</div>
-              <div className="tool-card-desc">{tab.desc}</div>
-            </div>
-          </button>
-        ))}
-      </div>
+      {/* #3 手机端：工具箱 + 选择作品 = 可折叠面板（进榜单风向时自动收起） */}
+      <section className={`tools-top-section nr-collapsible ${toolsCollapsedMobile ? 'is-collapsed' : ''}`}
+               data-collapsed={toolsCollapsedMobile ? '1' : '0'}>
+        <button
+          type="button"
+          className="nr-collapse-toggle"
+          aria-expanded={!toolsCollapsedMobile}
+          onClick={() => setToolsCollapsedMobile((v: boolean | null) => !(v === true))}
+        >
+          <span className="nr-collapse-toggle__label">
+            {toolsCollapsedMobile ? '▽ 展开 工具箱 & 选择作品' : '△ 收起 工具箱 & 选择作品'}
+          </span>
+          <span className="nr-collapse-toggle__icon">{toolsCollapsedMobile ? '＋' : '－'}</span>
+        </button>
+        <div className="nr-collapsible-body">
+          <div className="tools-grid">
+            {TOOL_TABS.map(tab => (
+              <button key={tab.key} className={`tool-card ${activeTab === tab.key ? 'active' : ''}`} onClick={() => setActiveTab(tab.key)}>
+                <span className="tool-card-icon">{tab.icon}</span>
+                <div className="tool-card-info">
+                  <div className="tool-card-name">{tab.label}</div>
+                  <div className="tool-card-desc">{tab.desc}</div>
+                </div>
+              </button>
+            ))}
+          </div>
 
-      <div className="form-row" style={{margin:'0 16px',marginTop:12}}>
-        <label className="input-label">选择作品</label>
-        <select className="input" value={selectedBookId} onChange={e => setSelectedBookId(e.target.value)}>
-          <option value="">— 选择要操作的作品 —</option>
-          {books.map(b => <option key={b.id} value={b.id}>{b.title} ({b.word_count}字)</option>)}
-        </select>
-      </div>
+          <div className="form-row" style={{margin:'0 16px',marginTop:12}}>
+            <label className="input-label">选择作品</label>
+            <select className="input" value={selectedBookId} onChange={e => setSelectedBookId(e.target.value)}>
+              <option value="">— 选择要操作的作品 —</option>
+              {books.map(b => <option key={b.id} value={b.id}>{b.title} ({b.word_count}字)</option>)}
+            </select>
+          </div>
+        </div>
+      </section>
 
       {activeTab === 'review' && (
         <div className="tool-panel">
@@ -1166,221 +1217,317 @@ category：master
 
       {activeTab === 'rankings' && (
         <div className="tool-panel nr-root">
-          <h3>📈 榜单风向</h3>
-
-          {/* 1. 平台 Tab */}
-          <div className="fusion-card nr-filter-card" style={{marginBottom:12}}>
-            <div className="nr-platform-tabs" style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
-              {(nrPlatforms.length ? nrPlatforms : [
-                {code:'fanqie',name:'番茄小说网'},
-                {code:'qidian',name:'起点中文网'},
-              ]).map(p => (
-                <button
-                  key={p.code}
-                  className={`chat-send nr-platform-tab ${nrPlatform === p.code ? 'primary active' : 'ghost'}`}
-                  onClick={() => setNrPlatform(p.code)}
-                  title={p.remark || p.name}
-                  style={{
-                    padding:'8px 14px',minHeight:34,fontWeight: nrPlatform===p.code? 700: 500,
-                    flex:'1 1 auto', minWidth: 130, fontSize: 14,
-                    borderRadius: 10,
-                    background: nrPlatform===p.code
-                      ? 'linear-gradient(135deg, var(--accent), var(--accent-hover))'
-                      : 'var(--bg-tertiary)',
-                    color: nrPlatform===p.code ? '#fff' : 'var(--text-secondary)',
-                    border: nrPlatform===p.code
-                      ? '1px solid transparent'
-                      : '1px solid var(--border-color)',
-                  }}
-                >
-                  {p.code==='fanqie'?'🍅':p.code==='qidian'?'🏯':'📚'} <span style={{fontSize:13}}>{p.name}</span>
-                </button>
-              ))}
-              <span style={{flex:'0 0 auto', minWidth:1, height: 28, borderLeft: '1px solid var(--border-color)', margin: '0 2px', opacity:.6}} />
-              <button
-                className="chat-send primary nr-crawl-btn"
-                onClick={handleNrCrawlNow}
-                disabled={!nrList?.sourceId || nrCrawling || nrListLoading}
+          {/* #4 #5 标题行：📈 榜单风向 左侧；🔍 搜索框+按钮 紧接其右侧（桌面端 inline，移动端换行） */}
+          <div className="nr-title-row" style={{
+            display:'flex',flexWrap:'wrap',gap:10,alignItems:'center',
+            marginBottom:10, width:'100%', boxSizing:'border-box', minWidth:0,
+          }}>
+            <h3 style={{margin:0,fontSize:17,fontWeight:800,color:'var(--text-primary)',
+                        display:'inline-flex',alignItems:'center',gap:6,flex:'0 0 auto'}}>
+              <span>📈</span><span>榜单风向</span>
+            </h3>
+            <div className="nr-title-search" style={{
+              display:'flex', gap:8, alignItems:'center',
+              flex:'1 1 260px', minWidth:200, maxWidth:'100%', boxSizing:'border-box',
+            }}>
+              <input
+                className="input nr-search-input"
+                value={nrKeyword}
+                onChange={e => setNrKeyword(e.target.value)}
+                placeholder="搜索书名 / 作者，找到你想仿写的同类书"
                 style={{
-                  padding:'8px 14px',minHeight:34,minWidth: 140,flex: '0 0 auto',
-                  borderRadius: 10, fontWeight: 700,
-                  background: nrList?.sourceKind==='curated'
-                    ? 'linear-gradient(135deg,#f39c12,#c0392b)'
-                    : 'linear-gradient(135deg,#16a085,#22a06b)',
-                  border: '1px solid transparent',
-                  color: '#fff',
+                  flex:'1 1 auto', minWidth:0, maxWidth:'100%',
+                  padding:'8px 12px', fontSize:13, minHeight:36,
+                  borderRadius:10, boxSizing:'border-box',
                 }}
-                title={nrList?.sourceId ? '忽略缓存用你的网络重新抓取当前榜单源' : '先加载某个榜单源后可手动刷新'}
-              >
-                {nrCrawling ? '⏳ 抓取中…' : nrList?.sourceKind==='curated' ? '🔄 刷新精选' : '☁️ 抓取本榜'}
-              </button>
-              {nrList?.sourceKind==='curated' && (
-                <span className="crawl-status crawl-tip" style={{fontSize:12,whiteSpace:'nowrap',marginRight:'auto'}}>
-                  <i className="fa-solid fa-circle-info"></i>
-                  当前榜单受目标站反爬限制，为平台精选精选快照
-                </span>
-              )}
+                onKeyDown={e => { if (e.key === 'Enter') triggerNrFetch(true); }}
+              />
+              <button
+                className="chat-send primary nr-search-btn"
+                onClick={() => triggerNrFetch(true)}
+                disabled={nrListLoading || nrCrawling}
+                style={{
+                  padding:'8px 16px',minHeight:36,fontSize:13,fontWeight:700,
+                  flex:'0 0 auto',borderRadius:10,
+                  background:'linear-gradient(135deg,var(--accent),var(--accent-hover))',
+                  color:'#fff',border:'1px solid transparent',
+                }}
+              >🔍 搜索</button>
             </div>
+          </div>
 
-            {/* 2. 榜单类型 & 男女频 & 分类（内联样式兜底，防止旧缓存 CSS 失效） */}
-            <div className="nr-filter-section" style={{marginTop:14, display:'flex', flexDirection:'column', gap: 10}}>
-              <div className="nr-filter-row nr-row-rank-type" style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
-                <span className="filter-label nr-filter-label" style={{fontSize:13,color:'var(--text-muted)', fontWeight:600, paddingRight: 8, marginRight: 4}}>榜单类型</span>
-                {nrFiltersLoading && <span style={{fontSize:12,color:'var(--text-muted)'}}>加载中…</span>}
-                {!nrFiltersLoading && (!nrFilters?.rankTypes?.length) && <span style={{fontSize:12,color:'var(--text-muted)'}}>暂无类型</span>}
-                {!nrFiltersLoading && nrFilters?.rankTypes?.map((rt: NRRankType) => {
-                  const active = nrRankType === rt.value;
-                  return (
-                    <span
-                      key={rt.value}
-                      className={`filter-tag nr-filter-tag ${active ? 'filter-tag-active nr-filter-tag-active' : ''}`}
-                      onClick={() => setNrRankType(rt.value)}
-                      title={rt.label}
-                      style={{
-                        display:'inline-flex',alignItems:'center',justifyContent:'center', cursor:'pointer',
-                        padding: '6px 14px', borderRadius: 999,
-                        background: active ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
-                        border: active ? '1px solid transparent' : '1px solid var(--border-color)',
-                        color: active ? '#fff' : 'var(--text-secondary)',
-                        fontWeight: active ? 700 : 500, fontSize: 13, lineHeight: 1.35,
-                        whiteSpace: 'nowrap', transition:'all .15s ease-in-out', flexShrink:0,
-                        boxShadow: active ? '0 2px 6px color-mix(in srgb, var(--accent) 25%, transparent)' : 'none',
-                      }}
-                    >
-                      {rt.label}
-                    </span>
-                  );
-                })}
-              </div>
-              <div className="nr-filter-row nr-row-gender" style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
-                <span className="filter-label nr-filter-label" style={{fontSize:13,color:'var(--text-muted)',fontWeight:600,paddingRight:8,marginRight:4}}>频道</span>
-                <span
-                  className={`filter-tag nr-filter-tag ${(!nrFilters?.genders?.length || nrFilters.genders.includes('male')) && nrGender !== 'female' ? 'filter-tag-active nr-filter-tag-active' : ''}`}
-                  onClick={() => setNrGender(nrGender === 'male' ? '' : 'male')}
-                  style={{
-                    display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
-                    padding:'6px 14px',borderRadius:999,
-                    background: ((!nrFilters?.genders?.length || nrFilters.genders.includes('male')) && nrGender !== 'female')
-                      ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
-                    border: '1px solid var(--border-color)',
-                    color: ((!nrFilters?.genders?.length || nrFilters.genders.includes('male')) && nrGender !== 'female')
-                      ? '#fff' : 'var(--text-secondary)',
-                    fontWeight: ((!nrFilters?.genders?.length || nrFilters.genders.includes('male')) && nrGender !== 'female') ? 700 : 500,
-                    fontSize: 13, flexShrink:0, transition:'all .15s ease-in-out',
-                  }}
-                >
-                  男频
-                </span>
-                {(!nrFilters?.genders?.length || nrFilters.genders.includes('female')) && (
-                  <span
-                    className={`filter-tag nr-filter-tag ${nrGender === 'female' ? 'filter-tag-active nr-filter-tag-active' : ''}`}
-                    onClick={() => setNrGender(nrGender === 'female' ? '' : 'female')}
+          {/* 筛选主卡：平台 / 抓取 / 抓取时间 / 榜单类型+频道 / 主题分类 */}
+          <div className="fusion-card nr-filter-card" style={{marginBottom:12}}>
+            {/* 1. 平台 Tab + 抓取本榜 + #4 抓取时间（抓取按钮右侧 inline，下方不再重复显示） */}
+            <div className="nr-platform-row" style={{
+              display:'flex',flexWrap:'wrap',gap:8,alignItems:'center',
+              width:'100%', boxSizing:'border-box', minWidth:0,
+            }}>
+              <div className="nr-platform-tabs" style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center',flex:'1 1 320px',minWidth:0}}>
+                {(nrPlatforms.length ? nrPlatforms : [
+                  {code:'fanqie',name:'番茄小说网'},
+                  {code:'qidian',name:'起点中文网'},
+                ]).map(p => (
+                  <button
+                    key={p.code}
+                    className={`chat-send nr-platform-tab ${nrPlatform === p.code ? 'primary active' : 'ghost'}`}
+                    onClick={() => setNrPlatform(p.code)}
+                    title={p.remark || p.name}
                     style={{
-                      display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
-                      padding:'6px 14px',borderRadius:999,
-                      background: nrGender === 'female'
-                        ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
-                      border: '1px solid var(--border-color)',
-                      color: nrGender === 'female' ? '#fff' : 'var(--text-secondary)',
-                      fontWeight: nrGender === 'female' ? 700 : 500,
-                      fontSize: 13, flexShrink:0, transition:'all .15s ease-in-out',
+                      padding:'8px 14px',minHeight:36,fontWeight: nrPlatform===p.code? 700: 500,
+                      flex:'1 1 0', minWidth: 120, fontSize: 14,
+                      borderRadius: 10,
+                      background: nrPlatform===p.code
+                        ? 'linear-gradient(135deg, var(--accent), var(--accent-hover))'
+                        : 'var(--bg-tertiary)',
+                      color: nrPlatform===p.code ? '#fff' : 'var(--text-secondary)',
+                      border: nrPlatform===p.code
+                        ? '1px solid transparent'
+                        : '1px solid var(--border-color)',
                     }}
                   >
-                    女频
-                  </span>
-                )}
+                    <span style={{fontSize:15}}>{p.code==='fanqie'?'🍅':p.code==='qidian'?'🏯':'📚'}</span>
+                    <span style={{fontSize:13,marginLeft:4,whiteSpace:'nowrap'}}>{p.name}</span>
+                  </button>
+                ))}
               </div>
-              <div>
-                <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:8,fontWeight:600}}>主题分类</div>
-                <div className="tags-content nr-category-tags" style={{display:'flex',flexWrap:'wrap',gap:8}}>
-                  {nrFiltersLoading && <span style={{fontSize:12,color:'var(--text-muted)'}}>加载分类中…</span>}
-                  {!nrFiltersLoading && (!nrFilters?.categories?.length) && <span style={{fontSize:12,color:'var(--text-muted)'}}>暂无分类</span>}
-                  {!nrFiltersLoading && nrFilters?.categories?.map((c: NRCategory) => {
-                    const active = nrCategoryCode === c.code;
+
+              {/* 竖分隔线（桌面端可见） */}
+              <span className="nr-divider-v" style={{display:'none'}} />
+
+              {/* 抓取按钮 + #4 抓取时间 inline */}
+              <div className="nr-crawl-row" style={{
+                display:'flex',gap:10,alignItems:'center',
+                flex:'1 1 auto', minWidth:0, justifyContent:'flex-end',
+              }}>
+                <button
+                  className="chat-send primary nr-crawl-btn"
+                  onClick={handleNrCrawlNow}
+                  disabled={nrCrawling || nrListLoading}
+                  style={{
+                    padding:'8px 18px',minHeight:36,minWidth: 140,flex:'0 0 auto',
+                    borderRadius: 10, fontWeight: 800, fontSize:14,
+                    background: nrList?.sourceKind==='curated'
+                      ? 'linear-gradient(135deg,#f39c12,#c0392b)'
+                      : 'linear-gradient(135deg,#16a085,#22a06b)',
+                    border: '1px solid transparent',
+                    color: '#fff',
+                    boxShadow:'0 2px 10px color-mix(in srgb, var(--accent) 25%, transparent)',
+                  }}
+                  title="按当前筛选条件重新抓取/刷新本榜单（#6：点击才抓，不自动触发）"
+                >
+                  {nrCrawling ? '⏳ 抓取中…' : nrList?.sourceKind==='curated' ? '🔄 刷新精选' : '☁️ 抓取本榜'}
+                </button>
+                {/* #4 抓取时间：抓取按钮右侧 inline；只展示一个（下面不要了） */}
+                <span className="nr-crawl-time" style={{
+                  fontSize:12,color:'var(--text-muted)',whiteSpace:'nowrap',
+                  display:'inline-flex',alignItems:'center',gap:4,flexShrink:0,
+                  padding:'6px 10px',borderRadius:999,
+                  background:'var(--bg-tertiary)',border:'1px solid var(--border-color)',
+                }}>
+                  <span style={{opacity:.7}}>🕒</span>
+                  <span>
+                    {nrList?.fetchAt
+                      ? new Date(nrList.fetchAt * 1000).toLocaleDateString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).replace(/\//g,'-')
+                      : '尚未抓取'}
+                  </span>
+                </span>
+              </div>
+            </div>
+
+            {/* curate 提示 banner */}
+            {nrList?.sourceKind==='curated' && (
+              <div className="crawl-status crawl-tip" style={{fontSize:12,marginTop:8,padding:'6px 10px',borderRadius:8,background:'color-mix(in srgb, #f39c12 10%, transparent)',color:'#c87f10'}}>
+                ℹ️ 当前榜单受目标站反爬限制，为平台精选快照
+              </div>
+            )}
+
+            {/* 2. 榜单类型 & 频道：两列 title 对齐；手机端单列两行 label 仍同宽 对齐好看 (#4 标题与内容均匀对齐) */}
+            <div className="nr-filter-section nr-grid-2col" style={{
+              marginTop:14, display:'grid',gap:'10px 18px',
+              gridTemplateColumns:'1fr 1fr',
+            }}>
+              {/* 左：榜单类型 */}
+              <div className="nr-filter-row nr-row-rank-type nr-row-aligned"
+                   style={{display:'flex',gap:8,alignItems:'flex-start'}}>
+                <span className="filter-label nr-filter-label nr-label-fixed"
+                      style={{fontSize:13,color:'var(--text-muted)',fontWeight:600,
+                              minWidth:72,width:72,flex:'0 0 72px',paddingTop:6,
+                              textAlign:'right',paddingRight:8,boxSizing:'border-box'}}>榜单类型</span>
+                <div style={{flex:'1 1 0',minWidth:0,display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
+                  {nrFiltersLoading && <span style={{fontSize:12,color:'var(--text-muted)'}}>加载中…</span>}
+                  {!nrFiltersLoading && (!nrFilters?.rankTypes?.length) && <span style={{fontSize:12,color:'var(--text-muted)'}}>暂无类型</span>}
+                  {!nrFiltersLoading && nrFilters?.rankTypes?.map((rt: NRRankType) => {
+                    const active = nrRankType === rt.value;
                     return (
                       <span
-                        key={c.id}
+                        key={rt.value}
                         className={`filter-tag nr-filter-tag ${active ? 'filter-tag-active nr-filter-tag-active' : ''}`}
-                        onClick={() => { setNrCategoryCode(c.code); setNrSubCategoryCode(''); }}
-                        title={c.scope==='all'?'平台总榜':`分类榜：${c.name}`}
+                        onClick={() => setNrRankType(rt.value)}
+                        title={rt.label}
                         style={{
-                          display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
-                          padding:'5px 12px',borderRadius:999,
+                          display:'inline-flex',alignItems:'center',justifyContent:'center', cursor:'pointer',
+                          padding: '6px 14px', borderRadius: 999,
                           background: active ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
                           border: active ? '1px solid transparent' : '1px solid var(--border-color)',
                           color: active ? '#fff' : 'var(--text-secondary)',
-                          fontWeight: active ? 700 : 500, fontSize: 12.5, flexShrink: 0, transition:'all .15s ease-in-out',
-                          whiteSpace:'nowrap',
+                          fontWeight: active ? 700 : 500, fontSize: 13, lineHeight: 1.35,
+                          whiteSpace: 'nowrap', transition:'all .15s ease-in-out', flexShrink:0,
+                          boxShadow: active ? '0 2px 6px color-mix(in srgb, var(--accent) 25%, transparent)' : 'none',
                         }}
-                      >
-                        {c.name || c.code}
-                      </span>
+                      >{rt.label}</span>
                     );
                   })}
                 </div>
               </div>
-              {/* 主题子类（起点等二级分类） */}
-              {(() => {
-                const subs = (nrFilters?.subcategories || []).filter((s: NRCategory) => s.parentCode === nrCategoryCode);
-                if (!subs.length) return null;
-                return (
-                  <div style={{marginTop:8}}>
-                    <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:8,fontWeight:600}}>主题细化</div>
-                    <div className="tags-content nr-sub-tags" style={{display:'flex',flexWrap:'wrap',gap:8}}>
-                      <span
-                        className={`filter-tag nr-filter-tag ${!nrSubCategoryCode ? 'filter-tag-active nr-filter-tag-active' : ''}`}
-                        onClick={() => setNrSubCategoryCode('')}
-                        style={{
-                          display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
-                          padding:'5px 12px',borderRadius:999,
-                          background: !nrSubCategoryCode ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
-                          border: !nrSubCategoryCode ? '1px solid transparent' : '1px solid var(--border-color)',
-                          color: !nrSubCategoryCode ? '#fff' : 'var(--text-secondary)',
-                          fontWeight: !nrSubCategoryCode ? 700 : 500, fontSize: 12.5, flexShrink:0,
-                          transition:'all .15s ease-in-out', whiteSpace:'nowrap',
-                        }}
-                        title="全部该分类下的小说"
-                      >
-                        全部
-                      </span>
-                      {subs.map((s: NRCategory) => {
-                        const active = nrSubCategoryCode === s.code;
-                        return (
-                          <span
-                            key={s.id}
-                            className={`filter-tag nr-filter-tag ${active ? 'filter-tag-active nr-filter-tag-active' : ''}`}
-                            onClick={() => setNrSubCategoryCode(s.code === nrSubCategoryCode ? '' : s.code)}
-                            title={`主题分类：${s.name}`}
-                            style={{
-                              display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
-                              padding:'5px 12px',borderRadius:999,
-                              background: active ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
-                              border: active ? '1px solid transparent' : '1px solid var(--border-color)',
-                              color: active ? '#fff' : 'var(--text-secondary)',
-                              fontWeight: active ? 700 : 500, fontSize: 12.5, flexShrink:0,
-                              transition:'all .15s ease-in-out', whiteSpace:'nowrap',
-                            }}
-                          >
-                            {s.name || s.code}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
+              {/* 右：频道（男频/女频） */}
+              <div className="nr-filter-row nr-row-gender nr-row-aligned"
+                   style={{display:'flex',gap:8,alignItems:'flex-start'}}>
+                <span className="filter-label nr-filter-label nr-label-fixed"
+                      style={{fontSize:13,color:'var(--text-muted)',fontWeight:600,
+                              minWidth:72,width:72,flex:'0 0 72px',paddingTop:6,
+                              textAlign:'right',paddingRight:8,boxSizing:'border-box'}}>频道</span>
+                <div style={{flex:'1 1 0',minWidth:0,display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
+                  <span
+                    className={`filter-tag nr-filter-tag ${(!nrFilters?.genders?.length || nrFilters.genders.includes('male')) && nrGender !== 'female' ? 'filter-tag-active nr-filter-tag-active' : ''}`}
+                    onClick={() => setNrGender(nrGender === 'male' ? '' : 'male')}
+                    style={{
+                      display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
+                      padding:'6px 14px',borderRadius:999,
+                      background: ((!nrFilters?.genders?.length || nrFilters.genders.includes('male')) && nrGender !== 'female')
+                        ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
+                      border: '1px solid var(--border-color)',
+                      color: ((!nrFilters?.genders?.length || nrFilters.genders.includes('male')) && nrGender !== 'female')
+                        ? '#fff' : 'var(--text-secondary)',
+                      fontWeight: ((!nrFilters?.genders?.length || nrFilters.genders.includes('male')) && nrGender !== 'female') ? 700 : 500,
+                      fontSize: 13, flexShrink:0, transition:'all .15s ease-in-out',
+                    }}
+                  >男频</span>
+                  {(!nrFilters?.genders?.length || nrFilters.genders.includes('female')) && (
+                    <span
+                      className={`filter-tag nr-filter-tag ${nrGender === 'female' ? 'filter-tag-active nr-filter-tag-active' : ''}`}
+                      onClick={() => setNrGender(nrGender === 'female' ? '' : 'female')}
+                      style={{
+                        display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
+                        padding:'6px 14px',borderRadius:999,
+                        background: nrGender === 'female'
+                          ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
+                        border: '1px solid var(--border-color)',
+                        color: nrGender === 'female' ? '#fff' : 'var(--text-secondary)',
+                        fontWeight: nrGender === 'female' ? 700 : 500,
+                        fontSize: 13, flexShrink:0, transition:'all .15s ease-in-out',
+                      }}
+                    >女频</span>
+                  )}
+                </div>
+              </div>
             </div>
+
+            {/* 3. 主题分类：美化排版（更饱满 padding, grid 多行） (#4 均匀对齐) */}
+            <div className="nr-row-category" style={{marginTop:14, display:'flex',gap:8, alignItems:'flex-start'}}>
+              <span className="filter-label nr-filter-label nr-label-fixed"
+                    style={{fontSize:13,color:'var(--text-muted)',fontWeight:600,
+                            minWidth:72,width:72,flex:'0 0 72px',paddingTop:6,
+                            textAlign:'right',paddingRight:8,boxSizing:'border-box'}}>主题分类</span>
+              <div className="tags-content nr-category-tags"
+                   style={{flex:'1 1 0',minWidth:0,
+                           display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(86px,1fr))',
+                           gap:'8px 8px'}}>
+                {nrFiltersLoading && <span style={{fontSize:12,color:'var(--text-muted)',gridColumn:'1 / -1'}}>加载分类中…</span>}
+                {!nrFiltersLoading && (!nrFilters?.categories?.length) && <span style={{fontSize:12,color:'var(--text-muted)',gridColumn:'1 / -1'}}>暂无分类</span>}
+                {!nrFiltersLoading && nrFilters?.categories?.map((c: NRCategory) => {
+                  const active = nrCategoryCode === c.code;
+                  return (
+                    <button
+                      type="button"
+                      key={c.id}
+                      className={`filter-tag nr-filter-tag nr-category-pill ${active ? 'filter-tag-active nr-filter-tag-active' : ''}`}
+                      onClick={() => { setNrCategoryCode(c.code); setNrSubCategoryCode(''); }}
+                      title={c.scope==='all'?'平台总榜':`分类榜：${c.name}`}
+                      style={{
+                        display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
+                        padding:'7px 10px',borderRadius:999, minHeight:30,
+                        background: active ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
+                        border: active ? '1px solid transparent' : '1px solid var(--border-color)',
+                        color: active ? '#fff' : 'var(--text-secondary)',
+                        fontWeight: active ? 700 : 500, fontSize: 12.5, transition:'all .15s ease-in-out',
+                        whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',
+                      }}
+                    >
+                      {c.name || c.code}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 主题子类（起点等二级分类） */}
+            {(() => {
+              const subs = (nrFilters?.subcategories || []).filter((s: NRCategory) => s.parentCode === nrCategoryCode);
+              if (!subs.length) return null;
+              return (
+                <div style={{marginTop:10,display:'flex',gap:8,alignItems:'flex-start'}}>
+                  <span className="filter-label nr-filter-label nr-label-fixed"
+                        style={{fontSize:13,color:'var(--text-muted)',fontWeight:600,
+                                minWidth:72,width:72,flex:'0 0 72px',paddingTop:6,
+                                textAlign:'right',paddingRight:8,boxSizing:'border-box'}}>主题细化</span>
+                  <div className="tags-content nr-sub-tags"
+                       style={{flex:'1 1 0',minWidth:0,display:'grid',
+                               gridTemplateColumns:'repeat(auto-fill, minmax(86px,1fr))',gap:'8px 8px'}}>
+                    <button
+                      type="button"
+                      className={`filter-tag nr-filter-tag nr-category-pill ${!nrSubCategoryCode ? 'filter-tag-active nr-filter-tag-active' : ''}`}
+                      onClick={() => setNrSubCategoryCode('')}
+                      style={{
+                        display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
+                        padding:'7px 10px',borderRadius:999, minHeight:30,
+                        background: !nrSubCategoryCode ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
+                        border: !nrSubCategoryCode ? '1px solid transparent' : '1px solid var(--border-color)',
+                        color: !nrSubCategoryCode ? '#fff' : 'var(--text-secondary)',
+                        fontWeight: !nrSubCategoryCode ? 700 : 500, fontSize: 12.5,
+                        transition:'all .15s ease-in-out', whiteSpace:'nowrap',
+                      }}
+                      title="全部该分类下的小说"
+                    >全部</button>
+                    {subs.map((s: NRCategory) => {
+                      const active = nrSubCategoryCode === s.code;
+                      return (
+                        <button
+                          type="button"
+                          key={s.id}
+                          className={`filter-tag nr-filter-tag nr-category-pill ${active ? 'filter-tag-active nr-filter-tag-active' : ''}`}
+                          onClick={() => setNrSubCategoryCode(s.code === nrSubCategoryCode ? '' : s.code)}
+                          title={`主题分类：${s.name}`}
+                          style={{
+                            display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
+                            padding:'7px 10px',borderRadius:999,minHeight:30,
+                            background: active ? 'linear-gradient(135deg,var(--accent),var(--accent-hover))' : 'var(--bg-tertiary)',
+                            border: active ? '1px solid transparent' : '1px solid var(--border-color)',
+                            color: active ? '#fff' : 'var(--text-secondary)',
+                            fontWeight: active ? 700 : 500, fontSize: 12.5,
+                            transition:'all .15s ease-in-out', whiteSpace:'nowrap',
+                            overflow:'hidden',textOverflow:'ellipsis',
+                          }}
+                        >{s.name || s.code}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
-          {/* Banner：热门标签 / 上升关键词（与筛选卡并排/堆叠，更紧凑美观） */}
+          {/* Banner：热门标签 / 上升关键词（#4 手机端各一行；桌面端两栏并排） */}
           {rankBanner && (
             <div className="nr-banner rank-result" style={{marginTop:4,marginBottom:12}}>
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:10}}>
-                <div className="rank-block nr-banner-hot" style={{margin:0}}>
+              <div className="nr-banner-grid"
+                   style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                <div className="rank-block nr-banner-hot nr-banner-row" style={{margin:0}}>
                   <h4 style={{fontSize:13,margin:'0 0 8px',display:'flex',alignItems:'center',gap:6,color:'var(--text-secondary)'}}>
                     🔥 热门标签
                   </h4>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                  <div className="nr-tags-line"
+                       style={{display:'flex',flexWrap:'wrap',gap:6}}>
                     {rankBanner.hot_tags.map((t,i) => (
                       <span key={i} style={{
                         padding:'4px 10px',borderRadius:999,
@@ -1392,11 +1539,12 @@ category：master
                     ))}
                   </div>
                 </div>
-                <div className="rank-block nr-banner-rising" style={{margin:0}}>
+                <div className="rank-block nr-banner-rising nr-banner-row" style={{margin:0}}>
                   <h4 style={{fontSize:13,margin:'0 0 8px',display:'flex',alignItems:'center',gap:6,color:'var(--text-secondary)'}}>
                     🚀 上升关键词
                   </h4>
-                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                  <div className="nr-tags-line"
+                       style={{display:'flex',flexWrap:'wrap',gap:6}}>
                     {rankBanner.rising_keywords.map((k,i) => (
                       <span key={i} style={{
                         padding:'4px 10px',borderRadius:999,
@@ -1412,75 +1560,32 @@ category：master
             </div>
           )}
 
-          {/* 搜索/统计工具栏 — 两行：第一行标题+统计；第二行搜索input+button，移动端可wrap */}
-          <div className="search-toolbar nr-search-toolbar fusion-card" style={{
-            padding:'12px 14px',marginBottom:12,
-            display:'flex',flexDirection:'column',gap:10,
+          {/* 榜单名 + 统计卡（仅展示一个「抓取时间」已在按钮右侧，这里不要） */}
+          <div className="nr-result-toolbar search-toolbar nr-search-toolbar fusion-card" style={{
+            padding:'10px 14px',marginBottom:12,
+            display:'flex',flexWrap:'wrap',gap:10,alignItems:'center',
             width:'100%',boxSizing:'border-box',minWidth:0,
           }}>
-            {/* 第一行：榜单名 + 统计信息，flex-wrap 可下一行 */}
-            <div className="nr-search-head" style={{
-              display:'flex',flexWrap:'wrap',gap:10,alignItems:'center',
-              width:'100%',minWidth:0,boxSizing:'border-box',
+            <div className="nr-search-title" style={{
+              fontSize:14,fontWeight:700,color:'var(--text-primary)',
+              whiteSpace:'normal',wordBreak:'break-word',lineHeight:1.4,
+              display:'inline-flex',flexWrap:'wrap',gap:6,alignItems:'center',flex:'1 1 220px',minWidth:0,
             }}>
-              <div className="nr-search-title" style={{
-                fontSize:14,fontWeight:700,color:'var(--text-primary)',
-                whiteSpace:'normal',wordBreak:'break-word',lineHeight:1.4,
-                display:'flex',flexWrap:'wrap',gap:6,alignItems:'baseline',flex:'1 1 220px',minWidth:0,
-              }}>
-                <span style={{padding:'2px 8px',borderRadius:8,background:'color-mix(in srgb, var(--accent) 10%, transparent)',color:'var(--accent)',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>
-                  📋 榜单
-                </span>
-                <span>{nrList?.rankTitle ? nrList.rankTitle : '请选择平台和分类'}</span>
-                {nrList?.pageTitle ? <span className="text-muted" style={{fontSize:12,color:'var(--text-muted)'}}>· {nrList.pageTitle}</span> : null}
-              </div>
-              <span className="nr-search-meta" style={{
-                fontSize:12,color:'var(--text-muted)',whiteSpace:'nowrap',
-                display:'inline-flex',alignItems:'center',gap:8,flexShrink:0,
-              }}>
-                <span>共 <b style={{color:'var(--accent)',fontSize:14}}>{nrList?.total ?? 0}</b> 条</span>
-                {nrList?.fetchAt ? (
-                  <span>
-                    · {new Date(nrList.fetchAt * 1000).toLocaleDateString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit'})}{' '}
-                    {new Date(nrList.fetchAt * 1000).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}
-                  </span>
-                ) : null}
+              <span style={{padding:'2px 8px',borderRadius:8,background:'color-mix(in srgb, var(--accent) 10%, transparent)',color:'var(--accent)',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>
+                📋 榜单
               </span>
+              <span>{nrList?.rankTitle ? nrList.rankTitle : '选好筛选条件 → 点击☁️ 抓取本榜'}</span>
+              {nrList?.pageTitle ? <span className="text-muted" style={{fontSize:12,color:'var(--text-muted)'}}>· {nrList.pageTitle}</span> : null}
             </div>
-            {/* 第二行：搜索 input + 搜索 button，移动端占满宽度 */}
-            <div className="nr-search-controls" style={{
-              display:'flex',gap:8,alignItems:'center',
-              flexWrap:'wrap',width:'100%',minWidth:0,boxSizing:'border-box',
+            <span className="nr-search-meta" style={{
+              fontSize:12,color:'var(--text-muted)',whiteSpace:'nowrap',
+              display:'inline-flex',alignItems:'center',gap:8,flexShrink:0,
             }}>
-              <input
-                className="input nr-search-input"
-                value={nrKeyword}
-                onChange={e => setNrKeyword(e.target.value)}
-                placeholder="搜索书名或作者（回车立即搜）"
-                style={{
-                  flex:'1 1 220px',minWidth:180,maxWidth:'100%',
-                  padding:'8px 12px',fontSize:13,minHeight:34,
-                  borderRadius:10,boxSizing:'border-box',
-                }}
-                onKeyDown={e => { if (e.key === 'Enter') loadNrBooks(nrCategoryCode,nrRankType,nrGender,1,nrKeyword); }}
-              />
-              <button
-                className="chat-send primary nr-search-btn"
-                onClick={() => loadNrBooks(nrCategoryCode,nrRankType,nrGender,1,nrKeyword)}
-                disabled={nrListLoading}
-                style={{
-                  padding:'8px 18px',minHeight:34,fontSize:13,fontWeight:700,
-                  flex:'0 0 auto',borderRadius:10,
-                  background:'linear-gradient(135deg,var(--accent),var(--accent-hover))',
-                  color:'#fff',border:'1px solid transparent',
-                }}
-              >
-                🔍 搜索
-              </button>
-            </div>
+              <span>共 <b style={{color:'var(--accent)',fontSize:14}}>{nrList?.total ?? 0}</b> 条 · 单页 {nrList?.pageSize ?? 20} 条</span>
+            </span>
           </div>
 
-          {/* 榜单标题/截断文案/错误 */}
+          {/* 提示/错误/加载 */}
           {nrList?.cutoffText && (
             <div style={{margin:'0 0 10px',padding:'6px 10px',fontSize:12,background:'var(--bg-tertiary)',borderRadius:6,color:'var(--text-muted)'}}>
               📌 {nrList.cutoffText}
@@ -1504,7 +1609,7 @@ category：master
           {/* 书籍列表：双套布局（移动端卡片 + 桌面端表格）互斥显示 */}
           {!nrListLoading && nrList?.items?.length ? (
             <>
-              {/* 移动端卡片（仅手机端显示） */}
+              {/* 移动端卡片（仅手机端显示）— 手机端一行一卡，minWidth:0 max-width:100% 强制不溢出 (#2 根治横溢) */}
               <div className="nr-books nr-mobile-books rank-card-grid nr-mobile-only">
                 {nrList.items.map((b: any, i: number) => {
                   const change = Number(b.rankChange) || 0;
@@ -1523,10 +1628,10 @@ category：master
                         padding:'12px', gap:8, display:'flex',flexDirection:'column',
                         background:'var(--bg-secondary)', border:'1px solid var(--border-color)',
                         borderRadius:12, textDecoration:'none', color:'inherit',
-                        width:'100%',boxSizing:'border-box',minWidth:0,overflow:'hidden',
+                        width:'100%',boxSizing:'border-box',minWidth:0,maxWidth:'100%',overflow:'hidden',
                       }}
                     >
-                      <div className="rank-card-head" style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                      <div className="rank-card-head" style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',width:'100%',maxWidth:'100%',minWidth:0}}>
                         {n <= 3
                           ? <span className={`rank-medal r${n}`} style={{
                               width:22,height:22,borderRadius:6,display:'inline-flex',
@@ -1543,7 +1648,7 @@ category：master
                           whiteSpace:'nowrap',flexShrink:0,
                         }}>{b.statusText}</span>}
                       </div>
-                      <div className="rank-card-main" style={{display:'flex',gap:10,minWidth:0}}>
+                      <div className="rank-card-main" style={{display:'flex',gap:10,minWidth:0,width:'100%',maxWidth:'100%',boxSizing:'border-box'}}>
                         {b.coverUrl ? (
                           <img
                             className="rank-cover"
@@ -1562,22 +1667,23 @@ category：master
                             display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,color:'var(--accent)',
                           }}>📚</div>
                         )}
-                        <div className="rank-book-info" style={{flex:'1 1 0',minWidth:0,display:'flex',flexDirection:'column',gap:4}}>
+                        <div className="rank-book-info" style={{flex:'1 1 0',minWidth:0,display:'flex',flexDirection:'column',gap:4,maxWidth:'calc(100% - 62px)'}}>
                           <div className="rank-card-title" style={{
                             fontSize:14.5,fontWeight:700,color:'var(--text-primary)',lineHeight:1.35,
-                            width:'100%',minWidth:0, wordBreak:'break-word',
+                            width:'100%',minWidth:0,maxWidth:'100%',wordBreak:'break-word',
                             display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',
                           }}>{b.bookTitle || '未命名'}</div>
                           {b.intro && <p className="rank-card-desc" style={{
                             fontSize:11.5,color:'var(--text-muted)',lineHeight:1.5,margin:0,
                             display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',
-                            width:'100%',minWidth:0,wordBreak:'break-word',
+                            width:'100%',minWidth:0,maxWidth:'100%',wordBreak:'break-word',
                           }}>{b.intro}</p>}
                           {b.lastChapterTitle && (
                             <div className="rank-card-sub" style={{
                               fontSize:11,color:'var(--text-muted)',
-                              width:'100%',minWidth:0,
+                              width:'100%',minWidth:0,maxWidth:'100%',
                               overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
+                              wordBreak:'break-all',
                             }}>📝 {b.lastChapterTitle}{b.lastUpdateTimeText ? ` · ${b.lastUpdateTimeText}` : ''}</div>
                           )}
                         </div>
@@ -1586,16 +1692,16 @@ category：master
                         display:'flex',flexWrap:'wrap',gap:'6px 10px',
                         fontSize:11,color:'var(--text-secondary)',
                         paddingTop:6,borderTop:'1px dashed var(--border-color)',
-                        width:'100%',boxSizing:'border-box',minWidth:0,
+                        width:'100%',boxSizing:'border-box',minWidth:0,maxWidth:'100%',
                       }}>
                         <span style={{minWidth:0,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',wordBreak:'break-all'}}>
-                          <b style={{color:'var(--text-muted)',fontWeight:500}}>作者 </b>{b.authorName || '—'}
+                          <b style={{color:'var(--text-muted)',fontWeight:500}}>作者</b> {b.authorName || '—'}
                         </span>
                         {cat && <span style={{minWidth:0,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',wordBreak:'break-all'}}>
-                          <b style={{color:'var(--text-muted)',fontWeight:500}}>分类 </b>{cat}
+                          <b style={{color:'var(--text-muted)',fontWeight:500}}>分类</b> {cat}
                         </span>}
                         {metricText !== '—' && (
-                          <span className="rank-metric" style={{marginLeft:'auto',flexShrink:0,minWidth:'auto'}}>
+                          <span className="rank-metric" style={{marginLeft:'auto',flexShrink:0,minWidth:'auto',maxWidth:'100%',overflow:'hidden'}}>
                             <em style={{
                               fontStyle:'normal',display:'inline-flex',alignItems:'center',gap:4,
                               fontSize:11.5,fontWeight:700,color:'#fff',padding:'3px 10px',borderRadius:999,
@@ -1674,9 +1780,7 @@ category：master
                                   }}
                                   onMouseEnter={e => e.currentTarget.style.color='var(--accent)'}
                                   onMouseLeave={e => e.currentTarget.style.color='var(--text-primary)'}
-                                >
-                                  {b.bookTitle}
-                                </a>
+                                >{b.bookTitle}</a>
                               ) : <span style={{fontWeight:700,color:'var(--text-primary)',fontSize:14.5,
                                                overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'block'}}>{b.bookTitle}</span>}
                               {b.intro && <div style={{
@@ -1716,7 +1820,7 @@ category：master
                 </table>
               </div>
 
-              {/* 分页：紧凑 & 移动端wrap不溢出 */}
+              {/* 分页：全部改用 triggerNrFetch（#6）；分页不再直接 loadNrBooks，走 nrFetchKey 触发，保证抓取策略一致 */}
               <div className="nr-pagination" style={{
                 display:'flex',justifyContent:'space-between',alignItems:'center',
                 marginTop:12,gap:10,flexWrap:'wrap',
@@ -1727,32 +1831,28 @@ category：master
                 width:'100%',boxSizing:'border-box',minWidth:0,
               }}>
                 <span style={{fontSize:12.5,color:'var(--text-muted)',minWidth:0,flex:'1 1 auto',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                  📖 第 <b style={{color:'var(--accent)'}}>{nrList.page}</b> 页 · 共 <b style={{color:'var(--accent)'}}>{nrList.total}</b> 条线索 · 单页 {nrList.pageSize} 条
+                  📖 第 <b style={{color:'var(--accent)'}}>{nrList.page}</b> 页 · 共 <b style={{color:'var(--accent)'}}>{nrList.total}</b> 条线索
                 </span>
                 <div style={{display:'flex',gap:6,flex:'0 0 auto',flexWrap:'wrap'}}>
                   <button
                     className="chat-send ghost"
-                    onClick={() => {const p = Math.max(1,nrList.page-1); setNrPage(p); loadNrBooks(nrSubCategoryCode || nrCategoryCode,nrRankType,nrGender,p,nrKeyword); }}
-                    disabled={nrList.page <= 1 || nrListLoading}
+                    onClick={() => {const p = Math.max(1,nrList.page-1); setNrPage(p); triggerNrFetch(false); }}
+                    disabled={nrList.page <= 1 || nrListLoading || nrCrawling}
                     style={{padding:'6px 14px',minHeight:30,fontSize:12.5,borderRadius:8,
                             background: nrList.page<=1||nrListLoading ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
                             color: nrList.page<=1||nrListLoading ? 'var(--text-muted)' : 'var(--text-secondary)',
                             border:'1px solid var(--border-color)',cursor: nrList.page<=1||nrListLoading ? 'not-allowed' : 'pointer',
                     }}
-                  >
-                    ← 上一页
-                  </button>
+                  >← 上一页</button>
                   <button
                     className="chat-send primary"
-                    onClick={() => {const p = nrList.page + 1; setNrPage(p); loadNrBooks(nrSubCategoryCode || nrCategoryCode,nrRankType,nrGender,p,nrKeyword); }}
-                    disabled={(nrList.page * (nrList.pageSize||50)) >= (nrList.total || 0) || nrListLoading}
+                    onClick={() => {const p = nrList.page + 1; setNrPage(p); triggerNrFetch(false); }}
+                    disabled={(nrList.page * (nrList.pageSize||50)) >= (nrList.total || 0) || nrListLoading || nrCrawling}
                     style={{padding:'6px 14px',minHeight:30,fontSize:12.5,borderRadius:8,fontWeight:700,
                             background: 'linear-gradient(135deg,var(--accent),var(--accent-hover))',
                             color: '#fff',border:'1px solid transparent',
                     }}
-                  >
-                    下一页 →
-                  </button>
+                  >下一页 →</button>
                 </div>
               </div>
             </>
@@ -1760,7 +1860,7 @@ category：master
 
           {!nrListLoading && nrList && (nrList.total ?? 0) === 0 && (
             <div style={{textAlign:'center',padding:30,color:'var(--text-muted)',fontSize:13,background:'var(--bg-secondary)',border:'1px dashed var(--border-color)',borderRadius:8}}>
-              暂无线索 {nrKeyword ? `（关键词「${nrKeyword}」无匹配）` : '——请切换分类或手动刷新重试'}
+              暂无线索 {nrKeyword ? `（关键词「${nrKeyword}」无匹配）` : '——请切换分类或手动点击☁️ 抓取本榜重试'}
             </div>
           )}
         </div>

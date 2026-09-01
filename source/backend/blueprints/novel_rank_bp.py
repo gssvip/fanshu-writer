@@ -271,10 +271,10 @@ RANK_SOURCES: list[dict[str, Any]] = [
     {"legacyId": 42, "siteCode": "fanqie", "categoryLegacyId": 102, "rankType": "new", "title": "新书榜", "url": "https://fanqienovel.com/rank/1_1_746", "enabled": 1, "meta": {"maxPages": 2, "metricName": "在读"}},
     {"legacyId": 43, "siteCode": "fanqie", "categoryLegacyId": 103, "rankType": "new", "title": "新书榜", "url": "https://fanqienovel.com/rank/1_1_718", "enabled": 1, "meta": {"maxPages": 2, "metricName": "在读"}},
     {"legacyId": 44, "siteCode": "fanqie", "categoryLegacyId": 104, "rankType": "new", "title": "新书榜", "url": "https://fanqienovel.com/rank/1_1_1016", "enabled": 1, "meta": {"maxPages": 2, "metricName": "在读"}},
-    # 起点（5）+七猫（3）大盘榜 + 起点新人新书榜（1）
+    # 起点（5）+七猫（3）大盘榜 + 起点新书榜（1）— 按需求7 起点只给用户选择「月票榜/新书榜」
     {"legacyId": 23, "siteCode": "qidian", "categoryLegacyId": None, "rankType": "hotsale", "title": "畅销榜", "url": "https://www.qidian.com/rank/hotsales/", "enabled": 1, "meta": {"gender": "male", "maxPages": 5, "scope": "all"}},
     {"legacyId": 24, "siteCode": "qidian", "categoryLegacyId": None, "rankType": "monthTicket", "title": "月票榜", "url": "https://www.qidian.com/rank/yuepiao/", "enabled": 1, "meta": {"gender": "male", "maxPages": 5, "metricName": "月票", "scope": "all"}},
-    {"legacyId": 47, "siteCode": "qidian", "categoryLegacyId": None, "rankType": "newauthor", "title": "新人作者新书榜", "url": "https://www.qidian.com/rank/newauthor/", "enabled": 1, "meta": {"gender": "male", "maxPages": 5, "scope": "all"}},
+    {"legacyId": 47, "siteCode": "qidian", "categoryLegacyId": None, "rankType": "newauthor", "title": "新书榜", "url": "https://www.qidian.com/rank/newauthor/", "enabled": 1, "meta": {"gender": "male", "maxPages": 5, "scope": "all"}},
     {"legacyId": 84, "siteCode": "qidian", "categoryLegacyId": None, "rankType": "hotsale", "title": "畅销榜", "url": "https://www.qdmm.com/rank/hotsales/", "enabled": 1, "meta": {"gender": "female", "maxPages": 5, "scope": "all"}},
     {"legacyId": 85, "siteCode": "qidian", "categoryLegacyId": None, "rankType": "monthTicket", "title": "月票榜", "url": "https://www.qdmm.com/rank/yuepiao/", "enabled": 1, "meta": {"gender": "female", "maxPages": 5, "metricName": "月票", "scope": "all"}},
     {"legacyId": 25, "siteCode": "qimao", "categoryLegacyId": None, "rankType": "hot", "title": "大热榜", "url": "https://www.qimao.com/qimaoapi/api/rank/book-list?is_girl=0&rank_type=1&date_type=1&date=&page=1", "enabled": 1, "meta": {"gender": "male", "maxPages": 5, "metricName": "热度", "scope": "all"}},
@@ -327,7 +327,7 @@ RANK_TYPE_LABELS: dict[str, str] = {
     'new': '新书榜',
     'hotsale': '畅销榜',
     'monthTicket': '月票榜',
-    'newauthor': '新人新书榜',
+    'newauthor': '新书榜',
     'hot': '大热榜',
     'collect': '收藏榜',
 }
@@ -1145,7 +1145,7 @@ _QIDIAN_RANK_LABEL: dict[str, str] = {
     'hotsale': '畅销榜',
     'monthTicket': '月票榜',
     'collect': '收藏榜',
-    'newauthor': '新人作者新书榜',
+    'newauthor': '新书榜',
 }
 _QIDIAN_METRIC_NAME: dict[str, str] = {
     'hotsale': '热度',
@@ -1459,12 +1459,11 @@ def api_rank_filters():
         return jsonify({'platform': platform, 'rankTypes': [], 'genders': [], 'categories': [], 'subcategories': []})
 
     # ---- 起点：走移动端 JSON 接口，榜单类型 / 男女频 / 大类 / 主题子类 全部可选 ----
+    # 按需求 7：起点只保留 月票榜 + 新书榜（原「新人作者新书榜」→ 统一叫 新书榜）
     if platform == 'qidian':
         rank_types: list[dict[str, str]] = [
-            {'value': 'hotsale', 'label': '畅销榜'},
             {'value': 'monthTicket', 'label': '月票榜'},
-            {'value': 'collect', 'label': '收藏榜'},
-            {'value': 'newauthor', 'label': '新人作者新书榜'},
+            {'value': 'newauthor',   'label': '新书榜'},
         ]
         categories: list[dict[str, Any]] = [
             {'id': 'all', 'code': '__all__', 'name': '全部', 'scope': 'all'}
