@@ -683,6 +683,22 @@ def _repair_nodes_to_one_ch_per_node(nodes, alloc_s, alloc_e, me_index, index_of
         nd = per_chapter[ch]
         nd.setdefault('main_event_index', me_index)
         nd.setdefault('title', f'第{ch}章节点')
+        # summary 强化兜底：LLM 若 summary + chapter_beats 互指造成"双短"死循环，
+        # 这里用本节点已有字段拼一段最少 80 字的梗概，保证该章能支撑 2400±100 字正文。
+        if len(str(nd.get('summary') or '')) < 80:
+            base_title = str(nd.get('title') or f'第{ch}章')
+            parts = [
+                f'第{ch}章（{base_title}）：开场先承接上一章节奏自然入戏，',
+                str(nd.get('events') or '随后推进核心事件，让主角在关键场景做出关键选择。'),
+                '→冲突：', str(nd.get('conflict') or '遇到对手压制或规则卡点，推进受阻陷入被动。'),
+                '→转折：主角依靠自身积累或伏笔破局，',
+                str(nd.get('cool_type') or '完成一次爽点呈现。'),
+                '→收尾：结果尘埃落定后余波铺开，',
+                '钩子：', str(nd.get('hook') or '抛出新悬念引向下一章。'),
+            ]
+            nd['summary'] = ''.join(parts)[:400]
+            # summary 同时同步回 chapter_beats[0] 保持单节拍一致
+            nd['chapter_beats'] = [str(nd['summary'])[:600]]
         # 保证 index 连续且唯一（即使原有 index 重复）
         next_idx += 1
         nd['index'] = next_idx
