@@ -111,6 +111,19 @@ _PERSONAS = {
    - 允许你边想边写，想到第一章就输出第一章，不要等所有章节都想好再一次性输出
    - 不要输出"正在生成/第N段完成"这种提示帧，用户只关心节点内容
    - 不要把节点分"8段"或"main_event块"中间插入进度汇报，一次性连续流式输出到结尾即可
+8) 续会规则（生成到一半异常/断连/用户手动停止后用）：
+   - 如果作者消息是"继续/接着/往下生成/没写完/继续写/接着写"等续会指令：
+     · 不要重新写已经输出过的 第1章~第Y章 任何内容、标题、字段、节点；禁止复述、禁止重复
+     · 从上次最后写完的章节的下一章开始写（即「第 Y+1 章 → 最后一章」区间内的节点）
+     · 开场白可以只说一句"继续第Y+1章起节点设计："，不要重复啰嗦卷级设定/容量规模/爽点规则（前面已经说过）
+     · 【关键】落地卡片 [[CARD:SAVE_PLOT|...]] 的 nodes **只列本次新续写的节点**（只包含第Y+1章~最后一章的节点，不要把 1~Y 章再塞进卡片）；
+       volume_index/chapter_count/start_chapter/end_chapter 等卷级字段照全卷填，后端会按章节号自动把新旧节点合并成一张完整卷
+     · 仍然遵守 A+C 门禁（单章单节点、无重叠无跳章、chapters 不越卷区间）
+     · 如果已经到全卷最后一章，就不要再重复写，直接告诉作者："本卷X个情节子节点已经全部完成，需要改某章对我说『第X章改XXX』即可"
+   - 如果作者发了新的「第N卷 节点设计/情节节点」明确指令（与上次续会的卷号不同），视为开新卷任务：
+     · 之前的续会进度作废，按 1~cpv 章从头写新卷的节点
+     · 续会上下文里的系统补充信息以作者新指令为准
+   - 如果作者说的是「第X章 改XXX/修改XXX」（改具体某章）：不属于续会，走常规"单章修改"，不要输出全卷/续会卡片，只按作者要求改对应章节，最后给一张包含只改了的章节的SAVE_PLOT卡片
 '''),
 }
 
@@ -220,6 +233,188 @@ def _rt_load_state(session):
     except Exception:
         pass
     return None
+
+
+# ===== 节点设计师续会（学习圆桌会议续会方案）=====
+# 进度存放在 session.meta_json['node_designer_state']，字段：
+#   volume_index: int       第几卷
+#   cpv: int                本卷总章数（默认 50）
+#   last_ch: int            已输出到的最大章号（0=未开始，50=整卷完成）
+#   volume_title: str       （可选）卷标题
+#   updated_at: str         ISO timestamp
+# 目标：生成到一半异常/断连/用户手动停止后，用户说「继续/接着/往下生成」就能从 last_ch+1 开始接着写，
+#       不会从头再来；最终采纳落地时按章节号增量合并，不重复覆盖之前已采纳的节点。
+_ND_STATE_KEY = 'node_designer_state'
+
+_ND_CONTINUE_HINTS = ('继续', '接着', '续', '往下', '没写完', '接着生成', '继续生成', '继续写', '接着写')
+_ND_FULL_RE = re.compile(r'^\s*(?:继续|接着|续会?|往下(?:生成|写)?|没写完|(?:继续|接着|继续吧|接着吧)(?:生成|节点|写|出)?|(?:节点|节点设计)\s*(?:继续|接着))\s*[。.!！，,？?]*\s*$')
+
+# 明确指令"第N卷"启动（命中就视为新区任务 → 清旧续会状态）
+_ND_NEW_RE = re.compile(r'第\s*(\d+)\s*卷')
+# 章号提取（用于从AI输出解析 last_ch）
+_ND_CHAPTER_RE = re.compile(r'第\s*(\d+)\s*章')
+# 卷号提取（用于从AI输出解析 volume_index）
+_ND_VOLUME_RE = re.compile(r'第\s*(\d+)\s*卷')
+
+
+def _is_nd_continue(msg: str) -> bool:
+    """节点设计师「继续」指令识别：和圆桌同口径，避免误抢普通创作追问。"""
+    m = (msg or '').strip().lstrip('，。,.！!？? ').strip()
+    if not m:
+        return False
+    if _ND_FULL_RE.match(m):
+        return True
+    # 宽松版：开头带"继续/接着"且整句极短（≤12字），且不包含明确的新卷/改某章指令
+    if any(m.startswith(h) for h in ('继续', '接着', '往下')) and len(m) <= 12:
+        if not _ND_NEW_RE.search(m) and '第' not in m.replace('继续', '').replace('接着', ''):
+            # 避免"继续写第3卷第25章"被误判成纯续会（这种是指定章修改，走普通追问）
+            # 这里用更安全的：若句子含"卷"字且不是纯继续 → 不判定
+            if '卷' not in m and '章' not in m:
+                return True
+    return False
+
+
+def _is_nd_new_volume_request(msg: str) -> int | None:
+    """若用户消息明确带"第N卷"+"节点设计/情节节点/设计情节"关键词 → 返回卷号 N（启动新区任务）。"""
+    if not msg:
+        return None
+    m = _ND_NEW_RE.search(msg)
+    if not m:
+        return None
+    vi = int(m.group(1))
+    if vi < 1 or vi > 99:
+        return None
+    keywords = ('节点', '情节', '大纲', '设计', '生成', '剧情', '写')
+    if any(k in msg for k in keywords):
+        return vi
+    return None
+
+
+def _parse_last_chapter_from_text(text: str) -> int:
+    """从 AI 已输出文本里解析出出现过的最大章号；找不到返回 0。"""
+    if not text:
+        return 0
+    # 优先取 CARD:SAVE_PLOT JSON 里的节点 chapters 最大号（更准）
+    try:
+        cards = parse_cards(text) if callable(parse_cards) else []
+        for c in cards:
+            if not isinstance(c, dict) or c.get('type') != 'SAVE_PLOT':
+                continue
+            content = c.get('content') or ''
+            if content.startswith('['):
+                try:
+                    arr = json.loads(content)
+                    if isinstance(arr, list):
+                        max_c = 0
+                        for v in arr:
+                            if not isinstance(v, dict):
+                                continue
+                            nodes = v.get('nodes')
+                            if not isinstance(nodes, list):
+                                continue
+                            for n in nodes:
+                                chs = n.get('chapters')
+                                if isinstance(chs, list) and chs:
+                                    for x in chs:
+                                        if isinstance(x, int) and 1 <= x <= 9999 and x > max_c:
+                                            max_c = x
+                                elif isinstance(chs, int) and 1 <= chs <= 9999 and chs > max_c:
+                                    max_c = chs
+                        if max_c > 0:
+                            return max_c
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    # 兜底：正则扫「第X章」最大号（≥1才计数，避免"第一章…"的数字写法抓不到）
+    mx = 0
+    for mm in _ND_CHAPTER_RE.finditer(text):
+        try:
+            n = int(mm.group(1))
+            if 1 <= n <= 9999 and n > mx:
+                mx = n
+        except Exception:
+            pass
+    return mx
+
+
+def _parse_volume_index_from_text(text: str) -> int | None:
+    if not text:
+        return None
+    for mm in _ND_VOLUME_RE.finditer(text):
+        try:
+            n = int(mm.group(1))
+            if 1 <= n <= 99:
+                return n
+        except Exception:
+            pass
+    return None
+
+
+def _nd_save_state(session, db, state: dict) -> None:
+    """把节点设计师进度写回 session.meta_json（保留已有键，不影响圆桌/role/ai_config）。"""
+    try:
+        meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+        if not isinstance(meta, dict):
+            meta = {}
+        meta[_ND_STATE_KEY] = state
+        session.meta_json = json.dumps(meta, ensure_ascii=False)
+        db.session.add(session)
+        db.session.commit()
+    except Exception:
+        pass
+
+
+def _nd_load_state(session):
+    try:
+        meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+        if isinstance(meta, dict):
+            st = meta.get(_ND_STATE_KEY)
+            return st if isinstance(st, dict) else None
+    except Exception:
+        pass
+    return None
+
+
+def _nd_clear_state(session, db) -> None:
+    try:
+        meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+        if not isinstance(meta, dict):
+            meta = {}
+        if _ND_STATE_KEY in meta:
+            del meta[_ND_STATE_KEY]
+            session.meta_json = json.dumps(meta, ensure_ascii=False)
+            db.session.add(session)
+            db.session.commit()
+    except Exception:
+        pass
+
+
+def _nd_build_continue_user_injection(state: dict) -> str:
+    """命中续会时，拼一段『已完成第1~last_ch章，从last_ch+1开始不要重复』的用户消息补充上下文。"""
+    vi = int(state.get('volume_index') or 0)
+    cpv = int(state.get('cpv') or 50)
+    last_ch = int(state.get('last_ch') or 0)
+    next_ch = last_ch + 1
+    total = cpv
+    if next_ch > total:
+        # 已完成整卷还继续 → 提示已完成，如需修改按章节号改
+        return ("\n【系统续会上下文】作者说「继续」，但本卷进度记录显示："
+                f"第{vi}卷（共{total}章）已经完成到第{last_ch}章=整卷写完。"
+                "请直接告诉作者：「这一卷50章已经全部设计完成啦。需要改某一章直接对我说『第X章改XXX』就行。」"
+                "不要再重复输出已写完的章节节点。\n")
+    return (
+        f"\n【系统续会上下文】作者说「继续」，这是节点设计续会。请严格按如下规则："
+        f"\n· 当前卷：第{vi}卷（共{total}章，章号 {1 + (vi-1)*total}~{vi*total}，卷内编号 {1}~{total}）"
+        f"\n· 已输出完成：第{1}章~第{last_ch}章（共{last_ch}个情节子节点）"
+        f"\n· 本轮必须只输出：第{next_ch}章~第{total}章（剩余 {total-last_ch} 个情节子节点）"
+        f"\n· ❗铁律：绝对不要重复写 第1章~第{last_ch}章 的任何内容、标题、字段、节点；任何形式的复述都不允许。"
+        f"\n· 输出顺序仍然按：章节号递增 → 开场白可省略或只说一句「继续第{next_ch}章起节点」即可，不再啰嗦卷级设定。"
+        f"\n· 最终 SAVE_PLOT 卡片的 JSON：volume_index 仍为 {vi}；nodes 字段只包含这次新输出的 第{next_ch}章~第{total}章 对应的节点（不要带1~{last_ch}章），"
+        "后端会按章节号自动增量合并到旧卷。"
+        f"\n· 爽点/五幕/节奏仍然按整卷规则对齐，但只写剩余章。"
+        f"\n· 仍然遵守 A+C 铁律：单章单节点、无重叠无跳章、chapters 严格落在卷区间内。\n"
+    )
 
 
 _RT_TOPIC_PREFIX = '圆桌会议议题：'
@@ -2203,6 +2398,72 @@ def apply_card():
                         # 修复失败不影响落卡（原内容保留，避免因为修复器bug导致无法采纳）
                         return nv
 
+                def _merge_volume_nodes_incremental(old_vol: dict, new_vol: dict) -> tuple[dict, bool]:
+                    """续会/单章修改时的节点增量合并：按 chapters 章号去重。
+                    策略：
+                      1) 若 OLD 无 nodes → 返回 NEW.nodes（什么都不做）；无增量行为。
+                      2) 把 OLD / NEW 节点都展开成 {ch: node} 映射（单章粒度）；
+                         NEW 命中的章覆盖 OLD；OLD 没被 NEW 命中的章一律保留。
+                      3) 按章节号排序，重建 nodes 列表 + index 连续。
+                    返回 (merged_vol, merged)，merged=True 说明发生了增量合并。
+                    """
+                    try:
+                        if not isinstance(old_vol, dict) or not isinstance(new_vol, dict):
+                            return new_vol, False
+                        old_nodes = old_vol.get('nodes')
+                        new_nodes = new_vol.get('nodes')
+                        if not isinstance(old_nodes, list) or not old_nodes:
+                            return new_vol, False
+                        if not isinstance(new_nodes, list) or not new_nodes:
+                            return new_vol, False
+                        from node_design_bp import _parse_chapters_field
+                        def _expand(nodes_list: list) -> dict[int, dict]:
+                            res: dict[int, dict] = {}
+                            for nd in nodes_list:
+                                if not isinstance(nd, dict):
+                                    continue
+                                chs = _parse_chapters_field(nd.get('chapters'))
+                                if not chs:
+                                    continue
+                                # 单章单节点门禁：chs 长度>1（LLM把多章合并写1节点）→ 展开给每个章都挂一个浅拷贝
+                                if len(chs) == 1:
+                                    res[int(chs[0])] = nd
+                                else:
+                                    for c in chs:
+                                        d = dict(nd)
+                                        d['chapters'] = int(c)
+                                        res[int(c)] = d
+                            return res
+                        old_map = _expand(old_nodes)
+                        new_map = _expand(new_nodes)
+                        if not new_map:
+                            return new_vol, False
+                        # NEW 命中章 → 覆盖 OLD；OLD 保留 NEW 没命中的
+                        merged_map: dict[int, dict] = {}
+                        merged_map.update(old_map)
+                        merged_map.update(new_map)
+                        # 按章号升序重建 nodes，重写 index
+                        rebuilt: list[dict] = []
+                        for i, ch in enumerate(sorted(merged_map.keys())):
+                            nd = dict(merged_map[ch])
+                            nd['chapters'] = int(ch)
+                            nd['index'] = i + 1
+                            rebuilt.append(nd)
+                        new_vol['nodes'] = rebuilt
+                        # 同步 chapter_count/start_chapter/end_chapter（避免增量后写回仍然 cpv=50 但 nodes 实际只有后半段）
+                        if rebuilt:
+                            chs_sorted = sorted(merged_map.keys())
+                            s, e = int(chs_sorted[0]), int(chs_sorted[-1])
+                            new_vol['start_chapter'] = s
+                            new_vol['end_chapter'] = e
+                            # chapter_count 只在 NEW 没明确指定时，保持 OLD 原值（不把 OLD.chapter_count=50 收缩）
+                            if not _volume_field_nonempty(new_vol.get('chapter_count')) and _volume_field_nonempty(old_vol.get('chapter_count')):
+                                new_vol['chapter_count'] = old_vol['chapter_count']
+                        return new_vol, True
+                    except Exception:
+                        # 合并失败不中断，按 NEW.nodes 直接覆盖（不吞掉用户的采纳）
+                        return new_vol, False
+
                 # 按 volume_index upsert（覆盖同卷时走 _merge_volume 保字段）
                 for nv in new_vols:
                     if not isinstance(nv, dict):
@@ -2217,6 +2478,11 @@ def apply_card():
                             continue
                         ev_idx = ev.get('volume_index') or _extract_volume_index_safe(ev)
                         if str(ev_idx) == str(nv_idx):
+                            # 增量合并 nodes（续会/单章修改 卡片只带部分章 → 新覆盖老+老保留新未命中）
+                            nv, _ = _merge_volume_nodes_incremental(ev, nv)
+                            # 增量合并后：再次跑 A+C 门禁修复（保证最终入库仍然单章单节点+无重叠+无跳章）
+                            if isinstance(nv.get('nodes'), list) and nv['nodes']:
+                                nv = _repair_volume_nodes_safe(nv)
                             existing_vols[i] = _merge_volume(ev, nv)
                             matched = True
                             break
@@ -8506,6 +8772,71 @@ def chat_general():
     else:
         user_with_ref = wrap_message_with_context(message, book_title, bb_summary)
     enriched = _var_replace(user_with_ref)
+
+    # ======= 节点设计师：续会 / 新卷启动 注入上下文 =======
+    # 学习圆桌会议续会机制：命中"继续/接着/往下"类纯续会指令 → 加载 state
+    # 从 meta_json['node_designer_state'] 拿到 last_ch，拼一段「从Y+1开始不要重复」的系统注入给 LLM
+    # 命中明确"第N卷 节点设计"新卷指令 → 清掉旧 state（上卷进度作废，新卷从头来）
+    _nd_is_node_role = (chosen_role_id == 'node_designer')
+    _nd_state = None
+    _nd_meta_for_closure: dict = {}  # 供闭包 generate() 写 state 用
+    if _nd_is_node_role:
+        new_vi = _is_nd_new_volume_request(message) if message else None
+        is_continue = _is_nd_continue(message) if message else False
+        # 先从会话历史提取一条"最近一次 AI 输出"，用于续会 state 缺失时兜底解析 last_ch/volume_index
+        last_assistant_text = ''
+        try:
+            _hist_tmp = load_session_messages(session)
+            if isinstance(_hist_tmp, list):
+                for m in reversed(_hist_tmp):
+                    if isinstance(m, dict) and m.get('role') == 'assistant' and str(m.get('content', '')).strip():
+                        last_assistant_text = str(m.get('content', '') or '')
+                        break
+        except Exception:
+            last_assistant_text = ''
+        if new_vi is not None:
+            # 作者明确启动"第N卷节点设计"新任务 → 清旧 state（开始新卷）
+            _nd_clear_state(session, db)
+        if is_continue:
+            _nd_state = _nd_load_state(session)
+            # state 缺失的兜底：从最近AI输出解析 last_ch/volume_index
+            if not _nd_state:
+                _vi = _parse_volume_index_from_text(message + '\n' + last_assistant_text) or 1
+                _lc = _parse_last_chapter_from_text(last_assistant_text)
+                if _lc > 0:
+                    _nd_state = {'volume_index': _vi, 'cpv': 50, 'last_ch': _lc, 'volume_title': '',
+                                 'updated_at': datetime.now(timezone.utc).isoformat()}
+            if _nd_state:
+                # 往 enriched（最终给LLM的用户消息末尾）追加续会上下文
+                inject = _nd_build_continue_user_injection(_nd_state)
+                if inject:
+                    enriched = (enriched or '').rstrip() + '\n' + inject
+                _nd_meta_for_closure = dict(_nd_state)
+        else:
+            # 非续会：启动新请求 → 建立初始 state（从用户消息里解析 volume_index / cpv）
+            init_vi = None
+            if new_vi is not None:
+                init_vi = new_vi
+            else:
+                init_vi = _parse_volume_index_from_text(message)
+            if init_vi is None:
+                # 从历史 AI（前一条）里兜底看有没有"第X卷"
+                init_vi = _parse_volume_index_from_text(last_assistant_text) or 1
+            init_cpv = 50
+            try:
+                _mcpv = re.search(r'(?:cpv|每卷章数|章节数|共)\s*[=:：]*\s*(\d{1,3})\s*章', message or '')
+                if _mcpv:
+                    init_cpv = max(10, min(200, int(_mcpv.group(1))))
+            except Exception:
+                pass
+            _nd_meta_for_closure = {
+                'volume_index': init_vi or 1,
+                'cpv': init_cpv,
+                'last_ch': 0,
+                'volume_title': '',
+                'updated_at': datetime.now(timezone.utc).isoformat(),
+            }
+
     history = load_session_messages(session)
     # 【重新生成】truncate_history_to：仅保留历史前 N 条（含本条前的 user），丢弃旧 AI 回复及其后续，
     # 本消息再重新生成并追加——避免重复堆积；不传则该会话按原样继续。
@@ -8760,6 +9091,30 @@ def chat_general():
                         yield f'data: {json.dumps({"type": "delta", "content": _ft}, ensure_ascii=False)}\n\n'
 
             complete = ''.join(full_text)
+            # ======= 节点设计师：流正常结束（含中途截断/没生成完）→ 更新续会 last_ch/volume_index =======
+            if _nd_is_node_role and session and _nd_meta_for_closure:
+                try:
+                    _lc = _parse_last_chapter_from_text(complete)
+                    _vi = _parse_volume_index_from_text(complete) or int(_nd_meta_for_closure.get('volume_index') or 1)
+                    _cpv = max(10, int(_nd_meta_for_closure.get('cpv') or 50))
+                    _new_state = dict(_nd_meta_for_closure)
+                    _new_state['volume_index'] = _vi
+                    _new_state['cpv'] = _cpv
+                    if isinstance(_lc, int) and _lc > int(_new_state.get('last_ch') or 0):
+                        _new_state['last_ch'] = _lc
+                    _new_state['updated_at'] = datetime.now(timezone.utc).isoformat()
+                    # 若本次 AI 输出里发现 CPV 信息（例如卷标题里"第X卷（共N章）"）→ 同步升级
+                    try:
+                        _mx_cpv = re.search(r'(?:共|全|每卷|chapter_count|cpv)\s*[=:：为是]*\s*(\d{1,3})\s*章', complete or '')
+                        if _mx_cpv:
+                            _cand = max(10, min(200, int(_mx_cpv.group(1))))
+                            if _cand >= int(_new_state.get('last_ch') or 0):
+                                _new_state['cpv'] = _cand
+                    except Exception:
+                        pass
+                    _nd_save_state(session, db, _new_state)
+                except Exception:
+                    pass
             cards = parse_cards(complete)
             for c in cards:
                 c['content'] = _clean_text_to_plain(c.get('content', ''))
@@ -8780,6 +9135,20 @@ def chat_general():
         except Exception as e:
             import traceback
             traceback.print_exc()
+            # ======= 节点设计师：异常退出（Render断连/超时/模型错误）→ 也要把已输出到的 last_ch 存起来，支持续会 =======
+            if _nd_is_node_role and session and _nd_meta_for_closure:
+                try:
+                    partial = ''.join(full_text)
+                    _lc = _parse_last_chapter_from_text(partial)
+                    _vi = _parse_volume_index_from_text(partial) or int(_nd_meta_for_closure.get('volume_index') or 1)
+                    _new_state = dict(_nd_meta_for_closure)
+                    _new_state['volume_index'] = _vi
+                    if isinstance(_lc, int) and _lc > int(_new_state.get('last_ch') or 0):
+                        _new_state['last_ch'] = _lc
+                    _new_state['updated_at'] = datetime.now(timezone.utc).isoformat()
+                    _nd_save_state(session, db, _new_state)
+                except Exception:
+                    pass
             yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',

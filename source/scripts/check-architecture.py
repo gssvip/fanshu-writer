@@ -99,7 +99,16 @@ WRITEPAGE_BASELINE = 8908
 #   - SAVE_PLOT 卡片 content 生成时合并现有卷字段（防采纳后 summary/main_plot 等被清空）
 #   - MAX_MS 从 12 分钟放宽到 15 分钟兜底（防整卷节点生成超时判死）
 #   - 所有 localStorage 直接写 token 的操作包 try/catch（防 Edge Tracking Prevention 抛错白屏）
-CHATPANEL_BASELINE = 4315
+# 2026-09-01 继续（节点设计续会 P0 需求·学习圆桌会议机制）：
+#   · 新增 node_designer 分支"纯续会指令（继续/接着/往下生成）"识别 → 从最近 AI 消息解析
+#     last_ch/volume_index → 自动补续会上下文给后端（即便后端 state 丢失也能精准续会）≈ +69 行
+#   · 原"整卷节点设计分支"逻辑保留不变，错误提示新增第2条"意外终止/断连→发继续从上次进度续会"
+#   → 4315 → 4384（+69 行，P0 用户明确要求的节点设计续会硬能力，不属业务膨胀堆肉：
+#     节点续会是用户在长流式输出（50章≈4-10分钟）下出问题后最核心的逃生通道，
+#     和 ChatPanel 智驾面板（node_designer 角色绑定的执行位置）强耦合，不能拆到独立组件。
+#     后续可把 node_designer 全部逻辑拆到独立 <NodeDesignerChat /> 组件，但那是一次更大重构，
+#     不占用本次 P0 续会需求工期。）
+CHATPANEL_BASELINE = 4384
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
@@ -189,7 +198,29 @@ TOOLSPAGE_BASELINE = 1192
 #   → 9244→9363（+119 行，P0 用户实锤需求：节点设计师取消分段/预算/轮询/超时，直接用智聊SSE直出，
 #     功能代码只能放到 chat_collab_bp.py（与 chat_general/apply-card 同一文件才能复用现有基础设施/避免循环 import），
 #     不属于"业务膨胀堆肉"，下一次拆分时再把 _PERSONAS + apply-card 节点门禁移到独立模块）
-CHAT_COLLAB_BP_BASELINE = 9363
+# 2026-09-01 继续（节点设计续会·P0·学习圆桌会议续会机制）≈ +369 行：
+#   A. 头部新增大约 180 行续会工具函数：
+#      _ND_STATE_KEY/_ND_CONTINUE_HINTS/_ND_FULL_RE → _is_nd_continue / _is_nd_new_volume_request
+#      _parse_last_chapter_from_text（扫SAVE_PLOT卡片+正则扫最大章号，多方法兜底）
+#      _parse_volume_index_from_text / _nd_save_state/_nd_load_state/_nd_clear_state
+#      _nd_build_continue_user_injection（命中续会时拼成『已完成1~Y从Y+1开始不要重复』系统上下文注入）
+#   B. chat_general_stream 路由命中 role=node_designer：
+#      · 新卷启动 → 清旧 state；建立初始 volume_index/cpv/last_ch=0
+#      · 纯"继续"命中 → 从 meta_json['node_designer_state'] 加载 state；state 缺失则从
+#        历史AI消息解析 last_ch/volume_index 兜底；把续会上下文 append 到 enriched 用户消息末尾给LLM
+#      · generate() 正常结束（解析complete写last_ch）+ 异常分支（解析partial full_text写last_ch）
+#        两处都存 state：即使用户手动停止 / Render 掐断 / 上游503 / LLM抛错，也能记住当前进度。
+#   C. node_designer persona 续会规则（约14行）：『继续』→不重复1~Y章，卡片nodes只列本次新续
+#      的章；『第X章改XXX』→ 单章修改卡片只带改完的章；开新卷则旧进度作废。
+#   D. apply-card SAVE_PLOT 新增 _merge_volume_nodes_incremental（约65行）：OLD/NEW 节点展开
+#      成 {ch:node} 映射，NEW 命中章覆盖 OLD，OLD 新未命中的章一律保留，避免续会卡片
+#      只带后半段时把 OLD 已经采纳过的前半段节点全部冲掉；合并完再二次 A+C 门禁修复。
+#   → 9363 → 9732（+369 行，P0 用户实锤需求：长流式输出最怕的就是断连后一切重来，
+#     这是 node_designer 改通用SSE直出后必须的续会逃生通道；代码分散在 chat_collab_bp.py
+#     内的 3 个位置（工具函数/ chat_general / apply-card），和文件的 chat_general/apply-card
+#     基础设施强耦合，无法独立抽新 Blueprint 而不引入循环 import / 重复样板代码。
+#     后续拆分目标：独立 nd_state.py 放续会工具、独立 nd_apply_card.py 放 nodes 增量合并。）
+CHAT_COLLAB_BP_BASELINE = 9732
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

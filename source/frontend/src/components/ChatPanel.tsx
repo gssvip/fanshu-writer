@@ -2571,85 +2571,216 @@ export default function ChatPanel() {
     const _sid = _sidReal || _PREKEY;
     const _rtRole = sessionRoleMap[_sid] || 'default';
     if (_rtRole === 'node_designer') {
+      // ===== A. 纯「继续/接着/往下生成」续会指令（学习圆桌会议续会方案）=====
+      //   · 命中后从上一条 AI 消息解析 last_ch/volume_index，兜底给 prompt 追加一句明确的续会上下文
+      //     （即便后端 session.meta_json 没存 state，LLM 也能靠这段上下文精准从 Y+1 章继续）
+      //   · 如果用户只带"继续"但历史里没有卷号/进度 → 退回提示用法
+      const tNorm = text.trim().replace(/[。.!！，,？?\s]+$/g, '');
+      const ND_CONTINUE_RE = /^(继续|接着|续|往下|没写完|(?:继续|接着|继续吧|接着吧)(?:生成|节点|写|出)?|(?:节点|节点设计)\s*(?:继续|接着)|(?:往下\s*(?:生成|写)))$/;
+      const isContinue = ND_CONTINUE_RE.test(tNorm) || (tNorm.length <= 12 && /^(继续|接着|往下)/.test(tNorm) && !/卷|章/.test(tNorm));
+      if (isContinue) {
+        // 从历史消息里找最近一条 AI 消息（节点设计师产出的内容），解析 volume_index 和 last_chapter
+        let lastAiText = '';
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const m = messages[i];
+          if (m.role === 'assistant' && typeof m.content === 'string' && m.content.trim()) {
+            lastAiText = m.content;
+            break;
+          }
+        }
+        const vols = lastAiText.match(/第\s*(\d+)\s*卷/g);
+        const viHint = vols && vols.length > 0 ? parseInt((vols[vols.length - 1].match(/\d+/) || ['0'])[0], 10) : 0;
+        const chapters = lastAiText.match(/第\s*(\d+)\s*章/g);
+        let maxCh = 0;
+        if (chapters && chapters.length > 0) {
+          for (const c of chapters) {
+            const n = parseInt((c.match(/\d+/) || ['0'])[0], 10);
+            if (n > maxCh) maxCh = n;
+          }
+        }
+        // 兜底再从最新 AI 挂载的 SAVE_PLOT 卡片 content 解析（更精准）
+        try {
+          for (let i = messages.length - 1; i >= 0 && maxCh === 0; i--) {
+            const m: any = messages[i];
+            if (m.role !== 'assistant') continue;
+            const cards: any[] = m.cards || [];
+            for (const c of cards) {
+              if (c.type !== 'SAVE_PLOT') continue;
+              const txt = String(c.content || '');
+              if (txt.startsWith('[')) {
+                const arr = JSON.parse(txt);
+                if (Array.isArray(arr)) {
+                  for (const v of arr) {
+                    if (v && Array.isArray(v.nodes)) {
+                      for (const n of v.nodes) {
+                        const chs = n.chapters;
+                        if (Array.isArray(chs) && chs.length > 0) {
+                          for (const x of chs) if (typeof x === 'number' && x > maxCh) maxCh = x;
+                        } else if (typeof chs === 'number' && chs > maxCh) {
+                          maxCh = chs;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch { /* ignore parse errors */ }
+        let promptText = text.trim();
+        if (maxCh > 0 || viHint > 0) {
+          const nextCh = Math.max(maxCh, 0) + 1;
+          promptText =
+            `继续节点设计。${viHint ? `当前卷：第${viHint}卷。` : ''}` +
+            (maxCh > 0
+              ? `已完成：第1章~第${maxCh}章。本轮请从第${nextCh}章开始继续输出后续章节点，**绝对不要重复写第1章~第${maxCh}章的任何内容**，`
+              : `本轮请继续从上次中断处往下输出，**绝对不要复述已写过的内容**，`) +
+            `最后给 SAVE_PLOT 卡片，cards 里的 nodes **只列出本次新续写的节点**（后端会按章节号自动增量合并到老卷）。`;
+        } else {
+          // 没有任何进度信息 → 退回提示用法
+          setMessages(prev => [...prev,
+            { role: 'user', content: text },
+            { role: 'assistant', content: '🎯 **节点设计师**：没找到当前卷的生成进度，无法直接续会。\n\n请直接告诉我卷号从头开始：如 `第1卷` `1`；\n如果是修改某章：直接说 `第25章增加反派压迫感` 即可。' },
+          ]);
+          return;
+        }
+        const _cfgId = sessionModelMap[_sid] || undefined;
+        appendUserAi(promptText);
+        setStreaming(true);
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+        try {
+          const res = await api.chatGeneralStream(
+            promptText,
+            {
+              bookId: bookId || undefined,
+              sessionId: chatGeneralSessionId || undefined,
+              aiConfigId: _cfgId,
+              roleId: 'node_designer',
+              deepThink: generalDeepThink,
+              webSearch: generalWebSearch,
+              truncateHistoryTo: opts?.truncateHistoryTo,
+            },
+            ctrl.signal
+          );
+          await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
+            if (kind === 'role_applied' && info && typeof info === 'object') {
+              const _backRole = String(info.role_id || 'default').trim() || 'default';
+              const _sid2 = chatGeneralSessionId || '';
+              if (_sid2) setSessionRoleMap(m => (m[_sid2] === _backRole ? m : { ...m, [_sid2]: _backRole }));
+            }
+          }, false, (freshSid: string) => {
+            if (freshSid && freshSid !== chatGeneralSessionId) {
+              setSessionModelMap(prev => {
+                const v = prev[_PREKEY];
+                if (v === undefined) return prev;
+                const { [_PREKEY]: _drop, ...rest } = prev;
+                void _drop;
+                return { ...rest, [freshSid]: v };
+              });
+              setSessionRoleMap(prev => {
+                const { [_PREKEY]: _drop, ...rest } = prev;
+                void _drop;
+                return { ...rest, [freshSid]: 'node_designer' };
+              });
+            }
+            setChatGeneralSessionId(freshSid);
+          });
+        } catch (e: any) {
+          if (e.name !== 'AbortError') {
+            const msg = (e?.message || e?.error || '续会失败').trim() || '续会失败';
+            appendAiNotice('❌ 续会失败：' + msg + '\n\n若要重开整卷：直接发送「第N卷」从头生成。若只改单章：直接说「第X章改XXX」。');
+            setStreamError('');
+            removeEmptyAi();
+          }
+        } finally {
+          setStreaming(false);
+          abortRef.current = null;
+        }
+        return;
+      }
+
+      // ===== B. 解析卷号：新任务 / 改某章 / 常规追问 =====
       // 解析用户输入中的卷号：支持"第1卷" "第一卷" "1卷" "卷1" "1" 等
       const _volMatch = text.match(/(?:第?\s*(\d+)\s*卷|卷\s*(\d+)|^(\d+)$)/);
       const vi = _volMatch ? parseInt(_volMatch[1] || _volMatch[2] || _volMatch[3], 10) : 0;
       if (!vi || vi < 1) {
-        // 不匹配卷号 → 提示用法
-        setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '🎯 **节点设计师**已就绪。请告诉我卷号，如：`第1卷`、`第一卷`、`1`\n\n将按【1章=1节点 · A+C门禁：无重叠无跳章 · 50章/卷 共约12万字】一条流式直出，结束后点击下方卡片「采纳」即可落入对应卷剧情线。' }]);
+        // 非卷号启动：按通用聊天下发（比如用户说"第25章改冲突"这种改某章指令）
+        // → 交给下方 general 分支，走通用 chatGeneralStream（角色仍然是 node_designer，
+        //   会命中 chat_general 里 node_designer persona 里"单章修改只改对应章 + 卡片只带改完章"规则）
+      } else {
+        // 匹配到卷号：用用户输入 + 卷号"第Vi卷"作为提示正文（后端 persona 会注入A+C硬约束），
+        // 直接走通用聊天 SSE（与 general 同一链路，自带 sse_keepalive 心跳帧，不会撞 Render 网关超时）。
+        // 不要人为分段、不要预算管控、不要补漏轮——让模型按生成规则流式直出到底。
+        const _cfgId = sessionModelMap[_sid] || undefined;
+        const _roleId = 'node_designer';
+        // 用户看到的输入：如果用户输入只写了"第N卷"/"N"，我们把它包装成更自然的完整指令，
+        // 方便以后用户修改时上下文能看到这是一条"为第N卷设计情节节点"的请求。
+        const volTitle = `第${vi}卷`;
+        let promptText = text.trim();
+        if (!promptText || /^[\s\d第卷一二三四五六七八九十百千零两0-9]+$/.test(promptText)) {
+          promptText = `请为${volTitle}设计情节节点。要求：单章单节点、无重叠无跳章、共50章/卷12万字规模、每章节点摘要支撑2400字正文、五幕对齐+爽点系统分层节奏，最后给出 SAVE_PLOT 卡片便于采纳。`;
+        }
+        appendUserAi(promptText);
+        setStreaming(true);
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+        try {
+          const res = await api.chatGeneralStream(
+            promptText,
+            {
+              bookId: bookId || undefined,
+              sessionId: chatGeneralSessionId || undefined,
+              aiConfigId: _cfgId,
+              roleId: _roleId,
+              deepThink: generalDeepThink,
+              webSearch: generalWebSearch,
+              truncateHistoryTo: opts?.truncateHistoryTo,
+            },
+            ctrl.signal
+          );
+          await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
+            if (kind === 'role_applied' && info && typeof info === 'object') {
+              const _backRole = String(info.role_id || 'default').trim() || 'default';
+              const _sid2 = chatGeneralSessionId || '';
+              if (_sid2) setSessionRoleMap(m => (m[_sid2] === _backRole ? m : { ...m, [_sid2]: _backRole }));
+            }
+            // 节点设计师模式：用户不需要我们在前端再额外追加 SAVE_PLOT 卡片；
+            // 卡片完全由 LLM 在 persona 里输出 [[CARD:SAVE_PLOT|...]]，consumeSSE 会自动解析挂载到本条消息。
+          }, false, (freshSid: string) => {
+            // 新建会话 → 迁移预会话模型/角色到真实sid
+            if (freshSid && freshSid !== chatGeneralSessionId) {
+              setSessionModelMap(prev => {
+                const v = prev[_PREKEY];
+                if (v === undefined) return prev;
+                const { [_PREKEY]: _drop, ...rest } = prev;
+                void _drop;
+                return { ...rest, [freshSid]: v };
+              });
+              setSessionRoleMap(prev => {
+                // 无论预会话有没有值，新会话一律写 node_designer（避免新建好后切回 default）
+                const { [_PREKEY]: _drop, ...rest } = prev;
+                void _drop;
+                return { ...rest, [freshSid]: 'node_designer' };
+              });
+            }
+            setChatGeneralSessionId(freshSid);
+          });
+          // 流结束后：给用户追加一句"如果需要修改某章，可以直接对我说『第X章改XXX』"的提示（追加到末尾）
+          //（避免"生成完了啥按钮都没"的困惑）。consumeSSE 已经把卡片挂到 AI 气泡上了，不用再手动处理。
+        } catch (e: any) {
+          if (e.name !== 'AbortError') {
+            const msg = (e?.message || e?.error || '节点设计失败').trim() || '节点设计失败';
+            appendAiNotice('❌ 节点设计失败：' + msg + '\n\n常见原因&解决：\n1) LLM上游503/限流 → 等30秒后发"继续"从上次进度续会（不需要重新从头）\n2) 意外终止/断连 → 直接发"继续"就能从上次进度续会（学习圆桌会议）\n3) 修改某章：直接对我说"第8章加强反派压迫感"/"第31章增加伏笔回收"即可，不需要重新跑整卷。');
+            setStreamError('');
+            removeEmptyAi();
+          }
+        } finally {
+          setStreaming(false);
+          abortRef.current = null;
+        }
         return;
       }
-      // 匹配到卷号：用用户输入 + 卷号"第Vi卷"作为提示正文（后端 persona 会注入A+C硬约束），
-      // 直接走通用聊天 SSE（与 general 同一链路，自带 sse_keepalive 心跳帧，不会撞 Render 网关超时）。
-      // 不要人为分段、不要预算管控、不要补漏轮——让模型按生成规则流式直出到底。
-      const _cfgId = sessionModelMap[_sid] || undefined;
-      const _roleId = 'node_designer';
-      // 用户看到的输入：如果用户输入只写了"第N卷"/"N"，我们把它包装成更自然的完整指令，
-      // 方便以后用户修改时上下文能看到这是一条"为第N卷设计情节节点"的请求。
-      const volTitle = `第${vi}卷`;
-      let promptText = text.trim();
-      if (!promptText || /^[\s\d第卷一二三四五六七八九十百千零两0-9]+$/.test(promptText)) {
-        promptText = `请为${volTitle}设计情节节点。要求：单章单节点、无重叠无跳章、共50章/卷12万字规模、每章节点摘要支撑2400字正文、五幕对齐+爽点系统分层节奏，最后给出 SAVE_PLOT 卡片便于采纳。`;
-      }
-      appendUserAi(promptText);
-      setStreaming(true);
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
-      try {
-        const res = await api.chatGeneralStream(
-          promptText,
-          {
-            bookId: bookId || undefined,
-            sessionId: chatGeneralSessionId || undefined,
-            aiConfigId: _cfgId,
-            roleId: _roleId,
-            deepThink: generalDeepThink,
-            webSearch: generalWebSearch,
-            truncateHistoryTo: opts?.truncateHistoryTo,
-          },
-          ctrl.signal
-        );
-        await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
-          if (kind === 'role_applied' && info && typeof info === 'object') {
-            const _backRole = String(info.role_id || 'default').trim() || 'default';
-            const _sid2 = chatGeneralSessionId || '';
-            if (_sid2) setSessionRoleMap(m => (m[_sid2] === _backRole ? m : { ...m, [_sid2]: _backRole }));
-          }
-          // 节点设计师模式：用户不需要我们在前端再额外追加 SAVE_PLOT 卡片；
-          // 卡片完全由 LLM 在 persona 里输出 [[CARD:SAVE_PLOT|...]]，consumeSSE 会自动解析挂载到本条消息。
-        }, false, (freshSid: string) => {
-          // 新建会话 → 迁移预会话模型/角色到真实sid
-          if (freshSid && freshSid !== chatGeneralSessionId) {
-            setSessionModelMap(prev => {
-              const v = prev[_PREKEY];
-              if (v === undefined) return prev;
-              const { [_PREKEY]: _drop, ...rest } = prev;
-              void _drop;
-              return { ...rest, [freshSid]: v };
-            });
-            setSessionRoleMap(prev => {
-              // 无论预会话有没有值，新会话一律写 node_designer（避免新建好后切回 default）
-              const { [_PREKEY]: _drop, ...rest } = prev;
-              void _drop;
-              return { ...rest, [freshSid]: 'node_designer' };
-            });
-          }
-          setChatGeneralSessionId(freshSid);
-        });
-        // 流结束后：给用户追加一句"如果需要修改某章，可以直接对我说『第X章改XXX』"的提示（追加到末尾）
-        //（避免"生成完了啥按钮都没"的困惑）。consumeSSE 已经把卡片挂到 AI 气泡上了，不用再手动处理。
-      } catch (e: any) {
-        if (e.name !== 'AbortError') {
-          const msg = (e?.message || e?.error || '节点设计失败').trim() || '节点设计失败';
-          appendAiNotice('❌ 节点设计失败：' + msg + '\n\n常见原因&解决：\n1) LLM上游503/限流 → 等30秒后重发（本生成约需3-8分钟，不要急，看到节点在逐步输出就说明一切正常）\n2) 修改某章：直接对我说"第8章加强反派压迫感"/"第31章增加伏笔回收"即可，不需要重新跑整卷。');
-          setStreamError('');
-          removeEmptyAi();
-        }
-      } finally {
-        setStreaming(false);
-        abortRef.current = null;
-      }
-      return;
     }
 
     // ====== 圆桌会议分支：6个专家Agent两轮轮流发言，实时流式展示，最后出总结报告 ======
