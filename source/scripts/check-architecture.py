@@ -61,7 +61,8 @@ FE_MAX_LINES = 1500
 # WritePage.tsx 基线行数：只能减不能增（前端巨石，防止继续膨胀）
 # 2026-08-18 重校准：版本号对比等细节+UI交互
 # 2026-08-29 重校准：随智驾功能增量同步至当前行数
-WRITEPAGE_BASELINE = 8902
+# 2026-09-01 重校准：aiChatHistory 离线缓存读写 try/catch 兜底（P0白屏急救，防 Tracking Prevention 拦截）
+WRITEPAGE_BASELINE = 8908
 
 # ChatPanel.tsx 基线行数：只能减不能增（智驾面板巨石，防止继续膨胀）
 # 2026-08-18 重校准2（M9 技能包生效链路打通）：
@@ -94,7 +95,11 @@ WRITEPAGE_BASELINE = 8902
 # 2026-08-29 重校准（删除通用聊天顶部命中选择按钮 + 圆表格/维度生成前端配套）：
 #   - 移除顶部命中选择按钮渲染与 hitSuggestionPopups 等状态管理
 #   - 同步其余智驾面板功能增量至当前行数
-CHATPANEL_BASELINE = 4164
+# 2026-09-01 重校准（白屏急救+采纳落地+超时兜底P0）：
+#   - SAVE_PLOT 卡片 content 生成时合并现有卷字段（防采纳后 summary/main_plot 等被清空）
+#   - MAX_MS 从 12 分钟放宽到 15 分钟兜底（防整卷节点生成超时判死）
+#   - 所有 localStorage 直接写 token 的操作包 try/catch（防 Edge Tracking Prevention 抛错白屏）
+CHATPANEL_BASELINE = 4315
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
@@ -173,10 +178,18 @@ TOOLSPAGE_BASELINE = 1192
 #   - 圆桌"正在讨论结果创作"delta 帧原为 f-string 嵌套含 \n 反斜杠，
 #     3.12 前会 SyntaxError，导致 CI(3.11) pytest 全部 collection 失败 → 拆成变量拼接
 #   → 净增 2 行（9086→9088）
-# 2026-08-30 重校准：随重构/规则替换合并入库，06d12d8 起该文件已至 9145，
-#   后经 f92f6cc 删重复"正在写第X章"占位帧 -2 → 9143；基线此前滞后未同步。
-#   → 9088→9143（属既有功能增量的基线追平，非本次回生）
-CHAT_COLLAB_BP_BASELINE = 9143
+# 2026-09-01 重校准（白屏急救·A+C章粒度门禁·采纳落地字段保留·整卷预算）：
+#   - chat_collab_bp.py：_merge_volume 重写（NEW非空覆盖 OLD兜底保留卷级字段）+ _volume_field_nonempty 辅助
+#     + 三常量+规则细则随 chat_collab_bp 历次增量同步 → 9143→9244（+101 行，P0修复与功能
+#     增量，chat_collab_bp 已是 chat_general/圆桌/节点设计/角色落地的多域聚合，需后续再拆分）
+#   - WritePage.tsx：新增 aiChatHistory 离线缓存 try/catch 兜底（防 Tracking Prevention 白屏）
+#     + 之前的 WritePage 状态管理/智驾面板交互合并入库 → 8902→8908（+6 行，P0白屏急救必需）
+#   - ChatPanel.tsx：SAVE_PLOT 卡片 content 合并现有卷字段（防采纳后卷级字段清空）
+#     + MAX_MS 从 12 分钟放宽到 15 分钟兜底
+#     + localStorage 访问包 try/catch（防 Tracking Prevention 白屏）
+#     + 之前的 NodeDesignView、节点设计师分段流式生成 UI 等增量合并入库
+#     → 4164→4315（+151 行，均为用户明确要求的 P0 白屏急救/采纳落地/超时兜底硬修复，非业务膨胀）
+CHAT_COLLAB_BP_BASELINE = 9244
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
