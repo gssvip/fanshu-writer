@@ -29,13 +29,6 @@ export default function WorkbenchPage() {
   const fileImportRef = useRef<HTMLInputElement>(null);
   const folderImportRef = useRef<HTMLInputElement>(null);
 
-  // 导出作品
-  const [showExport, setShowExport] = useState(false);
-  const [exportBookId, setExportBookId] = useState('');
-  const [exportType, setExportType] = useState<'full' | 'single'>('full');
-  const [exportFormat, setExportFormat] = useState('zip');
-  const [exporting, setExporting] = useState(false);
-
   // 使用说明书弹窗
   const [showManual, setShowManual] = useState(false);
 
@@ -262,41 +255,6 @@ export default function WorkbenchPage() {
     navigate(`/write?book=${book.id}&ai=global`);
   }
 
-  async function handleExportDownload() {
-    if (!exportBookId) { alert('请选择要导出的作品'); return; }
-    setExporting(true);
-    try {
-      let url: string;
-      let fallback: string;
-      if (exportType === 'full') {
-        url = api.getExportFullUrl(exportBookId);
-        fallback = 'export.zip';
-      } else {
-        url = api.getExportUrl(exportBookId, exportFormat);
-        fallback = `export.${exportFormat}`;
-      }
-      const token = localStorage.getItem('fanshu-token');
-      const resp = await fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: '下载失败' }));
-        throw new Error(err.error || `HTTP ${resp.status}`);
-      }
-      const blob = await resp.blob();
-      const disp = resp.headers.get('content-disposition') || '';
-      const m = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/);
-      const fileName = m ? decodeURIComponent(m[1]) : fallback;
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl; a.download = fileName;
-      document.body.appendChild(a); a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-      setShowExport(false);
-      setExportBookId('');
-    } catch (e: any) { alert('导出失败: ' + (e?.message || '请先登录')); }
-    setExporting(false);
-  }
-
   if (loading) return <div className="page loading-screen"><span>加载中...</span></div>;
 
   return (
@@ -341,14 +299,6 @@ export default function WorkbenchPage() {
           <span className="home-action-icon">📥</span>
           <span className="home-action-label">导入作品</span>
           <span className="home-action-desc">txt/md/word/zip</span>
-        </button>
-        <button
-          className="home-action-btn home-action-export"
-          onClick={() => { if (books.length === 0) { alert('还没有作品，先新建或导入吧'); return; } setExportBookId(''); setShowExport(true); }}
-        >
-          <span className="home-action-icon">📤</span>
-          <span className="home-action-label">导出作品</span>
-          <span className="home-action-desc">打包备份下载</span>
         </button>
         <button className="home-action-btn home-action-new" onClick={() => setShowNewBook(true)}>
           <span className="home-action-icon">✨</span>
@@ -646,62 +596,6 @@ export default function WorkbenchPage() {
                   <li>所有数据自动保存在本地</li>
                 </ul>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 导出作品弹窗 */}
-      {showExport && (
-        <div className="modal-overlay" onClick={() => !exporting && setShowExport(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
-            <h2>📤 导出作品</h2>
-            <p className="text-muted" style={{ fontSize: 13, marginBottom: 16 }}>
-              选择要导出的作品与格式，系统会把作品内容打包为文件下载到本地。
-            </p>
-            <div className="form-field">
-              <label>选择作品</label>
-              <select
-                className="input"
-                value={exportBookId}
-                onChange={e => setExportBookId(e.target.value)}
-              >
-                <option value="">-- 请选择作品 --</option>
-                {books.map(b => (
-                  <option key={b.id} value={b.id}>{b.title} · {b.word_count.toLocaleString()}字 · {b.chapter_count}章</option>
-                ))}
-              </select>
-            </div>
-            <div className="form-field">
-              <label>导出方式</label>
-              <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
-                <label style={{display:'flex',alignItems:'center',gap:6,padding:'8px 12px',border:'1px solid var(--border-color)',borderRadius:8,cursor:'pointer',background: exportType==='full'?'var(--accent-weak)':'transparent'}}>
-                  <input type="radio" name="expType" checked={exportType==='full'} onChange={() => setExportType('full')} />
-                  <div><b>完整工程</b><div style={{fontSize:11,color:'var(--text-muted)'}}>zip 包：含正文/章节/设定/大纲等（可再导入恢复）</div></div>
-                </label>
-                <label style={{display:'flex',alignItems:'center',gap:6,padding:'8px 12px',border:'1px solid var(--border-color)',borderRadius:8,cursor:'pointer',background: exportType==='single'?'var(--accent-weak)':'transparent'}}>
-                  <input type="radio" name="expType" checked={exportType==='single'} onChange={() => setExportType('single')} />
-                  <div><b>仅正文</b><div style={{fontSize:11,color:'var(--text-muted)'}}>txt / md / docx 等单文件，可直接阅读</div></div>
-                </label>
-              </div>
-            </div>
-            {exportType === 'single' && (
-              <div className="form-field">
-                <label>导出格式</label>
-                <select className="input" value={exportFormat} onChange={e => setExportFormat(e.target.value)}>
-                  <option value="zip">zip（所有内容打包）</option>
-                  <option value="txt">txt 纯文本</option>
-                  <option value="markdown">md 带章节结构</option>
-                  <option value="html">html 页面</option>
-                  <option value="epub">epub 电子书</option>
-                </select>
-              </div>
-            )}
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => setShowExport(false)} disabled={exporting}>取消</button>
-              <button className="btn-primary" onClick={handleExportDownload} disabled={!exportBookId || exporting}>
-                {exporting ? '正在导出…' : '开始下载'}
-              </button>
             </div>
           </div>
         </div>
