@@ -94,11 +94,19 @@ export const useStore = create<AppStore>((set) => ({
   chapters: [],
   currentChapter: null,
   currentUser: null,
+  // theme / customColors 在模块加载阶段同步访问 localStorage。
+  // 若用户浏览器开了 Edge Tracking Prevention / 隐身模式 / PWA 清 storage，
+  // localStorage 会抛 SecurityError → 直接打断 React 根挂载 = 白屏，
+  // 所以这里全部 try/catch 兜底到安全默认值。
   theme: (() => {
-    const t = localStorage.getItem('fanshu-theme');
-    // 兼容旧数据：sepia 映射为 green
-    if (t === 'sepia') { localStorage.setItem('fanshu-theme', 'green'); return 'green' as Theme; }
-    return (t as Theme) || 'light';
+    try {
+      const t = localStorage.getItem('fanshu-theme');
+      // 兼容旧数据：sepia 映射为 green
+      if (t === 'sepia') { try { localStorage.setItem('fanshu-theme', 'green'); } catch {} return 'green' as Theme; }
+      return (t as Theme) || 'light';
+    } catch {
+      return 'light';
+    }
   })(),
   customColors: loadCustomColors(),
   sidebarOpen: true,
@@ -123,13 +131,13 @@ export const useStore = create<AppStore>((set) => ({
   setCurrentChapter: (chapter) => set({ currentChapter: chapter }),
   setCurrentUser: (user) => set({ currentUser: user }),
   setTheme: (theme) => {
-    localStorage.setItem('fanshu-theme', theme);
+    try { localStorage.setItem('fanshu-theme', theme); } catch {}
     set({ theme });
   },
   setCustomColors: (colors) => {
     set((state) => {
       const next = { ...state.customColors, ...colors };
-      localStorage.setItem('fanshu-custom-colors', JSON.stringify(next));
+      try { localStorage.setItem('fanshu-custom-colors', JSON.stringify(next)); } catch {}
       return { customColors: next };
     });
   },
@@ -153,7 +161,7 @@ export const useStore = create<AppStore>((set) => ({
   closeNodeDesignView: () => set({ nodeDesignView: null }),
   markBibleDirty: () => set(state => ({ bibleDirtySeq: (state.bibleDirtySeq || 0) + 1 })),
   logout: () => {
-    localStorage.removeItem('fanshu-token');
+    try { localStorage.removeItem('fanshu-token'); } catch {}
     set({ currentUser: null, books: [], currentBook: null });
   },
 }));

@@ -61,7 +61,7 @@ export default function Home() {
     await api.deleteBook(id); refresh();
   };
 
-  const doLogout = () => { localStorage.removeItem('fanshu-token'); window.location.reload(); };
+  const doLogout = () => { try { localStorage.removeItem('fanshu-token'); } catch {} window.location.reload(); };
 
   return (
     <div className="home-root">

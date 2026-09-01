@@ -11,44 +11,42 @@ const DEFAULT_API_BASE = 'https://fanshu-writer-backend.onrender.com/api';
 // 3. 内置默认地址 DEFAULT_API_BASE（开箱即用）
 // 4. /api（仅适用于前后端同域部署或开发环境）
 export function getApiBaseUrl(): string {
-  const saved = localStorage.getItem('fanshu-api-base-url');
-  if (saved && saved.trim()) {
-    let url = saved.trim().replace(/\/+$/, '');
-    // 自动补全 /api 后缀：用户只需填后端根地址
-    if (!url.endsWith('/api')) {
-      url = url + '/api';
+  // localStorage 访问失败（Tracking Prevention / 隐身模式 / PWA 清 storage）
+  // 不抛错，直接退到环境变量 / 默认 / 同源。
+  try {
+    const saved = localStorage.getItem('fanshu-api-base-url');
+    if (saved && saved.trim()) {
+      let url = saved.trim().replace(/\/+$/, '');
+      if (!url.endsWith('/api')) url = url + '/api';
+      return url;
     }
-    return url;
-  }
+  } catch { /* fallback */ }
   const env = (import.meta as any).env?.VITE_API_URL;
   if (env && env.trim()) return env.trim().replace(/\/+$/, '');
-  // 同域部署（开发环境或后端托管前端时）走相对路径 /api
-  // 否则使用内置的默认后端地址
   const host = window.location.hostname;
   const isStaticHost = host.endsWith('.github.io') || host.endsWith('.vercel.app') || host.endsWith('.netlify.app');
-  if (isStaticHost) {
-    return DEFAULT_API_BASE;
-  }
+  if (isStaticHost) return DEFAULT_API_BASE;
   return '/api';
 }
 
 export function setApiBaseUrl(url: string) {
-  if (url && url.trim()) {
-    localStorage.setItem('fanshu-api-base-url', url.trim().replace(/\/+$/, ''));
-  } else {
-    localStorage.removeItem('fanshu-api-base-url');
-  }
+  try {
+    if (url && url.trim()) {
+      localStorage.setItem('fanshu-api-base-url', url.trim().replace(/\/+$/, ''));
+    } else {
+      localStorage.removeItem('fanshu-api-base-url');
+    }
+  } catch { /* ignore */ }
 }
 
 // 检测当前是否在静态托管环境（如 GitHub Pages）且未配置后端地址
 // 注意：内置默认地址后，静态托管环境不再算 misconfigured
 export function isApiMisconfigured(): boolean {
-  // 已有内置默认地址，永远不算 misconfigured
   return false;
 }
 
 function getToken(): string | null {
-  return localStorage.getItem('fanshu-token');
+  try { return localStorage.getItem('fanshu-token'); } catch { return null; }
 }
 
 // 后端是否正在预热中（避免重复预热）

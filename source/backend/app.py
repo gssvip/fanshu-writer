@@ -14525,8 +14525,13 @@ def serve_frontend(path):
         resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0'
         resp.headers['Pragma'] = 'no-cache'
         resp.headers['Expires'] = '0'
-        # 强制浏览器清除 HTTP 缓存和 Service Worker 注册（解决 PWA 死锁缓存问题）
-        resp.headers['Clear-Site-Data'] = '"cache", "cookies", "storage", "executionContexts"'
+        # 安全地清除旧 HTTP 缓存和 Service Worker 注册：
+        #   ⚠️  之前误用 Clear-Site-Data: "storage","cookies","executionContexts" 会触发：
+        #       1) 用户已登录 cookies 被清（刚登录就被踢）
+        #       2) store.ts / api.ts 同步访问 localStorage 被 Edge Tracking Prevention 拦截抛 SecurityException
+        #       3) React 根挂载失败 = 白屏
+        #   只保留 "cache", "serviceworkers"：足够清旧 PWA/缓存，且不破坏用户态和存储。
+        resp.headers['Clear-Site-Data'] = '"cache", "serviceworkers"'
         # 精确版本号：让 index.html 哪怕被缓，也知道该换新的
         try:
             v = json.loads((dist_dir / 'version.json').read_text(encoding='utf-8'))

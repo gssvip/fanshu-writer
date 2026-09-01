@@ -67,23 +67,29 @@ export default function MinePage() {
   const [serverStatus, setServerStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
 
   useEffect(() => {
-    const savedPath = localStorage.getItem('fanshu-local-path') || '';
-    const savedMode = (localStorage.getItem('fanshu-storage-mode') as 'cloud' | 'local') || 'cloud';
-    setLocalPath(savedPath);
-    setStorageMode(savedMode);
+    // 全部 localStorage 读写：用户开 Edge Tracking Prevention / 隐身模式 / 清 storage 会抛 SecurityError，
+    // 不处理就直接打断 MinePage 渲染 = 白屏，所以每一段包 try/catch 降级。
+    try {
+      const savedPath = localStorage.getItem('fanshu-local-path') || '';
+      const savedMode = (localStorage.getItem('fanshu-storage-mode') as 'cloud' | 'local') || 'cloud';
+      setLocalPath(savedPath);
+      setStorageMode(savedMode);
+    } catch {}
     // 加载自定义大模型列表
     try {
       const saved = localStorage.getItem('fanshu-custom-models');
       if (saved) setCustomModels(JSON.parse(saved));
     } catch { /* ignore */ }
     // 清理已废弃的背景图片配置（功能已移除）
-    localStorage.removeItem('fanshu-bg-image');
-    localStorage.removeItem('fanshu-bg-opacity');
+    try {
+      localStorage.removeItem('fanshu-bg-image');
+      localStorage.removeItem('fanshu-bg-opacity');
+    } catch {}
     const bgDiv = document.getElementById('bg-image-layer');
     if (bgDiv) bgDiv.remove();
     document.body.style.backgroundImage = '';
     // 加载后端服务器地址配置
-    setServerUrl(localStorage.getItem('fanshu-api-base-url') || '');
+    try { setServerUrl(localStorage.getItem('fanshu-api-base-url') || ''); } catch {}
   }, []);
 
   useEffect(() => {
@@ -230,7 +236,7 @@ export default function MinePage() {
     }
     const updated = [...customModels, { ...customModelForm }];
     setCustomModels(updated);
-    localStorage.setItem('fanshu-custom-models', JSON.stringify(updated));
+    try { localStorage.setItem('fanshu-custom-models', JSON.stringify(updated)); } catch {}
     setCustomModelForm({ name: '', base_url: '', model: '' });
     setShowAddCustom(false);
     alert('自定义模型已保存');
@@ -239,7 +245,7 @@ export default function MinePage() {
   function handleDeleteCustomModel(idx: number) {
     const updated = customModels.filter((_, i) => i !== idx);
     setCustomModels(updated);
-    localStorage.setItem('fanshu-custom-models', JSON.stringify(updated));
+    try { localStorage.setItem('fanshu-custom-models', JSON.stringify(updated)); } catch {}
   }
 
   function handleApplyCustomModel(m: { name: string; base_url: string; model: string }) {
@@ -323,8 +329,10 @@ export default function MinePage() {
   }
 
   function handleSaveStorage() {
-    localStorage.setItem('fanshu-local-path', localPath);
-    localStorage.setItem('fanshu-storage-mode', storageMode);
+    try {
+      localStorage.setItem('fanshu-local-path', localPath);
+      localStorage.setItem('fanshu-storage-mode', storageMode);
+    } catch {}
     alert(storageMode === 'local' ? '已切换为本地存储模式，数据将保存在浏览器中' : '已切换为云端存储模式');
   }
 
@@ -522,7 +530,7 @@ export default function MinePage() {
               <div className="custom-models-section">
                 <div className="custom-models-header">
                   <span className="custom-models-title">🏷️ 我的自定义模型</span>
-                  <button className="btn-icon" title="删除" onClick={() => { if (confirm('清空所有自定义模型？')) { setCustomModels([]); localStorage.removeItem('fanshu-custom-models'); } }}>🗑️</button>
+                  <button className="btn-icon" title="删除" onClick={() => { if (confirm('清空所有自定义模型？')) { setCustomModels([]); try { localStorage.removeItem('fanshu-custom-models'); } catch {} } }}>🗑️</button>
                 </div>
                 <div className="custom-models-list">
                   {customModels.map((m, i) => (
@@ -738,11 +746,11 @@ export default function MinePage() {
                 <div className="storage-info-card">
                   <div className="storage-info-row">
                     <span>📦 已用空间</span>
-                    <span>{((localStorage.length * 0.5 + JSON.stringify(localStorage).length) / 1024).toFixed(1)} KB</span>
+                    <span>{(() => { try { return (((localStorage.length * 0.5) + JSON.stringify(localStorage).length) / 1024).toFixed(1) + ' KB'; } catch { return 'N/A'; } })()}</span>
                   </div>
                   <div className="storage-info-row">
                     <span>📊 缓存条目</span>
-                    <span>{localStorage.length} 条</span>
+                    <span>{(() => { try { return localStorage.length + ' 条'; } catch { return 'N/A'; } })()}</span>
                   </div>
                 </div>
 

@@ -19,7 +19,7 @@ export default function AuthPage({ onAuth }: { onAuth: () => void }) {
       const result = mode === 'login'
         ? await api.login(username, password)
         : await api.register(username, password, email);
-      localStorage.setItem('fanshu-token', result.token);
+      try { localStorage.setItem('fanshu-token', result.token); } catch {}
       // 写入当前用户信息并触发书籍列表刷新（跨设备登录后立刻同步）
       if (result.user) {
         setCurrentUser(result.user);

@@ -31,7 +31,7 @@ export default function AuthModal({ onDone }: { onDone: () => void }) {
       const res = isRegister
         ? await api.register(form.username, form.password, form.email)
         : await api.login(form.username, form.password);
-      localStorage.setItem('fanshu-token', res.token);
+      try { localStorage.setItem('fanshu-token', res.token); } catch {}
       setCurrentUser?.(res.user);
       onDone();
     } catch (e: any) {

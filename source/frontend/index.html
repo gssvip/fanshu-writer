@@ -31,9 +31,15 @@
       // version.json 由 deploy.sh 每次部署生成，fetch 时带时间戳破缓存
       (function () {
         var KEY = 'fanshu-version';
+        // ⚠️ 用户开了 Edge Tracking Prevention / 隐身模式 / Clear-Site-Data 清 storage 时，
+        // localStorage 读写会抛 SecurityError → 直接打断 <script> 执行 → main.tsx 不加载 → 白屏。
+        // 所以所有 localStorage 访问全部 try/catch，版本自检降级为「仅 fetch 拉取到新版就强制带参刷新」，
+        // 不依赖本地状态也能保证不会永远拿旧缓存。
+        function safeGetKey() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
+        function safeSetKey(v) { try { localStorage.setItem(KEY, v); } catch (e) {} }
         function bustCache(url) { return url.replace(/([?&])_v=[^&]*(&|$)/, '$1').replace(/\?$/, '') + (url.indexOf('?') >= 0 ? '&' : '?') + '_v=' + Date.now(); }
         function reloadToNewVersion(v) {
-          localStorage.setItem(KEY, v);
+          safeSetKey(v);
           // 用带版本参数的 URL 强制重新请求 index.html，绕过所有缓存层
           var next = bustCache(location.href.split('#')[0]);
           if (location.href !== next) {
@@ -42,17 +48,25 @@
             location.reload(true);
           }
         }
+        var alreadyReloading = false;
         function check() {
+          if (alreadyReloading) return;
           fetch('./version.json?_t=' + Date.now(), { cache: 'no-store' })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (data) {
               if (!data || !data.v) return;
-              var saved = localStorage.getItem(KEY);
-              if (saved && saved !== data.v) {
+              var saved = safeGetKey();
+              if (!saved) {
+                // localStorage 不可用或首次访问：只要 URL 还没带版本参数，就强制刷新一次
+                var hasVersionParam = /[?&]_v=/.test(location.search || '');
+                safeSetKey(data.v);
+                if (!hasVersionParam) {
+                  alreadyReloading = true;
+                  reloadToNewVersion(data.v);
+                }
+              } else if (saved !== data.v) {
                 // 版本不一致，部署了新版，强制刷新拉取新 index.html
-                reloadToNewVersion(data.v);
-              } else if (!saved) {
-                // 首次访问：也强制带版本参数刷新一次，确保 index.html 和 JS 都是最新
+                alreadyReloading = true;
                 reloadToNewVersion(data.v);
               }
             })
