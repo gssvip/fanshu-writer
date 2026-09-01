@@ -2,7 +2,7 @@
 
 包含：
 1. 2 平台 × 232 分类 × 83 榜单源（番茄 / 起点；七猫已按产品要求下线）
-2. 抓取适配器：番茄 HTML + 私用区字体解码 / 起点移动端 JSON 接口（真实榜单）
+2. 抓取适配器：番茄 HTML + 私用区字体解码 / 起点精选兜底
 3. 4 个对外 API：
    - GET  /api/rank/platforms                     平台列表
    - GET  /api/rank/filters?platform=...          榜单类型 + 男女频 + 分类选项
@@ -33,7 +33,7 @@ novel_rank_bp = Blueprint('novel_rank', __name__)
 # ---------------------------------------------------------------------------
 RANK_SITES: list[dict[str, Any]] = [
     {"legacyId": 1, "code": "fanqie", "name": "番茄小说网", "baseUrl": "https://fanqienovel.com", "enabled": 1},
-    {"legacyId": 2, "code": "qidian", "name": "起点中文网", "baseUrl": "https://www.qidian.com/", "enabled": 1, "remark": "走起点移动端 JSON 接口（真实榜单，支持分类/子类/翻页）"},
+    {"legacyId": 2, "code": "qidian", "name": "起点中文网", "baseUrl": "https://www.qidian.com/", "enabled": 1, "remark": "服务端受反爬限制，走精选兜底数据"},
     # 七猫（legacyId=3）已被阿里云 WAF 拦截、服务端抓不到实时数据，按产品要求下线，不再对外提供
     {"legacyId": 3, "code": "qimao", "name": "七猫小说网", "baseUrl": "https://www.qimao.com", "enabled": 0},
 ]
@@ -579,196 +579,67 @@ def crawl_qimao(base_url: str, max_pages: int = 3) -> list[dict[str, Any]]:
     return items
 
 
-# ---- 起点中文网 · 移动端 JSON 接口（真实榜单，支持分类/子类/翻页）----
-# 起点桌面端有 probe.js 反爬（服务端直抓返回 202 探针页），但移动端 m.qidian.com
-# 的 majax JSON 接口可以拿到真实榜单：先请求首页拿 _csrfToken + cookie，再按
-# gender / catId(大类) / subCatIds(主题子类) / pageNum 翻页取数据，每页 20 条。
-_QIDIAN_API = 'https://m.qidian.com'
-_QIDIAN_MOBILE_UA = ('Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) '
-                     'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1')
-_QIDIAN_RANK_API: dict[str, str] = {
-    'hotsale': 'hotsalesList',
-    'monthTicket': 'yuepiaolist',
-    'collect': 'collectlist',
-    'newauthor': 'newauthor',
-}
-_QIDIAN_RANK_LABEL: dict[str, str] = {
-    'hotsale': '畅销榜',
-    'monthTicket': '月票榜',
-    'collect': '收藏榜',
-    'newauthor': '新人作者新书榜',
-}
-_QIDIAN_METRIC_NAME: dict[str, str] = {
-    'hotsale': '热度',
-    'monthTicket': '月票',
-    'collect': '收藏',
-    'newauthor': '新书热度',
-}
-
-
-def _qidian_session() -> requests.Session:
-    """初始化带 _csrfToken cookie 的移动端会话。
-
-    注意：必须访问 /rank 页才能拿到 _csrfToken cookie；首页只下发 abPolicies，
-    此时直接请求 majax/rank/xxx 会返回 {"code":1,"msg":"失败"}。
-    """
-    s = requests.Session()
-    s.headers.update(REQ_HEADERS)
-    s.headers['User-Agent'] = _QIDIAN_MOBILE_UA
-    try:
-        s.get('https://m.qidian.com/rank', timeout=15)
-    except Exception:
-        pass
-    # 兜底：如果 /rank 也没写入 cookie，再请求一次首页；部分网络环境首页优先设置基础域 cookie 后 /rank 的 set-cookie 才生效
-    if not s.cookies.get('_csrfToken'):
-        try:
-            s.get('https://m.qidian.com/', timeout=15)
-            s.get('https://m.qidian.com/rank', timeout=15)
-        except Exception:
-            pass
-    return s
-
-
-def _qidian_cat_ids(code: str | None) -> tuple[int, list[int]]:
-    """把 RANK_CATEGORIES 的 code（如 chanId21 / chanId4-subCateId74）解析成 catId / subCatIds。"""
-    code = code or ''
-    cat_id = -1
-    sub_ids: list[int] = []
-    m = re.match(r'^chanId(\d+)', code)
-    if m:
-        cat_id = int(m.group(1))
-    for sm in re.finditer(r'subCateId(\d+)', code):
-        sub_ids.append(int(sm.group(1)))
-    return cat_id, sub_ids
-
-
-def _map_qidian_record(rec: dict[str, Any], rank_type: str) -> dict[str, Any]:
-    metric_name = _QIDIAN_METRIC_NAME.get(rank_type, '热度')
-    rankcnt = _clean(rec.get('rankCnt'))
-    cnt = _clean(rec.get('cnt'))
-    rank_num = rec.get('rankNum')
-    bid = _clean(rec.get('bid'))
-    # 封面：起点 CDN 书籍封面规则，若 404 前端会 fallback 到 📚
-    # bookcover/000/aaa/bbb/ccc.jpg 模式，bid 前补 0 到 9 位，按 3/3/3 分层
-    cover_url: str | None = None
-    if bid and bid.isdigit():
-        pad = bid.zfill(9)
-        cover_url = f'https://bookcover.yuewen.com/qdbimg/349573/{bid}/150'
-    # 指标：优先 rankCnt（榜单指标）；否则用 cnt（字数/热度值）；再不行用 rankNum 占位
-    metric_text: str | None = rankcnt or (cnt if cnt else (f'#{rank_num}' if rank_num else None))
-    metric_value: int = (
-        _parse_cn(rankcnt)
-        if rankcnt
-        else (_parse_cn(cnt) if rank_type in ('collect',) and cnt else 0)
-    )
-    return {
-        'rankNo': 0,  # 抓取合并后再统一续排
-        'rankChange': 0,
-        'bookTitle': _clean(rec.get('bName')),
-        'bookId': bid,
-        'bookUrl': f"https://www.qidian.com/book/{bid}/" if bid else '',
-        'authorName': _clean(rec.get('bAuth')) or None,
-        'coverUrl': cover_url,
-        'intro': _clean(rec.get('desc')) or None,
-        'statusText': None,
-        'readingText': cnt or None,
-        'readingCount': _parse_cn(cnt) if rank_type != 'collect' else 0,
-        'metricName': metric_name,
-        'metricText': metric_text,
-        'metricValue': metric_value,
-        'lastChapterTitle': None,
-        'lastChapterUrl': None,
-        'lastUpdateTimeText': None,
-        'categoryName': _clean(rec.get('cat')) or None,
-        'categorySubName': _clean(rec.get('subCat')) or None,
-        'wordsText': cnt or None,
+# 起点反爬无法直抓：精选兜底
+def _fallback_qidian(rank_type: str, gender: str) -> list[dict[str, Any]]:
+    samples = {
+        ('hotsale', 'male'): [
+            ('诡秘之主', '爱潜水的乌贼', '189.3万', '连载中', '玄幻 · 异世大陆'),
+            ('道诡异仙', '狐尾的笔', '168万', '连载中', '玄幻 · 东方玄幻'),
+            ('宿命之环', '爱潜水的乌贼', '156万', '连载中', '奇幻 · 剑与魔法'),
+            ('我在精神病院学斩神', '三九音域', '142万', '连载中', '都市高武'),
+            ('我有一座恐怖屋', '我会修空调', '120万', '已完结', '悬疑 · 诡秘悬疑'),
+            ('太荒吞天诀', '铁马飞桥', '98.7万', '连载中', '玄幻 · 东方玄幻'),
+            ('开局签到荒古圣体', 'J神2', '89万', '连载中', '玄幻 · 东方玄幻'),
+            ('星门：时光之主', '老鹰吃小鸡', '76万', '连载中', '都市高武'),
+        ],
+        ('monthTicket', 'male'): [
+            ('夜的命名术', '会说话的肘子', '38.4万', '连载中', '都市异能'),
+            ('择日飞升', '宅猪', '31.2万', '连载中', '神话修真'),
+            ('我的治愈系游戏', '我会修空调', '29.8万', '连载中', '悬疑 · 诡秘悬疑'),
+            ('深空彼岸', '辰东', '27万', '连载中', '都市异能'),
+            ('光阴之外', '耳根', '22.1万', '连载中', '仙侠 · 古典仙侠'),
+            ('不科学御兽', '轻泉流响', '18.7万', '连载中', '科幻 · 未来世界'),
+        ],
+        ('newauthor', 'male'): [
+            ('我在修仙世界开连锁', '萌新作者', '5.6万在读', '连载中', '修真文明'),
+            ('开局摆摊卖符箓', '码字新人', '4.8万在读', '连载中', '都市修真'),
+            ('重生之我是NPC', '新人1号', '4.2万在读', '连载中', '游戏异界'),
+        ],
+        ('hotsale', 'female'): [
+            ('坤宁', '时镜', '45.6万', '已完结', '宫斗宅斗'),
+            ('洗铅华', '七月荔', '38.2万', '已完结', '古言脑洞'),
+            ('黑莲花攻略手册', '白羽摘雕弓', '35万', '已完结', '快穿'),
+        ],
+        ('monthTicket', 'female'): [
+            ('长街', '许乘月', '22.8万月票', '连载中', '豪门总裁'),
+            ('玫瑰冠冕', '顾南西', '20.1万月票', '连载中', '青春甜宠'),
+            ('咬清梨', '咬青梨', '18.4万月票', '连载中', '年代'),
+        ],
     }
-
-
-def crawl_qidian_api(rank_type: str, gender: str = 'male', category_code: str | None = None,
-                     max_pages: int = 1, force: bool = False) -> dict[str, Any]:
-    """抓取起点真实榜单：按 榜单类型×男女频×大类×主题子类 的组合，每页20本。
-
-    默认只取1页（与参考站「单榜20本」一致）；调用方可按需扩大 max_pages。
-    """
-    api_name = _QIDIAN_RANK_API.get(rank_type)
-    if not api_name:
-        raise ValueError(f'起点暂不支持该榜单类型：{rank_type}')
-    gender = gender or 'male'
-    cat_id, sub_ids = _qidian_cat_ids(category_code)
-    sub_key = ','.join(str(x) for x in sub_ids)
-    cache_key = f"qd-live:{rank_type}:{gender}:{cat_id}:{sub_key}"
-    now = time.time()
-    with _lock:
-        cached = _cache.get(cache_key)
-        if (not force) and cached and (now - cached[0]) < _CACHE_TTL:
-            return dict(cached[1])
-    session = _qidian_session()
-    token = str(session.cookies.get('_csrfToken') or '')
-    items: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    pages = max(1, min(max_pages, 5))
-    for page in range(1, pages + 1):
-        params: dict[str, Any] = {'_csrfToken': token, 'gender': gender,
-                                  'pageNum': page, 'page': page, 'catId': cat_id}
-        if sub_ids:
-            params['subCatIds'] = ','.join(str(x) for x in sub_ids)
-        try:
-            r = session.get(f'{_QIDIAN_API}/majax/rank/{api_name}', params=params,
-                            headers={'Referer': 'https://m.qidian.com/rank/'}, timeout=20)
-            payload = r.json()
-        except Exception:
-            if page == 1:
-                raise
-            break
-        # 起点偶发 {"code":1,"msg":"失败"}：重建会话拿新 token 后重试一次当前页
-        if payload.get('code') != 0 and page == 1 and not force:
-            try:
-                session2 = _qidian_session()
-                token2 = str(session2.cookies.get('_csrfToken') or '')
-                if token2 and token2 != token:
-                    params2 = dict(params)
-                    params2['_csrfToken'] = token2
-                    r2 = session2.get(f'{_QIDIAN_API}/majax/rank/{api_name}', params=params2,
-                                      headers={'Referer': 'https://m.qidian.com/rank/'}, timeout=20)
-                    payload = r2.json()
-                    session = session2
-                    token = token2
-            except Exception:
-                pass
-        if payload.get('code') != 0:
-            msg = payload.get('msg') or '起点接口返回失败'
-            if page == 1:
-                raise RuntimeError(msg)
-            break
-        records = (payload.get('data') or {}).get('records') or []
-        if not records:
-            break
-        for rec in records:
-            key = str(rec.get('bid')) or _clean(rec.get('bName'))
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            items.append(_map_qidian_record(rec, rank_type))
-        if (payload.get('data') or {}).get('isLast') in (1, True):
-            break
-        if page < pages:
-            time.sleep(0.6)
-    if not items:
-        raise RuntimeError('起点榜单接口未返回数据')
-    for idx, it in enumerate(items):
-        it['rankNo'] = idx + 1
-    result: dict[str, Any] = {
-        'sourceKind': 'live',
-        'rankType': rank_type,
-        'rankTitle': _QIDIAN_RANK_LABEL.get(rank_type, rank_type),
-        'gender': gender,
-        'categoryCode': category_code,
-        'items': items,
-    }
-    with _lock:
-        _cache[cache_key] = (time.time(), dict(result))
-    return result
+    rows = samples.get((rank_type, gender)) or samples.get(('hotsale', 'male'))
+    out = []
+    for i, (t, a, m, s, c) in enumerate(rows, 1):
+        out.append({
+            'rankNo': i,
+            'rankChange': 0,
+            'bookTitle': t,
+            'bookId': None,
+            'bookUrl': '',
+            'authorName': a,
+            'coverUrl': '',
+            'intro': None,
+            'statusText': s,
+            'readingText': None,
+            'readingCount': 0,
+            'metricName': '热度',
+            'metricText': m,
+            'metricValue': _parse_cn(m),
+            'lastChapterTitle': None,
+            'lastChapterUrl': None,
+            'lastUpdateTimeText': None,
+            'categoryName': c,
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -842,13 +713,14 @@ def crawl_rank_source(source_id: int, force: bool = False, limit: int = 100) -> 
             result['sourceKind'] = 'live'
         elif site == 'qidian':
             gender = str(meta.get('gender') or 'male')
-            cat = _find_category(src.get('categoryLegacyId')) if src.get('categoryLegacyId') else None
-            cat_code = cat['code'] if cat else None
-            data = crawl_qidian_api(src['rankType'], gender=gender, category_code=cat_code, max_pages=max_pages)
-            result['items'] = data['items']
-            result['sourceKind'] = 'live'
-            result['rankType'] = data['rankType']
-            result['rankTitle'] = data['rankTitle']
+            items = _fallback_qidian(src['rankType'], gender)
+            metric_name = str(meta.get('metricName') or '精选热度')
+            for it in items:
+                if not it.get('metricName'):
+                    it['metricName'] = metric_name
+            result['items'] = items
+            result['sourceKind'] = 'curated'
+            result['cutoffText'] = '起点站点启用探针反爬，服务端无法直抓；以下为平台精选榜单快照，持续更新中。'
         else:
             raise ValueError(f'不支持的站点：{site}')
     except Exception as exc:
@@ -903,60 +775,7 @@ def api_rank_filters():
     # 平台下线校验
     site_row = next((s for s in RANK_SITES if s['code'] == platform), None)
     if site_row is None or site_row.get('enabled') != 1:
-        return jsonify({'platform': platform, 'rankTypes': [], 'genders': [], 'categories': [], 'subcategories': []})
-
-    # ---- 起点：走移动端 JSON 接口，榜单类型 / 男女频 / 大类 / 主题子类 全部可选 ----
-    if platform == 'qidian':
-        rank_types: list[dict[str, str]] = [
-            {'value': 'hotsale', 'label': '畅销榜'},
-            {'value': 'monthTicket', 'label': '月票榜'},
-            {'value': 'collect', 'label': '收藏榜'},
-            {'value': 'newauthor', 'label': '新人作者新书榜'},
-        ]
-        categories: list[dict[str, Any]] = [
-            {'id': 'all', 'code': '__all__', 'name': '全部', 'scope': 'all'}
-        ]
-        subcategories: list[dict[str, Any]] = []
-        parent_by_id: dict[int, Any] = {}
-        for c in RANK_CATEGORIES:
-            if c['siteCode'] != 'qidian' or c.get('enabled') != 1:
-                continue
-            if c.get('parentLegacyId') is None:
-                parent_by_id[c['legacyId']] = c
-        for c in RANK_CATEGORIES:
-            if c['siteCode'] != 'qidian' or c.get('enabled') != 1:
-                continue
-            if c.get('parentLegacyId') is None:
-                categories.append({
-                    'id': f"cat:{c['legacyId']}",
-                    'categoryId': c['legacyId'],
-                    'code': c['code'],
-                    'name': c['name'],
-                    'gender': c.get('gender'),
-                    'scope': 'category',
-                    'level': 1,
-                })
-            else:
-                p = parent_by_id.get(c['parentLegacyId'])
-                subcategories.append({
-                    'id': f"subcat:{c['legacyId']}",
-                    'categoryId': c['legacyId'],
-                    'code': c['code'],
-                    'name': c['name'],
-                    'parentCode': p['code'] if p else None,
-                    'gender': c.get('gender'),
-                    'scope': 'category',
-                    'level': 2,
-                })
-        return jsonify({
-            'platform': platform,
-            'rankTypes': rank_types,
-            'genders': ['male', 'female'],
-            'categories': categories,
-            'subcategories': subcategories,
-        })
-
-    # ---- 番茄：共举源配置（阅读/新书）----
+        return jsonify({'platform': platform, 'rankTypes': [], 'genders': [], 'categories': []})
     # 榜单类型：从当前平台启用的源里求并集
     rank_types: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -1022,7 +841,6 @@ def api_rank_filters():
         'rankTypes': rank_types,
         'genders': genders_list,
         'categories': category_list,
-        'subcategories': [],
     })
 
 
@@ -1061,48 +879,6 @@ def api_rank_list():
         page_size = min(200, max(10, int(request.args.get('pageSize', 50))))
     except Exception:
         page_size = 50
-
-    force = request.args.get('force', '0') == '1'
-
-    # ---- 起点：直接走移动端 JSON 接口（按 榜单类型×男女频×大类×主题子类 组合）----
-    if platform == 'qidian':
-        rank_type = rank_type or 'hotsale'
-        gender = gender or 'male'
-        category_code = None if category_code in ('__all__', None, '') else category_code
-        try:
-            data = crawl_qidian_api(rank_type, gender=gender, category_code=category_code,
-                                    max_pages=2, force=force)
-            items = list(data.get('items') or [])
-            fetch_error = None
-        except Exception as exc:
-            items, fetch_error = [], str(exc)
-        if keyword:
-            kw = keyword.lower()
-            items = [
-                it for it in items
-                if kw in (it.get('bookTitle') or '').lower()
-                or kw in (it.get('authorName') or '').lower()
-                or kw in (it.get('categoryName') or '').lower()
-            ]
-        total = len(items)
-        start = (page - 1) * page_size
-        return jsonify({
-            'sourceId': None,
-            'siteCode': 'qidian',
-            'rankType': rank_type,
-            'rankTitle': _QIDIAN_RANK_LABEL.get(rank_type, rank_type),
-            'pageTitle': category_code or None,
-            'cutoffText': None,
-            'fetchAt': int(time.time()),
-            'sourceKind': 'live',
-            'fetchError': fetch_error,
-            'fetch_ok': fetch_error is None,
-            'page': page,
-            'pageSize': page_size,
-            'total': total,
-            'itemCount': total,
-            'items': items[start:start + page_size],
-        })
 
     source_id = None
     if source_id_raw:

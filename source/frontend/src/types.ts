@@ -291,7 +291,6 @@ export interface NRCategory {
   sourceId?: number;
   categoryId?: number;
   gender?: 'male' | 'female';
-  parentCode?: string;   // 主题子类所属父分类的 code
 }
 
 export interface NRFilters {
@@ -299,7 +298,6 @@ export interface NRFilters {
   rankTypes: NRRankType[];
   genders: ('male' | 'female')[];
   categories: NRCategory[];
-  subcategories?: NRCategory[];   // 主题子类（起点等二级分类）
 }
 
 export interface NRItem {
