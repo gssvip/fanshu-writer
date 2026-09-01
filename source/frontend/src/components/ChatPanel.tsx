@@ -2562,7 +2562,10 @@ export default function ChatPanel() {
     streamBufferRef.current = '';
     reasoningBufferRef.current = '';
 
-    // ====== 节点设计师助手：选中「节点设计师」助手后，输入卷号即可生成节点 ======
+    // ====== 节点设计师助手：选中后，输入卷号 → 直接走通用聊天 SSE 流式直出（智驾 sse_keepalive 每10s心跳帧）
+    // 旧方案（分段异步任务 + 轮询 + MAX_MS 15分钟 + 心跳/预算/补漏）完全废弃（见 git 历史）
+    // 新方案：在 chat_general 注入 node_designer 专属 persona，让 LLM 一次性一条 SSE 流式写到尾，
+    //         结果以 [[CARD:SAVE_PLOT|...|...]] 落地；apply-card 会在落库前统一过 A+C 门禁修复（单章单节点 · 无重叠无跳章 · 50章/卷）。
     const _PREKEY = '__general_pending_session__';
     const _sidReal = chatGeneralSessionId || '';
     const _sid = _sidReal || _PREKEY;
@@ -2573,144 +2576,78 @@ export default function ChatPanel() {
       const vi = _volMatch ? parseInt(_volMatch[1] || _volMatch[2] || _volMatch[3], 10) : 0;
       if (!vi || vi < 1) {
         // 不匹配卷号 → 提示用法
-        setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '🎯 **节点设计师**已就绪。请告诉我卷号，如：`第1卷`、`第一卷`、`1`\n\n系统将自动按本卷 main_events 逐段生成情节子节点（类似圆桌会议分段发言），生成过程中你能实时看到节点冒出来；结束后点击下方卡片「采纳」即可落入对应卷的剧情线。' }]);
+        setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '🎯 **节点设计师**已就绪。请告诉我卷号，如：`第1卷`、`第一卷`、`1`\n\n将按【1章=1节点 · A+C门禁：无重叠无跳章 · 50章/卷 共约12万字】一条流式直出，结束后点击下方卡片「采纳」即可落入对应卷剧情线。' }]);
         return;
       }
-      // 匹配到卷号 → 用 node-design/submit 分段异步 + 短轮询，边生成边在聊天气泡里实时刷新节点列表
+      // 匹配到卷号：用用户输入 + 卷号"第Vi卷"作为提示正文（后端 persona 会注入A+C硬约束），
+      // 直接走通用聊天 SSE（与 general 同一链路，自带 sse_keepalive 心跳帧，不会撞 Render 网关超时）。
+      // 不要人为分段、不要预算管控、不要补漏轮——让模型按生成规则流式直出到底。
+      const _cfgId = sessionModelMap[_sid] || undefined;
+      const _roleId = 'node_designer';
+      // 用户看到的输入：如果用户输入只写了"第N卷"/"N"，我们把它包装成更自然的完整指令，
+      // 方便以后用户修改时上下文能看到这是一条"为第N卷设计情节节点"的请求。
       const volTitle = `第${vi}卷`;
-      let cancelled = false;
-      // 构造一个渲染函数：把 progress+nodes 渲染成 markdown 文本
-      const renderSnapshot = (args: { phase: 'running' | 'done' | 'error' | 'cancelled'; nodes: any[]; done: number; total: number; current_segment?: string; message: string; error?: string; }): string => {
-        const { phase, nodes, done, total, current_segment, message, error } = args;
-        const header = `🎯 **节点设计师** · ${volTitle} · 分段流式生成\n`;
-        const segTotal = total > 0 ? total : (phase === 'done' ? done : 0);
-        const pct = segTotal > 0 ? Math.min(100, Math.round((done / segTotal) * 100)) : (phase === 'done' ? 100 : 0);
-        const pctLine = `\n进度：${pct}%（${done}${segTotal ? ` / ${segTotal}` : ''} 段）`;
-        const segLine = (phase === 'running' && current_segment) ? ` · 🔨 当前：${current_segment}` : '';
-        const statusLine = `\n状态：${phase === 'done' ? '✅ 已完成' : phase === 'error' ? '❌ 失败' : phase === 'cancelled' ? '⏸ 已取消' : '⏳ 生成中'}` + pctLine + segLine;
-        if (error) return `${header}${statusLine}\n\n❌ ${error}`;
-        if (nodes.length === 0 && phase === 'running') {
-          return `${header}${statusLine}\n\n💡 ${message || '正在读取卷剧情并拆分 main_events 成段，节点很快就会逐段冒出来…'}`;
-        }
-        const lines = nodes.map((n: any, i: number) => {
-          const t = n?.type || '';
-          const tMap: Record<string,string> = { M: '主线', C: '角色', W: '世界观', D: '日常', F: '伏笔' };
-          const tStr = tMap[t] ? ` [${tMap[t]}]` : '';
-          const title = n?.title ? `**${n.title}**` : '（未命名节点）';
-          const ch = n?.chapters ? ` · 第${n.chapters}章` : '';
-          const idx = n?.index ?? i + 1;
-          const sum = n?.summary ? `\n   > ${String(n.summary).replace(/\n/g, ' ').slice(0, 80)}${String(n.summary).length > 80 ? '…' : ''}` : '';
-          return `  ${idx}.${tStr} ${title}${ch}${sum}`;
-        });
-        // done：在末尾追加"点击下方卡片采纳"提示，然后再挂载卡片
-        const tail = phase === 'done' ? `\n\n💫 已生成 ${nodes.length} 个情节子节点。请点击下方卡片的「采纳」按钮，节点将落入${volTitle}的剧情线；也可以告诉我具体修改意见（如"第3节点加强爽感"/"第8节点增加伏笔"）。` : '';
-        return `${header}${statusLine}\n\n${message || ''}\n${lines.join('\n')}${tail}`;
-      };
-
-      // 插入用户消息 + 初始空 AI 气泡
-      const initialNodes: any[] = [];
-      setMessages(prev => [...prev,
-        { role: 'user', content: text },
-        { role: 'assistant', content: renderSnapshot({ phase: 'running', nodes: initialNodes, done: 0, total: 0, message: '任务已创建，排队等待生成…' }) },
-      ]);
+      let promptText = text.trim();
+      if (!promptText || /^[\s\d第卷一二三四五六七八九十百千零两0-9]+$/.test(promptText)) {
+        promptText = `请为${volTitle}设计情节节点。要求：单章单节点、无重叠无跳章、共50章/卷12万字规模、每章节点摘要支撑2400字正文、五幕对齐+爽点系统分层节奏，最后给出 SAVE_PLOT 卡片便于采纳。`;
+      }
+      appendUserAi(promptText);
       setStreaming(true);
-      let curDone = 0, curTotal = 0, curSeg = '';
-      let curMsg = '正在提交节点设计任务…';
-      let curNodes: any[] = [];
-      const updateAi = (patch: { phase?: 'running' | 'done' | 'error' | 'cancelled'; done?: number; total?: number; current_segment?: string; message?: string; nodes?: any[]; error?: string; }, cards?: any[]) => {
-        const phase = patch.phase || 'running';
-        if (patch.done !== undefined) curDone = patch.done;
-        if (patch.total !== undefined) curTotal = patch.total;
-        if (patch.current_segment !== undefined) curSeg = patch.current_segment;
-        if (patch.message !== undefined) curMsg = patch.message;
-        if (patch.nodes !== undefined) curNodes = patch.nodes;
-        setMessages(prev => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          const content = renderSnapshot({
-            phase,
-            nodes: curNodes, done: curDone, total: curTotal,
-            current_segment: curSeg, message: curMsg, error: patch.error,
-          });
-          if (last && last.role === 'assistant') {
-            next[next.length - 1] = { ...last, content, cards: cards || last.cards || [] };
-          } else {
-            next.push({ role: 'assistant', content, cards: cards || [] });
-          }
-          return next;
-        });
-      };
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
       try {
-        const sub = await api.nodeDesignSubmit(bookId, vi, { action: 'start' });
-        if (cancelled) return;
-        if (!sub.ok) throw new Error(sub.error || '任务提交失败，请重试');
-        updateAi({ phase: 'running', total: sub.total || 0, message: sub.total ? `已提交，共 ${sub.total} 段，正在分段生成…` : '分段生成中…' });
-        const jobId = sub.job_id || '';
-        // 前端最多 15 分钟兜底（与 aiOutlineVolume 15 分钟保持一致），避免死循环；
-        // 后端 TOTAL_BUDGET = 10 分钟会先主动收束，因此这里实际上只是最后一道保险。
-        const startedAt = Date.now();
-        const MAX_MS = 15 * 60 * 1000;
-        while (!cancelled) {
-          if (Date.now() - startedAt > MAX_MS) throw new Error('生成超时（15分钟），请稍后重新提交');
-          const st = await api.nodeDesignStatus(bookId, jobId);
-          updateAi({
-            phase: (st.state === 'error' ? 'error' : st.state === 'done' ? 'done' : st.state === 'cancelled' ? 'cancelled' : 'running') as any,
-            done: st.done ?? curDone,
-            total: st.total ?? curTotal,
-            current_segment: st.current_segment ?? curSeg,
-            message: st.message ?? curMsg,
-            nodes: st.nodes?.length ? st.nodes : curNodes,
-            error: st.state === 'error' ? (st.error || undefined) : undefined,
-          });
-          if (st.state === 'done') {
-            const finalNodes = (st.nodes?.length ? st.nodes : curNodes) || [];
-            // 组装 SAVE_PLOT 卡片 content：按 timeline 模式提供 JSON 数组形式的整卷对象。
-            // 防御性：先从 chatPanel 本地 bible 取出目标卷当前已有的卷级字段（summary/main_plot/
-            // core_conflict/main_events 等），和新生成的 nodes 一起打包进卡片。哪怕后端
-            // apply-card 出 bug，也不会把卷级大纲/冲突/事件因为卡片只传 nodes 而抹空。
-            let existingVol: any = null;
-            try {
-              const tlRaw = (bible as any)?.timeline || '';
-              if (typeof tlRaw === 'string' && tlRaw.trim()) {
-                const fence = tlRaw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-                const txt = fence ? fence[1].trim() : tlRaw.trim();
-                const arr = JSON.parse(txt);
-                if (Array.isArray(arr)) {
-                  for (const v of arr) {
-                    if (!v || typeof v !== 'object') continue;
-                    const vIdxRaw = (v as any).volume_index ?? (String((v as any).volume || '').match(/第?\s*(\d+)/) || [])[1];
-                    const vIdx = vIdxRaw !== '' && vIdxRaw !== undefined && vIdxRaw !== null ? Number(vIdxRaw) : NaN;
-                    if (Number.isFinite(vIdx) && Number(vIdx) === vi) { existingVol = v; break; }
-                  }
-                }
-              }
-            } catch { /* 解析失败就忽略，后端 _merge_volume 会兜底 */ }
-            const volPayload: any = { ...(existingVol || {}) };
-            volPayload.volume_index = vi;
-            volPayload.volume_id = volPayload.volume_id || String(vi);
-            volPayload.volume = volPayload.volume || volTitle;
-            volPayload.nodes = finalNodes;
-            const cardTimeline = JSON.stringify([volPayload]);
-            const cardId = 'node-' + Math.random().toString(36).slice(2, 9);
-            const cards = finalNodes.length > 0 ? [{
-              id: cardId,
-              type: 'SAVE_PLOT' as const,
-              title: `${volTitle}情节节点（${finalNodes.length}个）`,
-              content: cardTimeline,
-              target: '剧情',
-              status: 'pending' as const,
-            }] : [];
-            // 最终 snapshot：phase=done 时会在气泡尾提示用户采纳
-            updateAi({ phase: 'done', message: st.message || `已完成，共生成 ${finalNodes.length} 个情节节点。` }, cards);
-            break;
+        const res = await api.chatGeneralStream(
+          promptText,
+          {
+            bookId: bookId || undefined,
+            sessionId: chatGeneralSessionId || undefined,
+            aiConfigId: _cfgId,
+            roleId: _roleId,
+            deepThink: generalDeepThink,
+            webSearch: generalWebSearch,
+            truncateHistoryTo: opts?.truncateHistoryTo,
+          },
+          ctrl.signal
+        );
+        await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
+          if (kind === 'role_applied' && info && typeof info === 'object') {
+            const _backRole = String(info.role_id || 'default').trim() || 'default';
+            const _sid2 = chatGeneralSessionId || '';
+            if (_sid2) setSessionRoleMap(m => (m[_sid2] === _backRole ? m : { ...m, [_sid2]: _backRole }));
           }
-          if (st.state === 'error' || st.state === 'cancelled') break;
-          await new Promise(r => setTimeout(r, 1600));
-        }
+          // 节点设计师模式：用户不需要我们在前端再额外追加 SAVE_PLOT 卡片；
+          // 卡片完全由 LLM 在 persona 里输出 [[CARD:SAVE_PLOT|...]]，consumeSSE 会自动解析挂载到本条消息。
+        }, false, (freshSid: string) => {
+          // 新建会话 → 迁移预会话模型/角色到真实sid
+          if (freshSid && freshSid !== chatGeneralSessionId) {
+            setSessionModelMap(prev => {
+              const v = prev[_PREKEY];
+              if (v === undefined) return prev;
+              const { [_PREKEY]: _drop, ...rest } = prev;
+              void _drop;
+              return { ...rest, [freshSid]: v };
+            });
+            setSessionRoleMap(prev => {
+              // 无论预会话有没有值，新会话一律写 node_designer（避免新建好后切回 default）
+              const { [_PREKEY]: _drop, ...rest } = prev;
+              void _drop;
+              return { ...rest, [freshSid]: 'node_designer' };
+            });
+          }
+          setChatGeneralSessionId(freshSid);
+        });
+        // 流结束后：给用户追加一句"如果需要修改某章，可以直接对我说『第X章改XXX』"的提示（追加到末尾）
+        //（避免"生成完了啥按钮都没"的困惑）。consumeSSE 已经把卡片挂到 AI 气泡上了，不用再手动处理。
       } catch (e: any) {
-        updateAi({ phase: 'error', nodes: curNodes, error: e?.message || '未知错误' });
+        if (e.name !== 'AbortError') {
+          const msg = (e?.message || e?.error || '节点设计失败').trim() || '节点设计失败';
+          appendAiNotice('❌ 节点设计失败：' + msg + '\n\n常见原因&解决：\n1) LLM上游503/限流 → 等30秒后重发（本生成约需3-8分钟，不要急，看到节点在逐步输出就说明一切正常）\n2) 修改某章：直接对我说"第8章加强反派压迫感"/"第31章增加伏笔回收"即可，不需要重新跑整卷。');
+          setStreamError('');
+          removeEmptyAi();
+        }
       } finally {
         setStreaming(false);
+        abortRef.current = null;
       }
       return;
     }

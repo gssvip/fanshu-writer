@@ -182,14 +182,14 @@ TOOLSPAGE_BASELINE = 1192
 #   - chat_collab_bp.py：_merge_volume 重写（NEW非空覆盖 OLD兜底保留卷级字段）+ _volume_field_nonempty 辅助
 #     + 三常量+规则细则随 chat_collab_bp 历次增量同步 → 9143→9244（+101 行，P0修复与功能
 #     增量，chat_collab_bp 已是 chat_general/圆桌/节点设计/角色落地的多域聚合，需后续再拆分）
-#   - WritePage.tsx：新增 aiChatHistory 离线缓存 try/catch 兜底（防 Tracking Prevention 白屏）
-#     + 之前的 WritePage 状态管理/智驾面板交互合并入库 → 8902→8908（+6 行，P0白屏急救必需）
-#   - ChatPanel.tsx：SAVE_PLOT 卡片 content 合并现有卷字段（防采纳后卷级字段清空）
-#     + MAX_MS 从 12 分钟放宽到 15 分钟兜底
-#     + localStorage 访问包 try/catch（防 Tracking Prevention 白屏）
-#     + 之前的 NodeDesignView、节点设计师分段流式生成 UI 等增量合并入库
-#     → 4164→4315（+151 行，均为用户明确要求的 P0 白屏急救/采纳落地/超时兜底硬修复，非业务膨胀）
-CHAT_COLLAB_BP_BASELINE = 9244
+#   - 2026-09-01 继续：节点设计师改走智驾通用 chat SSE 流式直出（不再走 node_design_bp 异步任务）
+#     · _PERSONAS 新增 node_designer 角色 persona（A+C章粒度铁律+整卷50章门禁+爽点系统+输出卡片格式）≈ +76 行
+#     · apply-card SAVE_PLOT 模式新增 A+C 门禁：_repair_volume_nodes_safe 统一过 _repair_nodes_to_one_ch_per_node，
+#       保证单章单节点/无重叠无跳章/50章兜底 ≈ +72 行
+#   → 9244→9363（+119 行，P0 用户实锤需求：节点设计师取消分段/预算/轮询/超时，直接用智聊SSE直出，
+#     功能代码只能放到 chat_collab_bp.py（与 chat_general/apply-card 同一文件才能复用现有基础设施/避免循环 import），
+#     不属于"业务膨胀堆肉"，下一次拆分时再把 _PERSONAS + apply-card 节点门禁移到独立模块）
+CHAT_COLLAB_BP_BASELINE = 9363
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

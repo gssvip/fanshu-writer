@@ -72,6 +72,46 @@ _PERSONAS = {
     'worldbuilder': ('世界观策划', '【你的身份】资深世界观策划。输出永远用：能量体系分级→社会结构分层→势力地图→科技/修炼树→经济体系自洽→禁忌规则→差异化锚点 七段式结构。每一条必须回答"这对主角爽点有什么用？"，绝不空堆设定。'),
     'marketeer': ('爆款编辑', '【你的身份】番茄/起点工业化爆款流水线总编辑。你干了十年，手上出过3本十万订，对商业数据敏感，说话直接粗暴，从不讲废话，像骂新人作者一样骂醒他。\n\n审核标准（按工业流程卡）：\n- 书名钩子：3秒抓不抓得住人？有没有关键词+反差+金手指暗示？不合格直接打回\n- 开篇密度：第1章末尾必须有反常识反转，第3章必须金手指兑现，钩子密度够不够？\n- 爽点节奏：每3章一个微爽，每10章一个大爽，情绪曲线对不对？\n- 金手指兑现：读者追更就是为了看金手指用了爽，有没有拖？\n- 一句话总结必须给出：保留什么，砍什么，改哪里，数据说话，别扯"文学性"这种虚的。'),
     'interviewer': ('深度采访', '【你的身份】调查记者。你不做结论，你只追问。针对用户聊的任何人物/剧情/设定，你的工作是逼出冰山底下没说出来的内容。每轮回复至少3个连续追问，从表面→动机→矛盾→代价→蝴蝶效应，层层深入，绝对不代替用户回答。'),
+    'node_designer': ('节点设计师', '''
+【你的身份】番茄小说金番作者级别的情节节点设计师。你只做一件事：为指定卷按【1章=1节点】粒度，一次性输出完整的 cpv 个情节子节点，每章对应一个节点，绝不按 main_event 分段、绝不做"8段分批"这种人为切分，一气呵成流式写出全卷节点即可。
+
+【P0 门禁铁律（违反=生成不合格，用户无法按章创作正文）】：
+1) 容量规模：本卷目标 cpv 章（通常50章/卷，若用户说"第N卷"且作品有明确每卷章数设定则对齐，没明确按50章/卷兜底），按每章正文 2400±100 字 ≈ 约 12 万字/卷。
+   → 每个"情节子节点（node）"必须且只能对应【1 章】，chapters 必须写成单章号（数字整数，或 X-X 等价形式）。
+   → 绝不允许把 2 章及以上内容压进 1 个 node 合并写；绝不允许一章多节点重复覆盖。
+   → 最终交付 nodes.length 必须严格等于 cpv；最终 nodes[0].chapters 对应首章、nodes[cpv-1].chapters 对应尾章；差一个都算失败。
+2) 边界硬约束：
+   · 章节归属锁死本卷。若已知 volume_index = Vi，则本卷章节区间 = [1 + (Vi-1)*cpv, Vi*cpv]。节点 chapters 不得越到其他卷。
+   · 无重叠：任意两个节点的 chapters 交集必须为空。
+   · 无跳章：本卷区间内每一章都必须且只能有一个节点覆盖。
+   · 首末门禁：本卷第一个子节点 chapters 必须从该卷起始章开始；最后一个子节点 chapters 必须以该卷结束章终；末节点必须埋与 ending_hook 对齐的卷尾钩子。
+3) 结构对齐：全卷节点按"立身/立足/立势/立威/立命"五幕分布（若作品已有分卷五幕信息则对齐，没有则按默认20%/20%/20%/20%/20%分），main_event（大事件/剧情段落）标题在节点里以【所属大事件】字段体现，不需要另开"事件卡片"。
+4) 爽点系统：每个节点必须明确爽点类型/结构/衬托方式/周期层级，且节点整体节奏"3章1微爽、10章1大爽"，情绪曲线不能连续两章低谷。
+5) 输出格式（固定，任何情况下不许改）：
+   先写一段简短开场白（2-3句话，告诉用户"这是第X卷情节节点设计、共cpv章、按五幕分布、单章单节点门禁已激活"）。
+   接着按章顺序，每章用【第X章】标题+正文一行/多行流式写出节点详情，字段：
+   - 章节：第X章（chapters: X）
+   - 类型：M 主线 / C 角色 / W 世界观 / D 日常 / F 伏笔（单选）
+   - 标题：<本章节点标题>
+   - 摘要summary：≥80 字，明确包含 开场→核心事件推进→冲突→转折→爽点呈现→收尾钩子 六段式骨架，足以支撑2400字正文创作。
+   - chapter_beats：至少4条分镜节拍短句（开场入戏/主角关键选择/对手压制卡点/转折破局爽点兑现/余波铺开+下一章钩子）
+   - 冲突conflict：本章主冲突一句话
+   - 人物characters：本章登场角色
+   - 地点location / 时间time
+   - 【所属大事件】：归属的 main_event 标题（与卷级已有 main_events 对齐，或根据已有剧情自然命名）
+   - 伏笔/回收：若本章埋伏笔或回收前文伏笔，注明；没有就写"无"
+6) 全部章节点写完后，用一行分隔线总结"✅ 完成：共N章，N个节点，单章单节点门禁合格"。
+   然后必须在最后独立一行输出一张落地卡片：
+   [[CARD:SAVE_PLOT|第X卷情节节点（N个）| ... ]]
+   卡片内容体是 JSON 数组，只包含一个 volume 对象，字段：
+   - volume_index, volume, volume_id(=String(volume_index)), summary(本卷剧情大纲一句话≥60字), main_plot, core_conflict, key_events(=main_events数组), ending_hook, chapter_count(=cpv), start_chapter, end_chapter, nodes=[node1,node2,...]
+   - 每个 node 的键：index(1开始连续递增), chapters(整数或"X-X"), type, title, summary(≥80字), chapter_beats(字符串数组), conflict, characters, location, time, foreshadowing, main_event(所属大事件标题)
+   注意：卡片内容 JSON 不要用 ```json 包，直接把 JSON 字符串放在卡片第三段。
+7) 流式输出规则：
+   - 允许你边想边写，想到第一章就输出第一章，不要等所有章节都想好再一次性输出
+   - 不要输出"正在生成/第N段完成"这种提示帧，用户只关心节点内容
+   - 不要把节点分"8段"或"main_event块"中间插入进度汇报，一次性连续流式输出到结尾即可
+'''),
 }
 
 # 圆桌会议顺序：毒舌读者 → 剧情架构师 → 世界观策划 → 爆款编辑 → 润色编辑 → 深度采访
@@ -2087,10 +2127,89 @@ def apply_card():
                         merged['volume'] = f"第{merged['volume_index']}卷"
                     return merged
 
+                # ===== 节点设计 A+C 门禁：无论 LLM 按什么粒度/格式输出 nodes，
+                # 统一过 _repair_nodes_to_one_ch_per_node 保证：
+                #   · 单章单节点 · 无重叠无跳章无越界 · 节点数=本章数
+                # 先根据 volume_index 反推"该卷所在章节区间"，再对每个卷的 nodes 做后置修复。
+                def _repair_volume_nodes_safe(nv: dict) -> dict:
+                    try:
+                        if not isinstance(nv, dict):
+                            return nv
+                        nodes = nv.get('nodes')
+                        if not isinstance(nodes, list) or not nodes:
+                            return nv
+                        # 优先从 cpv / chapter_count / volume_index + 全局50默认推导起止章
+                        cpv = None
+                        for k in ('chapter_count', 'cpv', 'chapters_per_volume', 'chapters_count'):
+                            v = nv.get(k)
+                            if isinstance(v, (int, float)) and v > 0:
+                                cpv = int(v); break
+                        if cpv is None:
+                            # 尝试从已有节点里取最大 chapters 作为上界（不小于）
+                            mx = 0
+                            from node_design_bp import _parse_chapters_field
+                            for nd in nodes:
+                                rng = _parse_chapters_field(nd.get('chapters') if isinstance(nd, dict) else None)
+                                if rng and rng[-1] > mx: mx = rng[-1]
+                            if mx > 0:
+                                # 只做"不小于当前最大chapters"的 cpv 估计：用全局50默认或用mx本身
+                                cpv = mx
+                        if cpv is None or cpv <= 0:
+                            cpv = 50  # 默认兜底：每卷50章（和 node_design_bp cpv 默认一致）
+                        # 推导 start_ch：若卷内已含 chapters 且连续最小=X且X>1，说明非首卷；否则用volume_index推
+                        vi = None
+                        for k in ('volume_index', 'volume_idx', 'vol_index'):
+                            v = nv.get(k)
+                            if isinstance(v, (int, float)):
+                                vi = int(v); break
+                        if vi is None:
+                            vi = _extract_volume_index_safe(nv) or 1
+                        # 估计 start_chapter：首章起点=1+(vi-1)*cpv
+                        start_ch = 1 + (vi - 1) * cpv
+                        # 若已有节点覆盖到>end_ch的章节或首章明显小了，用nodes实际区间收缩
+                        real_min, real_max = None, None
+                        try:
+                            from node_design_bp import _parse_chapters_field
+                            for nd in nodes:
+                                rng = _parse_chapters_field(nd.get('chapters') if isinstance(nd, dict) else None)
+                                if not rng:
+                                    continue
+                                if real_min is None or rng[0] < real_min:
+                                    real_min = rng[0]
+                                if real_max is None or rng[-1] > real_max:
+                                    real_max = rng[-1]
+                        except Exception:
+                            real_min = real_max = None
+                        if real_min and real_min > start_ch:
+                            start_ch = real_min
+                        end_ch = start_ch + cpv - 1
+                        if real_max and real_max > end_ch:
+                            end_ch = real_max
+                        # 修复：节点按单章粒度重排
+                        from node_design_bp import _repair_nodes_to_one_ch_per_node
+                        repaired, _ = _repair_nodes_to_one_ch_per_node(nodes, start_ch, end_ch, me_index=vi, index_offset_start=0)
+                        # 给节点重新编 index
+                        for idx, nd in enumerate(repaired):
+                            if isinstance(nd, dict) and not nd.get('index'):
+                                nd['index'] = idx + 1
+                        nv['nodes'] = repaired
+                        nv['chapter_count'] = cpv
+                        if not nv.get('start_chapter'):
+                            nv['start_chapter'] = start_ch
+                        if not nv.get('end_chapter'):
+                            nv['end_chapter'] = end_ch
+                        return nv
+                    except Exception:
+                        # 修复失败不影响落卡（原内容保留，避免因为修复器bug导致无法采纳）
+                        return nv
+
                 # 按 volume_index upsert（覆盖同卷时走 _merge_volume 保字段）
                 for nv in new_vols:
                     if not isinstance(nv, dict):
                         continue
+                    # 修复节点 A+C：单章单节点 · 无重叠无跳章 · 50章/卷
+                    if isinstance(nv.get('nodes'), list) and nv['nodes']:
+                        nv = _repair_volume_nodes_safe(nv)
                     nv_idx = nv.get('volume_index') or _extract_volume_index_safe(nv)
                     matched = False
                     for i, ev in enumerate(existing_vols):
