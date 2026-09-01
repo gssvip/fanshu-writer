@@ -826,53 +826,114 @@ def _crawl_fq_api(url: str, category_name: str | None, limit: int = 20) -> list[
         return []
 
 
+def _build_fq_secondary_ssr_urls(url: str) -> list[str]:
+    """根据主 URL 构造若干「同分类、不同榜单类型」的 SSR URL，用于在不依赖 msToken 的前提下凑齐 20 本。
+    URL 格式 /rank/{a}_{b}[_{c}]：
+      - a: 性别 (1=男, 0=女)
+      - b: 榜单类型 (2=阅读榜, 1=新书榜) — 真实 SSR 对 b=1/2/3/4/5 多数有内容
+      - c: 分类 id（可选）
+    返回有序列表：优先同性别 跨榜单类型 → 跨 rank-mold 前缀数字，再跨性别（同分类）兜底。
+    """
+    info = _parse_fq_rank_url(url)
+    if not info:
+        return []
+    a = '1' if info['gender'] == 1 else '0'
+    # primary b from info.rank_type: 'reading' → '2', 'new' → '1'
+    b_primary = '2' if info['rank_type'] == 'reading' else '1'
+    c = str(info['category_id']) if info['category_id'] is not None else None
+    result: list[str] = []
+    base = 'https://fanqienovel.com/rank'
+    suffix = f'_{c}' if c else ''
+    # 1) 同性别 跨榜单类型 (阅读↔新书)
+    other_b = '1' if b_primary == '2' else '2'
+    result.append(f'{base}/{a}_{other_b}{suffix}')
+    # 2) 同性别 其它榜单-mold 前缀 (2,3,4,5)  — SSR 实测 rank-book-item 有时有内容
+    for prefix in ['2', '3', '4', '5']:
+        if prefix != a:  # 避免重复 primary 自身 (a==1 时 prefix=1 跳过)
+            for bt in [b_primary, other_b]:
+                result.append(f'{base}/{prefix}_{bt}{suffix}')
+    # 3) 跨性别 (同榜单类型+分类) — 仅分类榜有 c，全部榜通常男女分开无意义
+    if c:
+        other_a = '0' if a == '1' else '1'
+        for bt in [b_primary, other_b]:
+            result.append(f'{base}/{other_a}_{bt}{suffix}')
+    # 去重保持顺序 + 排除自身
+    seen: set[str] = set()
+    seen.add(url.rstrip('/'))
+    uniq: list[str] = []
+    for u in result:
+        uu = u.rstrip('/')
+        if uu in seen:
+            continue
+        seen.add(uu)
+        uniq.append(u)
+    return uniq
+
+
 def crawl_fanqie(url: str, category_name: str | None = None, max_pages: int = 1, limit: int = 20) -> dict[str, Any]:
-    # 策略：SSR HTML 必走（稳定 10 条左右）+ 分类 JSON API 补齐（最多 limit 条），按 bookId 去重合并后截断到 limit。
-    # 番茄 SSR 不分页（?page=2 仍返回第 1 页 DOM），因此 max_pages 不再循环请求多页，仅用于兼容；
-    # 若 __INITIAL_STATE__.rank.book_list 有超过 SSR DOM 条数的条目，parse_fanqie_html 会自动合并。
+    # 抓取策略（纯 HTTP，无 headless）：
+    #   Step 1: SSR 主 URL → 稳定 10 条
+    #   Step 2: 若不足 limit，用 _build_fq_secondary_ssr_urls 生成的同源异榜/异型 URL 继续 SSR 抓取，
+    #           合并去重到 limit 条（弥补 msToken 限制导致 offset>10 的 JSON API 无法纯 requests 获取第 2 页的问题）。
+    #   Step 3: 仍不足则再尝试 JSON API 最佳努力（通常由于缺少 msToken 返回空，仅作兜底）。
+    # 番茄 SSR 不分页（?page=2 仍返回第 1 页 DOM），因此忽略 max_pages 循环；若 __INITIAL_STATE__.rank.book_list
+    # 有超过 SSR DOM 条数的条目，parse_fanqie_html 会自动合并。
+    limit_i = max(int(limit or 20), 1)
     parsed_page_title = ''
     parsed_cutoff = ''
     items: list[dict[str, Any]] = []
-    try:
-        html = _rank_fetch(url, referer='https://fanqienovel.com/')
-        parsed = parse_fanqie_html(html, category_name=category_name)
-        items.extend(parsed.get('items') or [])
-        parsed_page_title = parsed.get('pageTitle') or ''
-        parsed_cutoff = parsed.get('cutoffText') or ''
-    except Exception as first_err:
-        ssr_err = first_err
-    else:
-        ssr_err = None
+    seen_ids: set[str] = set()
+    seen_titles: set[str] = set()
 
-    # SSR 失败或缺条目时，尝试 JSON API 作为保底 / 补齐
-    need = max(0, int(limit or 20) - len(items))
-    if need > 0 or ssr_err is not None:
-        extra_limit = max(int(limit or 20) * 2, need)
-        api_items = _crawl_fq_api(url, category_name=category_name, limit=extra_limit)
-        if ssr_err is not None and not items and not api_items:
-            raise ssr_err  # SSR + API 全失败才抛
-        # 合并去重
-        seen: set[str] = {str(it.get('bookId') or '').strip() for it in items if it.get('bookId')}
-        seen_titles: set[str] = {str(it.get('bookTitle') or '').strip() for it in items}
-        for ai in api_items:
-            bid = str(ai.get('bookId') or '').strip()
-            title = str(ai.get('bookTitle') or '').strip()
-            if (bid and bid in seen) or (title and title in seen_titles):
+    def _merge(new_items: list[dict[str, Any]]) -> None:
+        for it in new_items:
+            bid = str(it.get('bookId') or '').strip()
+            title = str(it.get('bookTitle') or '').strip()
+            if (bid and bid in seen_ids) or (title and title in seen_titles):
                 continue
-            items.append(ai)
-            if bid: seen.add(bid)
+            items.append(it)
+            if bid: seen_ids.add(bid)
             if title: seen_titles.add(title)
-            if len(items) >= int(limit or 20):
+            if len(items) >= limit_i:
                 break
 
+    ssr_urls = [url] + _build_fq_secondary_ssr_urls(url)
+    last_err: Exception | None = None
+    for idx, u in enumerate(ssr_urls):
+        if len(items) >= limit_i:
+            break
+        try:
+            html = _rank_fetch(u, referer='https://fanqienovel.com/')
+            parsed = parse_fanqie_html(html, category_name=category_name)
+            if idx == 0:
+                parsed_page_title = parsed.get('pageTitle') or ''
+                parsed_cutoff = parsed.get('cutoffText') or ''
+            new_items = list(parsed.get('items') or [])
+            # 过滤：非首个源有乱码/字体缺失时放弃
+            if idx > 0 and new_items:
+                bad = sum(1 for it in new_items if _pua_count(str(it.get('bookTitle') or '')) >= 2)
+                if bad / len(new_items) > 0.5:
+                    continue
+            _merge(new_items)
+        except Exception as err:
+            last_err = err
+            if idx == 0:
+                continue  # 主 URL 失败不中断，用后续 URL 兜底
+
+    # 仍不足 → 尝试 JSON API（msToken 兜底）
+    if len(items) < limit_i:
+        need = limit_i - len(items)
+        api_items = _crawl_fq_api(url, category_name=category_name, limit=max(need * 2, 20))
+        _merge(api_items)
+
     if not items:
-        raise RuntimeError('番茄榜单未解析到条目（页面结构可能变更 / 网络异常）')
+        raise last_err or RuntimeError('番茄榜单未解析到条目（页面结构可能变更 / 网络异常）')
 
     # 最终截断到 limit 并重新续排 rankNo
-    if limit and limit > 0:
-        items = items[:limit]
-    for idx, it in enumerate(items):
-        it['rankNo'] = idx + 1
+    if limit_i > 0:
+        items = items[:limit_i]
+    for i, it in enumerate(items):
+        it['rankNo'] = i + 1
 
     return {'pageTitle': parsed_page_title, 'cutoffText': parsed_cutoff, 'items': items}
 

@@ -2898,16 +2898,20 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   font-size: 12px; font-weight: 700; color: #fff; padding: 3px 10px; border-radius: 12px;
   background: linear-gradient(135deg, var(--accent), var(--accent-hover));
 }
-@media (min-width: 720px) {
-  .rank-card-grid { grid-template-columns: repeat(2, 1fr); }
+/* 断点统一：768px 以下=移动端，768px 及以上=桌面端 */
+.nr-root, .nr-root * { box-sizing: border-box; }
+.nr-root { overflow-x: hidden; width: 100%; max-width: 100%; }
+@media (min-width: 768px) {
+  .nr-mobile-only, .nr-mobile-only.nr-books, .nr-mobile-only.rank-card-grid { display: none !important; }
+  .nr-desktop-only { display: block; }
+  .nr-desktop-books { display: block; width: 100%; }
 }
-/* 桌面端保留宽表格查看（在窄屏隐藏，改用卡片） */
-@media (max-width: 719px) {
-  .rank-books-table { display: none; }
+@media (max-width: 767px) {
+  .nr-desktop-only, .nr-desktop-books { display: none !important; }
+  .nr-mobile-only { display: block; }
 }
-@media (min-width: 720px) {
-  .rank-card-grid.nr-mobile-only { display: none; }
-}
+.nr-table-row:hover,
+.rank-books-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent) !important; }
 
 /* ===== 榜单风向 · 组件与响应式（断点=768px 与全局一致） ===== */
 .filter-tag {
