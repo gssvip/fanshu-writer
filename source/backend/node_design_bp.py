@@ -213,6 +213,46 @@ def _load_volume_context(book_id, volume_index, req_data, rv, act_descriptions):
         evt_alloc[-1]['e'] = evt_end
         evt_alloc[-1]['ec'] = evt_end - evt_alloc[-1]['s'] + 1
 
+    # === 关键修复：将 evt_alloc 中"跨度 > MAX_CH_PER_SUBALLOC（默认 8）"的大事件段自动拆成
+    # 多个连续子段，每段子段 <=8 章。LLM 一次稳定输出 8 个节点远比重稳输出 20~30 个容易得多，
+    # 从源头消灭"LLM 漏章→后置修复变占位节点"问题。
+    MAX_CH_PER_SUBALLOC = 8
+    if evt_alloc and MAX_CH_PER_SUBALLOC > 0:
+        fine_allocs = []
+        for a in evt_alloc:
+            span = a['e'] - a['s'] + 1
+            if span <= MAX_CH_PER_SUBALLOC:
+                fine_allocs.append(dict(a))
+                continue
+            me_idx = a.get('me_index') or (len(fine_allocs) + 1)
+            title = a.get('title') or ''
+            raw = a.get('raw') or {}
+            cur_s = a['s']
+            e_end = a['e']
+            seg_i = 0
+            while cur_s <= e_end:
+                # 子段每段 MAX_CH_PER_SUBALLOC 章，最后一段可能略短
+                cur_e = min(e_end, cur_s + MAX_CH_PER_SUBALLOC - 1)
+                seg_ec = cur_e - cur_s + 1
+                seg_i += 1
+                sub_title = title if seg_i == 1 else f'{title}（{seg_i}/{((e_end - a["s"]) // MAX_CH_PER_SUBALLOC) + (1 if (e_end - a["s"]) % MAX_CH_PER_SUBALLOC else 0)}）'
+                fine_allocs.append({
+                    'me_index': me_idx,
+                    'title': sub_title,
+                    's': cur_s, 'e': cur_e, 'ec': seg_ec, 'raw': raw,
+                    '_is_sub_split': True, '_sub_seg': seg_i,
+                })
+                cur_s = cur_e + 1
+        # 再做一次末段兜底：防止拆分误差导致最终 e != evt_end
+        if fine_allocs and fine_allocs[-1]['e'] != evt_end:
+            fine_allocs[-1]['e'] = evt_end
+            fine_allocs[-1]['ec'] = evt_end - fine_allocs[-1]['s'] + 1
+        # 再做一次前置兜底：首段 s 必须 == start_chapter
+        if fine_allocs and fine_allocs[0]['s'] != start_chapter:
+            fine_allocs[0]['s'] = start_chapter
+            fine_allocs[0]['ec'] = fine_allocs[0]['e'] - start_chapter + 1
+        evt_alloc = fine_allocs
+
     # 相邻卷衔接上下文
     prev_vol, next_vol = None, None
     ordered = sorted(existing_vols, key=lambda v: _vol_index(v) or 0)
@@ -451,6 +491,51 @@ def _build_user_prompt(st, alloc, is_first_alloc, is_last_alloc):
 请严格围绕以上条件输出 JSON。"""
 
 
+def _build_fillgap_prompt(st, alloc, missing_chs, existing_nodes_in_alloc):
+    """大事件主段生成后，若还有 missing_chs（本事件区间内没被 LLM 覆盖的章号），
+    用这个 prompt 专向 LLM"点名补漏"：明确按缺失章号清单一个不漏地只输出这些章的节点。
+    missing_chs: List[int]，必须是 alloc.s..alloc.e 子集且按升序。
+    existing_nodes_in_alloc: 本子段已生成节点（供衔接参考，不重写，避免覆盖已生成内容）。"""
+    missing_chs = sorted(set(int(c) for c in missing_chs if alloc['s'] <= int(c) <= alloc['e']))
+    if not missing_chs:
+        return None, ''
+    me_idx = alloc.get('me_index') or 0
+    me_title = alloc.get('title') or f'事件{me_idx}'
+    ch_list = '、'.join(str(c) for c in missing_chs)
+    ec = len(missing_chs)
+    ref_nodes_txt = ''
+    if existing_nodes_in_alloc:
+        try:
+            refs = []
+            for n in existing_nodes_in_alloc[:4]:
+                rng = _parse_chapters_field(n.get('chapters'))
+                if not rng: continue
+                refs.append(f"  ch{rng[0]} title={str(n.get('title',''))[:30]} 摘要前60字={str(n.get('summary',''))[:60]}")
+            if refs:
+                ref_nodes_txt = "\n【已完成同事件节点（仅供你衔接，严禁写进输出，严禁覆盖它们）】\n" + "\n".join(refs)
+        except Exception:
+            ref_nodes_txt = ''
+    prompt = f"""书名：{st['title']}
+{st.get('core_params','')}
+【任务：专属补漏】本 main_event（事件{me_idx}《{me_title}》，章区间第{alloc['s']}-{alloc['e']}章）刚刚已经完成一轮生成，但以下章节仍"一个节点都没有"，必须由你本次只输出这些缺失章的节点，不要再输出其他章。
+【缺失章号清单（按正文顺序）】：{ch_list}
+  → 共 {ec} 章，nodes.length 必须严格等于 {ec}，第 k 个 node.chapters = 第 k 个缺失章号。
+【本卷卷级 6 要素锚】
+- 核心人物：{(st.get('target') or {}).get('characters','') or '（无）'}
+- 地点路线：{(st.get('target') or {}).get('location','') or '（无）'}
+- 境界变化：{(st.get('target') or {}).get('realm_change','') or '（无）'}
+- 核心冲突：{(st.get('target') or {}).get('core_conflict','') or '（无）'}
+- 卷尾钩子：{st.get('target_ending') or '（无）'}
+【五幕对齐】本卷属于"{st.get('current_act','立身')}"幕：{st.get('act_desc','')}
+【爽点系统】每个节点要有爽点类型/结构/衬托/层级。{ref_nodes_txt}
+【方案A · 章粒度铁律】：缺失章号清单里的每一章 = 1 个独立 node，chapters 写单章号或 X-X，禁止多章合并。
+【方案C · 边界硬约束】：任何 node.chapters 必须 ∈ 缺失章号清单，且不得出现 alloc 区间外（<{alloc['s']} 或 >{alloc['e']}）的章。
+【容量】每个 node.summary ≥ 80 字，结构要包含：开场→核心事件→冲突→转折→收尾/钩子；这样才能撑起该章 2400±100 字正文。
+【输出】严格 JSON：{"nodes": [ ... ]}，数组顺序=缺失章号升序，不要 markdown 代码块，不要注释。
+"""
+    return prompt, ch_list
+
+
 def _build_revise_prompt(st, node, feedback):
     """修改意见：基于原始节点 + 用户反馈，重生成单个节点。"""
     orig = json.dumps(node, ensure_ascii=False)
@@ -493,33 +578,87 @@ def _run_node_job(job):
             user_prompt = _build_user_prompt(st, alloc, i == 0, i == n - 1)
             alloc_title = alloc.get('title') or ''
             me_idx = alloc.get('me_index') or (i + 1)
+            s_alloc, e_alloc = int(alloc['s']), int(alloc['e'])
             job['current_segment'] = alloc_title or f'事件{me_idx}'
-            job['message'] = f'正在生成子节点：{alloc_title or "事件" + str(me_idx)}…'
-            content, err = _call_llm(
-                [{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': user_prompt}],
-                max_tokens=0, temperature=0.65, retry_count=2, timeout=180,
-            )
-            if err:
-                job['error'] = f'事件“{alloc_title or me_idx}”生成失败：{err}'
+
+            # --- 本轮子段的累计节点：主生成 + 最多 2 轮补漏 ---
+            round_nodes_accum: list = []
+
+            def _missing_in_alloc(have_nodes):
+                covered = set()
+                for nd in have_nodes:
+                    rng = _parse_chapters_field(nd.get('chapters'))
+                    if not rng: continue
+                    a, b = rng
+                    for c in range(max(a, s_alloc), min(b, e_alloc) + 1):
+                        covered.add(c)
+                full = set(range(s_alloc, e_alloc + 1))
+                return sorted(full - covered)
+
+            do_rounds = 0
+            max_rounds = 3  # 1 主生成 + 最多 2 轮补漏
+            segment_error = None
+            while do_rounds < max_rounds and not job.get('_cancel'):
+                do_rounds += 1
+                if do_rounds == 1:
+                    job['message'] = f'[1/3] 生成子节点：{alloc_title or "事件" + str(me_idx)}（第{s_alloc}-{e_alloc}章）…'
+                    prompt = user_prompt
+                    temperature = 0.65
+                else:
+                    missing = _missing_in_alloc(round_nodes_accum)
+                    if not missing:
+                        break  # 本段全齐，提前结束
+                    # 补漏轮：只针对 missing 章号清单请求 LLM
+                    job['message'] = (f'[{do_rounds}/3] 正在为 {alloc_title or "事件" + str(me_idx)} 补齐 {len(missing)} 个缺失章 '
+                                      f'（{",".join(str(c) for c in missing[:8])}{"…" if len(missing)>8 else ""}）…')
+                    prompt, _ch_list = _build_fillgap_prompt(st, alloc, missing, round_nodes_accum)
+                    if not prompt:
+                        break
+                    temperature = 0.75 + (do_rounds - 1) * 0.05
+                content, err = _call_llm(
+                    [{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': prompt}],
+                    max_tokens=0, temperature=temperature, retry_count=2, timeout=180,
+                )
+                if err:
+                    segment_error = f'事件“{alloc_title or me_idx}”第{do_rounds}轮生成失败：{err}'
+                    if do_rounds == 1:
+                        # 主生成失败 → 后面补漏也没意义，直接段级报错
+                        break
+                    continue
+                parsed, jerr = _extract_json_from_llm(content, expect='object')
+                nodes_this_round: list = []
+                if not jerr and isinstance(parsed, dict):
+                    nr = parsed.get('nodes') or []
+                    if isinstance(nr, list):
+                        nodes_this_round = nr
+                elif jerr and do_rounds == 1:
+                    # 主生成 JSON 解析失败 → 段级报错（由补漏轮尝试救一下也可以，但为了一致性直接断）
+                    segment_error = f'事件“{alloc_title}”JSON解析失败：{jerr}'
+                    break
+                # 合并入累计：相同 chapters 以新的覆盖（补漏轮可覆盖之前的"残留"）
+                def _key_ch(nd):
+                    r = _parse_chapters_field(nd.get('chapters'))
+                    return r[0] if r else None
+                existing_by_ch = {_key_ch(nd): nd for nd in round_nodes_accum if _key_ch(nd) is not None}
+                for nd in nodes_this_round:
+                    k = _key_ch(nd)
+                    if k is None or k < s_alloc or k > e_alloc:
+                        continue
+                    existing_by_ch[k] = nd
+                round_nodes_accum = list(existing_by_ch.values())
+                # 每轮后再 sleep 一下，别冲太快
+                _time.sleep(0.2)
+            if segment_error:
+                job['error'] = segment_error
                 break
-            parsed, jerr = _extract_json_from_llm(content, expect='object')
-            nodes = []
-            if not jerr and isinstance(parsed, dict):
-                nodes = parsed.get('nodes') or []
-                if not isinstance(nodes, list):
-                    nodes = []
-            elif jerr:
-                job['error'] = f'事件“{alloc_title}”JSON解析失败：{jerr}'
-                break
-            # === 方案A+C 后置门禁修复：无论 LLM 输出怎样，本段输出必须严格
-            # === 1 节点=1 章，覆盖 [alloc.s, alloc.e] 全区间，无重叠无跳章
+            # 全部轮结束后，交给 A+C 后置门禁 修一次 → 最终本段 = 严格区间 [s_alloc,e_alloc] 全章单节点
             fixed_nodes, index_seq = _repair_nodes_to_one_ch_per_node(
-                nodes, alloc['s'], alloc['e'], me_idx, index_seq
+                round_nodes_accum, s_alloc, e_alloc, me_idx, index_seq
             )
             new_nodes.extend(fixed_nodes)
             job['nodes'] = list(job.get('nodes') or []) + list(fixed_nodes)
             job['done'] = i + 1
-            _time.sleep(0.35)
+            _time.sleep(0.25)
         if job.get('error') is None:
             final_nodes = sorted(job.get('nodes') or [], key=lambda x: _node_sort_key(x))
             # 整卷终态校验：最终节点必须覆盖 [start_chapter, evt_end] 全 cpv 章，缺就补
