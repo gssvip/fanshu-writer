@@ -531,7 +531,7 @@ def _build_fillgap_prompt(st, alloc, missing_chs, existing_nodes_in_alloc):
 【方案A · 章粒度铁律】：缺失章号清单里的每一章 = 1 个独立 node，chapters 写单章号或 X-X，禁止多章合并。
 【方案C · 边界硬约束】：任何 node.chapters 必须 ∈ 缺失章号清单，且不得出现 alloc 区间外（<{alloc['s']} 或 >{alloc['e']}）的章。
 【容量】每个 node.summary ≥ 80 字，结构要包含：开场→核心事件→冲突→转折→收尾/钩子；这样才能撑起该章 2400±100 字正文。
-【输出】严格 JSON：{"nodes": [ ... ]}，数组顺序=缺失章号升序，不要 markdown 代码块，不要注释。
+【输出】严格 JSON：{{"nodes": [ /* 仅列 missing_chs 对应节点，顺序 = missing_chs 升序 */ ]}}，不要 markdown 代码块，不要注释。
 """
     return prompt, ch_list
 
