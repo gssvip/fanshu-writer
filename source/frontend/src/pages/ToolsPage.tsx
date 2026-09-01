@@ -1163,8 +1163,7 @@ category：master
 
       {activeTab === 'rankings' && (
         <div className="tool-panel">
-          <h3>📈 榜单风向（移植自 easy-writing: NovelRank）</h3>
-          <p className="text-muted">对齐 easy-writing 的 2 平台 × 232 分类 × 83 榜单源：番茄/起点，抓真实榜单数据，实时查看赛道热度与热门题材（七猫已下线）</p>
+          <h3>📈 榜单风向</h3>
 
           {/* 1. 平台 Tab */}
           <div className="fusion-card" style={{marginBottom:12}}>
@@ -1256,19 +1255,9 @@ category：master
             </div>
           </div>
 
-          {/* Banner：热门标签 / 上升关键词 / 创作建议 */}
+          {/* Banner：热门标签 / 上升关键词 */}
           {rankBanner && (
             <div className="rank-result" style={{marginTop:4,marginBottom:16}}>
-              <div className="rank-platform-banner" style={{
-                display:'flex',alignItems:'center',gap:12,padding:12,background:'linear-gradient(135deg,var(--accent),var(--accent-hover))',
-                color:'#fff',borderRadius:'var(--radius-sm)',marginBottom:10,
-              }}>
-                <span style={{fontSize:22}}>{rankBanner.icon}</span>
-                <div>
-                  <div style={{fontSize:15,fontWeight:700}}>{rankBanner.platform} · {rankBanner.note}</div>
-                  <div style={{fontSize:11,opacity:.92}}>📌 风向 {rankBanner.trend_marker.label} · {rankBanner.trend_marker.tone}</div>
-                </div>
-              </div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:10}}>
                 <div className="rank-block" style={{margin:0}}>
                   <h4 style={{fontSize:12,marginBottom:6}}>🔥 热门标签</h4>
@@ -1285,9 +1274,6 @@ category：master
                       <span key={i} style={{padding:'3px 9px',borderRadius:12,background:'color-mix(in srgb, var(--accent) 12%, transparent)',border:'1px solid color-mix(in srgb, var(--accent) 40%, transparent)',fontSize:11,color:'var(--accent)'}}>{k}</span>
                     ))}
                   </div>
-                </div>
-                <div className="rank-block" style={{margin:0,gridColumn:'1 / -1'}}>
-                  <div style={{fontSize:13,lineHeight:1.7}}>💡 <strong>创作建议：</strong>{rankBanner.advice}</div>
                 </div>
               </div>
             </div>
