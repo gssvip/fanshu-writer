@@ -1164,7 +1164,7 @@ category：master
       {activeTab === 'rankings' && (
         <div className="tool-panel">
           <h3>📈 榜单风向（移植自 easy-writing: NovelRank）</h3>
-          <p className="text-muted">完全对齐 easy-writing 的 3 平台 × 232 分类 × 83 榜单源：番茄/起点/七猫，抓真实榜单数据，实时查看赛道热度与热门题材</p>
+          <p className="text-muted">对齐 easy-writing 的 2 平台 × 232 分类 × 83 榜单源：番茄/起点，抓真实榜单数据，实时查看赛道热度与热门题材（七猫已下线）</p>
 
           {/* 1. 平台 Tab */}
           <div className="fusion-card" style={{marginBottom:12}}>
@@ -1172,7 +1172,6 @@ category：master
               {(nrPlatforms.length ? nrPlatforms : [
                 {code:'fanqie',name:'番茄小说网'},
                 {code:'qidian',name:'起点中文网'},
-                {code:'qimao',name:'七猫小说网'},
               ]).map(p => (
                 <button
                   key={p.code}
@@ -1181,7 +1180,7 @@ category：master
                   title={p.remark || p.name}
                   style={{padding:'6px 14px',minHeight:32,fontWeight: nrPlatform===p.code? 700: 500}}
                 >
-                  {p.code==='fanqie'?'🍅':p.code==='qidian'?'🏯':'🐱'} {p.name}
+                  {p.code==='fanqie'?'🍅':p.code==='qidian'?'🏯':'📚'} {p.name}
                 </button>
               ))}
               <span style={{flex:1}} />

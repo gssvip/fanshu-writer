@@ -1,8 +1,8 @@
 """榜单风向 Blueprint（完整移植自 easy-writing: NovelRank 模块）。
 
 包含：
-1. 3 平台 × 232 分类 × 83 榜单源（番茄 / 起点 / 七猫）
-2. 抓取适配器：番茄 HTML + 私用区字体解码 / 七猫 JSON 接口 / 起点精选兜底
+1. 2 平台 × 232 分类 × 83 榜单源（番茄 / 起点；七猫已按产品要求下线）
+2. 抓取适配器：番茄 HTML + 私用区字体解码 / 起点精选兜底
 3. 4 个对外 API：
    - GET  /api/rank/platforms                     平台列表
    - GET  /api/rank/filters?platform=...          榜单类型 + 男女频 + 分类选项
@@ -29,12 +29,13 @@ from flask import Blueprint, jsonify, request
 novel_rank_bp = Blueprint('novel_rank', __name__)
 
 # ---------------------------------------------------------------------------
-# 1. 榜单种子数据：3 站点 × 232 分类 × 83 榜单源
+# 1. 榜单种子数据：2 站点 × 232 分类 × 83 榜单源（七猫已按产品要求下线）
 # ---------------------------------------------------------------------------
 RANK_SITES: list[dict[str, Any]] = [
     {"legacyId": 1, "code": "fanqie", "name": "番茄小说网", "baseUrl": "https://fanqienovel.com", "enabled": 1},
     {"legacyId": 2, "code": "qidian", "name": "起点中文网", "baseUrl": "https://www.qidian.com/", "enabled": 1, "remark": "服务端受反爬限制，走精选兜底数据"},
-    {"legacyId": 3, "code": "qimao", "name": "七猫小说网", "baseUrl": "https://www.qimao.com", "enabled": 1},
+    # 七猫（legacyId=3）已被阿里云 WAF 拦截、服务端抓不到实时数据，按产品要求下线，不再对外提供
+    {"legacyId": 3, "code": "qimao", "name": "七猫小说网", "baseUrl": "https://www.qimao.com", "enabled": 0},
 ]
 
 # 以下分类源完全移植自 easy-writing/src/config/rank-sources.ts（RANK_CATEGORIES）。
@@ -771,6 +772,10 @@ def api_rank_platforms():
 @novel_rank_bp.route('/api/rank/filters', methods=['GET'])
 def api_rank_filters():
     platform = request.args.get('platform', 'fanqie').strip()
+    # 平台下线校验
+    site_row = next((s for s in RANK_SITES if s['code'] == platform), None)
+    if site_row is None or site_row.get('enabled') != 1:
+        return jsonify({'platform': platform, 'rankTypes': [], 'genders': [], 'categories': []})
     # 榜单类型：从当前平台启用的源里求并集
     rank_types: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -850,6 +855,18 @@ def api_rank_list():
     """
     source_id_raw = request.args.get('sourceId')
     platform = request.args.get('platform', 'fanqie').strip()
+    # 平台下线校验：七猫等未启用站点不再对外提供实时榜单
+    site_row = next((s for s in RANK_SITES if s['code'] == platform), None)
+    if site_row is None or site_row.get('enabled') != 1:
+        return jsonify({
+            'sourceId': source_id_raw,
+            'items': [],
+            'itemCount': 0,
+            'page': 1,
+            'pageSize': 50,
+            'total': 0,
+            'fetchError': f'平台「{platform}」已下线',
+        })
     rank_type = request.args.get('rankType')
     gender = request.args.get('gender')
     category_code = request.args.get('categoryCode')
