@@ -4,6 +4,11 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeHighlight from 'rehype-highlight';
+// P1-2 Markdown 增强：KaTeX / highlight.js CSS 从 node_modules 静态导入（Vite 打包到本地 assets），
+// 彻底避免 cdn.jsdelivr.net 跨站 CDN 被 Edge/Safari Tracking Prevention 阻止后，
+// Console 里出现 "blocked access to storage for <CDN URL>" 的告警，同时解决公司/校园网 CDN 不可达导致样式白屏问题。
+import 'katex/dist/katex.min.css';
+import 'highlight.js/styles/github.min.css';
 import { useStore } from '../store';
 import { api } from '../api';
 import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible, AIConfig } from '../types';
@@ -11,13 +16,6 @@ import CarLogo from './CarLogo';
 // Q1：直接复用现有实体管理弹窗（跨维度重命名/合并），不再在 ChatPanel 里重复造"动作影响预览"轮子
 import EntityRegistryModal from '../pages/EntityRegistryModal';
 import NodeDesignView from './NodeDesignView';
-// P1-2 Markdown 增强：CDN 注入 KaTeX/Highlight.js 样式（避免 Vite 静态 import 缺失导致部署白屏）
-(() => {
-  if (typeof document === 'undefined') return;
-  const K = 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css';
-  const H = 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css';
-  [K, H].forEach(href => { if (!document.querySelector(`link[href="${href}"]`)) { const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = href; document.head.appendChild(l); } });
-})();
 
 const __BUILD_TAG__ = 'v3-0814';
 
