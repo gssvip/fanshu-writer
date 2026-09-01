@@ -23,6 +23,7 @@ import time as _time
 import uuid as _uuid
 import json
 import re as _re
+import re  # helper 函数中直接写 re.xxx
 from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify
 
@@ -360,7 +361,7 @@ _NODE_SCHEMA = """{
   "title": "节点标题（动宾结构）",
   "chapters": "<起始章号>-<结束章号>",
   "type": "M/C/W/D/F",
-  "characters": "本节点核心出场人物，按权重",
+  "characters": [{"name": "人物名", "relation": "关系类型(主角/家人/亲友/爱人/盟友/同僚/下属/上司/对手/敌对/路人/中立/陌生人·支持组合如'家人·兄')"}],
   "events": "本节点事件：谁在什么场景做了什么→关键后果（20-40字，动词+名词）",
   "conflict": "本节点冲突：主角vs谁/争什么/卡点（20字内）",
   "time": "本节点时间锚",
@@ -369,6 +370,9 @@ _NODE_SCHEMA = """{
   "age_change": "本节点结束时主角年龄/时程变化",
   "summary": "本节点事件推进梗概（起因→关键动作→直接后果→收尾→钩子，纯动词+名词，禁止环境/比喻/形容词/心理铺陈）",
   "chapter_beats": [{"chapter": 章号, "beat": "本章只推进的这一段剧情（20-35字）"}],
+  "resources_gained": ["【钱财】...×N", "【物品】...×N", "【武器法宝】...×N", "【功法能力】...×N", "【其它】..."],
+  "resources_used":   ["【钱财】...×N", "【物品】...×N", "【武器法宝】...×N", "【功法能力】...×N", "【其它】..."],
+  "total_resources_owned": { "钱财": ["...×N"], "物品": ["...×N"], "武器法宝": ["...×N"], "功法能力": ["...×N"], "其它": ["...×N"] },
   "cool_type": "爽点类型（八选一）",
   "cool_structure": "爽点结构",
   "cool_contrast": "衬托方式",
@@ -415,7 +419,15 @@ def _build_system_prompt(st):
 节点设计必须服务于该幕的核心目标。
 {_COOL_SYSTEM}
 【节点要素铁律】每个节点只许包含以下结构要素（剧情调度卡，不是正文/抒情）：
-time / location / events / conflict / characters / hook；埋收 bury/payoff 精确到章。
+time / location / events / conflict / characters(必须带relation关系标签) / resources_gained / resources_used / total_resources_owned(滚动核算：上一章总资源 - 本章消耗 + 本章获得 = 本章总资源) / hook；埋收 bury/payoff 精确到章。
+【资源分类口径（5类，必须写清【类别前缀】）】
+  · 【钱财】银两/灵石/元石/金币/铜币（例：下品灵石×300）
+  · 【物品】丹药/符箓/令牌/钥匙/材料/天材地宝/杂物（例：洗髓丹×5、赤焰铁×12斤）
+  · 【武器法宝】兵器/防具/法宝/法器/灵器/命器（例：青锋剑·上品法器×1）
+  · 【功法能力】修炼功法/武技/神通/秘法/血脉能力/被动天赋（例：《焚天诀》·天阶下品·初窥门径）
+  · 【其它】地位/称号/势力归属/人脉/信息/契约（例：护城军·百夫长、城主密道入口地图）
+【资源滚动铁律】resources_gained 列"本章新增获取"的资源；resources_used 列"本章使用/消耗/被抢走/破碎/过期/送人"的资源（已经使用/消耗掉的，必须在本章 total_resources_owned 中消除扣减，禁止既写在 resources_used 又在总资源中原封不动）；total_resources_owned 是截至本章结束主角实际仍拥有的全部资源明细，分 5 类列出，必须严格与前一章滚动（上一章total - 本章used + 本章gained = 本章total），不能凭空跳变。
+【人物关系口径】characters 字段强制写 relation 标签，枚举：主角/家人(父/母/兄/弟/姐/妹/子女/配偶)/亲友(朋/友/师/徒)/爱人/盟友/同僚/下属/上司/对手/敌对/路人/中立/陌生人；多关系可用"家人·兄""盟友·同僚"组合。
 【负清单】禁止环境物象描写、比喻拟人排比工整对仗、动作细节链与形容词堆砌、心理情绪铺陈；summary 只用动词+名词推进梗概。
 【章节匹配检查项】生成后请自行逐条核对：
   ✅ 本事件 [alloc.s-alloc.e] 区间每一章都对应恰好一个 node；总数 = (e - s + 1)
@@ -835,6 +847,354 @@ def _parse_chapters_field(v):
     return None
 
 
+def _normalize_node_resources_and_relations(nd, ch_int, prev_total_map):
+    """统一给 A+C 修复后的节点补：人物关系（缺省标签/规范成字符串数组）+ 资源三字段。
+    返回：(normalized_node, current_total_map)。current_total_map 用于下一章滚动核算。
+    - prev_total_map: 上一章结束的 total_resources_owned（字典：5类→列表）
+    """
+    if not isinstance(nd, dict):
+        nd = {}
+    # ==== ① characters 统一成数组，每项 "姓名|关系:X" ====
+    raw = nd.get('characters')
+    normalized_chars: list[str] = []
+    # 常用关系枚举：按关键词猜，猜不到就兜底"关系:主角/亲友/路人"
+    def _guess_relation(name: str) -> str:
+        n = name.strip()
+        if not n:
+            return "路人"
+        low = n
+        if any(k in low for k in ('主角', '男主', '女主', '我', '本人')):
+            return "主角"
+        if any(k in low for k in ('父', '母', '兄', '弟', '姐', '妹', '子', '女', '丈', '妻', '夫', '爷', '奶', '公', '婆')):
+            return "家人"
+        if any(k in low for k in ('师', '徒', '友', '朋', '兄', '姐')):
+            return "亲友"
+        if any(k in low for k in ('爱', '道侣', '伴侣', '女友', '男友', '妻', '夫')):
+            return "爱人"
+        if any(k in low for k in ('敌', '仇', '反派', '杀', '对手', 'BOSS', 'boss', '恶')):
+            return "敌对"
+        if any(k in low for k in ('同', '战友', '盟', '门内')):
+            return "盟友·同僚"
+        if any(k in low for k in ('下属', '手下', '随从', '仆', '兵')):
+            return "下属"
+        if any(k in low for k in ('长老', '掌门', '主', '上司', '管')):
+            return "上司"
+        if any(k in low for k in ('路人', '围观', '旁观', '群众', '杂兵')):
+            return "路人"
+        return "中立"
+
+    def _split_to_people(raw_str):
+        # 按常见分隔符拆分；避免括号内的内容被切
+        out: list[str] = []
+        cur = ''
+        depth = 0
+        for ch in raw_str:
+            if ch in '（([':
+                depth += 1; cur += ch
+            elif ch in '）)]':
+                depth = max(0, depth - 1); cur += ch
+            elif depth == 0 and ch in '、,，；; \t\n/|':
+                if cur.strip():
+                    out.append(cur.strip())
+                cur = ''
+            else:
+                cur += ch
+        if cur.strip():
+            out.append(cur.strip())
+        return [x for x in out if x]
+
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                nm = str(item.get('name') or item.get('人物') or '').strip()
+                rel = str(item.get('relation') or item.get('关系') or '').strip()
+                if not rel:
+                    rel = _guess_relation(nm)
+                if nm:
+                    normalized_chars.append(f"{nm}|关系:{rel}")
+            elif isinstance(item, str):
+                s = item.strip()
+                if not s:
+                    continue
+                if '|关系:' in s or '（关系' in s or '(关系' in s:
+                    # 已经写了关系 → 规范化
+                    s2 = s.replace('（关系：', '|关系:').replace('（关系:', '|关系:').replace('(关系：', '|关系:').replace('(关系:', '|关系:')
+                    if '）' in s2 and s2.endswith('）'):
+                        s2 = s2[:-1]
+                    if ')' in s2 and s2.endswith(')'):
+                        s2 = s2[:-1]
+                    normalized_chars.append(s2)
+                else:
+                    # 纯名字 → 切分出人，逐个补关系标签
+                    for nm in _split_to_people(s):
+                        if not nm:
+                            continue
+                        # 名字里带括号(关系:X) → 解析
+                        rel_v = ''
+                        par_m = re.search(r'[（(]\s*关?系?[:：]\s*([^()）]+)\s*[)）]', nm)
+                        if par_m:
+                            rel_v = par_m.group(1).strip()
+                            nm_clean = nm[:par_m.start()].strip()
+                        else:
+                            nm_clean = nm
+                            rel_v = _guess_relation(nm_clean)
+                        if nm_clean:
+                            normalized_chars.append(f"{nm_clean}|关系:{rel_v}")
+    elif isinstance(raw, str):
+        s = raw.strip()
+        if s:
+            if '|关系:' in s or '（关系' in s or '(关系' in s or '、' in s or '，' in s:
+                for p in _split_to_people(s):
+                    if not p:
+                        continue
+                    if '|关系:' in p:
+                        normalized_chars.append(p)
+                    else:
+                        rel_v = ''
+                        par_m = re.search(r'[（(]\s*关?系?[:：]\s*([^()）]+)\s*[)）]', p)
+                        if par_m:
+                            rel_v = par_m.group(1).strip()
+                            nm_clean = p[:par_m.start()].strip()
+                        else:
+                            nm_clean = p
+                            rel_v = _guess_relation(p)
+                        if nm_clean:
+                            normalized_chars.append(f"{nm_clean}|关系:{rel_v}")
+            else:
+                normalized_chars.append(f"{s}|关系:{_guess_relation(s)}")
+    # 兜底：空人物 → 默认"主角|关系:主角"（保证写正文时至少有主角名占位）
+    if not normalized_chars:
+        normalized_chars = ["主角|关系:主角"]
+    nd['characters'] = normalized_chars
+
+    # ==== ② resources_gained / resources_used 规范成字符串数组 ====
+    def _norm_resource_list(v) -> list[str]:
+        res: list[str] = []
+        if isinstance(v, list):
+            for x in v:
+                if x is None:
+                    continue
+                s = str(x).strip()
+                if s:
+                    res.append(s)
+        elif isinstance(v, dict):
+            for cat, items in v.items():
+                c_cat = str(cat).strip() or '其它'
+                if isinstance(items, list):
+                    for it in items:
+                        s = str(it).strip()
+                        if s:
+                            res.append(f"【{c_cat}】{s}")
+                elif items:
+                    s = str(items).strip()
+                    if s:
+                        res.append(f"【{c_cat}】{s}")
+        elif isinstance(v, str) and v.strip():
+            # 行分隔字符串 → 拆成多项
+            for ln in re.split(r'[；;\n]+', v):
+                s = ln.strip()
+                if not s:
+                    continue
+                if s.startswith('【'):
+                    res.append(s)
+                else:
+                    res.append(f"【物品】{s}")
+        # 分类过滤：没有【类别】前缀的自动补【物品】或【功法能力】
+        tidy: list[str] = []
+        for s in res:
+            if not s:
+                continue
+            if s.startswith('【'):
+                tidy.append(s); continue
+            cat = '物品'
+            low = s
+            if any(k in low for k in ('灵石', '银两', '黄金', '金币', '元石', '铜币', '钱', '财')):
+                cat = '钱财'
+            elif any(k in low for k in ('剑', '刀', '枪', '甲', '盾', '法宝', '法器', '灵器', '命器', '弓', '棍', '杖', '鞭', '锤')):
+                cat = '武器法宝'
+            elif any(k in low for k in ('功法', '武技', '神通', '秘法', '诀', '术', '天赋', '血脉', '觉醒', '《')):
+                cat = '功法能力'
+            elif any(k in low for k in ('称号', '职位', '身份', '归属', '弟子', '长老', '令牌', '情报', '地契', '契约', '人脉')):
+                cat = '其它'
+            tidy.append(f"【{cat}】{s}")
+        return tidy
+
+    gained = _norm_resource_list(nd.get('resources_gained'))
+    used = _norm_resource_list(nd.get('resources_used'))
+    nd['resources_gained'] = gained
+    nd['resources_used'] = used
+
+    # ==== ③ total_resources_owned 规范成 { 钱财:[], 物品:[], 武器法宝:[], 功法能力:[], 其它:[] }
+    #      滚动核算：上一章total - 本章used + 本章gained = 本章total
+    CAT_KEYS = ('钱财', '物品', '武器法宝', '功法能力', '其它')
+    def _parse_cat_map(raw) -> dict:
+        """把各种形态的 total_resources_owned 解析成 {cat: list[str]}"""
+        out: dict[str, list[str]] = {c: [] for c in CAT_KEYS}
+        if isinstance(raw, dict):
+            for c in CAT_KEYS:
+                val = raw.get(c) or raw.get(c.lower()) or raw.get(c.replace('武器法宝', '武器·法宝')) or raw.get(c + '类') or []
+                if isinstance(val, list):
+                    for x in val:
+                        if x is None: continue
+                        s = str(x).strip()
+                        if s:
+                            out[c].append(s)
+                elif isinstance(val, str) and val.strip():
+                    for ln in re.split(r'[；;\n,，]+', val):
+                        s = ln.strip()
+                        if s: out[c].append(s)
+        elif isinstance(raw, list):
+            # 列表形态 → 按前缀分类
+            for x in raw:
+                s = str(x or '').strip()
+                if not s: continue
+                m = re.match(r'【(.+?)】', s)
+                if m:
+                    c = m.group(1).strip()
+                    if c not in out: c = '物品'
+                    out[c].append(s)
+                else:
+                    out['物品'].append(s)
+        elif isinstance(raw, str) and raw.strip():
+            for ln in raw.splitlines():
+                s = ln.strip()
+                if not s: continue
+                m = re.match(r'【(.+?)】', s)
+                if m:
+                    c = m.group(1).strip()
+                    if c not in out: c = '物品'
+                    out[c].append(s)
+                else:
+                    out['物品'].append(s)
+        return out
+
+    def _minus_category(cat_items: list[str], used_entries: list[str]) -> list[str]:
+        """按条目名+数量的近似匹配，扣减 used_entries。
+        思路：构造字典 {名前缀: [剩余数量+整条]}；used 里若有同名条目就扣。
+        扣不动就原样（兜底不丢信息）。
+        """
+        # 先把 gained/used 里的前缀去掉取正文名+数量
+        import re as _re
+        def _strip_cat(s: str):
+            return _re.sub(r'^【.+?】', '', s).strip() or s
+
+        def _name_qty(s: str):
+            core = _strip_cat(s)
+            # 拆分 名×N / N个XX / XX*N
+            m1 = _re.search(r'^(.+?)\s*[×xX*]\s*(\d+)\s*个?$', core)
+            if m1:
+                return m1.group(1).strip(), int(m1.group(2))
+            m2 = _re.search(r'^(\d+)\s*(?:个|份|颗|粒|斤|两|匹|张|件|本|块|段|把|柄|套|对|枚|卷|种|重|层)\s*(.+)$', core)
+            if m2:
+                return m2.group(2).strip(), int(m2.group(1))
+            return core.strip(), 1  # 没写数量 → 默认 1
+
+        used_by_prefix: dict[str, int] = {}
+        for u in used_entries:
+            nm, q = _name_qty(u)
+            if nm:
+                used_by_prefix[nm] = used_by_prefix.get(nm, 0) + q
+
+        result: list[str] = []
+        # 先合并同前缀（输入可能有重复前缀的多条）
+        bucket: dict[str, int] = {}
+        originals: dict[str, str] = {}
+        for it in cat_items:
+            nm, q = _name_qty(it)
+            if not nm:
+                continue
+            bucket[nm] = bucket.get(nm, 0) + q
+            if nm not in originals:
+                originals[nm] = _strip_cat(it)
+        for nm, qty in bucket.items():
+            used_q = used_by_prefix.pop(nm, 0)
+            left = qty - used_q
+            if left <= 0:
+                continue
+            core = originals.get(nm) or nm
+            # 再拼回「【类别】名称×数量」
+            if left == 1:
+                result.append(core)
+            else:
+                # 如果原先是「5个丹」这种格式，保持风格，统一写成 core×left
+                result.append(f"{core}×{left}")
+        # used 里没扣掉的条目（名称不匹配）→ 兜底：不扣，避免错误删资源（宁可多，不能吞）
+        return result
+
+    # 先拿 prev_total（上一章总资源），没有就用本节点自带的 total_resources_owned
+    prev_map = _parse_cat_map(prev_total_map if isinstance(prev_total_map, dict) else None)
+    self_total = _parse_cat_map(nd.get('total_resources_owned'))
+    # 如果上一章是空（首章 / 续会前段没信息），优先用本节点自带的 total；否则按滚动公式：prev - used + gained
+    if not any(prev_map.values()):
+        # 首章/无前置信息：优先信任本节点自带的 total_resources_owned，否则按 gained 建（gained就是第一章收获）
+        if any(self_total.values()):
+            merged_map = {c: list(self_total.get(c) or []) for c in CAT_KEYS}
+        else:
+            merged_map = {c: [] for c in CAT_KEYS}
+            # gained 按前缀分类注入
+            for g in gained:
+                mm = re.match(r'【(.+?)】', g)
+                if mm:
+                    c = mm.group(1)
+                    if c not in merged_map: c = '物品'
+                    merged_map[c].append(g)
+    else:
+        # 滚动公式：prev - used + gained
+        merged_map = {c: list(prev_map.get(c) or []) for c in CAT_KEYS}
+        # Step1: 扣 used
+        for c in CAT_KEYS:
+            if not merged_map.get(c):
+                continue
+            # 从本类 used_entries 里挑前缀匹配的进行扣减
+            used_in_cat: list[str] = []
+            for u in used:
+                mm = re.match(r'【(.+?)】', u)
+                if mm and mm.group(1) == c:
+                    used_in_cat.append(u)
+            merged_map[c] = _minus_category(merged_map[c], used_in_cat)
+        # Step2: 加 gained
+        for g in gained:
+            mm = re.match(r'【(.+?)】', g)
+            if mm:
+                c = mm.group(1)
+                if c not in merged_map: c = '物品'
+                merged_map[c].append(g)
+    # 对每一类做：合并同前缀多条成「名称×总数量」（避免滚动后一堆重复的【物品】洗髓丹×1 | 洗髓丹×3 → 合并成洗髓丹×4）
+    import re as _re2
+    def _compress_cat(items: list[str]) -> list[str]:
+        def _strip(s): return _re2.sub(r'^【.+?】', '', s).strip() or s
+        def _nq(s):
+            core = _strip(s)
+            m1 = _re2.search(r'^(.+?)\s*[×xX*]\s*(\d+)\s*个?$', core)
+            if m1:
+                return m1.group(1).strip(), int(m1.group(2))
+            m2 = _re2.search(r'^(\d+)\s*(?:个|份|颗|粒|斤|两|匹|张|件|本|块|段|把|柄|套|对|枚|卷|种|重|层)\s*(.+)$', core)
+            if m2:
+                return m2.group(2).strip(), int(m2.group(1))
+            return core.strip(), 1
+        bucket: dict[str, int] = {}
+        for it in items:
+            nm, q = _nq(it)
+            if not nm:
+                continue
+            bucket[nm] = bucket.get(nm, 0) + q
+        out: list[str] = []
+        for nm, q in sorted(bucket.items()):
+            if q <= 0: continue
+            if q == 1:
+                out.append(nm)
+            else:
+                out.append(f"{nm}×{q}")
+        return out
+
+    for c in CAT_KEYS:
+        merged_map[c] = _compress_cat(merged_map.get(c) or [])
+    # 空类也保留 key 存在，保证 UI / JSON schema 一致
+    final_total = {c: merged_map.get(c) or [] for c in CAT_KEYS}
+    nd['total_resources_owned'] = final_total
+    return nd, final_total
+
+
 def _repair_nodes_to_one_ch_per_node(nodes, alloc_s, alloc_e, me_index, index_offset_start):
     """方案 A+C 的后置"门禁修复器"：无论模型输出如何，保证：
        - 返回节点数 = ec = alloc_e - alloc_s + 1
@@ -874,6 +1234,8 @@ def _repair_nodes_to_one_ch_per_node(nodes, alloc_s, alloc_e, me_index, index_of
     # 按章号清单补齐缺失章（用占位节点）
     next_idx = int(index_offset_start)
     ordered = []
+    # 资源滚动：首章之前为 None → 按首章 gained / 自带 total 建；后续每章按 prev_total + gained - used 滚动
+    prev_total: dict | None = None
     for ch in range(alloc_s, alloc_e + 1):
         if ch not in per_chapter:
             # 占位节点：标注为自动补齐，后续可人工修改
@@ -891,6 +1253,8 @@ def _repair_nodes_to_one_ch_per_node(nodes, alloc_s, alloc_e, me_index, index_of
                 'hook': '',
                 'bury': '',
                 'payoff': '',
+                'resources_gained': [],
+                'resources_used': [],
             }
         nd = per_chapter[ch]
         nd.setdefault('main_event_index', me_index)
@@ -916,6 +1280,8 @@ def _repair_nodes_to_one_ch_per_node(nodes, alloc_s, alloc_e, me_index, index_of
         nd['index'] = next_idx
         if not isinstance(nd.get('chapter_beats'), list) or len(nd['chapter_beats']) < 1:
             nd['chapter_beats'] = [str(nd.get('summary') or '')]
+        # 资源三字段 + 人物关系规范化 + 滚动核算总资源（prev_total → 本章total）
+        nd, prev_total = _normalize_node_resources_and_relations(nd, ch, prev_total)
         ordered.append(nd)
     return ordered, next_idx
 

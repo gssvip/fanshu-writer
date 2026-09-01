@@ -108,7 +108,11 @@ WRITEPAGE_BASELINE = 8908
 #     和 ChatPanel 智驾面板（node_designer 角色绑定的执行位置）强耦合，不能拆到独立组件。
 #     后续可把 node_designer 全部逻辑拆到独立 <NodeDesignerChat /> 组件，但那是一次更大重构，
 #     不占用本次 P0 续会需求工期。）
-CHATPANEL_BASELINE = 4384
+# 2026-09-01 继续（节点资源滚动+人物关系字段 P0）：
+#   · ChatPanel 节点设计师 prompt 补充 3 项资源字段口径（gained/used/total_owned 滚动+消除）+ 人物关系枚举
+#     + 示例写法（"林墨白(关系:亲友·师)"）≈ +4 行
+#   → 4384 → 4388（+4 行，P0 用户明确要求的节点字段补齐，属同一 prompt 自然扩张）
+CHATPANEL_BASELINE = 4388
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
@@ -220,7 +224,18 @@ TOOLSPAGE_BASELINE = 1192
 #     内的 3 个位置（工具函数/ chat_general / apply-card），和文件的 chat_general/apply-card
 #     基础设施强耦合，无法独立抽新 Blueprint 而不引入循环 import / 重复样板代码。
 #     后续拆分目标：独立 nd_state.py 放续会工具、独立 nd_apply_card.py 放 nodes 增量合并。）
-CHAT_COLLAB_BP_BASELINE = 9732
+# 2026-09-01 继续（P0：节点资源滚动核算 + 出场人物关系字段）≈ +16 行：
+#   · _PERSONAS['node_designer'] 输出格式5) 新增：人物关系枚举（13 类·支持组合）+ 5 类资源口径
+#     （钱财/物品/武器法宝/功法能力/其它）+ 资源滚动铁律（上章总 - 本章消耗 + 本章获得 = 本章总）
+#     · SAVE_PLOT JSON nodes schema：characters 字符串数组每项 "姓名|关系:X" +
+#       resources_gained/resources_used 分类前缀字符串数组 + total_resources_owned {5类→[]} 对象
+#   · chat_collab_bp.py 仅涨 16 行（prompt 扩展）；真正的修复/核算实现落在独立 node_design_bp：
+#     _normalize_node_resources_and_relations（≈+348 行·人物关系缺省自动打标 + 资源5类口径规范化 +
+#       total_resources_owned 滚动公式 prev-used+gained + 条目名×数量合并/扣减）
+#     _repair_nodes_to_one_ch_per_node 在章循环里调用滚动 + 补齐缺失字段
+#   → 9732 → 9748（+16 行，chat_collab_bp 只涨 prompt 扩展 16 行，主实现落在 node_design_bp，
+#     不属于 chat_collab_bp 巨石继续膨胀堆肉）
+CHAT_COLLAB_BP_BASELINE = 9748
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

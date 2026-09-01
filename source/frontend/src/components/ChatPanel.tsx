@@ -2719,7 +2719,12 @@ export default function ChatPanel() {
         const volTitle = `第${vi}卷`;
         let promptText = text.trim();
         if (!promptText || /^[\s\d第卷一二三四五六七八九十百千零两0-9]+$/.test(promptText)) {
-          promptText = `请为${volTitle}设计情节节点。要求：单章单节点、无重叠无跳章、共50章/卷12万字规模、每章节点摘要支撑2400字正文、五幕对齐+爽点系统分层节奏，最后给出 SAVE_PLOT 卡片便于采纳。`;
+          promptText = `请为${volTitle}设计情节节点。要求：单章单节点、无重叠无跳章、共50章/卷12万字规模、每章节点摘要支撑2400字正文、五幕对齐+爽点系统分层节奏；
+  ① 每章节点必须含 【资源·本章获得 resources_gained】【资源·本章消耗 resources_used】【总资源 total_resources_owned】三项：
+     - 分类口径：钱财/物品/武器法宝/功法能力/其它；每项写 名称×数量/规格
+     - 本章消耗/使用掉的资源，必须在【总资源】里消除扣减（上一章总资源 - 本章消耗 + 本章获得 = 本章总资源，跨章滚动严格连续）
+  ② 人物 characters 每人均需写关系：格式「姓名(关系:X)」，关系从 主角/家人/亲友/爱人/盟友/同僚/下属/上司/对手/敌对/路人/中立/陌生人 里选（可组合，如"林墨白(关系:亲友·师)"）
+最后给出 SAVE_PLOT 卡片（nodes 字段含 characters/resources_gained/resources_used/total_resources_owned）便于采纳。`;
         }
         appendUserAi(promptText);
         setStreaming(true);
