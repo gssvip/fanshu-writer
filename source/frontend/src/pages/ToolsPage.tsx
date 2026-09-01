@@ -1560,37 +1560,7 @@ category：master
             </div>
           )}
 
-          {/* 榜单名 + 统计卡（仅展示一个「抓取时间」已在按钮右侧，这里不要） */}
-          <div className="nr-result-toolbar search-toolbar nr-search-toolbar fusion-card" style={{
-            padding:'10px 14px',marginBottom:12,
-            display:'flex',flexWrap:'wrap',gap:10,alignItems:'center',
-            width:'100%',boxSizing:'border-box',minWidth:0,
-          }}>
-            <div className="nr-search-title" style={{
-              fontSize:14,fontWeight:700,color:'var(--text-primary)',
-              whiteSpace:'normal',wordBreak:'break-word',lineHeight:1.4,
-              display:'inline-flex',flexWrap:'wrap',gap:6,alignItems:'center',flex:'1 1 220px',minWidth:0,
-            }}>
-              <span style={{padding:'2px 8px',borderRadius:8,background:'color-mix(in srgb, var(--accent) 10%, transparent)',color:'var(--accent)',fontSize:12,fontWeight:700,whiteSpace:'nowrap'}}>
-                📋 榜单
-              </span>
-              <span>{nrList?.rankTitle ? nrList.rankTitle : '选好筛选条件 → 点击☁️ 抓取本榜'}</span>
-              {nrList?.pageTitle ? <span className="text-muted" style={{fontSize:12,color:'var(--text-muted)'}}>· {nrList.pageTitle}</span> : null}
-            </div>
-            <span className="nr-search-meta" style={{
-              fontSize:12,color:'var(--text-muted)',whiteSpace:'nowrap',
-              display:'inline-flex',alignItems:'center',gap:8,flexShrink:0,
-            }}>
-              <span>共 <b style={{color:'var(--accent)',fontSize:14}}>{nrList?.total ?? 0}</b> 条 · 单页 {nrList?.pageSize ?? 20} 条</span>
-            </span>
-          </div>
-
           {/* 提示/错误/加载 */}
-          {nrList?.cutoffText && (
-            <div style={{margin:'0 0 10px',padding:'6px 10px',fontSize:12,background:'var(--bg-tertiary)',borderRadius:6,color:'var(--text-muted)'}}>
-              📌 {nrList.cutoffText}
-            </div>
-          )}
           {nrList?.fetchError && (
             <div style={{margin:'0 0 10px',padding:'8px 10px',background:'#fdecec',borderRadius:6,fontSize:12,color:'#c0392b'}}>
               ⚠️ 抓取失败：{nrList.fetchError}
