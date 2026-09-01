@@ -1,4 +1,4 @@
-import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, AppliedPatchItem, ImpactPreview } from './types';
+import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, AppliedPatchItem, ImpactPreview, AIUsageLogItem, AIUsageStats, RankingData } from './types';
 
 // 后端 API 默认地址（内置，开箱即用）
 // 其他用户无需手动配置即可使用。如需切换到自部署的后端，可在「我的 → 服务器」覆盖。
@@ -319,6 +319,17 @@ export const api = {
     }
     return res.json() as Promise<{ success: boolean; added: number; total: number }>;
   },
+
+  // AI 调用账本
+  getAiUsage: (opts?: { limit?: number; scene?: string; bookId?: string; onlyFail?: boolean }) =>
+    request<{ items: AIUsageLogItem[]; total: number }>(
+      `/ai/usage?limit=${opts?.limit || 50}${opts?.scene ? `&scene=${encodeURIComponent(opts.scene)}` : ''}${opts?.bookId ? `&book_id=${encodeURIComponent(opts.bookId)}` : ''}${opts?.onlyFail ? '&only_fail=1' : ''}`, { cache: 'no-store' }),
+  getAiUsageStats: (days = 7) =>
+    request<AIUsageStats>(`/ai/usage/stats?days=${days}`, { cache: 'no-store' }),
+
+  // 榜单风向
+  getRankings: (platform = 'fanqie') =>
+    request<RankingData>(`/rankings?platform=${encodeURIComponent(platform)}`),
 
   // Stages
   listStages: (bookId: string) => request<StageItem[]>(`/books/${bookId}/stages`),

@@ -239,6 +239,33 @@ export interface WorkflowStep {
   prompt_key: string;
 }
 
+// AI 调用账本
+export interface AIUsageLogItem {
+  id: string; book_id?: string | null; chapter_id?: string | null;
+  scene: string; task_type: string; model: string;
+  prompt_chars: number; output_chars: number;
+  success: boolean; error_message: string; duration_ms: number;
+  created_at: string;
+}
+export interface AIUsageSceneStat { scene: string; count: number; output_chars: number }
+export interface AIUsageModelStat { model: string; count: number }
+export interface AIUsageStats {
+  days: number; total_calls: number; success_rate: number;
+  success: number; failed: number;
+  total_output_chars: number; total_prompt_chars: number; total_duration_ms: number; avg_output_chars: number;
+  by_scene: AIUsageSceneStat[]; by_model: AIUsageModelStat[];
+}
+
+// 榜单风向
+export interface RankingExample { title: string; tag: string; point: string }
+export interface RankingData {
+  platform: string; icon: string; note: string;
+  trend_marker: { label: string; tone: string };
+  hot_tags: string[]; rising_keywords: string[]; hot_genres: string[];
+  examples: RankingExample[];
+  advice: string;
+}
+
 export interface ReviewResult {
   scores: Record<string, number>;
   total_score: number;

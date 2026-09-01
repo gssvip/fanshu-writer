@@ -16,6 +16,14 @@ export default function Home() {
   const [nf, setNf] = useState({ title:'',author:'',genre:'other',book_type:'novel',synopsis:'',template_id:'',target_words:0,total_volumes:0,novel_styles:[] as string[] });
   const [menuOpen, setMenuOpen] = useState(false);
   const [showAiPicker, setShowAiPicker] = useState(false);
+  // 首页操作：导入/导出/新建 一排
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const [showExport, setShowExport] = useState(false);
+  const [exportBookId, setExportBookId] = useState('');
+  const [exportFormat, setExportFormat] = useState('zip');
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => { api.listTemplates().then(setTemplates).catch(()=>{}); }, []);
 

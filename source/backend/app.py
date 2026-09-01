@@ -560,6 +560,33 @@ class AIConfig(db.Model):
             return None
 
 
+class AIUsageLog(db.Model):
+    """【AI调用账本】记录每次LLM调用的场景、模型、字数、Token、成败等信息，用于审计与成本统计。"""
+    __tablename__ = 'ai_usage_logs'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    book_id = db.Column(db.String(36), db.ForeignKey('books.id'), nullable=True, index=True)
+    chapter_id = db.Column(db.String(36), db.ForeignKey('chapters.id'), nullable=True)
+    scene = db.Column(db.String(64), default='', index=True)      # 细分场景（自动取调用函数名，可被 scene_label 覆盖）
+    task_type = db.Column(db.String(32), default='creation')      # creation / recognition
+    model = db.Column(db.String(100), default='')
+    prompt_chars = db.Column(db.Integer, default=0)               # 输入字数
+    output_chars = db.Column(db.Integer, default=0)               # 输出字数
+    success = db.Column(db.Boolean, default=True)
+    error_message = db.Column(db.Text, default='')
+    duration_ms = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'book_id': self.book_id, 'chapter_id': self.chapter_id,
+            'scene': self.scene, 'task_type': self.task_type, 'model': self.model,
+            'prompt_chars': self.prompt_chars, 'output_chars': self.output_chars,
+            'success': self.success, 'error_message': self.error_message,
+            'duration_ms': self.duration_ms,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class AppPreference(db.Model):
     __tablename__ = 'app_preferences'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -9111,7 +9138,49 @@ def _extract_json_from_llm(content, expect='auto'):
 
     return None, f'未找到有效JSON（最后错误: {last_error}），原始内容前300字: {content[:300]}'
 
-def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation', retry_count=2, timeout=300):
+def _derive_llm_scene():
+    """自动从调用者函数名推导细分场景（用于AI调用账本），避免逐处手写场景标签。"""
+    try:
+        import inspect
+        # _call_llm 包装器 → 调用者
+        return inspect.currentframe().f_back.f_back.f_code.co_name
+    except Exception:
+        return 'unknown'
+
+
+def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation', retry_count=2, timeout=300,
+              scene_label=None, book_id=None, chapter_id=None):
+    """统一 LLM 调用入口。包装真正的调用逻辑 _call_llm_impl，并在每次调用后写入【AI调用账本】。
+    比 impl 额外接受 scene_label / book_id / chapter_id 用于账本埋点（可省略，会自动推导场景）。"""
+    _cfg = AIConfig.get_active()
+    _model = _cfg.get_model_for_task(task_type) if (_cfg and _cfg.api_key) else ('(未配置)' if not _cfg or not _cfg.api_key else '')
+    import time as _t
+    _start = _t.time()
+    content, error = _call_llm_impl(messages, max_tokens=max_tokens, temperature=temperature,
+                                    task_type=task_type, retry_count=retry_count, timeout=timeout)
+    try:
+        AIUsageLog(
+            scene=scene_label or _derive_llm_scene(),
+            task_type=task_type,
+            model=_model,
+            prompt_chars=sum(len(str(m.get('content', ''))) for m in (messages or [])),
+            output_chars=len(content or ''),
+            success=(error is None),
+            error_message=((error or '')[:500]) if error else '',
+            duration_ms=int((_t.time() - _start) * 1000),
+            book_id=book_id,
+            chapter_id=chapter_id,
+        )
+        db.session.commit()
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+    return content, error
+
+
+def _call_llm_impl(messages, max_tokens=None, temperature=None, task_type='creation', retry_count=2, timeout=300):
     """统一的 LLM 调用辅助函数，返回 (content, error)
     task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)
     max_tokens 语义：None → 用 cfg.max_tokens；0 → 不限制（不下发该字段，用模型自身默认上限）；正整数 → 显式限定。
@@ -14345,9 +14414,123 @@ def export_analysis():
     bio.seek(0)
     return send_file(bio, mimetype='application/json', as_attachment=True, download_name='analysis_result.json')
 
+
+# ============================================================
+# 【AI 调用账本】查询与统计接口
+# ============================================================
+@app.route('/api/ai/usage', methods=['GET'])
+def ai_usage_list():
+    """返回最近 N 条 AI 调用记录（可传 scene / book_id 过滤）。"""
+    limit = min(int(request.args.get('limit', 50)), 200)
+    q = AIUsageLog.query
+    scene = request.args.get('scene')
+    book_id = request.args.get('book_id')
+    only_fail = request.args.get('only_fail') == '1'
+    if scene:
+        q = q.filter(AIUsageLog.scene == scene)
+    if book_id:
+        q = q.filter(AIUsageLog.book_id == book_id)
+    if only_fail:
+        q = q.filter(AIUsageLog.success.is_(False))
+    rows = q.order_by(AIUsageLog.created_at.desc()).limit(limit).all()
+    return jsonify({'items': [r.to_dict() for r in rows], 'total': len(rows)})
+
+
+@app.route('/api/ai/usage/stats', methods=['GET'])
+def ai_usage_stats():
+    """AI 调用账本汇总：总调用、成功率、输出字数、耗时、按场景/模型分组。"""
+    days = int(request.args.get('days', 7))
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    base = AIUsageLog.query.filter(AIUsageLog.created_at >= since)
+    total = base.count()
+    success = base.filter(AIUsageLog.success.is_(True)).count()
+    total_output = db.session.query(db.func.coalesce(db.func.sum(AIUsageLog.output_chars), 0)).filter(
+        AIUsageLog.created_at >= since).scalar() or 0
+    total_prompt = db.session.query(db.func.coalesce(db.func.sum(AIUsageLog.prompt_chars), 0)).filter(
+        AIUsageLog.created_at >= since).scalar() or 0
+    total_ms = db.session.query(db.func.coalesce(db.func.sum(AIUsageLog.duration_ms), 0)).filter(
+        AIUsageLog.created_at >= since).scalar() or 0
+
+    scene_rows = db.session.query(AIUsageLog.scene, db.func.count(AIUsageLog.id),
+                                  db.func.sum(AIUsageLog.output_chars)).filter(
+        AIUsageLog.created_at >= since).group_by(AIUsageLog.scene).order_by(db.func.count(AIUsageLog.id).desc()).limit(20).all()
+    model_rows = db.session.query(AIUsageLog.model, db.func.count(AIUsageLog.id)).filter(
+        AIUsageLog.created_at >= since).group_by(AIUsageLog.model).order_by(db.func.count(AIUsageLog.id).desc()).limit(20).all()
+
+    return jsonify({
+        'days': days,
+        'total_calls': total,
+        'success_rate': round(success / total * 100, 1) if total else 100,
+        'success': success,
+        'failed': total - success,
+        'total_output_chars': total_output,
+        'total_prompt_chars': total_prompt,
+        'total_duration_ms': total_ms,
+        'avg_output_chars': round(total_output / total, 0) if total else 0,
+        'by_scene': [{'scene': s or 'unknown', 'count': c, 'output_chars': o or 0} for s, c, o in scene_rows],
+        'by_model': [{'model': m or '(未配置)', 'count': c} for m, c in model_rows],
+    })
+
+
+# ============================================================
+# 【榜单风向】各平台排行榜趋势数据
+# ============================================================
+_RANKING_DATA = {
+    'qidian': {
+        'platform': '起点中文网', 'icon': '🏯', 'note': '男频传统市场风向',
+        'trend_marker': {'label': '稳中求变', 'tone': '新梗融合 · 情怀翻新'},
+        'hot_tags': ['都市异能', '玄幻女婿', '重生商战', '无限流', '轻悬疑'],
+        'rising_keywords': ['国运', '规则怪谈', '位面穿梭', '投资博弈', '反派逆袭'],
+        'hot_genres': ['都市', '玄幻', '游戏', '科幻', '历史'],
+        'examples': [
+            {'title': '都市：从投资开始解惑', 'tag': '都市 · 投资博弈', 'point': '金融博弈+草根翻身'},
+            {'title': '我靠反派身份躺平', 'tag': '玄幻 · 反套路', 'point': '反套路人设红利'},
+            {'title': '规则怪谈：我在规则里求生', 'tag': '悬疑 · 规则流', 'point': '规则怪谈持续高热'},
+        ],
+        'advice': '起点读者偏爱"强逻辑+长线布局"。建议把流行元素做"融合创新"而非跟风复制，聚焦在一个扎实的爽点上持续放大。'
+    },
+    'fanqie': {
+        'platform': '番茄小说', 'icon': '🍅', 'note': '免费流量 · 快节奏爽点',
+        'trend_marker': {'label': '轻快迭代', 'tone': '开局即高潮 · 短平快'},
+        'hot_tags': ['赘婿', '战神', '神豪', '神医', '末世复苏'],
+        'rising_keywords': ['奶爸', '千亿首富', '觉醒系统', '直播', '打脸'],
+        'hot_genres': ['都市', '玄幻', '军婚', '豪门', '星际'],
+        'examples': [
+            {'title': '开局觉醒神级签到', 'tag': '系统 · 签到流', 'point': '开局金手指马上爽'},
+            {'title': '神医奶爸：下山救美', 'tag': '都市 · 神医奶爸', 'point': '反差人设+日常爽点'},
+            {'title': '末世：我能无限进化', 'tag': '末世 · 进化流', 'point': '末世题材复活热'},
+        ],
+        'advice': '番茄读者耐心有限，前3000字必须给出第一个爽点。标题直给、章节留钩子，用高频"打脸"节奏驱动追更。'
+    },
+    'qimao': {
+        'platform': '七猫中文网', 'icon': '🐱', 'note': '下沉+免费 · 强情绪强冲突',
+        'trend_marker': {'label': '情绪出口', 'tone': '复仇/逆袭/家人羁绊'},
+        'hot_tags': ['豪门', '复仇', '满级大佬', '女频爽文', '马甲文'],
+        'rising_keywords': ['认亲', '隐藏身份', '打脸绿茶', '一家顶配', '黑马逆袭'],
+        'hot_genres': ['女频豪门', '都市', '穿越', '玄幻', '宫斗'],
+        'examples': [
+            {'title': '满级大佬穿成农家妇', 'tag': '女频 · 满级大佬', 'point': '满级人设+身份反差'},
+            {'title': '豪门隐婚：首富妻子掉马甲', 'tag': '女频 · 马甲流', 'point': '马甲掉马情绪拉满'},
+            {'title': '重生之复仇千金', 'tag': '女频 · 复仇', 'point': '复仇爽感+家人羁绊'},
+        ],
+        'advice': '七猫读者看重情绪引爆点，家庭/身份冲突最能引发共鸣和评论互动。开篇快速抛出强冲突，用"掉马甲/被低估"制造持续爽感。'
+    },
+}
+
+
+@app.route('/api/rankings', methods=['GET'])
+def rankings_analyse():
+    """获取平台榜单风向（趋势、热点标签、上升关键词、参考作品、创作建议）。"""
+    platform = request.args.get('platform', 'fanqie')
+    data = _RANKING_DATA.get(platform)
+    if not data:
+        return jsonify({'error': '未知平台'}), 400
+    return jsonify(data)
+
+
 # 【冷启动提速·2026-08-20】schema+seed 版本号：改动数据库结构（新表/新列/迁移）
 # 或种子数据（SEED_SKILL_PACKS / 内置模板）时必须递增此版本，老库才会重新走全量初始化。
-SCHEMA_SEED_VERSION = '2026-08-30.1'  # 递增：去AI味儿改稿心法新增"悬空动作/被动吃亏"检测第11条，老库需重同步种子
+SCHEMA_SEED_VERSION = '2026-09-01.1'  # 新增 ai_usage_logs 表（AI调用账本），老库需重建
 
 class AppMeta(db.Model):
     """应用元数据 KV 表：记录 schema/seed 版本，支持启动快速路径。"""

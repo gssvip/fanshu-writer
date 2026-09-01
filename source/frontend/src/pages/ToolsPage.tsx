@@ -2,10 +2,10 @@ import { useState, useEffect, useContext, useRef } from 'react';
 import * as yaml from 'js-yaml';
 import { api } from '../api';
 import { AuthContext } from '../App';
-import type { Book, SkillPack, ReviewResult, AnalysisResult, WorkflowStep } from '../types';
+import type { Book, SkillPack, ReviewResult, AnalysisResult, WorkflowStep, RankingData, AIUsageStats, AIUsageLogItem } from '../types';
 import { GENRES, GENRE_GROUPS, normalizeGenreKey } from '../constants';
 
-type ToolTab = 'review' | 'skills' | 'analyze' | 'export';
+type ToolTab = 'review' | 'skills' | 'analyze' | 'rankings' | 'ledger';
 
 interface SkillEditorState {
   id: string | null;
@@ -52,8 +52,19 @@ export default function ToolsPage() {
   const [uploadFilename, setUploadFilename] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [exportFormat, setExportFormat] = useState('txt');
   const skillImportRef = useRef<HTMLInputElement>(null);
+
+  // 【榜单风向】各平台排行榜趋势
+  const [rankPlatform, setRankPlatform] = useState('fanqie');
+  const [rankData, setRankData] = useState<RankingData | null>(null);
+  const [rankLoading, setRankLoading] = useState(false);
+
+  // 【AI 调用账本】
+  const [usageStats, setUsageStats] = useState<AIUsageStats | null>(null);
+  const [usageLogs, setUsageLogs] = useState<AIUsageLogItem[]>([]);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageDays, setUsageDays] = useState(7);
+  const [usageOnlyFail, setUsageOnlyFail] = useState(false);
 
   // 拆书分析同步到作品
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -70,6 +81,34 @@ export default function ToolsPage() {
     api.listSkillPacks(skillGenreFilter || undefined, skillTypeFilter || undefined)
       .then(setSkillPacks).catch(() => {});
   }, [skillGenreFilter, skillTypeFilter]);
+
+  // 加载榜单风向（默认平台）
+  useEffect(() => { loadRankings('fanqie'); }, []);
+
+  // 加载 AI 调用账本
+  useEffect(() => { loadUsage(); }, []);
+
+  async function loadRankings(platform: string) {
+    setRankLoading(true);
+    try { const r = await api.getRankings(platform); setRankData(r); }
+    catch (e: any) { setRankData(null); }
+    setRankLoading(false);
+  }
+
+  async function loadUsage(days?: number, onlyFail?: boolean) {
+    const d = days ?? usageDays;
+    const of = onlyFail ?? usageOnlyFail;
+    setUsageLoading(true);
+    try {
+      const [stats, logs] = await Promise.all([
+        api.getAiUsageStats(d),
+        api.getAiUsage({ limit: 50, onlyFail: of }),
+      ]);
+      setUsageStats(stats);
+      setUsageLogs(logs.items);
+    } catch (e: any) { /* 后台未配置时静默 */ }
+    setUsageLoading(false);
+  }
 
   async function handleReview() {
     if (!selectedBookId) return;
@@ -518,45 +557,6 @@ export default function ToolsPage() {
     setSyncing(false);
   }
 
-  function getExportUrl() {
-    if (!selectedBookId) return '';
-    if (exportFormat === 'zip') return api.getExportZipUrl(selectedBookId);
-    return api.getExportUrl(selectedBookId, exportFormat);
-  }
-
-  // 带认证的文件下载（避免<a>标签无法发送Authorization头）
-  const [downloading, setDownloading] = useState(false);
-  async function handleAuthDownload(url: string, fallbackName: string) {
-    if (!url || url === '#') return;
-    setDownloading(true);
-    try {
-      const token = localStorage.getItem('fanshu-token');
-      const resp = await fetch(url, {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-      });
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: '下载失败' }));
-        throw new Error(err.error || `HTTP ${resp.status}`);
-      }
-      const blob = await resp.blob();
-      // 从响应头获取文件名，否则用fallback
-      const disp = resp.headers.get('content-disposition') || '';
-      const m = disp.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)/);
-      const fileName = m ? decodeURIComponent(m[1]) : fallbackName;
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    } catch (e: any) {
-      alert('导出失败: ' + (e.message || '请先登录'));
-    }
-    setDownloading(false);
-  }
-
   // 删除原来硬编码的迷你 GENRES 字典：引用 ../constants 的真相源 GENRES / GENRE_GROUPS
   // 原有的 'all': '全部' 只在筛选下拉里用"所有题材"空值代替，不再污染题材真相源。
 
@@ -564,7 +564,8 @@ export default function ToolsPage() {
     { key: 'review' as ToolTab, label: 'AI 责编', icon: '🔍', desc: 'AI平台视角审稿打分' },
     { key: 'skills' as ToolTab, label: '技能包', icon: '📦', desc: '15+题材工作流套件' },
     { key: 'analyze' as ToolTab, label: '拆书分析', icon: '📊', desc: '导入文件分析提炼方法论' },
-    { key: 'export' as ToolTab, label: '导出', icon: '📤', desc: '导出/备份作品' },
+    { key: 'rankings' as ToolTab, label: '榜单风向', icon: '📈', desc: '各平台排行榜趋势洞察' },
+    { key: 'ledger' as ToolTab, label: 'AI调用账本', icon: '🧾', desc: '每次AI调用的成本与成败' },
   ];
 
   return (
@@ -1060,40 +1061,173 @@ category：master
         </div>
       )}
 
-      {activeTab === 'export' && (
+      {activeTab === 'rankings' && (
         <div className="tool-panel">
-          <h3>📤 导出作品</h3>
-          <p className="text-muted">导出为不同格式或备份整个项目</p>
+          <h3>📈 榜单风向</h3>
+          <p className="text-muted">抓取各平台排行榜数据，分析趋势、热门标签与上升关键词，帮你踩准市场节奏</p>
 
-          {/* 全量导出：维度+章节 */}
-          <div className="export-section" style={{background:'var(--bg-tertiary)',borderRadius:'var(--radius-sm)',padding:16,marginBottom:16}}>
-            <h4 style={{fontSize:14,marginBottom:6}}>📦 全量导出（推荐）</h4>
-            <p className="text-muted" style={{fontSize:12,marginBottom:10}}>将所有维度设定（构思/设定/大纲/世界观/人物/剧情/伏笔/地点/风格）和全部章节，各自导出为独立txt/md文件，打包到以小说名命名的文件夹中。</p>
-            <button className={`btn-primary ${!selectedBookId || downloading ? 'disabled' : ''}`}
-              disabled={!selectedBookId || downloading}
-              onClick={() => { if (!selectedBookId) { alert('请先选择作品'); return; } handleAuthDownload(api.getExportFullUrl(selectedBookId), 'export.zip'); }}>
-              {downloading ? '⏳ 导出中...' : '📦 全量导出到文件夹'}
-            </button>
-          </div>
-
-          {/* 单文件导出 */}
-          <div className="export-section">
-            <h4 style={{fontSize:14,marginBottom:6}}>📄 单文件导出</h4>
-            <div className="form-row">
-              <label className="input-label">导出格式</label>
-              <select className="input" value={exportFormat} onChange={e => setExportFormat(e.target.value)}>
-                <option value="txt">纯文本 (.txt)</option>
-                <option value="html">网页 (.html)</option>
-                <option value="json">JSON数据 (.json)</option>
-                <option value="zip">完整备份 (.zip)</option>
+          <div className="form-row" style={{alignItems:'flex-end',gap:8}}>
+            <div style={{flex:1}}>
+              <label className="input-label">选择平台</label>
+              <select className="input" value={rankPlatform} onChange={e => { setRankPlatform(e.target.value); loadRankings(e.target.value); }}>
+                <option value="fanqie">番茄小说</option>
+                <option value="qidian">起点中文网</option>
+                <option value="qimao">七猫中文网</option>
               </select>
             </div>
-            <button className={`btn-secondary ${!selectedBookId || downloading ? 'disabled' : ''}`}
-              disabled={!selectedBookId || downloading}
-              onClick={() => { if (!selectedBookId) return; handleAuthDownload(getExportUrl(), `export.${exportFormat}`); }}>
-              {downloading ? '⏳ 导出中...' : '下载单文件'}
+            <button className="btn-primary" onClick={() => loadRankings(rankPlatform)} disabled={rankLoading}>
+              {rankLoading ? '获取中...' : '获取榜单'}
             </button>
           </div>
+
+          {rankData && (
+            <div className="rank-result" style={{marginTop:16}}>
+              <div className="rank-platform-banner" style={{
+                display:'flex',alignItems:'center',gap:12,padding:14,background:'linear-gradient(135deg,var(--accent),var(--accent-hover))',
+                color:'#fff',borderRadius:'var(--radius-sm)',marginBottom:12,
+              }}>
+                <span style={{fontSize:26}}>{rankData.icon}</span>
+                <div>
+                  <div style={{fontSize:16,fontWeight:700}}>{rankData.platform} · {rankData.note}</div>
+                  <div style={{fontSize:12,opacity:.9}}>📌 风向 {rankData.trend_marker.label} · {rankData.trend_marker.tone}</div>
+                </div>
+              </div>
+
+              <div className="rank-block">
+                <h4 style={{fontSize:13,marginBottom:6}}>🔥 热门标签</h4>
+                <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                  {rankData.hot_tags.map((t, i) => (
+                    <span key={i} style={{padding:'4px 10px',borderRadius:14,background:'var(--bg-tertiary)',border:'1px solid var(--border-color)',fontSize:12}}>{t}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rank-block" style={{marginTop:12}}>
+                <h4 style={{fontSize:13,marginBottom:6}}>🚀 上升关键词</h4>
+                <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                  {rankData.rising_keywords.map((k, i) => (
+                    <span key={i} style={{padding:'4px 10px',borderRadius:14,background:'color-mix(in srgb, var(--accent) 12%, transparent)',border:'1px solid color-mix(in srgb, var(--accent) 40%, transparent)',fontSize:12,color:'var(--accent)'}}>{k}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rank-block" style={{marginTop:12}}>
+                <h4 style={{fontSize:13,marginBottom:6}}>📚 参考作品</h4>
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  {rankData.examples.map((ex, i) => (
+                    <div key={i} style={{padding:'10px 12px',background:'var(--bg-secondary)',border:'1px solid var(--border-color)',borderRadius:8}}>
+                      <div style={{fontWeight:600,fontSize:13}}>{ex.title}</div>
+                      <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{ex.tag} · {ex.point}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rank-advice" style={{marginTop:12,padding:12,background:'color-mix(in srgb, var(--accent) 8%, transparent)',borderRadius:'var(--radius-sm)',fontSize:13,lineHeight:1.7}}>
+                💡 <strong>创作建议：</strong>{rankData.advice}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'ledger' && (
+        <div className="tool-panel">
+          <h3>🧾 AI 调用账本</h3>
+          <p className="text-muted">记录每一次AI调用的场景、模型、字数、耗时与成败，便于审计和成本掌控</p>
+
+          <div className="form-row" style={{alignItems:'flex-end',gap:8}}>
+            <div style={{flex:1}}>
+              <label className="input-label">统计周期</label>
+              <select className="input" value={usageDays} onChange={e => { const d = Number(e.target.value); setUsageDays(d); loadUsage(d, usageOnlyFail); }}>
+                <option value={7}>近 7 天</option>
+                <option value={30}>近 30 天</option>
+                <option value={90}>近 90 天</option>
+              </select>
+            </div>
+            <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13}}>
+              <input type="checkbox" checked={usageOnlyFail} onChange={e => { const of = e.target.checked; setUsageOnlyFail(of); loadUsage(usageDays, of); }} /> 仅看失败
+            </label>
+            <button className="btn-primary" onClick={() => loadUsage()} disabled={usageLoading}>{usageLoading ? '加载中...' : '刷新'}</button>
+          </div>
+
+          {usageStats && (
+            <>
+              <div className="ledger-cards" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginTop:16}}>
+                <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
+                  <div style={{fontSize:22,fontWeight:800,color:'var(--accent)'}}>{usageStats.total_calls}</div>
+                  <div style={{fontSize:12,color:'var(--text-muted)'}}>总调用（{usageStats.days}天）</div>
+                </div>
+                <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
+                  <div style={{fontSize:22,fontWeight:800,color:'#27ae60'}}>{usageStats.success_rate}%</div>
+                  <div style={{fontSize:12,color:'var(--text-muted)'}}>成功率（失败{usageStats.failed}）</div>
+                </div>
+                <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
+                  <div style={{fontSize:22,fontWeight:800}}>{(usageStats.total_output_chars / 10000).toFixed(2)}万字</div>
+                  <div style={{fontSize:12,color:'var(--text-muted)'}}>累计输出字数</div>
+                </div>
+                <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
+                  <div style={{fontSize:22,fontWeight:800}}>{(usageStats.total_duration_ms / 60000 / 60).toFixed(1)}h</div>
+                  <div style={{fontSize:12,color:'var(--text-muted)'}}>累计耗时时长</div>
+                </div>
+              </div>
+
+              {usageStats.by_scene.length > 0 && (
+                <div className="ledger-block" style={{marginTop:16}}>
+                  <h4 style={{fontSize:14,marginBottom:8}}>📌 按场景分布</h4>
+                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
+                    {usageStats.by_scene.map((s, i) => {
+                      const max = Math.max(...usageStats.by_scene.map(x => x.count), 1);
+                      return (
+                        <div key={i} style={{display:'flex',alignItems:'center',gap:8,fontSize:13}}>
+                          <span style={{width:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.scene}</span>
+                          <div style={{flex:1,background:'var(--bg-tertiary)',borderRadius:4,height:14,overflow:'hidden'}}>
+                            <div style={{width:`${(s.count / max) * 100}%`,height:'100%',background:'var(--accent)',borderRadius:4}} />
+                          </div>
+                          <span style={{minWidth:24,textAlign:'right',fontWeight:600}}>{s.count}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {usageLogs.length > 0 && (
+                <div className="ledger-block" style={{marginTop:16}}>
+                  <h4 style={{fontSize:14,marginBottom:8}}>🗒️ 最近调用明细</h4>
+                  <div style={{maxHeight:300,overflowY:'auto',border:'1px solid var(--border-color)',borderRadius:8}}>
+                    <table style={{width:'100%',fontSize:12,borderCollapse:'collapse'}}>
+                      <thead>
+                        <tr style={{background:'var(--bg-tertiary)',textAlign:'left'}}>
+                          <th style={{padding:8}}>场景</th><th style={{padding:8}}>模型</th><th style={{padding:8}}>输出字</th>
+                          <th style={{padding:8}}>耗时</th><th style={{padding:8}}>状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {usageLogs.map(log => (
+                          <tr key={log.id} style={{borderTop:'1px solid var(--border-color)'}}>
+                            <td style={{padding:'6px 8px',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={log.scene}>{log.scene}</td>
+                            <td style={{padding:'6px 8px',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={log.model}>{log.model}</td>
+                            <td style={{padding:'6px 8px'}}>{log.output_chars}</td>
+                            <td style={{padding:'6px 8px'}}>{log.duration_ms}ms</td>
+                            <td style={{padding:'6px 8px'}}>
+                              {log.success ? <span style={{color:'#27ae60'}}>✓</span> : <span style={{color:'#e74c3c'}}>✗ {log.error_message.slice(0,20)}</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {!usageStats && (
+            <div className="empty-state" style={{padding:24,marginTop:12}}>
+              <p>暂无AI调用记录。完成一次AI创作/修正后，这里会自动记录。</p>
+            </div>
+          )}
         </div>
       )}
 
