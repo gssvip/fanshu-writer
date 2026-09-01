@@ -607,14 +607,25 @@ _QIDIAN_METRIC_NAME: dict[str, str] = {
 
 
 def _qidian_session() -> requests.Session:
-    """初始化带 _csrfToken cookie 的移动端会话（先访问首页取 token）。"""
+    """初始化带 _csrfToken cookie 的移动端会话。
+
+    注意：必须访问 /rank 页才能拿到 _csrfToken cookie；首页只下发 abPolicies，
+    此时直接请求 majax/rank/xxx 会返回 {"code":1,"msg":"失败"}。
+    """
     s = requests.Session()
     s.headers.update(REQ_HEADERS)
     s.headers['User-Agent'] = _QIDIAN_MOBILE_UA
     try:
-        s.get('https://m.qidian.com/', timeout=15)
+        s.get('https://m.qidian.com/rank', timeout=15)
     except Exception:
         pass
+    # 兜底：如果 /rank 也没写入 cookie，再请求一次首页；部分网络环境首页优先设置基础域 cookie 后 /rank 的 set-cookie 才生效
+    if not s.cookies.get('_csrfToken'):
+        try:
+            s.get('https://m.qidian.com/', timeout=15)
+            s.get('https://m.qidian.com/rank', timeout=15)
+        except Exception:
+            pass
     return s
 
 
@@ -634,33 +645,52 @@ def _qidian_cat_ids(code: str | None) -> tuple[int, list[int]]:
 def _map_qidian_record(rec: dict[str, Any], rank_type: str) -> dict[str, Any]:
     metric_name = _QIDIAN_METRIC_NAME.get(rank_type, '热度')
     rankcnt = _clean(rec.get('rankCnt'))
+    cnt = _clean(rec.get('cnt'))
+    rank_num = rec.get('rankNum')
+    bid = _clean(rec.get('bid'))
+    # 封面：起点 CDN 书籍封面规则，若 404 前端会 fallback 到 📚
+    # bookcover/000/aaa/bbb/ccc.jpg 模式，bid 前补 0 到 9 位，按 3/3/3 分层
+    cover_url: str | None = None
+    if bid and bid.isdigit():
+        pad = bid.zfill(9)
+        cover_url = f'https://bookcover.yuewen.com/qdbimg/349573/{bid}/150'
+    # 指标：优先 rankCnt（榜单指标）；否则用 cnt（字数/热度值）；再不行用 rankNum 占位
+    metric_text: str | None = rankcnt or (cnt if cnt else (f'#{rank_num}' if rank_num else None))
+    metric_value: int = (
+        _parse_cn(rankcnt)
+        if rankcnt
+        else (_parse_cn(cnt) if rank_type in ('collect',) and cnt else 0)
+    )
     return {
         'rankNo': 0,  # 抓取合并后再统一续排
         'rankChange': 0,
         'bookTitle': _clean(rec.get('bName')),
-        'bookId': _clean(rec.get('bid')),
-        'bookUrl': f"https://www.qidian.com/book/{_clean(rec.get('bid'))}/",
+        'bookId': bid,
+        'bookUrl': f"https://www.qidian.com/book/{bid}/" if bid else '',
         'authorName': _clean(rec.get('bAuth')) or None,
-        'coverUrl': None,
+        'coverUrl': cover_url,
         'intro': _clean(rec.get('desc')) or None,
         'statusText': None,
-        'readingText': _clean(rec.get('cnt')) or None,
-        'readingCount': 0,
+        'readingText': cnt or None,
+        'readingCount': _parse_cn(cnt) if rank_type != 'collect' else 0,
         'metricName': metric_name,
-        'metricText': rankcnt or None,
-        'metricValue': _parse_cn(rankcnt or ''),
+        'metricText': metric_text,
+        'metricValue': metric_value,
         'lastChapterTitle': None,
         'lastChapterUrl': None,
         'lastUpdateTimeText': None,
         'categoryName': _clean(rec.get('cat')) or None,
         'categorySubName': _clean(rec.get('subCat')) or None,
-        'wordsText': _clean(rec.get('cnt')) or None,
+        'wordsText': cnt or None,
     }
 
 
 def crawl_qidian_api(rank_type: str, gender: str = 'male', category_code: str | None = None,
-                     max_pages: int = 2, force: bool = False) -> dict[str, Any]:
-    """抓取起点真实榜单：按 榜单类型×男女频×大类×主题子类 的组合，逐页合并去重。"""
+                     max_pages: int = 1, force: bool = False) -> dict[str, Any]:
+    """抓取起点真实榜单：按 榜单类型×男女频×大类×主题子类 的组合，每页20本。
+
+    默认只取1页（与参考站「单榜20本」一致）；调用方可按需扩大 max_pages。
+    """
     api_name = _QIDIAN_RANK_API.get(rank_type)
     if not api_name:
         raise ValueError(f'起点暂不支持该榜单类型：{rank_type}')
@@ -690,6 +720,26 @@ def crawl_qidian_api(rank_type: str, gender: str = 'male', category_code: str | 
         except Exception:
             if page == 1:
                 raise
+            break
+        # 起点偶发 {"code":1,"msg":"失败"}：重建会话拿新 token 后重试一次当前页
+        if payload.get('code') != 0 and page == 1 and not force:
+            try:
+                session2 = _qidian_session()
+                token2 = str(session2.cookies.get('_csrfToken') or '')
+                if token2 and token2 != token:
+                    params2 = dict(params)
+                    params2['_csrfToken'] = token2
+                    r2 = session2.get(f'{_QIDIAN_API}/majax/rank/{api_name}', params=params2,
+                                      headers={'Referer': 'https://m.qidian.com/rank/'}, timeout=20)
+                    payload = r2.json()
+                    session = session2
+                    token = token2
+            except Exception:
+                pass
+        if payload.get('code') != 0:
+            msg = payload.get('msg') or '起点接口返回失败'
+            if page == 1:
+                raise RuntimeError(msg)
             break
         records = (payload.get('data') or {}).get('records') or []
         if not records:
