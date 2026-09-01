@@ -278,6 +278,67 @@ export interface RankingData {
   fetch_error?: string;
 }
 
+// ========== 榜单风向（移植自 easy-writing: NovelRank）==========
+export interface NRPlatform { code: string; name: string; baseUrl?: string; remark?: string; }
+
+export interface NRRankType { value: string; label: string; }
+
+export interface NRCategory {
+  id: string;
+  code: string;
+  name: string;
+  scope?: 'all' | 'category';
+  sourceId?: number;
+  categoryId?: number;
+  gender?: 'male' | 'female';
+}
+
+export interface NRFilters {
+  platform: string;
+  rankTypes: NRRankType[];
+  genders: ('male' | 'female')[];
+  categories: NRCategory[];
+}
+
+export interface NRItem {
+  rankNo: number;
+  rankChange: number;
+  bookTitle: string;
+  bookId?: string | null;
+  bookUrl: string;
+  authorName?: string | null;
+  coverUrl?: string | null;
+  intro?: string | null;
+  statusText?: string | null;
+  readingCount: number;
+  readingText?: string | null;
+  metricName?: string | null;
+  metricValue?: number | null;
+  metricText?: string | null;
+  lastChapterTitle?: string | null;
+  lastChapterUrl?: string | null;
+  lastUpdateTimeText?: string | null;
+  categoryName?: string | null;
+  categorySubName?: string | null;
+}
+
+export interface NRListResult {
+  sourceId: number | null;
+  siteCode?: string;
+  rankType?: string;
+  rankTitle?: string;
+  pageTitle?: string;
+  cutoffText?: string;
+  fetchAt?: number;
+  sourceKind?: 'live' | 'curated';
+  fetchError?: string;
+  page: number;
+  pageSize: number;
+  total: number;
+  itemCount: number;
+  items: NRItem[];
+}
+
 export interface ReviewResult {
   scores: Record<string, number>;
   total_score: number;

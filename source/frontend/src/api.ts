@@ -1,4 +1,4 @@
-import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, AppliedPatchItem, ImpactPreview, AIUsageLogItem, AIUsageStats, RankingData } from './types';
+import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, AppliedPatchItem, ImpactPreview, AIUsageLogItem, AIUsageStats, RankingData, NRPlatform, NRFilters, NRListResult } from './types';
 
 // 后端 API 默认地址（内置，开箱即用）
 // 其他用户无需手动配置即可使用。如需切换到自部署的后端，可在「我的 → 服务器」覆盖。
@@ -329,9 +329,44 @@ export const api = {
   getAiUsageStats: (days = 7) =>
     request<AIUsageStats>(`/ai/usage/stats?days=${days}`, { cache: 'no-store' }),
 
-  // 榜单风向
+  // 榜单风向（老版聚合分析视图，兼容首页引用）
   getRankings: (platform = 'fanqie') =>
     request<RankingData>(`/rankings?platform=${encodeURIComponent(platform)}`),
+
+  // 榜单风向（移植自 easy-writing: NovelRank，多维度钻取）
+  nrListPlatforms: () => request<{ platforms: NRPlatform[] }>('/rank/platforms'),
+  nrListFilters: (platform: string, params?: { rankType?: string; gender?: string }) => {
+    const qs = new URLSearchParams();
+    qs.set('platform', platform);
+    if (params?.rankType) qs.set('rankType', params.rankType);
+    if (params?.gender) qs.set('gender', params.gender);
+    return request<NRFilters>(`/rank/filters?${qs.toString()}`);
+  },
+  nrListBooks: (params: {
+    sourceId?: number;
+    platform?: string;
+    rankType?: string;
+    gender?: string;
+    categoryCode?: string;
+    keyword?: string;
+    page?: number;
+    pageSize?: number;
+    force?: boolean;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.sourceId != null) qs.set('sourceId', String(params.sourceId));
+    if (params.platform) qs.set('platform', params.platform);
+    if (params.rankType) qs.set('rankType', params.rankType);
+    if (params.gender) qs.set('gender', params.gender);
+    if (params.categoryCode) qs.set('categoryCode', params.categoryCode);
+    if (params.keyword) qs.set('keyword', params.keyword);
+    if (params.page) qs.set('page', String(params.page));
+    if (params.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params.force) qs.set('force', '1');
+    return request<NRListResult>(`/rank/list?${qs.toString()}`);
+  },
+  nrForceCrawl: (sourceId: number) =>
+    request<{ ok: boolean; itemCount?: number; fetchAt?: number; error?: string }>(`/rank/crawl`, { method: 'POST', body: JSON.stringify({ sourceId }) }),
 
   // Stages
   listStages: (bookId: string) => request<StageItem[]>(`/books/${bookId}/stages`),

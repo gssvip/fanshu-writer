@@ -2,7 +2,7 @@ import { useState, useEffect, useContext, useRef } from 'react';
 import * as yaml from 'js-yaml';
 import { api } from '../api';
 import { AuthContext } from '../App';
-import type { Book, SkillPack, ReviewResult, AnalysisResult, WorkflowStep, RankingData } from '../types';
+import type { Book, SkillPack, ReviewResult, AnalysisResult, WorkflowStep, RankingData, NRPlatform, NRFilters, NRRankType, NRCategory, NRListResult, NRItem } from '../types';
 import { GENRES, GENRE_GROUPS, normalizeGenreKey } from '../constants';
 
 type ToolTab = 'review' | 'skills' | 'analyze' | 'rankings';
@@ -56,10 +56,22 @@ export default function ToolsPage() {
 
   const skillImportRef = useRef<HTMLInputElement>(null);
 
-  // 【榜单风向】各平台排行榜趋势
-  const [rankPlatform, setRankPlatform] = useState('fanqie');
-  const [rankData, setRankData] = useState<RankingData | null>(null);
-  const [rankLoading, setRankLoading] = useState(false);
+  // 【榜单风向 V2 · 移植自 easy-writing: NovelRank】
+  const [nrPlatforms, setNrPlatforms] = useState<NRPlatform[]>([]);
+  const [nrPlatform, setNrPlatform] = useState('fanqie');
+  const [nrRankType, setNrRankType] = useState<string>('');
+  const [nrGender, setNrGender] = useState<string>('');
+  const [nrCategoryCode, setNrCategoryCode] = useState<string>('__all__');
+  const [nrFilters, setNrFilters] = useState<NRFilters | null>(null);
+  const [nrFiltersLoading, setNrFiltersLoading] = useState(false);
+  const [nrList, setNrList] = useState<NRListResult | null>(null);
+  const [nrListLoading, setNrListLoading] = useState(false);
+  const [nrListError, setNrListError] = useState('');
+  const [nrKeyword, setNrKeyword] = useState('');
+  const [nrPage, setNrPage] = useState(1);
+  const [nrCrawling, setNrCrawling] = useState(false);
+  // 保留原 getRankings 返回的旧结构作为 banner
+  const [rankBanner, setRankBanner] = useState<RankingData | null>(null);
 
   // 拆书分析同步到作品
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -77,14 +89,79 @@ export default function ToolsPage() {
       .then(setSkillPacks).catch(() => {});
   }, [skillGenreFilter, skillTypeFilter]);
 
-  // 加载榜单风向（默认平台）
-  useEffect(() => { loadRankings('fanqie'); }, []);
+  // 加载榜单风向：平台列表 + 默认筛选 + 书籍列表 + 旧 banner
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.nrListPlatforms();
+        if (Array.isArray(r.platforms)) setNrPlatforms(r.platforms);
+      } catch {}
+    })();
+  }, []);
 
-  async function loadRankings(platform: string) {
-    setRankLoading(true);
-    try { const r = await api.getRankings(platform); setRankData(r); }
-    catch (e: any) { setRankData(null); }
-    setRankLoading(false);
+  useEffect(() => {
+    // category 变化 → 第一页重拉
+    loadNrBooks(nrCategoryCode, nrRankType, nrGender, 1, nrKeyword);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nrCategoryCode]);
+
+  useEffect(() => { setNrPage(1); }, [nrKeyword]);
+
+  // 平台/榜单类型/男女频变化 → 刷新 filters + 自动重置 category，然后拉书
+  useEffect(() => {
+    (async () => {
+      setNrFiltersLoading(true);
+      try {
+        const f = await api.nrListFilters(nrPlatform, { rankType: nrRankType || undefined, gender: nrGender || undefined });
+        setNrFilters(f);
+        if (f.rankTypes.length && !f.rankTypes.find(r => r.value === nrRankType)) {
+          setNrRankType(f.rankTypes[0].value);
+          // rankType 会触发 useEffect，这里直接返回
+          return;
+        }
+        const all = f.categories.find((c: NRCategory) => c.code === '__all__') || f.categories[0];
+        const code = (all ? all.code : '__all__');
+        if (code !== nrCategoryCode) setNrCategoryCode(code);
+        await loadNrBooks(code, nrRankType, nrGender, 1, nrKeyword);
+      } catch {}
+      finally { setNrFiltersLoading(false); }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nrPlatform, nrRankType, nrGender]);
+
+  async function loadNrBooks(catCode: string, rt: string, gd: string, page = 1, kw = '', force = false) {
+    setNrListLoading(true);
+    setNrListError('');
+    try {
+      const r = await api.nrListBooks({
+        platform: nrPlatform,
+        rankType: rt || undefined,
+        gender: gd || undefined,
+        categoryCode: catCode === '__all__' ? undefined : catCode,
+        keyword: kw || undefined,
+        page,
+        pageSize: 50,
+        force,
+      });
+      setNrList(r);
+    } catch (e: any) { setNrListError(e?.message || '加载失败'); setNrList(null); }
+    finally { setNrListLoading(false); }
+    // 异步拉 banner（热门标签/创作建议）——与 V2 钻取并行展示
+    try {
+      const b = await api.getRankings(nrPlatform);
+      setRankBanner(b);
+    } catch { /* banner 失败不阻塞主视图 */ }
+  }
+
+  async function handleNrCrawlNow() {
+    const sid = nrList?.sourceId;
+    if (!sid) return;
+    setNrCrawling(true);
+    try {
+      await api.nrForceCrawl(sid);
+      await loadNrBooks(nrCategoryCode, nrRankType, nrGender, nrPage, nrKeyword, true);
+    } catch (e: any) { alert('刷新失败：' + (e?.message || String(e))); }
+    finally { setNrCrawling(false); }
   }
 
   async function handleReview() {
@@ -1086,113 +1163,273 @@ category：master
 
       {activeTab === 'rankings' && (
         <div className="tool-panel">
-          <h3>📈 榜单风向</h3>
-          <p className="text-muted">抓取各平台排行榜数据，分析趋势、热门标签与上升关键词，帮你踩准市场节奏</p>
+          <h3>📈 榜单风向（移植自 easy-writing: NovelRank）</h3>
+          <p className="text-muted">完全对齐 easy-writing 的 3 平台 × 232 分类 × 83 榜单源：番茄/起点/七猫，抓真实榜单数据，实时查看赛道热度与热门题材</p>
 
-          <div className="form-row" style={{alignItems:'flex-end',gap:8}}>
-            <div style={{flex:1}}>
-              <label className="input-label">选择平台</label>
-              <select className="input" value={rankPlatform} onChange={e => { setRankPlatform(e.target.value); loadRankings(e.target.value); }}>
-                <option value="fanqie">番茄小说</option>
-                <option value="qidian">起点中文网</option>
-                <option value="qimao">七猫中文网</option>
-              </select>
+          {/* 1. 平台 Tab */}
+          <div className="fusion-card" style={{marginBottom:12}}>
+            <div style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
+              {(nrPlatforms.length ? nrPlatforms : [
+                {code:'fanqie',name:'番茄小说网'},
+                {code:'qidian',name:'起点中文网'},
+                {code:'qimao',name:'七猫小说网'},
+              ]).map(p => (
+                <button
+                  key={p.code}
+                  className={`chat-send ${nrPlatform === p.code ? 'primary' : 'ghost'}`}
+                  onClick={() => setNrPlatform(p.code)}
+                  title={p.remark || p.name}
+                  style={{padding:'6px 14px',minHeight:32,fontWeight: nrPlatform===p.code? 700: 500}}
+                >
+                  {p.code==='fanqie'?'🍅':p.code==='qidian'?'🏯':'🐱'} {p.name}
+                </button>
+              ))}
+              <span style={{flex:1}} />
+              <button
+                className="chat-send primary"
+                onClick={handleNrCrawlNow}
+                disabled={!nrList?.sourceId || nrCrawling || nrListLoading}
+                style={{padding:'6px 14px',minHeight:32}}
+                title={nrList?.sourceId ? '忽略缓存用你的网络重新抓取当前榜单源' : '先加载某个榜单源后可手动刷新'}
+              >
+                {nrCrawling ? '⏳ 抓取中…' : nrList?.sourceKind==='curated' ? '🔄 刷新精选' : '☁️ 抓取本榜'}
+              </button>
+              {nrList?.sourceKind==='curated' && (
+                <span className="crawl-status crawl-tip" style={{fontSize:12}}>
+                  <i className="fa-solid fa-circle-info"></i>
+                  当前榜单受目标站反爬限制，为平台精选精选快照
+                </span>
+              )}
             </div>
-            <button className="btn-primary" onClick={() => loadRankings(rankPlatform)} disabled={rankLoading}>
-              {rankLoading ? '获取中...' : '获取榜单'}
-            </button>
-          </div>
 
-          {rankData && (
-            <div className="rank-result" style={{marginTop:16}}>
-              <div className="rank-platform-banner" style={{
-                display:'flex',alignItems:'center',gap:12,padding:14,background:'linear-gradient(135deg,var(--accent),var(--accent-hover))',
-                color:'#fff',borderRadius:'var(--radius-sm)',marginBottom:12,
-              }}>
-                <span style={{fontSize:26}}>{rankData.icon}</span>
-                <div>
-                  <div style={{fontSize:16,fontWeight:700}}>{rankData.platform} · {rankData.note}</div>
-                  <div style={{fontSize:12,opacity:.9}}>📌 风向 {rankData.trend_marker.label} · {rankData.trend_marker.tone}</div>
-                </div>
-                <div style={{marginLeft:'auto',fontSize:11,opacity:.9,padding:'3px 8px',background:'rgba(255,255,255,.18)',borderRadius:6}}>
-                  {rankData.source || (rankData.fetch_ok ? '实时抓取' : '内置精选')} · {rankData.books?.length || 0} 本
+            {/* 2. 榜单类型 & 男女频 & 分类 */}
+            <div style={{marginTop:12}}>
+              <div style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center',marginBottom:8}}>
+                <span className="filter-label" style={{fontSize:13,color:'var(--text-muted)'}}>榜单类型：</span>
+                {nrFiltersLoading && <span style={{fontSize:12,color:'var(--text-muted)'}}>加载中…</span>}
+                {!nrFiltersLoading && (!nrFilters?.rankTypes?.length) && <span style={{fontSize:12,color:'var(--text-muted)'}}>暂无类型</span>}
+                {!nrFiltersLoading && nrFilters?.rankTypes?.map((rt: NRRankType) => (
+                  <span
+                    key={rt.value}
+                    className={`filter-tag ${nrRankType === rt.value ? 'filter-tag-active' : ''}`}
+                    onClick={() => setNrRankType(rt.value)}
+                    title={rt.label}
+                  >
+                    {rt.label}
+                  </span>
+                ))}
+              </div>
+              <div style={{display:'flex',flexWrap:'wrap',gap:8,alignItems:'center',marginBottom:8}}>
+                <span className="filter-label" style={{fontSize:13,color:'var(--text-muted)'}}>类型：</span>
+                <span
+                  className={`filter-tag ${(!nrFilters?.genders?.length || nrFilters.genders.includes('male')) && nrGender !== 'female' ? 'filter-tag-active' : ''}`}
+                  onClick={() => setNrGender(nrGender === 'male' ? '' : 'male')}
+                >
+                  男频
+                </span>
+                {(!nrFilters?.genders?.length || nrFilters.genders.includes('female')) && (
+                  <span
+                    className={`filter-tag ${nrGender === 'female' ? 'filter-tag-active' : ''}`}
+                    onClick={() => setNrGender(nrGender === 'female' ? '' : 'female')}
+                  >
+                    女频
+                  </span>
+                )}
+              </div>
+              <div>
+                <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:6}}>主题分类：</div>
+                <div className="tags-content" style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                  {nrFiltersLoading && <span style={{fontSize:12,color:'var(--text-muted)'}}>加载分类中…</span>}
+                  {!nrFiltersLoading && (!nrFilters?.categories?.length) && <span style={{fontSize:12,color:'var(--text-muted)'}}>暂无分类</span>}
+                  {!nrFiltersLoading && nrFilters?.categories?.map((c: NRCategory) => (
+                    <span
+                      key={c.id}
+                      className={`filter-tag ${nrCategoryCode === c.code ? 'filter-tag-active' : ''}`}
+                      onClick={() => setNrCategoryCode(c.code)}
+                      title={c.scope==='all'?'平台总榜':`分类榜：${c.name}`}
+                      style={{cursor:'pointer'}}
+                    >
+                      {c.name || c.code}
+                    </span>
+                  ))}
                 </div>
               </div>
+            </div>
+          </div>
 
-              {/* 真实榜单书籍 */}
-              {Array.isArray(rankData.books) && rankData.books.length > 0 && (
-                <div className="rank-block">
-                  <h4 style={{fontSize:14,marginBottom:8}}>📖 实时榜单 Top{rankData.books.length}</h4>
-                  <div style={{display:'flex',flexDirection:'column',gap:6}}>
-                    {rankData.books.map((b, i) => (
-                      <a
-                        key={i}
-                        href={b.bookUrl || undefined}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rank-book-row"
-                        style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',background:'var(--bg-secondary)',border:'1px solid var(--border-color)',borderRadius:8,textDecoration:'none',color:'inherit'}}
-                      >
-                        <span className="rank-no" style={{minWidth:24,fontWeight:800,fontSize:14,color:i<3?'#e67e22':'var(--text-muted)'}}>{b.rankNo ?? i+1}</span>
-                        {b.coverUrl ? (
-                          <img src={b.coverUrl} alt="" style={{width:30,height:40,borderRadius:4,objectFit:'cover',background:'var(--bg-tertiary)'}} />
-                        ) : (
-                          <span style={{width:30,height:40,borderRadius:4,background:'var(--bg-tertiary)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:16}}>📚</span>
-                        )}
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:600,fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{b.title || b.point}</div>
-                          <div style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                            {[b.author, b.category, b.words, b.status, b.updateTime].filter(Boolean).join(' · ')}
-                          </div>
-                        </div>
-                        {!!b.metric && (
-                          <span style={{fontSize:12,fontWeight:700,color:'var(--accent)',whiteSpace:'nowrap'}}>{b.metric}</span>
-                        )}
-                      </a>
+          {/* Banner：热门标签 / 上升关键词 / 创作建议 */}
+          {rankBanner && (
+            <div className="rank-result" style={{marginTop:4,marginBottom:16}}>
+              <div className="rank-platform-banner" style={{
+                display:'flex',alignItems:'center',gap:12,padding:12,background:'linear-gradient(135deg,var(--accent),var(--accent-hover))',
+                color:'#fff',borderRadius:'var(--radius-sm)',marginBottom:10,
+              }}>
+                <span style={{fontSize:22}}>{rankBanner.icon}</span>
+                <div>
+                  <div style={{fontSize:15,fontWeight:700}}>{rankBanner.platform} · {rankBanner.note}</div>
+                  <div style={{fontSize:11,opacity:.92}}>📌 风向 {rankBanner.trend_marker.label} · {rankBanner.trend_marker.tone}</div>
+                </div>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:10}}>
+                <div className="rank-block" style={{margin:0}}>
+                  <h4 style={{fontSize:12,marginBottom:6}}>🔥 热门标签</h4>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+                    {rankBanner.hot_tags.map((t,i) => (
+                      <span key={i} style={{padding:'3px 9px',borderRadius:12,background:'var(--bg-tertiary)',border:'1px solid var(--border-color)',fontSize:11}}>{t}</span>
                     ))}
                   </div>
                 </div>
-              )}
-
-              {!rankData.fetch_ok && rankData.fetch_error && (
-                <div className="rank-block" style={{marginTop:8,padding:'8px 10px',background:'#fdecec',borderRadius:8,fontSize:12,color:'#c0392b'}}>
-                  ⚠️ 实时抓取失败（{rankData.fetch_error}），已展示内置精选榜单
+                <div className="rank-block" style={{margin:0}}>
+                  <h4 style={{fontSize:12,marginBottom:6}}>🚀 上升关键词</h4>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+                    {rankBanner.rising_keywords.map((k,i) => (
+                      <span key={i} style={{padding:'3px 9px',borderRadius:12,background:'color-mix(in srgb, var(--accent) 12%, transparent)',border:'1px solid color-mix(in srgb, var(--accent) 40%, transparent)',fontSize:11,color:'var(--accent)'}}>{k}</span>
+                    ))}
+                  </div>
                 </div>
-              )}
-
-              <div className="rank-block" style={{marginTop:12}}>
-                <h4 style={{fontSize:13,marginBottom:6}}>🔥 热门标签</h4>
-                <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                  {rankData.hot_tags.map((t, i) => (
-                    <span key={i} style={{padding:'4px 10px',borderRadius:14,background:'var(--bg-tertiary)',border:'1px solid var(--border-color)',fontSize:12}}>{t}</span>
-                  ))}
+                <div className="rank-block" style={{margin:0,gridColumn:'1 / -1'}}>
+                  <div style={{fontSize:13,lineHeight:1.7}}>💡 <strong>创作建议：</strong>{rankBanner.advice}</div>
                 </div>
               </div>
+            </div>
+          )}
 
-              <div className="rank-block" style={{marginTop:12}}>
-                <h4 style={{fontSize:13,marginBottom:6}}>🚀 上升关键词</h4>
-                <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-                  {rankData.rising_keywords.map((k, i) => (
-                    <span key={i} style={{padding:'4px 10px',borderRadius:14,background:'color-mix(in srgb, var(--accent) 12%, transparent)',border:'1px solid color-mix(in srgb, var(--accent) 40%, transparent)',fontSize:12,color:'var(--accent)'}}>{k}</span>
-                  ))}
+          {/* 搜索框 */}
+          <div className="search-toolbar fusion-card" style={{padding:'10px 12px',marginBottom:12,display:'flex',gap:8,alignItems:'center'}}>
+            <div style={{fontSize:13,whiteSpace:'nowrap',color:'var(--text-muted)'}}>
+              📋 {nrList?.rankTitle ? nrList.rankTitle : '榜单'}
+              {nrList?.pageTitle ? <span className="text-muted"> · {nrList.pageTitle}</span> : null}
+            </div>
+            <span style={{flex:1}} />
+            <input
+              className="input"
+              value={nrKeyword}
+              onChange={e => setNrKeyword(e.target.value)}
+              placeholder="搜索书名 / 作者 / 分类，回车确认"
+              style={{maxWidth:320}}
+              onKeyDown={e => { if (e.key === 'Enter') loadNrBooks(nrCategoryCode,nrRankType,nrGender,1,nrKeyword); }}
+            />
+            <button
+              className="chat-send"
+              onClick={() => loadNrBooks(nrCategoryCode,nrRankType,nrGender,1,nrKeyword)}
+              disabled={nrListLoading}
+              style={{padding:'4px 12px',minHeight:28,fontSize:12}}
+            >
+              搜索
+            </button>
+            <span style={{fontSize:12,color:'var(--text-muted)',marginLeft:4}}>
+              共 <b>{nrList?.total ?? 0}</b> 条
+              {nrList?.fetchAt ? <> · {new Date(nrList.fetchAt * 1000).toLocaleString('zh-CN', {hour12:false})}</> : null}
+            </span>
+          </div>
+
+          {/* 榜单标题/截断文案/错误 */}
+          {nrList?.cutoffText && (
+            <div style={{margin:'0 0 10px',padding:'6px 10px',fontSize:12,background:'var(--bg-tertiary)',borderRadius:6,color:'var(--text-muted)'}}>
+              📌 {nrList.cutoffText}
+            </div>
+          )}
+          {nrList?.fetchError && (
+            <div style={{margin:'0 0 10px',padding:'8px 10px',background:'#fdecec',borderRadius:6,fontSize:12,color:'#c0392b'}}>
+              ⚠️ 抓取失败：{nrList.fetchError}
+              {nrList.sourceKind === 'curated' && !nrList.items.length ? '。已尝试平台精选兜底。' : ''}
+            </div>
+          )}
+          {nrListError && !nrList?.fetchError && (
+            <div style={{margin:'0 0 10px',padding:'8px 10px',background:'#fdecec',borderRadius:6,fontSize:12,color:'#c0392b'}}>
+              ⚠️ {nrListError}
+            </div>
+          )}
+          {nrListLoading && (
+            <div style={{textAlign:'center',padding:30,color:'var(--text-muted)',fontSize:13}}>⏳ 加载榜单书籍…</div>
+          )}
+
+          {/* 书籍列表表格 */}
+          {!nrListLoading && nrList?.items?.length ? (
+            <>
+              <table className="rank-books-table" style={{
+                width:'100%',borderCollapse:'collapse',fontSize:13,
+                background:'var(--bg-secondary)',border:'1px solid var(--border-color)',borderRadius:8,overflow:'hidden',
+              }}>
+                <thead>
+                  <tr style={{background:'var(--bg-tertiary)',color:'var(--text-muted)'}}>
+                    <th style={{padding:'8px 10px',textAlign:'left',fontWeight:600,width:58}}>#</th>
+                    <th style={{padding:'8px 10px',textAlign:'left',fontWeight:600,width:40}}></th>
+                    <th style={{padding:'8px 10px',textAlign:'left',fontWeight:600}}>作品</th>
+                    <th style={{padding:'8px 10px',textAlign:'left',fontWeight:600,width:120}}>作者</th>
+                    <th style={{padding:'8px 10px',textAlign:'left',fontWeight:600,width:120}}>分类</th>
+                    <th style={{padding:'8px 10px',textAlign:'left',fontWeight:600,width:100}}>{nrList?.items[0]?.metricName || '指标'}</th>
+                    <th style={{padding:'8px 10px',textAlign:'left',fontWeight:600,width:100}}>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {nrList.items.map((b: NRItem, i: number) => {
+                    const change = Number(b.rankChange) || 0;
+                    return (
+                      <tr key={i} style={{borderTop:'1px solid var(--border-color)'}}>
+                        <td style={{padding:'6px 10px',fontWeight: b.rankNo <=3 ? 800: 500,color: b.rankNo <=3 ? '#e67e22':'var(--text-muted)'}}>
+                          {b.rankNo}
+                          {change > 0 && <span style={{marginLeft:4,color:'#22a06b',fontSize:11}}>↑{change}</span>}
+                          {change < 0 && <span style={{marginLeft:4,color:'#c0392b',fontSize:11}}>↓{-change}</span>}
+                        </td>
+                        <td style={{padding:'6px 10px'}}>
+                          {b.coverUrl ? (
+                            <img src={b.coverUrl} alt="" style={{width:30,height:40,borderRadius:4,objectFit:'cover',background:'var(--bg-tertiary)'}} loading="lazy" />
+                          ) : (
+                            <span style={{width:30,height:40,borderRadius:4,background:'var(--bg-tertiary)',display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:14}}>📚</span>
+                          )}
+                        </td>
+                        <td style={{padding:'6px 10px',minWidth:0}}>
+                          {b.bookUrl ? (
+                            <a href={b.bookUrl} target="_blank" rel="noreferrer" style={{fontWeight:600,color:'inherit',textDecoration:'none'}}>
+                              {b.bookTitle}
+                            </a>
+                          ) : <span style={{fontWeight:600}}>{b.bookTitle}</span>}
+                          {b.intro && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,whiteSpace:'normal',overflow:'hidden',textOverflow:'ellipsis',display:'-webkit-box',WebkitLineClamp:1,WebkitBoxOrient:'vertical'}}>{b.intro}</div>}
+                          {b.lastChapterTitle && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>📝 {b.lastChapterTitle}{b.lastUpdateTimeText ? ` · ${b.lastUpdateTimeText}` : ''}</div>}
+                        </td>
+                        <td style={{padding:'6px 10px',color:'var(--text-muted)',fontSize:12,whiteSpace:'nowrap'}}>{b.authorName || '—'}</td>
+                        <td style={{padding:'6px 10px',color:'var(--text-muted)',fontSize:12,whiteSpace:'nowrap'}}>
+                          {[b.categoryName, b.categorySubName].filter(Boolean).join(' / ') || '—'}
+                        </td>
+                        <td style={{padding:'6px 10px',fontSize:12,fontWeight:700,color:'var(--accent)',whiteSpace:'nowrap'}}>{(b.metricText ?? (b.metricValue ?? 0)) || '—'}</td>
+                        <td style={{padding:'6px 10px',color:'var(--text-muted)',fontSize:12,whiteSpace:'nowrap'}}>{b.statusText || '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {/* 分页：简单上一页/下一页（默认 50/页） */}
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:10}}>
+                <span style={{fontSize:12,color:'var(--text-muted)'}}>
+                  第 {nrList.page} 页 · 共 {nrList.total} 条
+                </span>
+                <div style={{display:'flex',gap:6}}>
+                  <button
+                    className="chat-send ghost"
+                    onClick={() => {const p = Math.max(1,nrList.page-1); setNrPage(p); loadNrBooks(nrCategoryCode,nrRankType,nrGender,p,nrKeyword); }}
+                    disabled={nrList.page <= 1 || nrListLoading}
+                    style={{padding:'4px 12px',minHeight:26,fontSize:12}}
+                  >
+                    上一页
+                  </button>
+                  <button
+                    className="chat-send ghost"
+                    onClick={() => {const p = nrList.page + 1; setNrPage(p); loadNrBooks(nrCategoryCode,nrRankType,nrGender,p,nrKeyword); }}
+                    disabled={(nrList.page * (nrList.pageSize||50)) >= (nrList.total || 0) || nrListLoading}
+                    style={{padding:'4px 12px',minHeight:26,fontSize:12}}
+                  >
+                    下一页
+                  </button>
                 </div>
               </div>
+            </>
+          ) : null}
 
-              <div className="rank-block" style={{marginTop:12}}>
-                <h4 style={{fontSize:13,marginBottom:6}}>📚 参考作品</h4>
-                <div style={{display:'flex',flexDirection:'column',gap:8}}>
-                  {rankData.examples.map((ex, i) => (
-                    <div key={i} style={{padding:'10px 12px',background:'var(--bg-secondary)',border:'1px solid var(--border-color)',borderRadius:8}}>
-                      <div style={{fontWeight:600,fontSize:13}}>{ex.title}</div>
-                      <div style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{ex.tag} · {ex.point}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rank-advice" style={{marginTop:12,padding:12,background:'color-mix(in srgb, var(--accent) 8%, transparent)',borderRadius:'var(--radius-sm)',fontSize:13,lineHeight:1.7}}>
-                💡 <strong>创作建议：</strong>{rankData.advice}
-              </div>
+          {!nrListLoading && nrList && (nrList.total ?? 0) === 0 && (
+            <div style={{textAlign:'center',padding:30,color:'var(--text-muted)',fontSize:13,background:'var(--bg-secondary)',border:'1px dashed var(--border-color)',borderRadius:8}}>
+              暂无线索 {nrKeyword ? `（关键词「${nrKeyword}」无匹配）` : '——请切换分类或手动刷新重试'}
             </div>
           )}
         </div>

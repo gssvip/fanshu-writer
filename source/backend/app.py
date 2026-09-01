@@ -214,6 +214,7 @@ try:
     from blueprints.health_bp import health_bp; app.register_blueprint(health_bp)
     from blueprints.ai_config_bp import ai_config_bp; app.register_blueprint(ai_config_bp)
     from blueprints.chat_collab_bp import chat_collab_bp; app.register_blueprint(chat_collab_bp)
+    from blueprints.novel_rank_bp import novel_rank_bp; app.register_blueprint(novel_rank_bp)
     from node_design_bp import node_design_bp; app.register_blueprint(node_design_bp)
 except ImportError:
     pass
