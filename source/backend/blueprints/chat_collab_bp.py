@@ -9896,21 +9896,50 @@ def chat_roundtable():
         bb_summary = '、'.join(nf[1] for nf in non_empty_fields) if non_empty_fields else '暂无已填充维度'
 
     # 会话创建/获取
-    if not book_id:
-        session = AISession.query.filter(
-            AISession.scope == 'roundtable_global',
-            AISession.title == '圆桌会议',
-        ).order_by(AISession.updated_at.desc()).first()
-        if not session:
-            session = AISession(id=str(uuid.uuid4()), scope='roundtable_global',
-                                title='圆桌会议', book_id=None,
-                                messages_json='[]', created_at=datetime.now(timezone.utc),
-                                updated_at=datetime.now(timezone.utc))
-            db.session.add(session); db.session.commit()
-        session_id = session.id
-    else:
-        session = _get_or_create_session_for_book(session_id, book_id, scope=scope, title=topic[:30])
-        session_id = session.id
+    # 【D2: resume_from_checkpoint 核心修复】
+    # 之前如果是通用 Tab 触发的圆桌 (scope!=roundtable_*)，首次请求时后端强制 scope 路由并保存了 state，
+    # 但前端"继续"按钮传的是 chatGeneralSessionId（上次的通用对话 session_id，scope 是 general/roundtable_per_book）。
+    # 后端按"scope=roundtable_global + title=圆桌会议"去查，查到的不一定是同一条会话，或干脆捞不到 state → state=None → 新会议重开场。
+    # 修复：resume_from_checkpoint=true 且前端给了 session_id 时，先按 id 直接拉这条 session，
+    #       只要它 meta_json 里有 _RT_STATE_KEY（说明这条 session 里真的保存过圆桌进度），就直接用这条。
+    _req_session_id = (data.get('session_id') or '').strip() or None
+    _resume_state_found_in_session = False
+    if resume_from_checkpoint and _req_session_id:
+        try:
+            _candidate = AISession.query.filter_by(id=_req_session_id).first()
+            if _candidate is not None:
+                _cm = _candidate.meta_json if isinstance(_candidate.meta_json, dict) else (
+                    json.loads(_candidate.meta_json or '{}') if _candidate.meta_json else {})
+                if isinstance(_cm, dict) and isinstance(_cm.get(_RT_STATE_KEY), dict):
+                    _rst = _cm[_RT_STATE_KEY]
+                    # 只要 done 非空或 moderator_open 非空或 topic 非空，就是真的有进度
+                    if (_rst.get('done') and isinstance(_rst['done'], list) and len(_rst['done']) > 0) or _rst.get('moderator_open') or _rst.get('topic'):
+                        session = _candidate
+                        session_id = session.id
+                        # scope/title 此时不重要，重要的是这条 session 里有 roundtable_state 进度
+                        book_id = session.book_id or book_id
+                        scope = session.scope or scope
+                        _resume_state_found_in_session = True
+        except Exception:
+            _resume_state_found_in_session = False
+
+    if not _resume_state_found_in_session:
+        # 回到原有逻辑（正常的首次开会 / 新建会议，或 resume_from_checkpoint 但 session_id 对应无状态）
+        if not book_id:
+            session = AISession.query.filter(
+                AISession.scope == 'roundtable_global',
+                AISession.title == '圆桌会议',
+            ).order_by(AISession.updated_at.desc()).first()
+            if not session:
+                session = AISession(id=str(uuid.uuid4()), scope='roundtable_global',
+                                    title='圆桌会议', book_id=None,
+                                    messages_json='[]', created_at=datetime.now(timezone.utc),
+                                    updated_at=datetime.now(timezone.utc))
+                db.session.add(session); db.session.commit()
+            session_id = session.id
+        else:
+            session = _get_or_create_session_for_book(session_id, book_id, scope=scope, title=topic[:30])
+            session_id = session.id
 
     # P1-1 模型配置解析（与 chat_general 完全一致，复用会话级模型配置逻辑）
     req_ai_config_id = (data.get('ai_config_id') or '').strip() or None
@@ -10014,6 +10043,43 @@ def chat_roundtable():
             is_continue = _is_rt_continue(topic)
             state = _rt_load_state(session)
 
+            # 【D3·终极兜底捞 state】：resume_from_checkpoint=true 时，
+            # 如果上面仍然拿到 state=None 或空 dict（比如 session/scope 彻底错位、state 存在别的会话里），
+            # 直接扫 DB 所有 AISession 里 meta_json 有 _RT_STATE_KEY 的记录，挑出"有 done/moderator_open/topic"
+            # 且最近更新、且 book_id 匹配（book_id 场景下）的那条，把它的 state 偷过来强行续会。
+            if resume_from_checkpoint and (not state or not isinstance(state, dict) or len(state.get('done') or []) == 0):
+                try:
+                    # 构造 filter：有书绑书，无书就全局
+                    q = AISession.query
+                    if book_id:
+                        q = q.filter(AISession.book_id == book_id)
+                    recent_sessions = q.order_by(AISession.updated_at.desc()).limit(50).all()
+                    _best_st = None
+                    _best_score = -1
+                    for rs in recent_sessions:
+                        try:
+                            rm = rs.meta_json if isinstance(rs.meta_json, dict) else (
+                                json.loads(rs.meta_json or '{}') if getattr(rs, 'meta_json', None) else {})
+                            if not isinstance(rm, dict): continue
+                            st = rm.get(_RT_STATE_KEY)
+                            if not isinstance(st, dict): continue
+                            _sc = 0
+                            _sc += 10 * len(st.get('done') or [])  # 已发言专家越多 = 越可能就是我们要的
+                            if st.get('moderator_open'): _sc += 3
+                            if st.get('topic'): _sc += 1
+                            if book_id and str(rs.book_id or '') == str(book_id): _sc += 5
+                            if _sc > _best_score:
+                                _best_score = _sc
+                                _best_st = dict(st)
+                                # 顺便把 session 指针也切过去（方便最后存到同一个地方，不跨 session）
+                                session = rs
+                        except Exception:
+                            continue
+                    if _best_st is not None and _best_score > 0:
+                        state = _best_st
+                except Exception:
+                    pass  # 扫描失败 = 静默继续，交给原逻辑
+
             # 会议已完成 + 用户发"继续/会议继续/追加一轮" → 交给 append_mode 追加新一轮
             # 会议已完成 + 用户发新话题（非续会指令）→ 自动落入下方"新会议"，不重复上一场
 
@@ -10054,6 +10120,35 @@ def chat_roundtable():
                             state['phase'] = 'resumed'
                 # state is None（极少：DB 清理 / 首次开会被截断在主持人开场前）→ 不设置任何模式，
                 # 走 else 全新会议兜底，避免报错误死流程
+
+            # 【D3·诊断帧·透明可见】：往前端吐一条 roundtable_status 把实际运行时情况全写出来
+            #   用户截图/粘贴这条 = 我一秒知道为什么还是重新开了主持人
+            _diag_mode = (
+                '创作产出卡片' if create_mode else
+                '追加新一轮' if append_mode else
+                '调整反馈' if adjust_mode else
+                '断点续会接着开' if resuming else
+                '全新会议（主持人+榜单分析师从头来）'
+            )
+            _diag_done_n = len(state.get('done') or []) if isinstance(state, dict) else 0
+            _diag_flags = (f"resume_cp={('T' if resume_from_checkpoint else 'F')}, "
+                           f"state_loaded={('T' if isinstance(state, dict) else 'F')}, "
+                           f"done_n={_diag_done_n}, is_continue={('T' if is_continue else 'F')}, "
+                           f"create={('T' if create_mode else 'F')}, "
+                           f"append={('T' if append_mode else 'F')}, "
+                           f"adjust={('T' if adjust_mode else 'F')}, "
+                           f"resuming={('T' if resuming else 'F')}")
+            if resume_from_checkpoint and not (create_mode or append_mode or adjust_mode or resuming):
+                _diag_prefix = "🔴🔴🔴【续会失败】 resume_from_checkpoint=true 但四种续会模式都没命中 → 即将走全新会议从主持人+榜单分析师重开场。flags=("
+                _diag_suffix = "). 请把这条完整状态发给工程师定位，多谢。"
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"{_diag_prefix}{_diag_flags}{_diag_suffix}"}}, ensure_ascii=False)}\n\n'
+            elif resume_from_checkpoint and (resuming or append_mode):
+                _nx = (
+                    f"下一位={_ROUNDTABLE_ORDER[_diag_done_n % len(_ROUNDTABLE_ORDER)] if 0 <= (_diag_done_n % len(_ROUNDTABLE_ORDER)) < len(_ROUNDTABLE_ORDER) else _ROUNDTABLE_ORDER[0]}（绝不再从榜单分析师重说）"
+                    if resuming else f"追加新一轮（{len(_ROUNDTABLE_ORDER)} 位专家）")
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"🟢【续会命中：{_diag_mode}】已保存发言 {_diag_done_n} 段；{_nx}。调试：{_diag_flags}"}}, ensure_ascii=False)}\n\n'
+            else:
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"ℹ️【{_diag_mode}】调试：{_diag_flags}"}}, ensure_ascii=False)}\n\n'
 
             if create_mode:
                 # ========== 创作模式：按讨论共识创作维度 → 产出标准可采纳卡片 ==========
@@ -10578,72 +10673,95 @@ def chat_roundtable():
             # 覆盖【用户点"停止"/刷新页面/关闭浏览器】场景：SSE 连接断 = Python 抛 GeneratorExit
             # GeneratorExit 是 BaseException 子类 ❗NOT Exception❗，所以上面的 except Exception 抓不到，
             # 之前就是这里漏了 → state 没存 → 下次点继续 state=None → 全新会议从主持人+榜单分析师重开场。
-            # finally 在正常完成 / Exception / GeneratorExit（任何 BaseException）三条路径上都会执行，
-            # 是目前 Python 中唯一能保证 SSE 断连场景下一定落地 state 的方案。
             try:
-                if session is None or 'db' not in dir() or db is None:
-                    pass  # 最早的初始化阶段报错（如 AIConfig 缺失）还没拿到 session/db → 跳过
-                else:
-                    # 读取所有运行时变量：优先 locals() 里的当前值，其次 state 字典，最后兜底空值
+                _fin_has_session = (session is not None) and ('db' in dir()) and (db is not None)
+            except Exception:
+                _fin_has_session = False
+            if _fin_has_session:
+                try:
                     _fin_state = dict(state) if isinstance(state, dict) else {}
-                    # —— done：已完整发言并 append 到 local.done 的专家记录，是续会最核心的数据 ——
+                except Exception:
+                    _fin_state = {}
+                # —— 1) done 数组（续会核心：已完整发言的专家列表）：直接用局部变量名 done，UnboundLocalError 兜底
+                try:
+                    # noinspection PyUnboundLocalVariable
+                    _fin_done_local = done  # type: ignore
+                    if isinstance(_fin_done_local, list) and _fin_done_local:
+                        _fin_state['done'] = [dict(x) if isinstance(x, dict) else x for x in _fin_done_local]
+                except (UnboundLocalError, NameError, Exception):
+                    if 'done' not in _fin_state or not isinstance(_fin_state.get('done'), list):
+                        _fin_state['done'] = []
+                if not isinstance(_fin_state.get('done'), list):
+                    _fin_state['done'] = []
+                # —— 2) discussion_history：拼接上下文给续会的下一位专家读
+                try:
+                    # noinspection PyUnboundLocalVariable
+                    _fin_hist_local = discussion_history  # type: ignore
+                    if isinstance(_fin_hist_local, str) and _fin_hist_local:
+                        _fin_state['discussion_history'] = _fin_hist_local
+                except (UnboundLocalError, NameError, Exception):
+                    if not _fin_state.get('discussion_history'):
+                        try:
+                            # noinspection PyUnboundLocalVariable
+                            _fin_tf_local = topic_final  # type: ignore
+                            if _fin_tf_local: _fin_state['discussion_history'] = f'【原始议题】\n{_fin_tf_local}\n\n'
+                        except (UnboundLocalError, NameError, Exception):
+                            if topic: _fin_state['discussion_history'] = f'【原始议题】\n{topic}\n\n'
+                # —— 3) topic / moderator_open（前者保证续会不用传"继续"两个字）
+                try:
+                    # noinspection PyUnboundLocalVariable
+                    _fin_tf_local2 = topic_final  # type: ignore
+                    if _fin_tf_local2 and not _fin_state.get('topic'):
+                        _fin_state['topic'] = str(_fin_tf_local2)
+                except (UnboundLocalError, NameError, Exception):
+                    if topic and not _fin_state.get('topic'):
+                        _fin_state['topic'] = topic
+                if not _fin_state.get('moderator_open'):
                     try:
-                        _local_done = locals().get('done')
-                        if isinstance(_local_done, list) and _local_done:
-                            _fin_state['done'] = list(_local_done)
-                        elif 'done' not in _fin_state or not isinstance(_fin_state['done'], list):
-                            _fin_state['done'] = []
-                    except Exception:
-                        if 'done' not in _fin_state: _fin_state['done'] = []
-                    # —— discussion_history：上下文拼接给下一位专家作为前置摘要
-                    try:
-                        _local_hist = locals().get('discussion_history')
-                        if isinstance(_local_hist, str) and _local_hist:
-                            _fin_state['discussion_history'] = _local_hist
-                    except Exception:
+                        # noinspection PyUnboundLocalVariable
+                        _fin_mc = mod_content  # type: ignore
+                        if _fin_mc: _fin_state['moderator_open'] = str(_fin_mc)
+                    except (UnboundLocalError, NameError, Exception):
                         pass
-                    # —— topic / moderator_open / rounds / book-level 元数据
-                    try:
-                        _local_topic = locals().get('topic_final') or _fin_state.get('topic') or topic or ''
-                        if _local_topic: _fin_state.setdefault('topic', str(_local_topic))
-                    except Exception:
-                        pass
-                    try:
-                        if 'moderator_open' not in _fin_state or not _fin_state.get('moderator_open'):
-                            try: _fin_state['moderator_open'] = str(locals().get('mod_content') or _fin_state.get('moderator_open') or '')
-                            except Exception: pass
-                    except Exception:
-                        pass
-                    try:
-                        if not _fin_state.get('total_rounds_hint'):
-                            try:
-                                _rh = locals().get('_rounds_hint_cur') or _fin_state.get('total_rounds_hint') or 2
-                                _fin_state['total_rounds_hint'] = max(1, min(99, int(_rh)))
-                            except Exception:
-                                _fin_state['total_rounds_hint'] = 2
-                    except Exception:
-                        _fin_state['total_rounds_hint'] = 2
-                    # —— 标记位（除非真的完成了 completed=True，否则任何退出都视为可续会的中断）
+                # —— 4) rounds hint
+                try:
+                    if not _fin_state.get('total_rounds_hint'):
+                        try:
+                            # noinspection PyUnboundLocalVariable
+                            _fin_rh = _rounds_hint_cur  # type: ignore
+                            _fin_state['total_rounds_hint'] = max(1, min(99, int(_fin_rh)))
+                        except (UnboundLocalError, NameError, Exception, ValueError):
+                            _fin_state['total_rounds_hint'] = 2
+                except Exception:
+                    _fin_state['total_rounds_hint'] = 2
+                # —— 5) active / completed 标志位：除非真做完了，否则一律标可续会
+                try:
                     if not _fin_state.get('completed'):
                         _fin_state['active'] = True
                         _fin_state['completed'] = False
                     if not _fin_state.get('phase'):
                         _fin_state['phase'] = 'interrupted' if not _fin_state.get('completed') else 'done'
-                    # —— DB 持久化保存
+                except Exception:
+                    pass
+                # —— 6) DB 持久化（核心！）
+                try:
                     _rt_save_state(session, db, _fin_state)
-                    # —— 同时落盘历史消息（刷新界面即可见，用户看到确实保留了已发言内容）
+                except Exception:
+                    pass
+                # —— 7) 历史消息落盘（刷新界面用户能直接看到已保存的发言段）
+                try:
                     try:
-                        _h = history if 'history' in locals() else []
-                        _h = _h if isinstance(_h, list) else []
-                        _tp = str(_fin_state.get('topic') or topic or '')
-                        _mo = str(_fin_state.get('moderator_open') or '')
-                        _dn = list(_fin_state.get('done') or [])
-                        _rt_persist_messages(session, _h, _tp, _mo, _dn, '')
-                    except Exception:
-                        pass
-            except Exception:
-                # finally 内任何存盘错误 = 静默吞，绝不能污染 SSE 流或造成 Python 生成器异常
-                pass
+                        # noinspection PyUnboundLocalVariable
+                        _fin_h = history  # type: ignore
+                    except (UnboundLocalError, NameError, Exception):
+                        _fin_h = []
+                    _fin_h = _fin_h if isinstance(_fin_h, list) else []
+                    _rt_persist_messages(session, _fin_h,
+                                         str(_fin_state.get('topic') or topic or ''),
+                                         str(_fin_state.get('moderator_open') or ''),
+                                         list(_fin_state.get('done') or []), '')
+                except Exception:
+                    pass
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
                     headers={'Cache-Control': 'no-cache, no-transform',

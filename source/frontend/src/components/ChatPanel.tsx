@@ -3517,6 +3517,9 @@ export default function ChatPanel() {
             }
             return next;
           });
+        } else if (evt.type === 'meta' && evt.kind === 'roundtable_status' && evt.info && typeof evt.info.text === 'string') {
+          // 续会/模式诊断帧：把工程师写的🟢/🔴诊断信息变成可见通知（不要静默丢弃！）
+          appendAiNotice('🧭 圆桌诊断：' + evt.info.text);
         } else if (evt.type === 'meta' && evt.kind === 'reasoning' && evt.info && typeof evt.info.text === 'string') {
           reasoningBufferRef.current += evt.info.text;
           const rbuf = reasoningBufferRef.current;
