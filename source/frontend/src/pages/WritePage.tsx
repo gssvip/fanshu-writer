@@ -6444,8 +6444,8 @@ function OutlineCombinedPanel(props: {
 
       {editing ? (
         <textarea
-          className="input bible-editor-textarea"
-          rows={16}
+          className="input bible-editor-textarea paper-textarea"
+          rows={18}
           value={editValue}
           onChange={e => setEditValue(e.target.value)}
           placeholder={placeholderMap[subTab]}

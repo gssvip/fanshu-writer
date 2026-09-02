@@ -835,7 +835,7 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
    · 横线阶 --paper-line-h=32px，与正文/编辑 line-height 严格一致
    ============================================================ */
 
-/* —— 纸张底座（主题色自适应，无装订线/无贴纸） —— */
+/* —— 纸张容器（无外壳 / 无彩色纸质！直接用用户主题色 bg-secondary；只留横格当"类纸横线"） —— */
 :root{
   --paper-line-h: 32px;        /* 正文/编辑 统一横线阶（与 line-height 完全相等） */
   --paper-font-size: 17px;     /* 正文基准字号 */
@@ -845,43 +845,32 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   position: relative;
   width: 100%;
   box-sizing: border-box;
-  margin-top: 10px;
-  padding: 18px 26px 18px 26px;
-  border-radius: 6px 16px 10px 14px;
-  /* 底：主题 bg-secondary 叠暖黄 + 极淡 45° 斜纹噪点（防纯色发死） */
-  background:
-    repeating-linear-gradient(
-      45deg,
-      transparent 0, transparent 7px,
-      color-mix(in srgb, #000 1%, transparent) 7px, color-mix(in srgb, #000 1%, transparent) 8px
-    ),
-    color-mix(in srgb, var(--bg-secondary) 82%, #f5e6c0 18%);
-  background-color: color-mix(in srgb, var(--bg-secondary) 82%, #f5e6c0 18%);
-  border: 1.5px solid color-mix(in srgb, var(--text-muted) 42%, transparent);
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent),
-    0 10px 26px -18px color-mix(in srgb, var(--text-primary) 30%, transparent),
-    0 22px 44px -34px color-mix(in srgb, var(--text-primary) 24%, transparent);
+  margin-top: 6px;
+  /* 不要边框/阴影/圆角/斜纹噪点/暖色叠纸 → 直接融入用户主题面板色 */
+  padding: 4px 10px 6px 10px;
+  border: none !important;
+  border-radius: 0 !important;
+  background: none !important;
+  background-color: var(--bg-secondary) !important;
+  box-shadow: none !important;
   overflow: hidden;
   cursor: pointer;
-  transition: transform .18s ease, box-shadow .2s ease, border-color .2s ease;
+  transition: none !important;
 }
+/* 不要 hover 翘起来/变边 抖动 */
 .paper-notebook:hover{
-  transform: translateY(-1px) rotate(-.12deg);
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--text-muted) 30%);
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent),
-    0 16px 34px -18px color-mix(in srgb, var(--text-primary) 36%, transparent),
-    0 28px 54px -34px color-mix(in srgb, var(--text-primary) 28%, transparent);
+  transform: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
-/* 章节编辑纸：不触发点击旋转（不然编辑中会抖动），cursor 默认 */
+/* 章节编辑纸：cursor 默认（不 pointer）；其余已经无 hover 翘动了 */
 .chapter-edit-paper{ cursor: default; }
-.chapter-edit-paper:hover{ transform: none; }
+.chapter-edit-paper:hover{ transform: none !important; }
 
 @media (max-width: 767px) {
   .paper-notebook{
-    padding: 16px 14px 16px 14px !important;
-    border-radius: 4px 12px 8px 10px !important;
+    padding: 4px 8px 6px 8px !important;
+    border-radius: 0 !important;
   }
   :root{
     --paper-font-size: 16px;
@@ -935,10 +924,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   align-items: center;
   font-size: 12px;
   font-weight: 500;
-  color: color-mix(in srgb, var(--text-muted) 88%, #8a6a2e 20%);
+  color: var(--text-muted);
   letter-spacing: .6px;
   border-top: 1px dashed color-mix(in srgb, var(--text-muted) 42%, transparent);
-  background: color-mix(in srgb, var(--bg-secondary) 82%, #f5e6c0 18%);
+  background-color: var(--bg-secondary) !important;   /* 贴合用户主题色（无暖黄彩纸） */
   position: relative;
   margin-bottom: -4px;
   padding-bottom: 6px;
@@ -1006,8 +995,8 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 }
 .chapter-paper .novel-paragraph{
   display: block !important;
-  /* 段末留 1 条横线（32px），保证下一段首行仍精准踩 32 的倍数横线 */
-  margin: 0 0 var(--paper-line-h) 0 !important;
+  /* 段末不要空一行！用户明确说"行与行之间空一行不要" → 连续踩横线，段与段紧凑（下一段首行正好踩 32 的下一条线） */
+  margin: 0 0 0 0 !important;
   padding: 0 !important;
   text-indent: 2em !important;
   font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "SimSun", "STSong", serif;
@@ -1017,7 +1006,7 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   text-align: justify !important;
   letter-spacing: .25px !important;
 }
-.chapter-paper .novel-paragraph:last-child{ margin-bottom: 4px !important; }
+.chapter-paper .novel-paragraph:last-child{ margin-bottom: 0 !important; }
 .chapter-paper .novel-empty-hint{
   color: color-mix(in srgb, var(--text-muted) 94%, #8a5b00 20%);
   font-style: italic;
@@ -1060,11 +1049,7 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   box-shadow: 0 1.5px 0 -1px var(--accent) !important;
 }
 
-/* —— 纸质 textarea：设定/大纲/章节正文 编辑态 → 仍是笔记本横线纸 + 光标精准踩线
-       两种场景：
-         ① 裸用（设定/大纲/通用维度 编辑，外层无 paper-notebook）：自己带纸底+边框+阴影+卷角padding
-         ② 被 paper-notebook 包裹（章节编辑态）：透明背景无框，直接透外层纸底
- —— */
+/* —— 类纸横格 textarea（无外壳 / 无彩纸 / 无边框阴影；直接 bg-secondary 主题色；padding 必须=0 → 字的第一行 top=0，正好踩 32px 横线） —— */
 .paper-textarea{
   display: block !important;
   width: 100% !important;
@@ -1072,7 +1057,8 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   outline: none !important;
   resize: vertical !important;
   min-height: calc(var(--paper-line-h) * 18);
-  /* 横格（3 容器之一，另外俩：bible-text / chapter-reading-content） */
+  /* 横格（3 容器之一，另外俩：bible-text / chapter-reading-content）
+     颜色：color-mix text-muted 28% → 随主题自适应暗色/亮色的横格色 */
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
@@ -1081,26 +1067,32 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
     color-mix(in srgb, var(--text-muted) 28%, transparent) var(--paper-line-h),
     transparent var(--paper-line-h)
   );
-  /* 纸底（裸用场景自带纸底，主题 color-mix 不透明，不会"透明"） */
-  background-color: color-mix(in srgb, var(--bg-secondary) 84%, #f5e6c0 16%) !important;
+  /* 背景色：用户主题的 bg-secondary（不要暖黄/彩纸/纸质颜色） */
+  background-color: var(--bg-secondary) !important;
   background-repeat: repeat;
   background-position: 0 0;
   background-attachment: local;            /* 滚动时横线跟随文字（编辑长文本不飘） */
-  /* 裸用场景：自带边框 + 纸外盒 padding + 阴影（像真的一张纸） */
-  padding: 18px 26px !important;
+  /* padding 必须 4 边 0：横格 0 起点 = 第一行字上沿 → 32px 横线正好踩第一行字下沿
+     之前 padding-top:18px 导致 横格0~32 vs 内容18~25.5基线 → 差 6.5px 文字"乱码不在线上" */
+  padding: 0 !important;
   margin: 10px 0 0 0 !important;
-  border: 1.5px solid color-mix(in srgb, var(--text-muted) 42%, transparent) !important;
-  border-radius: 6px 16px 10px 14px !important;
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent),
-    0 10px 26px -18px color-mix(in srgb, var(--text-primary) 30%, transparent),
-    0 22px 44px -34px color-mix(in srgb, var(--text-primary) 24%, transparent) !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
   font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "SimSun", "STSong", serif !important;
   font-size: var(--paper-font-size) !important;      /* 17px */
   line-height: var(--paper-line-h) !important;       /* 32px = 横线阶，光标必踩线 */
-  color: color-mix(in srgb, var(--text-primary) 94%, #2b1f0b 20%) !important;
+  color: var(--text-primary) !important;
   letter-spacing: .25px !important;
-  caret-color: color-mix(in srgb, var(--accent) 88%, #2b1f0b 20%);
+  caret-color: var(--accent);
+}
+/* 强覆盖旧的 bible-editor-textarea 默认（padding:12px / font-size 15px / line-height 1.8 → 破坏踩线对齐的元凶） */
+textarea.bible-editor-textarea.paper-textarea,
+textarea.input.paper-textarea{
+  padding: 0 !important;
+  font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "SimSun", "STSong", serif !important;
+  font-size: var(--paper-font-size) !important;
+  line-height: var(--paper-line-h) !important;
 }
 .paper-textarea::placeholder{
   color: color-mix(in srgb, var(--text-muted) 70%, transparent);
@@ -1119,27 +1111,21 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
     color-mix(in srgb, var(--accent) 42%, transparent) var(--paper-line-h),
     transparent var(--paper-line-h)
   );
-  /* 裸用场景聚焦：边框变主色 + 阴影加深。
-     章节编辑态会被 *下面* 更后声明的 .paper-notebook .paper-textarea :focus 覆盖掉 → 章节继续无框 */
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--text-muted) 30%) !important;
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent),
-    0 16px 34px -18px color-mix(in srgb, var(--text-primary) 36%, transparent),
-    0 28px 54px -34px color-mix(in srgb, var(--text-primary) 28%, transparent) !important;
+  /* 无外壳：聚焦不画边框阴影 */
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
-/* 被 paper-notebook 包裹时（章节编辑态）：透明、无边框、无阴影、无内边距
-   此段写在 .paper-textarea:focus 之后 → 同等特异性下后者赢：章节编辑聚焦时仍然保持无框无阴影，不会被裸用的 focus 边框污染 */
+/* 章节编辑态被 paper-notebook 包裹 → 背景透明（透外层统一 bg-secondary，其实色值一样；但要保证横格跟着 textarea 滚动） */
 .paper-notebook .paper-textarea,
 .paper-notebook .paper-textarea:focus{
   background-color: transparent !important;
-  padding: 0 !important;
   border: none !important;
   border-radius: 0 !important;
   box-shadow: none !important;
-  margin: 0 !important;
   border-color: transparent !important;
 }
-/* 章节编辑 textarea 额外宽松 padding-top 8（与章节阅读一致，避开标题分隔线） */
+/* 章节编辑 textarea：margin-top 8 → 避开标题分隔线；
+   padding 仍是 0（保证正文第一行 top=0 踩 32px 横线，不在 padding=8 起点错位） */
 .chapter-paper-textarea{
   margin-top: 8px !important;
 }
@@ -1151,11 +1137,11 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   .paper-textarea{ min-height: calc(var(--paper-line-h) * 14); font-size: var(--paper-font-size) !important; }
 }
 
-/* 暗色模式：便利贴/装订线被硬隐藏 亮度兜底 */
+/* 暗色模式：页脚贴合用户主题色 bg-secondary，不做暖黄彩纸 */
 @media (prefers-color-scheme: dark){
   body[data-theme='dark'] .paper-footer,
   :root:has(#theme-toggle:checked) .paper-footer{
-    background: color-mix(in srgb, var(--bg-secondary) 82%, #f5e6c0 18%);
+    background-color: var(--bg-secondary) !important;
   }
 }
 
