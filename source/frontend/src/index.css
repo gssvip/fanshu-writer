@@ -686,7 +686,9 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   .desktop-sidebar{display:flex}
   .tab-bar{display:none}
   .main-content{padding-bottom:0}
-  .page{max-width:none}
+  /* 桌面端全局 .page 档位式加宽：768~1439 用 1280，与各 Tab tool-panel 同宽居中，
+     解决"首页/工具页窄窄一列"和两侧留白不均问题（手机端仍走 max-width:900 紧凑） */
+  .page{max-width:1280px;margin:0 auto;width:calc(100% - 40px)}
   .workbench-content{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:20px;align-items:start}
   .write-layout{height:calc(100vh - 56px)}
   .book-grid{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
@@ -694,9 +696,21 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   .skill-grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
   .stage-sidebar{width:180px;min-width:180px}
   .ai-panel{width:350px;min-width:350px}
-  .mine-page{max-width:600px;margin:0 auto}
+  /* 我的页面：保持居中（表单/设置不适合太宽），但 600→720 更易读 */
+  .mine-page{max-width:720px;margin:0 auto}
   /* 手机端顶部 topbar 仅移动端显示，电脑端隐藏 */
   .home-topbar-mobile{display:none}
+}
+/* ≥1440 二档：.page / .workbench 升级为 1540；workbench 三栏更清爽 */
+@media (min-width: 1440px) {
+  .page{max-width:1540px !important;margin:0 auto !important;width:calc(100% - 48px) !important}
+  .workbench-content{gap:24px;padding:24px}
+}
+/* ≥1760 三档：.page 升级为 1780；首页工作台可升级为三列（但仍保持 2 列以保证信息密度不过稀） */
+@media (min-width: 1760px) {
+  .page{max-width:1780px !important;margin:0 auto !important;width:calc(100% - 64px) !important}
+  .workbench-content{gap:28px;padding:28px}
+  .book-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;padding:20px}
 }
 
 /* Mobile only */
