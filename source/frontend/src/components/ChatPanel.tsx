@@ -1549,19 +1549,20 @@ export default function ChatPanel() {
   // 每个会话独立记忆上次选的模型：sessionId -> aiConfigId
   const [sessionModelMap, setSessionModelMap] = useState<Record<string, string>>({});
   const [showModelPicker, setShowModelPicker] = useState(false);
-  // P1-3 内置角色 persona：9款常用人格（仅通用聊天生效），选中后发送给后端作为system persona前缀
-  // 顺序即助手面板上的排列顺序：0=默认助手 · 1=圆桌会议 · 2=节点设计师 · 3=润色编辑 · 4=毒舌读者 · 5=剧情架构师 · 6=世界观策划 · 7=爆款编辑 · 8=榜单分析师 · 9=深度采访
+  // P1-3 内置角色 persona：10款常用人格（仅通用聊天生效），选中后发送给后端作为system persona前缀
+  // 顺序按用户习惯：默认助手 → 润色编辑 → 毒舌读者 → 剧情架构师 → 世界观策划 → 爆款编辑 →【榜单分析师🧾新增】→【节点设计师🎯新增】→【圆桌会议🪑新增】→ 深度采访
+  // 新增顺序放在爆款编辑后面 = 用户打开列表第一眼就能看到（不用滚到底），符合你说"榜单分析师是单独助手，选他聊天式触发扫榜"
   const BUILTIN_ROLES = [
-    { id: 'default',    name: '默认助手', emoji: '🧠', brief: '正常智驾回答，不附加人格' },
-    { id: 'roundtable', name: '圆桌会议', emoji: '🪑', brief: '7位专家Agent围坐开会（榜单分析师率先扫榜定风向），两轮轮流发言后产出总结报告' },
-    { id: 'node_designer', name: '节点设计师', emoji: '🎯', brief: '按卷生成情节节点（1章=1节点+资源滚动+人物关系），结果可采纳落入剧情线' },
-    { id: 'polish',     name: '润色编辑', emoji: '✍️', brief: '擅长文字润色，指出语病、节奏、结构问题，给出具体改写对比' },
-    { id: 'toxic_critic', name: '毒舌读者', emoji: '🔥', brief: '极度挑剔的读者视角，不留情面，专挑AI味和套路化' },
-    { id: 'architect',  name: '剧情架构师', emoji: '🧱', brief: '擅长分卷结构、张力曲线、伏笔回收、CDL角色三角' },
-    { id: 'worldbuilder', name: '世界观策划', emoji: '🗺️', brief: '擅长能量体系、势力地图、科技树/修炼树、经济体系自洽' },
-    { id: 'marketeer',  name: '爆款编辑', emoji: '📈', brief: '从书名/一句话梗/前3章钩子的工业化爆款视角把关' },
-    { id: 'rank_analyst', name: '榜单分析师', emoji: '🧾', brief: '【先扫榜再聊天】对话前自动扫番茄/起点新书榜，基于真实榜单风向给构思/书名/钩子建议' },
-    { id: 'interviewer', name: '深度采访', emoji: '🎙️', brief: '连续追问直到挖透设定矛盾和人物动机，擅长逼出冰山' },
+    { id: 'default',       name: '默认助手',     emoji: '🧠​', brief: '正常智驾回答，不附加人格' },
+    { id: 'polish',        name: '润色编辑',     emoji: '✍️​', brief: '擅长文字润色，指出语病、节奏、结构问题，给出具体改写对比' },
+    { id: 'toxic_critic',  name: '毒舌读者',     emoji: '🔥​', brief: '极度挑剔的读者视角，不留情面，专挑AI味和套路化' },
+    { id: 'architect',     name: '剧情架构师',   emoji: '🧱​', brief: '擅长分卷结构、张力曲线、伏笔回收、CDL角色三角' },
+    { id: 'worldbuilder',  name: '世界观策划',   emoji: '🗺️​', brief: '擅长能量体系、势力地图、科技树/修炼树、经济体系自洽' },
+    { id: 'marketeer',     name: '爆款编辑',     emoji: '📈​', brief: '从书名/一句话梗/前3章钩子的工业化爆款视角把关' },
+    { id: 'rank_analyst',  name: '榜单分析师',   emoji: '🧾​', brief: '【先扫榜再聊天】对话前自动扫番茄/起点新书榜，基于真实榜单风向给构思/书名/钩子建议' },
+    { id: 'node_designer', name: '节点设计师',   emoji: '🎯​', brief: '按卷生成情节节点（1章=1节点+资源滚动+人物关系），结果可采纳落入剧情线' },
+    { id: 'roundtable',    name: '圆桌会议',     emoji: '🪑​', brief: '7位专家Agent围坐开会（榜单分析师率先扫榜定风向），两轮轮流发言后产出总结报告' },
+    { id: 'interviewer',   name: '深度采访',     emoji: '🎙️​', brief: '连续追问直到挖透设定矛盾和人物动机，擅长逼出冰山' },
   ] as const;
   // 通用聊天每个会话独立记住上次选的角色：sessionId -> roleId
   const [sessionRoleMap, setSessionRoleMap] = useState<Record<string, string>>({});
@@ -4370,8 +4371,6 @@ export default function ChatPanel() {
                   {activeTab === 'setting' && selectedDim === 'general' ? (
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b' }}>💬 通用聊天模式 · 想聊啥就聊啥</p>
-                      <p style={{ fontSize: 13, color: '#6b7280', margin: '8px 0 0' }}>命中创作关键词自动提示一键入库 📦。自然语言聊天，直接说需求即可。</p>
-                      <p style={{ fontSize: 12, color: '#9ca3af', margin: '10px 0 0' }}>💡 选择上方「🎯 节点设计师」助手可生成情节节点</p>
                     </div>
                   ) : (
                     <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
