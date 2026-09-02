@@ -3299,11 +3299,7 @@ export default function ChatPanel() {
               return next;
             });
           } else if (evt.type === 'meta' && evt.kind === 'roundtable_status' && evt.info && typeof evt.info.text === 'string') {
-            // 【C1清理】save校验/全新会议调试帧静默忽略；仅显示续会命中成功 & 续会失败错误
-            const _t = evt.info.text;
-            if (/【续会命中|续会命中·|续会失败|续会：|⚠️|❌|🔴|⏭️ 续会/.test(_t)) {
-              appendAiNotice('🧭 ' + _t.replace(/🧭 圆桌诊断：/g, ''));
-            }
+            // 【D1·静默】续会成功/失败全不弹任何消息气泡，直接让下一位专家流式发言就完事
           } else if (evt.type === 'meta' && evt.kind === 'roundtable_speaker' && evt.info) {
             // 切换发言人：记录当前发言人名字，接下来的delta都算它的发言
             curName = String(evt.info.speaker_name || '').trim();
@@ -3555,10 +3551,7 @@ export default function ChatPanel() {
             return next;
           });
         } else if (evt.type === 'meta' && evt.kind === 'roundtable_status' && evt.info && typeof evt.info.text === 'string') {
-          const _t = evt.info.text;
-          if (/【续会命中|续会命中·|续会失败|续会：|⚠️|❌|🔴|⏭️ 续会/.test(_t)) {
-            appendAiNotice('🧭 ' + _t.replace(/🧭 圆桌诊断：/g, ''));
-          }
+          // 【D1·静默】任何续会提示都不弹气泡
         } else if (evt.type === 'meta' && evt.kind === 'reasoning' && evt.info && typeof evt.info.text === 'string') {
           reasoningBufferRef.current += evt.info.text;
           const rbuf = reasoningBufferRef.current;

@@ -10295,19 +10295,8 @@ def chat_roundtable():
                 # state is None（极少：DB 清理 / 首次开会被截断在主持人开场前）→ 不设置任何模式，
                 # 走 else 全新会议兜底，避免报错误死流程
 
-            # 【C2·干净版续会提示】仅保留关键提示：续会命中/追加→吐一条简短友好信息；
-            #    续会失败→仅一条告警；全新会议正常路径 = 静默，不弹任何调试通知
+            # 【D2·静默续会】用户点继续=只想接着讨论，任何续会命中/追加/失败都不推 roundtable_status，直接进模式分支
             _diag_done_n = len(state.get('done') or []) if isinstance(state, dict) else 0
-            if resume_from_checkpoint and not (create_mode or append_mode or adjust_mode or resuming):
-                # 极少：用户点了继续，但 DB 真的找不到任何进度 → 告诉用户回退到新会议
-                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "🔴【续会失败】未找到已保存的会议进度，将开启新会议。请确保本次会议曾有≥1位专家讲完后再尝试继续。"}}, ensure_ascii=False)}\n\n'
-            elif resume_from_checkpoint and (resuming or append_mode):
-                if resuming:
-                    _nx_id = _ROUNDTABLE_ORDER[_diag_done_n % len(_ROUNDTABLE_ORDER)] if 0 <= (_diag_done_n % len(_ROUNDTABLE_ORDER)) < len(_ROUNDTABLE_ORDER) else _ROUNDTABLE_ORDER[0]
-                    _nx_name = _PERSONAS[_nx_id][0] if _nx_id in _PERSONAS else _nx_id
-                    yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"🟢【续会命中·断点续会接着开】已保存发言 {_diag_done_n} 段；下一位 = {_nx_name}"}}, ensure_ascii=False)}\n\n'
-                else:
-                    yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"🟢【续会命中·追加新一轮】已保存发言 {_diag_done_n} 段；将追加本轮 {len(_ROUNDTABLE_ORDER)} 位专家讨论"}}, ensure_ascii=False)}\n\n'
 
             if create_mode:
                 # ========== 创作模式：按讨论共识创作维度 → 产出标准可采纳卡片 ==========
@@ -10465,8 +10454,6 @@ def chat_roundtable():
                     _next_round = 1 + _len_done // N
                     _next_idx = _len_done % len(_ROUNDTABLE_ORDER)
                     _next_id = _ROUNDTABLE_ORDER[_next_idx] if 0 <= _next_idx < len(_ROUNDTABLE_ORDER) else _ROUNDTABLE_ORDER[0]
-                    _next_name = _PERSONAS[_next_id][0] if _next_id in _PERSONAS else _next_id
-                    yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"⏯️ 续会：已保留 {_len_done} 位发言 · 第{_next_round}轮 · 下一位：{_next_name}（不重复开场、不重复榜单分析师）"}}, ensure_ascii=False)}\n\n'
                 # 立即落盘一次（刷新即可见已完成的发言）
                 _rt_persist_messages(session, history, topic_final, state.get('moderator_open', '') if isinstance(state, dict) else '', done, '')
             else:
