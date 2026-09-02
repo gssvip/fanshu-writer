@@ -128,12 +128,12 @@ except ImportError:
     RunRecoveryService = None
 
 app = Flask(__name__, static_folder=None)
-app.config['SECRET_KEY'] = 'fanshu-writer-secret-key'
+app.config['SECRET_KEY'] = os.environ.get('APP_SECRET_KEY') or os.urandom(32).hex()
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
-# 前端构建产物目录：FANSHU_FRONTEND_DIST 环境变量 > backend/static（git 预构建）> frontend/dist（本地开发）
+# 前端构建产物目录：APP_FRONTEND_DIST 环境变量 > backend/static（git 预构建）> frontend/dist（本地开发）
 _static_dist = Path(__file__).parent / 'static'
-_frontend_dist_env = os.environ.get('FANSHU_FRONTEND_DIST')
+_frontend_dist_env = os.environ.get('APP_FRONTEND_DIST') or os.environ.get('FANSHU_FRONTEND_DIST')
 if _frontend_dist_env:
     FRONTEND_DIST = Path(_frontend_dist_env)
 elif (_static_dist / 'index.html').exists() and (_static_dist / 'assets').exists():
@@ -143,8 +143,8 @@ else:
     # 本地开发：使用 frontend/dist（vite dev/build 产物）
     FRONTEND_DIST = Path(__file__).parent.parent / 'frontend' / 'dist'
 
-# 数据持久化目录：HF Spaces 用 /data（设 FANSHU_DATA_DIR）、Render 按环境变量、本地 ~/.fanshu-writer
-DATA_DIR = Path(os.environ.get('FANSHU_DATA_DIR', Path.home() / '.fanshu-writer'))
+# 数据持久化目录：支持部署环境通过环境变量自定义，本地开发默认放用户目录下隐藏文件夹
+DATA_DIR = Path(os.environ.get('APP_DATA_DIR') or os.environ.get('FANSHU_DATA_DIR') or (Path.home() / '.app-data'))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============================================================================
@@ -4979,7 +4979,7 @@ def sync_skill_pack_from_github(pack_id):
         for skill_dir in skill_dirs:
             url = f'https://raw.githubusercontent.com/{owner}/{repo}/main/skills/{skill_dir}/SKILL.md'
             try:
-                req = urllib.request.Request(url, headers={'User-Agent': 'fanshu-writer'})
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 App/1.0'})
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     content = resp.read().decode('utf-8', errors='replace')
                 # 提取 YAML frontmatter 中的 description
@@ -15016,7 +15016,7 @@ def serve_frontend(path):
     index_file = dist_dir / 'index.html'
     if index_file.exists():
         resp = send_from_directory(dist_dir, 'index.html')
-        # index.html 坚决不缓存，每次都从服务器拿最新（防 Service Worker / PWA / GitHub Pages CDN 长时间抱旧）
+        # index.html 坚决不缓存，每次拿最新（绕过各类静态托管/CDN/Worker缓存）
         resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0'
         resp.headers['Pragma'] = 'no-cache'
         resp.headers['Expires'] = '0'

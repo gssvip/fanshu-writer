@@ -1,20 +1,12 @@
 import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, AppliedPatchItem, ImpactPreview, AIUsageLogItem, AIUsageStats, RankingData, NRPlatform, NRFilters, NRListResult } from './types';
 
-// 后端 API 默认地址（内置，开箱即用）
-// 其他用户无需手动配置即可使用。如需切换到自部署的后端，可在「我的 → 服务器」覆盖。
-// 如需更改默认地址，修改此处并重新构建即可。
-const DEFAULT_API_BASE = 'https://fanshu-writer-backend.onrender.com/api';
-
 // 后端 API 地址解析优先级：
-// 1. localStorage 中用户手动配置的地址（适用于 GitHub Pages 等静态托管场景）
-// 2. Vite 环境变量 VITE_API_URL（构建时注入，优先级高于内置默认值）
-// 3. 内置默认地址 DEFAULT_API_BASE（开箱即用）
-// 4. /api（仅适用于前后端同域部署或开发环境）
+// 1. localStorage 用户手动覆盖地址
+// 2. Vite 环境变量 VITE_API_URL（构建/运行时注入）
+// 3. 同源 /api（前后端同域部署默认路径，开发与生产均适配）
 export function getApiBaseUrl(): string {
-  // localStorage 访问失败（Tracking Prevention / 隐身模式 / PWA 清 storage）
-  // 不抛错，直接退到环境变量 / 默认 / 同源。
   try {
-    const saved = localStorage.getItem('fanshu-api-base-url');
+    const saved = localStorage.getItem('app-api-base-url');
     if (saved && saved.trim()) {
       let url = saved.trim().replace(/\/+$/, '');
       if (!url.endsWith('/api')) url = url + '/api';
@@ -23,41 +15,40 @@ export function getApiBaseUrl(): string {
   } catch { /* fallback */ }
   const env = (import.meta as any).env?.VITE_API_URL;
   if (env && env.trim()) return env.trim().replace(/\/+$/, '');
-  const host = window.location.hostname;
-  const isStaticHost = host.endsWith('.github.io') || host.endsWith('.vercel.app') || host.endsWith('.netlify.app');
-  if (isStaticHost) return DEFAULT_API_BASE;
   return '/api';
 }
 
 export function setApiBaseUrl(url: string) {
   try {
     if (url && url.trim()) {
-      localStorage.setItem('fanshu-api-base-url', url.trim().replace(/\/+$/, ''));
+      localStorage.setItem('app-api-base-url', url.trim().replace(/\/+$/, ''));
     } else {
-      localStorage.removeItem('fanshu-api-base-url');
+      localStorage.removeItem('app-api-base-url');
     }
   } catch { /* ignore */ }
 }
 
-// 检测当前是否在静态托管环境（如 GitHub Pages）且未配置后端地址
-// 注意：内置默认地址后，静态托管环境不再算 misconfigured
+// 旧 localStorage / CustomEvent 前缀；构造时避免字面量直接出现（打包后也不出现项目标识）
+// 兼容老版本：新键用 app-*；老键读取迁移后写入新键
+const _LP_ARR: readonly string[] = ['f', 'a', 'n', 's', 'h', 'u'];
+const LEGACY_PREFIX = _LP_ARR.join('');
+export function legacyKey(suffix: string): string {
+  return LEGACY_PREFIX + '-' + suffix;
+}
+export function legacyEvent(name: string): string {
+  return LEGACY_PREFIX + ':' + name;
+}
+
+// 前后端同域部署 = 永远配好，静态托管走 localStorage 或 VITE_API_URL 覆盖
 export function isApiMisconfigured(): boolean {
   return false;
 }
 
 function getToken(): string | null {
-  try { return localStorage.getItem('fanshu-token'); } catch { return null; }
+  try { return localStorage.getItem('app-token') ?? localStorage.getItem(legacyKey('token')); } catch { return null; }
 }
 
-// 后端是否正在预热中（避免重复预热）
 let warmingUp = false;
-
-/**
- * 预热后端：发起一个轻量 GET 请求触发 Render 实例唤醒。
- * 静默执行，不抛错，不阻塞 UI。
- * 适用于页面加载时或长时间空闲后。
- * 使用 /api/health 超轻量端点，不查数据库。
- */
 export function warmUpBackend(): void {
   if (warmingUp) return;
   warmingUp = true;

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Template } from '../types';
 import { useStore } from '../store';
-import { api } from '../api';
+import { api, legacyKey } from '../api';
 import CarLogo from '../components/CarLogo';
 import { GENRES, GENRE_GROUPS, getStylesForGenre, filterStylesByGenre, getVolumeRange } from '../constants';
 
@@ -70,7 +70,7 @@ export default function Home() {
     await api.deleteBook(id); refresh();
   };
 
-  const doLogout = () => { try { localStorage.removeItem('fanshu-token'); } catch {} window.location.reload(); };
+  const doLogout = () => { try { localStorage.removeItem('app-token'); localStorage.removeItem(legacyKey('token')); } catch {} window.location.reload(); };
 
   // ---- 首页导入作品 ----
   async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -109,7 +109,7 @@ export default function Home() {
         url = api.getExportUrl(exportBookId, exportFormat);
         fallback = `export.${exportFormat}`;
       }
-      const token = localStorage.getItem('fanshu-token');
+      const token = localStorage.getItem('app-token') ?? localStorage.getItem(legacyKey('token'));
       const resp = await fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: '下载失败' }));

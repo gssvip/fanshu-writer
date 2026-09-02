@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { legacyKey } from '../api';
 
 /** 判断是否移动端视口 */
 export function useIsMobile(breakpoint = 768): boolean {
@@ -42,10 +43,11 @@ export function useKeyboardInset() {
  * 检测是否存在比服务端更新的本地草稿，提示用户恢复。
  */
 export function useDraftCache(key: string, serverContent: string) {
-  const storageKey = `fanshu-draft:${key}`;
+  const storageKey = `app-draft:${key}`;
+  const legacyKey_ = legacyKey(`draft:${key}`);
   const [content, setContent] = useState<string>(() => {
     try {
-      return localStorage.getItem(storageKey) ?? serverContent;
+      return localStorage.getItem(storageKey) ?? localStorage.getItem(legacyKey_) ?? serverContent;
     } catch {
       return serverContent;
     }
@@ -221,10 +223,10 @@ export function useWritingStats(currentWords: number, isWriting: boolean) {
   const sessionStartRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 读取 localStorage 中的历史数据
+  // 读取 localStorage 中的历史数据（兼容旧键）
   const readHistory = useCallback(() => {
     try {
-      const raw = localStorage.getItem('fanshu-writing-history');
+      const raw = localStorage.getItem('app-writing-history') ?? localStorage.getItem(legacyKey('writing-history'));
       if (!raw) return { todayWords: 0, streak: 0, lastDate: '' };
       return JSON.parse(raw);
     } catch {
@@ -234,7 +236,7 @@ export function useWritingStats(currentWords: number, isWriting: boolean) {
 
   const saveHistory = useCallback((data: { todayWords: number; streak: number; lastDate: string }) => {
     try {
-      localStorage.setItem('fanshu-writing-history', JSON.stringify(data));
+      localStorage.setItem('app-writing-history', JSON.stringify(data));
     } catch { /* ignore */ }
   }, []);
 

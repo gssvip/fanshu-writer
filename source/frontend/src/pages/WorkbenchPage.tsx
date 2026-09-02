@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../api';
+import { api, legacyKey } from '../api';
 import { AuthContext } from '../App';
 import type { Book } from '../types';
 import { GENRES, GENRE_GROUPS, getStylesForGenre, filterStylesByGenre, getVolumeRange } from '../constants';
@@ -163,7 +163,7 @@ export default function WorkbenchPage() {
 
     // 读取今日统计
     try {
-      const raw = localStorage.getItem('fanshu-writing-history');
+      const raw = localStorage.getItem('app-writing-history') ?? localStorage.getItem(legacyKey('writing-history'));
       if (raw) {
         const hist = JSON.parse(raw);
         const today = new Date().toISOString().slice(0, 10);
@@ -275,7 +275,7 @@ export default function WorkbenchPage() {
         url = api.getExportUrl(exportBookId, exportFormat);
         fallback = `export.${exportFormat}`;
       }
-      const token = localStorage.getItem('fanshu-token');
+      const token = localStorage.getItem('app-token') ?? localStorage.getItem(legacyKey('token'));
       const resp = await fetch(url, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: '下载失败' }));

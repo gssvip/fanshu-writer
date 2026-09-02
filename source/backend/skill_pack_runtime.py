@@ -3,12 +3,11 @@
 技能包运行期注入辅助（文风包生效链路补丁的核心承载模块）。
 
 从 app.py 里拆出「文风激活 ID 解析」「激活文风包清单构造」两项，
-避免 app.py 巨石增长（基线 14009）。被以下场景调用：
+避免 app.py 巨石增长。被以下场景调用：
 - 章节续写 (ai_continue) 时拼接 system_prompt
-- 未来批量生成 / 审校等正文生成入口
+- 批量生成 / 审校等正文生成入口
 
-Author: fanshu-writer
-Date:   2026-08-21
+Date: 2026-08-21
 """
 
 from __future__ import annotations

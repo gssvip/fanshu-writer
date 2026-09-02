@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Book, Chapter } from './types';
+import { legacyKey } from './api';
 
 interface User { id: string; username: string; email: string; }
 
@@ -87,7 +88,8 @@ const DEFAULT_CUSTOM_COLORS: CustomThemeColors = {
 
 function loadCustomColors(): CustomThemeColors {
   try {
-    const raw = localStorage.getItem('fanshu-custom-colors');
+    // 兼容旧键：迁移到 app-custom-colors
+    let raw = localStorage.getItem('app-custom-colors') ?? localStorage.getItem(legacyKey('custom-colors'));
     if (raw) return { ...DEFAULT_CUSTOM_COLORS, ...JSON.parse(raw) };
   } catch { /* ignore */ }
   return DEFAULT_CUSTOM_COLORS;
@@ -100,14 +102,15 @@ export const useStore = create<AppStore>((set) => ({
   currentChapter: null,
   currentUser: null,
   // theme / customColors 在模块加载阶段同步访问 localStorage。
-  // 若用户浏览器开了 Edge Tracking Prevention / 隐身模式 / PWA 清 storage，
+  // 若用户浏览器开了隐私模式 / PWA 清 storage，
   // localStorage 会抛 SecurityError → 直接打断 React 根挂载 = 白屏，
   // 所以这里全部 try/catch 兜底到安全默认值。
   theme: (() => {
     try {
-      const t = localStorage.getItem('fanshu-theme');
+      // 兼容旧键：迁移到 app-theme
+      const t = localStorage.getItem('app-theme') ?? localStorage.getItem(legacyKey('theme'));
       // 兼容旧数据：sepia 映射为 green
-      if (t === 'sepia') { try { localStorage.setItem('fanshu-theme', 'green'); } catch {} return 'green' as Theme; }
+      if (t === 'sepia') { try { localStorage.setItem('app-theme', 'green'); } catch {} return 'green' as Theme; }
       return (t as Theme) || 'light';
     } catch {
       return 'light';
@@ -138,13 +141,13 @@ export const useStore = create<AppStore>((set) => ({
   setCurrentChapter: (chapter) => set({ currentChapter: chapter }),
   setCurrentUser: (user) => set({ currentUser: user }),
   setTheme: (theme) => {
-    try { localStorage.setItem('fanshu-theme', theme); } catch {}
+    try { localStorage.setItem('app-theme', theme); } catch {}
     set({ theme });
   },
   setCustomColors: (colors) => {
     set((state) => {
       const next = { ...state.customColors, ...colors };
-      try { localStorage.setItem('fanshu-custom-colors', JSON.stringify(next)); } catch {}
+      try { localStorage.setItem('app-custom-colors', JSON.stringify(next)); } catch {}
       return { customColors: next };
     });
   },
@@ -174,7 +177,7 @@ export const useStore = create<AppStore>((set) => ({
     chatPanelPresetRankScanPlatform: platform ?? null,
   }),
   logout: () => {
-    try { localStorage.removeItem('fanshu-token'); } catch {}
+    try { localStorage.removeItem('app-token'); localStorage.removeItem(legacyKey('token')); } catch {}
     set({ currentUser: null, books: [], currentBook: null });
   },
 }));

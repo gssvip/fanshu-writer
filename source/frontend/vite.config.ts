@@ -6,22 +6,19 @@ import { createHash } from 'node:crypto'
 import { resolve, join, relative } from 'node:path'
 
 // =======================================================================
-// 「前后端对齐」防呆插件（根治 GitHub push 了但线上还是旧界面）
+// 「前后端对齐」防呆插件（根治 push 了但线上还是旧界面）
 //
-// Render rootDir = source/backend，Flask app.py 按这个优先级读前端：
-//   1) env FANSHU_FRONTEND_DIST
-//   2) backend/static/index.html + assets/  ← 生产默认（git 跟踪！）
+// 后端 Flask 按以下优先级读前端：
+//   1) env APP_FRONTEND_DIST
+//   2) backend/static/index.html + assets/  ← 生产默认
 //   3) source/frontend/dist/                 ← 本地开发 fallback
 //
-// 本插件在 vite build 结束后自动做 3 件事，以后你在任何地方跑
-// `npm run build` / `npm run build-and-sync` / deploy.sh 都得到一致结果：
+// 本插件在 vite build 结束后自动做三件事：
 //   A. 写 FRONTEND_DIST/version.json（commitId / builtAt / indexMd5）
-//      → 线上访问 https://你的域名/version.json 一眼核对是否真的更到新版
-//   B. cp -rf dist/* → backend/static/（覆盖 index.html 与 assets/，
-//      不删除 static 根目录的 logo/dian.jpg 等静态资源）
-//   C. 打印 md5 对账，避免一半复制一半没复制
+//   B. 同步 dist/* → backend/static/
+//   C. 打印 md5 对账
 // =======================================================================
-function fanshuAlignPlugin() {
+function buildAlignPlugin() {
   const ROOT = resolve(__dirname, '..')               // /workspace/source
   const BACKEND_STATIC = join(ROOT, 'backend', 'static')
   const GIT_ROOT = resolve(ROOT, '..')                // /workspace
@@ -42,7 +39,7 @@ function fanshuAlignPlugin() {
   }
 
   return {
-    name: 'fanshu-align',
+    name: 'build-align',
     closeBundle() {
       // 本插件只在 build（非 dev/preview）阶段执行
       // —— closeBundle 是 vite build 结束、dist 所有文件落盘后的钩子
@@ -61,7 +58,7 @@ function fanshuAlignPlugin() {
       }, null, 2) + '\n'
       mkdirSync(join(distDir, '.fan-tmp'), { recursive: true })  // 占位，避免空文件夹难排查
       writeFileSync(join(distDir, 'version.json'), versionPayload, 'utf8')
-      console.log('\n📘 [fanshu-align] version.json 写入 dist/version.json:')
+      console.log('\n📘 [align] version.json 写入 dist/version.json:')
       console.log('   commit =', shortCommitId(), '  indexMd5 =', indexMd5)
 
       // ---------- B. cp -rf dist/* → backend/static/ ----------
@@ -101,7 +98,7 @@ function fanshuAlignPlugin() {
       const dstMd5 = md5File(dstIndex)
       if (dstMd5 !== indexMd5) {
         throw new Error(
-          `🚨 [fanshu-align] 前后端 index.html 哈希不一致！\n` +
+          `🚨 [align] 前后端 index.html 哈希不一致！\n` +
           `   dist:   ${indexMd5}  (${relative(GIT_ROOT, indexHtml)})\n` +
           `   static: ${dstMd5}  (${relative(GIT_ROOT, dstIndex)})\n` +
           `   请手动 rm -rf source/backend/static/assets 后重新 npm run build`
@@ -109,15 +106,43 @@ function fanshuAlignPlugin() {
       }
       const dstVersion = join(BACKEND_STATIC, 'version.json')
       writeFileSync(dstVersion, versionPayload, 'utf8')
-      console.log('✅ [fanshu-align] dist → backend/static 同步完成，哈希一致:', indexMd5)
-      console.log('   → 线上访问 /version.json 可直接核对 commitId 和构建时间\n')
+      console.log('✅ [align] dist → backend/static 同步完成，哈希一致:', indexMd5)
     },
   }
 }
 
+// 构建期清理 HTML：删除 HTML 模板中所有 <!-- xxx --> 注释（源码安全）
+function htmlSanitizePlugin() {
+  return {
+    name: 'html-sanitize',
+    transformIndexHtml(html: string): string {
+      // 删除标准 HTML 注释（<!-- ... -->），不破坏 <script>/<style> 内内容
+      return html.replace(/<!--[\s\S]*?-->/g, '');
+    },
+  };
+}
+
 export default defineConfig({
   base: './',
-  plugins: [react(), fanshuAlignPlugin()],
+  plugins: [react(), buildAlignPlugin(), htmlSanitizePlugin()],
+  build: {
+    // 【加密】生产构建彻底关闭 sourcemap
+    sourcemap: false,
+    minify: 'terser',
+    terserOptions: {
+      // 进一步压缩：删掉所有 console.*（开发调试信息）和 debugger
+      compress: { drop_console: true, drop_debugger: true, passes: 2 },
+      mangle: { safari10: true },
+      format: { comments: false },
+    } as any,
+    rollupOptions: {
+      output: {
+        // 去掉 chunk 文件名里的可读 vendor/app 前缀，仅保留 hash 降低逆向可识别性
+        chunkFileNames: 'assets/[hash].js',
+        assetFileNames: 'assets/[hash][extname]',
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

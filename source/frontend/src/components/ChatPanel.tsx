@@ -1812,7 +1812,7 @@ export default function ChatPanel() {
     } finally {
       setBackfillRunning(false);
       // 触发进度条刷新（EventLog 变了）
-      try { window.dispatchEvent(new CustomEvent('fanshu:progress-needs-refresh')); } catch {}
+      try { window.dispatchEvent(new CustomEvent('app:progress-needs-refresh')); } catch {}
     }
   }, [bookId, backfillLLM]);
 
@@ -1846,8 +1846,8 @@ export default function ChatPanel() {
         refreshProgress();
       }
     };
-    window.addEventListener('fanshu:progress-needs-refresh', handler);
-    return () => window.removeEventListener('fanshu:progress-needs-refresh', handler);
+    window.addEventListener('app:progress-needs-refresh', handler);
+    return () => window.removeEventListener('app:progress-needs-refresh', handler);
   }, [chatPanelOpen, bookId, refreshProgress]);
 
   // 加载聊天会话：优先 chatPanelSessionId 指定的，否则最新

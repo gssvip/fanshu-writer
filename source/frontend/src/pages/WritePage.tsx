@@ -383,7 +383,7 @@ export default function WritePage() {
   // 章节AI聊天历史（持久保留，类似聊天窗口）
   // type: 'content'=章节正文（可折叠）, 'status'=状态提示（如已保存），用户提问无type
   // 主存走后端 AISession（scope='chapter'），localStorage 降级为离线缓存
-  const aiChatHistoryKey = bookId ? `fanshu-ai-chat-${bookId}` : '';
+  const aiChatHistoryKey = bookId ? `app-ai-chat-${bookId}` : '';
   const [aiChatHistory, setAiChatHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string; chapterTitle?: string; type?: 'content' | 'status'; collapsed?: boolean }>>(() => {
     try {
       if (aiChatHistoryKey) {
@@ -480,7 +480,7 @@ export default function WritePage() {
       if (currentTab.field === 'concept') {
         setConcept(editValue);
       }
-      try { window.dispatchEvent(new CustomEvent('fanshu:progress-needs-refresh', { detail: { field: currentTab.field } })); } catch {}
+      try { window.dispatchEvent(new CustomEvent('app:progress-needs-refresh', { detail: { field: currentTab.field } })); } catch {}
     } catch (e: any) {
       alert('保存失败: ' + e.message);
     }
@@ -615,7 +615,7 @@ export default function WritePage() {
       try {
         const updated = await api.updateBible(bookId, { [currentTab.field]: '' } as any);
         setBible(updated);
-        try { window.dispatchEvent(new CustomEvent('fanshu:progress-needs-refresh', { detail: { field: currentTab.field } })); } catch {}
+        try { window.dispatchEvent(new CustomEvent('app:progress-needs-refresh', { detail: { field: currentTab.field } })); } catch {}
       } catch (e: any) {
         alert('删除失败: ' + e.message);
       }
@@ -6226,7 +6226,7 @@ function OutlineCombinedPanel(props: {
       const updated = await api.updateBible(bookId, { [currentField]: collapseNewlines(editValue) } as any);
       onBibleUpdate(updated);
       setEditing(false);
-      try { window.dispatchEvent(new CustomEvent('fanshu:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
+      try { window.dispatchEvent(new CustomEvent('app:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
     } catch (e: any) {
       alert('保存失败: ' + e.message);
     }
@@ -6268,7 +6268,7 @@ function OutlineCombinedPanel(props: {
       try {
         const updated = await api.updateBible(bookId, { [currentField]: '' } as any);
         onBibleUpdate(updated);
-        try { window.dispatchEvent(new CustomEvent('fanshu:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
+        try { window.dispatchEvent(new CustomEvent('app:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
       } catch (e: any) {
         alert('删除失败: ' + e.message);
       }
@@ -6540,7 +6540,7 @@ function SettingsCombinedPanel(props: {
       onBibleUpdate(updated);
       setEditing(false);
       // 保存后派发自定义事件，通知AI智驾刷新创作进度
-      try { window.dispatchEvent(new CustomEvent('fanshu:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
+      try { window.dispatchEvent(new CustomEvent('app:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
     } catch (e: any) { alert('保存失败: ' + e.message); }
     setSaving(false);
   }
@@ -6578,7 +6578,7 @@ function SettingsCombinedPanel(props: {
       try {
         const updated = await api.updateBible(bookId, { [currentField]: '' } as any);
         onBibleUpdate(updated);
-        try { window.dispatchEvent(new CustomEvent('fanshu:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
+        try { window.dispatchEvent(new CustomEvent('app:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
       } catch (e: any) { alert('删除失败: ' + e.message); }
     });
   }

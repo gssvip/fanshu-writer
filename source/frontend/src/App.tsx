@@ -1,7 +1,7 @@
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, createContext, useContext, useCallback } from 'react';
 import { useStore } from './store';
-import { api, warmUpBackend } from './api';
+import { api, warmUpBackend, legacyKey } from './api';
 import AuthModal from './components/AuthModal';
 import ChatPanel from './components/ChatPanel';
 import WorkbenchPage from './pages/WorkbenchPage';
@@ -119,10 +119,12 @@ export default function App() {
 
   useEffect(() => {
     // 清理已废弃的背景图片配置（功能已移除）
-    const savedBg = localStorage.getItem('fanshu-bg-image');
+    const savedBg = localStorage.getItem('app-bg-image') ?? localStorage.getItem(legacyKey('bg-image'));
     if (savedBg) {
-      localStorage.removeItem('fanshu-bg-image');
-      localStorage.removeItem('fanshu-bg-opacity');
+      localStorage.removeItem('app-bg-image');
+      localStorage.removeItem(legacyKey('bg-image'));
+      localStorage.removeItem('app-bg-opacity');
+      localStorage.removeItem(legacyKey('bg-opacity'));
       document.body.style.backgroundImage = '';
     }
   }, []);

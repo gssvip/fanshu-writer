@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext, useRef } from 'react';
 import { useStore } from '../store';
-import { api, getApiBaseUrl, setApiBaseUrl } from '../api';
+import { api, getApiBaseUrl, setApiBaseUrl, legacyKey } from '../api';
 import { AuthContext } from '../App';
 import type { AIConfig } from '../types';
 import type { Book, AIUsageStats, AIUsageLogItem } from '../types';
@@ -74,29 +74,30 @@ export default function MinePage() {
   const [serverStatus, setServerStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
 
   useEffect(() => {
-    // 全部 localStorage 读写：用户开 Edge Tracking Prevention / 隐身模式 / 清 storage 会抛 SecurityError，
+    // 全部 localStorage 读写：用户开隐私模式 / 清 storage 会抛 SecurityError，
     // 不处理就直接打断 MinePage 渲染 = 白屏，所以每一段包 try/catch 降级。
     try {
-      const savedPath = localStorage.getItem('fanshu-local-path') || '';
-      const savedMode = (localStorage.getItem('fanshu-storage-mode') as 'cloud' | 'local') || 'cloud';
+      const savedPath = localStorage.getItem('app-local-path') ?? localStorage.getItem(legacyKey('local-path')) ?? '';
+      const savedModeRaw = localStorage.getItem('app-storage-mode') ?? localStorage.getItem(legacyKey('storage-mode'));
+      const savedMode: 'cloud' | 'local' = (savedModeRaw === 'local' ? 'local' : 'cloud');
       setLocalPath(savedPath);
       setStorageMode(savedMode);
     } catch {}
-    // 加载自定义大模型列表
+    // 加载自定义大模型列表（兼容旧键）
     try {
-      const saved = localStorage.getItem('fanshu-custom-models');
+      const saved = localStorage.getItem('app-custom-models') ?? localStorage.getItem(legacyKey('custom-models'));
       if (saved) setCustomModels(JSON.parse(saved));
     } catch { /* ignore */ }
     // 清理已废弃的背景图片配置（功能已移除）
     try {
-      localStorage.removeItem('fanshu-bg-image');
-      localStorage.removeItem('fanshu-bg-opacity');
+      localStorage.removeItem('app-bg-image'); localStorage.removeItem(legacyKey('bg-image'));
+      localStorage.removeItem('app-bg-opacity'); localStorage.removeItem(legacyKey('bg-opacity'));
     } catch {}
     const bgDiv = document.getElementById('bg-image-layer');
     if (bgDiv) bgDiv.remove();
     document.body.style.backgroundImage = '';
-    // 加载后端服务器地址配置
-    try { setServerUrl(localStorage.getItem('fanshu-api-base-url') || ''); } catch {}
+    // 加载后端服务器地址配置（兼容旧键）
+    try { setServerUrl(localStorage.getItem('app-api-base-url') ?? localStorage.getItem(legacyKey('api-base-url')) ?? ''); } catch {}
   }, []);
 
   useEffect(() => {
@@ -109,7 +110,7 @@ export default function MinePage() {
   useEffect(() => {
     // 读取写作打卡数据
     try {
-      const raw = localStorage.getItem('fanshu-writing-history');
+      const raw = localStorage.getItem('app-writing-history') ?? localStorage.getItem(legacyKey('writing-history'));
       if (raw) {
         const hist = JSON.parse(raw);
         const today = new Date().toISOString().slice(0, 10);
@@ -259,8 +260,7 @@ export default function MinePage() {
     }
     const updated = [...customModels, { ...customModelForm }];
     setCustomModels(updated);
-    try { localStorage.setItem('fanshu-custom-models', JSON.stringify(updated)); } catch {}
-    setCustomModelForm({ name: '', base_url: '', model: '' });
+    try { localStorage.setItem('app-custom-models', JSON.stringify(updated)); } catch {}    setCustomModelForm({ name: '', base_url: '', model: '' });
     setShowAddCustom(false);
     alert('自定义模型已保存');
   }
@@ -268,8 +268,7 @@ export default function MinePage() {
   function handleDeleteCustomModel(idx: number) {
     const updated = customModels.filter((_, i) => i !== idx);
     setCustomModels(updated);
-    try { localStorage.setItem('fanshu-custom-models', JSON.stringify(updated)); } catch {}
-  }
+    try { localStorage.setItem('app-custom-models', JSON.stringify(updated)); } catch {}  }
 
   function handleApplyCustomModel(m: { name: string; base_url: string; model: string }) {
     setAIConfig((prev: AIConfig) => ({ ...prev, provider: 'custom', base_url: m.base_url, model: m.model }));
@@ -355,8 +354,8 @@ export default function MinePage() {
 
   function handleSaveStorage() {
     try {
-      localStorage.setItem('fanshu-local-path', localPath);
-      localStorage.setItem('fanshu-storage-mode', storageMode);
+      localStorage.setItem('app-local-path', localPath);
+      localStorage.setItem('app-storage-mode', storageMode);
     } catch {}
     alert(storageMode === 'local' ? '已切换为本地存储模式，数据将保存在浏览器中' : '已切换为云端存储模式');
   }
@@ -404,7 +403,7 @@ export default function MinePage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `fanshu-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `backup-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
       alert(`已导出 ${Object.keys(allData.books).length} 部作品到本地`);
@@ -555,7 +554,7 @@ export default function MinePage() {
               <div className="custom-models-section">
                 <div className="custom-models-header">
                   <span className="custom-models-title">🏷️ 我的自定义模型</span>
-                  <button className="btn-icon" title="删除" onClick={() => { if (confirm('清空所有自定义模型？')) { setCustomModels([]); try { localStorage.removeItem('fanshu-custom-models'); } catch {} } }}>🗑️</button>
+                  <button className="btn-icon" title="删除" onClick={() => { if (confirm('清空所有自定义模型？')) { setCustomModels([]); try { localStorage.removeItem('app-custom-models'); localStorage.removeItem(legacyKey('custom-models')); } catch {} } }}>🗑️</button>
                 </div>
                 <div className="custom-models-list">
                   {customModels.map((m, i) => (

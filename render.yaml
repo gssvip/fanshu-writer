@@ -1,44 +1,21 @@
 services:
   - type: web
-    name: fanshu-writer-backend
+    name: app-backend
     runtime: python
     rootDir: source/backend
     plan: free
-    # ==============================================================
-    # 【前后端对齐·核心原则】—— 改这里之前先读 deploy.sh 头部注释！
-    # 本项目的生产前端静态文件路径是：<repo>/source/backend/static/
-    #   由 app.py FRONTEND_DIST 第 2 优先级命中：backend/static/index.html + assets/
-    #   （FANSHU_FRONTEND_DIST 不设！因为它会让你读到旧 frontend/dist）
-    #
-    # "为什么 npm run build 之后前端还不更新？" —— 99% 是忘了把 dist/* 同步到
-    # backend/static/。现在用工程化方式根治：
-    #   ① vite.config.ts fanshuAlignPlugin 钩子：build 结束自动 cp dist → static
-    #     + 写 version.json + 哈希对账（对账失败抛错，不准提交错误版本）
-    #   ② 根目录 deploy.sh：一键完成 构建→对账→git commit→push→Render 部署
-    #   ③ 上线核对：curl https://<域名>/version.json 看 commitId 是否一致
-    # 下次任何部署只用跑：bash deploy.sh
-    # ==============================================================
-    # 前端构建产物已提交到 backend/static（git 跟踪），无需在 Render 上重新 build
-    # 简化构建命令，避免免费版内存不足导致 npm build 失败
+    # 生产前端静态文件路径：<repo>/source/backend/static/（git 跟踪，预构建产物）
+    # 任何部署只用跑：bash deploy.sh 一键完成 构建→对账→commit→push→部署
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
-      # ============================================================
-      # 铁律：用户数据（账号及作品）必须存到 PostgreSQL，绝不能因部署丢失
-      # ============================================================
-      # 生产环境未配置 DATABASE_URL 时，应用会拒绝启动（铁律保护）
-      # 请确保 DATABASE_URL 已在 Environment 中配置，否则部署会失败
-      #
-      # 推荐 Neon 免费版（永久免费 0.5GB，数据持久）：https://neon.tech
-      # 注册后在 Render 的 Environment 里手动添加：
-      #   key=DATABASE_URL
-      #   value=postgresql://user:password@host/dbname?sslmode=require
-      # ============================================================
-      - key: FANSHU_DATA_DIR
-        value: /tmp/fanshu-data
-      # ⚠️ 关键修复：不要设 FANSHU_FRONTEND_DIST=../frontend/dist（该目录在 Render
-      # rootDir=source/backend 下可能不存在/不是最新构建，且前端构建产物统一由
-      # CI 预构建到 backend/static，app.py 优先级 #2 会自动使用 backend/static，
-      # 避免后端读到旧 dist 导致"前端没更新"假象。
+      # 铁律：用户数据存 PostgreSQL；未配置 DATABASE_URL 时应用会拒绝启动
+      # 推荐使用 Neon / Supabase Postgres，然后在 Render Environment 手动添加：
+      #   DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
+      - key: APP_DATA_DIR
+        value: /tmp/app-data
+      # APP_FRONTEND_DIST 不建议设，默认读取 backend/static（预构建）
+      - key: APP_SECRET_KEY
+        generateValue: true
