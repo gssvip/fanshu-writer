@@ -507,88 +507,134 @@ def _rt_stream_turn(gw, messages, temperature, max_tokens, attempts: int = 2):
             raise
 
 
+# ===== 圆桌进度持久化【终极·独立小表方案】=====
+# 背景血泪：ai_sessions ORM 类根本没定义 meta_json 列 → PostgreSQL 不存在该列 → 所有写 meta_json=内存属性被 SQLAlchemy 忽略
+#   → state 从来没真正落过盘！还报 ProgrammingError: column "meta_json" does not exist。
+#   同时 Flask 请求 db.session 在用户点停止（GeneratorExit）时会被回滚，finally commit 被冲掉。
+# 方案：单建 roundtable_state 小表，session_id 字符串 PK + state_json 全文 + updated_at 时间戳。
+#   用 CREATE TABLE IF NOT EXISTS，连 Alembic 迁移都不需要；读写用全新独立 engine/session，和请求范围彻底隔离。
+_RT_STATE_TABLE = 'roundtable_state'
+
+
+def _rt_ind_connect():
+    """返回 (engine, SessionMaker) — 独立DB连接，不被请求回滚。"""
+    import os as _os_rt
+    from sqlalchemy import create_engine as _ce
+    from sqlalchemy.orm import sessionmaker as _sm
+    _db_uri = (_os_rt.environ.get('DATABASE_URL')
+               or _os_rt.environ.get('SQLALCHEMY_DATABASE_URI')
+               or 'sqlite:///' + _os_rt.path.join(_os_rt.path.dirname(_os_rt.path.abspath(__file__)), '..', 'app.db'))
+    _eng = _ce(_db_uri, pool_pre_ping=True, connect_args={'check_same_thread': False} if _db_uri.startswith('sqlite') else {})
+    _SM = _sm(bind=_eng, autoflush=False, expire_on_commit=False)
+    return _eng, _SM
+
+
+def _rt_ind_ensure_table(ind_sess):
+    from sqlalchemy import text as _t
+    # 幂等：IF NOT EXISTS，两边 DB 都支持；注意 PG 用 TIMESTAMP，SQLite 用 DATETIME，但写 TEXT 也兼容
+    ind_sess.execute(_t(f"""
+        CREATE TABLE IF NOT EXISTS {_RT_STATE_TABLE} (
+            session_id VARCHAR(36) PRIMARY KEY,
+            state_json TEXT NOT NULL,
+            updated_at TEXT
+        )
+    """))
+    ind_sess.commit()
+
+
 def _rt_save_state(session, db, state: dict) -> str:
-    """【N2·绝对可靠】圆桌进度存 DB。
-
-    为什么重写？—— 之前直接用请求绑定的 db.session → 用户点"停止"AbortController 断 SSE，
-    Python 抛 GeneratorExit（BaseException 子类），Flask 请求收尾时把 db.session 标记为 rollback-only，
-    finally 里那行 db.session.commit() **被回滚当垃圾扔掉了** → meta_json 里永远没 roundtable_state → state_loaded=F。
-
-    修复：开一条完全独立的 SQLAlchemy session（新建 engine+session 连接，与请求范围 db.session 物理隔离），
-    按 id 重新查询 AISession → 修改 meta_json → 独立 commit → 关闭。就算主请求全滚了，这里写的 DB 行也稳在磁盘。
-
-    返回：str 描述（"ok:3saved" / "fail:xxx"），前端诊断帧可直接显示。
+    """【F2】圆桌进度 100% 持久化：
+    (1) 独立连接 + 独立 roundtable_state 小表写入（绝对不回滚、不依赖 ai_sessions.meta_json 列不存在的问题）
+    (2) 写完新连接再 SELECT 回来双重校验
+    (3) 内存属性再赋值 session.meta_json（兼容其他读 session.meta_json.xxx 的旧代码，本请求生命周期内好使）
+    返回："ok:verify_ok,done=N" 或 "fail:原因:详情"
     """
     _sid = str(getattr(session, 'id', '') or '').strip()
     _msg = 'ok:noop'
     try:
         if not _sid:
             return 'fail:no_sid'
-        from sqlalchemy import create_engine as _sa_ce
-        import os as _os_rt
-        # 与 app.py SQLALCHEMY_DATABASE_URI 同源（flask env 里总是有）
-        _db_uri = (_os_rt.environ.get('DATABASE_URL')
-                   or _os_rt.environ.get('SQLALCHEMY_DATABASE_URI')
-                   or 'sqlite:///' + _os_rt.path.join(_os_rt.path.dirname(_os_rt.path.abspath(__file__)), '..', 'app.db'))
-        _eng = _sa_ce(_db_uri, pool_pre_ping=True, connect_args={'check_same_thread': False} if _db_uri.startswith('sqlite') else {})
-        from sqlalchemy.orm import sessionmaker as _sa_sm
-        _SM = _sa_sm(bind=_eng, autoflush=False, expire_on_commit=False)
-        _ind_sess = _SM()
+        if not isinstance(state, dict):
+            return 'fail:state_not_dict'
+        _eng, _SM = _rt_ind_connect()
         try:
-            # 反射 / 直接文本 SQL 更新都行，用 text SQL 最省事不依赖导入 AISession 类
-            from sqlalchemy import text as _sa_text
-            _row = _ind_sess.execute(_sa_text('SELECT id, meta_json FROM ai_sessions WHERE id = :sid LIMIT 1'), {'sid': _sid}).fetchone()
-            if _row is None:
-                _msg = 'fail:ai_session_row_not_found(id=' + _sid[:8] + '…)'
-                return _msg
-            _cur_meta_str = (str(_row[1]) if _row[1] is not None else '') or '{}'
+            _ind_sess = _SM()
             try:
-                _cur_meta = json.loads(_cur_meta_str) if isinstance(_cur_meta_str, str) else _cur_meta_str
-            except Exception:
-                _cur_meta = {}
-            if not isinstance(_cur_meta, dict):
-                _cur_meta = {}
-            _cur_meta[_RT_STATE_KEY] = state
-            _new_meta_str = json.dumps(_cur_meta, ensure_ascii=False)
-            _ind_sess.execute(
-                _sa_text('UPDATE ai_sessions SET meta_json = :mj, updated_at = CURRENT_TIMESTAMP WHERE id = :sid'),
-                {'mj': _new_meta_str, 'sid': _sid}
-            )
-            _ind_sess.commit()
-            # ====== 双重校验：独立新 session 再 SELECT 一次，确认真的落盘 ======
-            _ind2 = _SM()
-            try:
-                _ch = _ind2.execute(_sa_text('SELECT meta_json FROM ai_sessions WHERE id = :sid LIMIT 1'), {'sid': _sid}).fetchone()
-                if _ch is None:
-                    _msg = 'fail:verify_select_none'
-                else:
-                    try:
-                        _ch_m = json.loads(str(_ch[0]) or '{}')
-                        _st = _ch_m.get(_RT_STATE_KEY) if isinstance(_ch_m, dict) else None
-                        _dn = len((_st or {}).get('done') or []) if isinstance(_st, dict) else -1
-                        if _st is None:
-                            _msg = 'fail:verify_state_missing_after_write'
-                        else:
-                            _msg = f'ok:verify_ok,done={_dn}'
-                    except Exception as _e2:
-                        _msg = 'fail:verify_parse:' + str(_e2)[:40]
+                _rt_ind_ensure_table(_ind_sess)
+                from sqlalchemy import text as _t
+                _json = json.dumps(state, ensure_ascii=False)
+                from datetime import datetime, timezone
+                _ts = datetime.now(timezone.utc).isoformat()
+                # SQLite/PG 都支持的 upsert 写法：先尝试 UPDATE，受影响=0 再 INSERT
+                _up = _ind_sess.execute(
+                    _t(f"UPDATE {_RT_STATE_TABLE} SET state_json = :sj, updated_at = :ts WHERE session_id = :sid"),
+                    {'sj': _json, 'ts': _ts, 'sid': _sid}
+                )
+                if getattr(_up, 'rowcount', 0) == 0:
+                    _ind_sess.execute(
+                        _t(f"INSERT INTO {_RT_STATE_TABLE} (session_id, state_json, updated_at) VALUES (:sid, :sj, :ts)"),
+                        {'sid': _sid, 'sj': _json, 'ts': _ts}
+                    )
+                _ind_sess.commit()
+                # ===== 双重校验 =====
+                _ind2 = _SM()
+                try:
+                    _row = _ind2.execute(_t(f"SELECT state_json FROM {_RT_STATE_TABLE} WHERE session_id = :sid LIMIT 1"), {'sid': _sid}).fetchone()
+                    if _row is None:
+                        _msg = 'fail:verify_no_row_after_upsert'
+                    else:
+                        try:
+                            _re_read = json.loads(str(_row[0]) or '{}')
+                            _dn = len(_re_read.get('done') or []) if isinstance(_re_read, dict) else -1
+                            if not isinstance(_re_read, dict):
+                                _msg = 'fail:verify_json_not_dict'
+                            else:
+                                _msg = f'ok:verify_ok,done={_dn}'
+                        except Exception as _e2:
+                            _msg = 'fail:verify_parse:' + str(_e2)[:60]
+                finally:
+                    try: _ind2.close()
+                    except Exception: pass
             finally:
-                try: _ind2.close()
+                try: _ind_sess.close()
                 except Exception: pass
         finally:
-            try: _ind_sess.close()
-            except Exception: pass
             try: _eng.dispose()
             except Exception: pass
+        # —— 兼容：把 state 同时写进内存 session.meta_json 属性（不是DB列，仅本请求生命周期内好使）——
+        try:
+            _cur = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+            if not isinstance(_cur, dict): _cur = {}
+            _cur[_RT_STATE_KEY] = state
+            session.meta_json = json.dumps(_cur, ensure_ascii=False)
+        except Exception:
+            pass
     except Exception as _e:
         try:
-            _msg = 'fail:' + type(_e).__name__ + ':' + str(_e)[:80]
+            _msg = 'fail:' + type(_e).__name__ + ':' + str(_e)[:100]
         except Exception:
             _msg = 'fail:unknown'
     return _msg
 
 
 def _rt_load_state(session):
+    """读圆桌进度：
+    (1) 优先独立 roundtable_state 小表读（最新真持久化的值）
+    (2) 兼容 fallback：读内存 session.meta_json 属性
+    """
+    _sid = str(getattr(session, 'id', '') or '').strip()
+    if _sid:
+        _st = _rt_load_state_by_sid_independent(_sid)
+        if isinstance(_st, dict):
+            # 同步写入内存属性，保持后续读 meta_json 路径一致
+            try:
+                _cur = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+                if not isinstance(_cur, dict): _cur = {}
+                _cur[_RT_STATE_KEY] = _st
+                session.meta_json = json.dumps(_cur, ensure_ascii=False)
+            except Exception:
+                pass
+            return _st
     try:
         meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
         if isinstance(meta, dict):
@@ -600,29 +646,24 @@ def _rt_load_state(session):
 
 
 def _rt_load_state_by_sid_independent(sid: str):
-    """独立新连接读 state，绕过请求db.session可能的回滚脏数据；用于D3终极兜底。返回 dict|None。"""
+    """独立新连接从 roundtable_state 小表读 state；表不存在/无行 → 返回 None。"""
     try:
         sid = str(sid or '').strip()
         if not sid: return None
-        from sqlalchemy import create_engine as _sa_ce, text as _sa_text
-        import os as _os_rt
-        _db_uri = (_os_rt.environ.get('DATABASE_URL')
-                   or _os_rt.environ.get('SQLALCHEMY_DATABASE_URI')
-                   or 'sqlite:///' + _os_rt.path.join(_os_rt.path.dirname(_os_rt.path.abspath(__file__)), '..', 'app.db'))
-        _eng = _sa_ce(_db_uri, connect_args={'check_same_thread': False} if _db_uri.startswith('sqlite') else {})
-        from sqlalchemy.orm import sessionmaker as _sa_sm
-        _SM = _sa_sm(bind=_eng)
-        _s = _SM()
+        _eng, _SM = _rt_ind_connect()
         try:
-            _r = _s.execute(_sa_text('SELECT meta_json FROM ai_sessions WHERE id = :sid LIMIT 1'), {'sid': sid}).fetchone()
-            if _r is None: return None
-            _m = json.loads(str(_r[0]) or '{}') if _r[0] is not None else {}
-            if isinstance(_m, dict):
-                _st = _m.get(_RT_STATE_KEY)
-                return _st if isinstance(_st, dict) else None
+            _s = _SM()
+            try:
+                _rt_ind_ensure_table(_s)
+                from sqlalchemy import text as _t
+                _r = _s.execute(_t(f"SELECT state_json FROM {_RT_STATE_TABLE} WHERE session_id = :sid LIMIT 1"), {'sid': sid}).fetchone()
+                if _r is None: return None
+                _m = json.loads(str(_r[0]) or '{}') if _r[0] is not None else None
+                return _m if isinstance(_m, dict) else None
+            finally:
+                try: _s.close()
+                except Exception: pass
         finally:
-            try: _s.close()
-            except Exception: pass
             try: _eng.dispose()
             except Exception: pass
     except Exception:
@@ -9998,26 +10039,31 @@ def chat_roundtable():
     # 之前如果是通用 Tab 触发的圆桌 (scope!=roundtable_*)，首次请求时后端强制 scope 路由并保存了 state，
     # 但前端"继续"按钮传的是 chatGeneralSessionId（上次的通用对话 session_id，scope 是 general/roundtable_per_book）。
     # 后端按"scope=roundtable_global + title=圆桌会议"去查，查到的不一定是同一条会话，或干脆捞不到 state → state=None → 新会议重开场。
-    # 修复：resume_from_checkpoint=true 且前端给了 session_id 时，先按 id 直接拉这条 session，
-    #       只要它 meta_json 里有 _RT_STATE_KEY（说明这条 session 里真的保存过圆桌进度），就直接用这条。
+    # 修复：resume_from_checkpoint=true 且前端给了 session_id 时，【优先从独立 roundtable_state 小表读】，
+    #       因为 ai_sessions.meta_json 列根本不存在（前序所有写均是内存态，ORM 不映射），所以以前按 meta_json 查100%失败。
     _req_session_id = (data.get('session_id') or '').strip() or None
     _resume_state_found_in_session = False
     if resume_from_checkpoint and _req_session_id:
         try:
-            _candidate = AISession.query.filter_by(id=_req_session_id).first()
+            # 用新表独立连接直接读真实进度 —— 100% 对齐 _rt_save_state 存的位置
+            _rst = _rt_load_state_by_sid_independent(_req_session_id)
+            _candidate = None
+            if isinstance(_rst, dict) and ((_rst.get('done') and isinstance(_rst['done'], list) and len(_rst['done']) > 0) or _rst.get('moderator_open') or _rst.get('topic')):
+                # 有真实进度：尝试把 session ORM 对象切到该 session_id（后续其他逻辑要用 session.scope/book_id）
+                try:
+                    _candidate = AISession.query.filter_by(id=_req_session_id).first()
+                except Exception:
+                    _candidate = None
             if _candidate is not None:
-                _cm = _candidate.meta_json if isinstance(_candidate.meta_json, dict) else (
-                    json.loads(_candidate.meta_json or '{}') if _candidate.meta_json else {})
-                if isinstance(_cm, dict) and isinstance(_cm.get(_RT_STATE_KEY), dict):
-                    _rst = _cm[_RT_STATE_KEY]
-                    # 只要 done 非空或 moderator_open 非空或 topic 非空，就是真的有进度
-                    if (_rst.get('done') and isinstance(_rst['done'], list) and len(_rst['done']) > 0) or _rst.get('moderator_open') or _rst.get('topic'):
-                        session = _candidate
-                        session_id = session.id
-                        # scope/title 此时不重要，重要的是这条 session 里有 roundtable_state 进度
-                        book_id = session.book_id or book_id
-                        scope = session.scope or scope
-                        _resume_state_found_in_session = True
+                session = _candidate
+                session_id = session.id
+                book_id = session.book_id or book_id
+                scope = session.scope or scope
+                _resume_state_found_in_session = True
+            elif isinstance(_rst, dict) and ((_rst.get('done') and isinstance(_rst['done'], list) and len(_rst['done']) > 0) or _rst.get('moderator_open') or _rst.get('topic')):
+                # ai_sessions 里没这条记录（可能 scope 错被删），但 roundtable_state 有真进度
+                #   → 用兜底创建的 session，但 state 会在 generate 里 D3-0 独立读命中
+                _resume_state_found_in_session = False
         except Exception:
             _resume_state_found_in_session = False
 
@@ -10173,38 +10219,38 @@ def chat_roundtable():
 
             # 【D3·终极兜底捞 state】：resume_from_checkpoint=true 时，
             # 如果上面仍然拿到 state=None 或空 dict（比如 session/scope 彻底错位、state 存在别的会话里），
-            # 直接扫 DB 所有 AISession 里 meta_json 有 _RT_STATE_KEY 的记录，挑出"有 done/moderator_open/topic"
-            # 且最近更新、且 book_id 匹配（book_id 场景下）的那条，把它的 state 偷过来强行续会。
+            # 扫最近的 ai_sessions，用每条 session.id 去独立 roundtable_state 小表里找进度（因为 meta_json 列不存在）。
             if resume_from_checkpoint and (not state or not isinstance(state, dict) or len(state.get('done') or []) == 0):
                 try:
-                    # 构造 filter：有书绑书，无书就全局
                     q = AISession.query
                     if book_id:
                         q = q.filter(AISession.book_id == book_id)
                     recent_sessions = q.order_by(AISession.updated_at.desc()).limit(50).all()
                     _best_st = None
                     _best_score = -1
+                    _best_session = None
                     for rs in recent_sessions:
                         try:
-                            rm = rs.meta_json if isinstance(rs.meta_json, dict) else (
-                                json.loads(rs.meta_json or '{}') if getattr(rs, 'meta_json', None) else {})
-                            if not isinstance(rm, dict): continue
-                            st = rm.get(_RT_STATE_KEY)
+                            _rsid = str(getattr(rs, 'id', '') or '').strip()
+                            if not _rsid: continue
+                            st = _rt_load_state_by_sid_independent(_rsid)
                             if not isinstance(st, dict): continue
                             _sc = 0
-                            _sc += 10 * len(st.get('done') or [])  # 已发言专家越多 = 越可能就是我们要的
+                            _sc += 10 * len(st.get('done') or [])
                             if st.get('moderator_open'): _sc += 3
                             if st.get('topic'): _sc += 1
                             if book_id and str(rs.book_id or '') == str(book_id): _sc += 5
                             if _sc > _best_score:
                                 _best_score = _sc
                                 _best_st = dict(st)
-                                # 顺便把 session 指针也切过去（方便最后存到同一个地方，不跨 session）
-                                session = rs
+                                _best_session = rs
                         except Exception:
                             continue
                     if _best_st is not None and _best_score > 0:
                         state = _best_st
+                        if _best_session is not None:
+                            session = _best_session
+                            session_id = str(getattr(session, 'id', '') or session_id)
                 except Exception:
                     pass  # 扫描失败 = 静默继续，交给原逻辑
 
