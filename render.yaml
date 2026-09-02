@@ -4,6 +4,20 @@ services:
     runtime: python
     rootDir: source/backend
     plan: free
+    # ==============================================================
+    # 【前后端对齐·核心原则】—— 改这里之前先读 deploy.sh 头部注释！
+    # 本项目的生产前端静态文件路径是：<repo>/source/backend/static/
+    #   由 app.py FRONTEND_DIST 第 2 优先级命中：backend/static/index.html + assets/
+    #   （FANSHU_FRONTEND_DIST 不设！因为它会让你读到旧 frontend/dist）
+    #
+    # "为什么 npm run build 之后前端还不更新？" —— 99% 是忘了把 dist/* 同步到
+    # backend/static/。现在用工程化方式根治：
+    #   ① vite.config.ts fanshuAlignPlugin 钩子：build 结束自动 cp dist → static
+    #     + 写 version.json + 哈希对账（对账失败抛错，不准提交错误版本）
+    #   ② 根目录 deploy.sh：一键完成 构建→对账→git commit→push→Render 部署
+    #   ③ 上线核对：curl https://<域名>/version.json 看 commitId 是否一致
+    # 下次任何部署只用跑：bash deploy.sh
+    # ==============================================================
     # 前端构建产物已提交到 backend/static（git 跟踪），无需在 Render 上重新 build
     # 简化构建命令，避免免费版内存不足导致 npm build 失败
     buildCommand: pip install -r requirements.txt

@@ -7,10 +7,19 @@ __pycache__/
 venv/
 
 # Build output
+# ⚠️【前后端对齐·铁律 1/2】不要单独 ignore source/backend/static —— Flask 生产环境就是从这里读前端！
+#    如果误把它加入 ignore → Render 拿到的是旧版本 → 用户说"怎么还是原界面"。
+#    vite.config.ts 里的 fanshuAlignPlugin 会在 npm run build 时自动把 dist/* 同步到这里。
+#    一键部署：bash deploy.sh
 dist/
 # 前端构建产物纳入版本控制，用于 GitHub Pages / Render 直接托管
 !source/frontend/dist/
 !source/frontend/dist/**
+# ⚠️【前后端对齐·铁律 2/2】backend/static/{index.html,assets,version.json} 必须被 git 跟踪：
+!source/backend/static/index.html
+!source/backend/static/version.json
+!source/backend/static/assets/
+!source/backend/static/assets/**
 # docs/ is used for GitHub Pages - do NOT ignore
 
 # IDE
