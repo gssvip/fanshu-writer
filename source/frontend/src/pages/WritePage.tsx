@@ -3404,7 +3404,6 @@ function ChapterPanel(props: {
 
         {/* —— 笔记本类纸：章节落地正文；点击纸区域直接进入编辑 —— */}
         <article className="paper-notebook chapter-paper" onClick={onStartEdit} style={{cursor:'text'}}>
-          <div className="paper-curl" aria-hidden="true" />
 
           <div className="paper-inner">
             <h3 className="chapter-detail-title paper-title">{activeChapter.title}</h3>
@@ -3438,7 +3437,6 @@ function ChapterPanel(props: {
 
         {/* —— 笔记本类纸编辑纸 —— */}
         <article className="paper-notebook chapter-paper chapter-edit-paper">
-          <div className="paper-curl" aria-hidden="true" />
           <div className="paper-inner">
             <input
               className="paper-title-input"
@@ -6126,12 +6124,11 @@ function BibleEditPanel(props: {
         <>
           {/* —— 笔记本类纸：维度落地内容；点击纸区域直接进入编辑 —— */}
           <div className="paper-notebook bible-paper" data-dim={tab.label} onClick={onStartEdit} style={{cursor:'text'}}>
-            <div className="paper-curl" aria-hidden="true" />
             <div className="paper-inner">
               <pre className="bible-text">{collapseNewlines(content)}</pre>
               <div className="paper-footer" aria-hidden="true">
                 <span className="paper-footer-left">— 蚂蚁世界观百科 —</span>
-                <span className="paper-footer-right">— Updated —</span>
+                <span className="paper-footer-right">— 智驾 —</span>
               </div>
             </div>
           </div>
@@ -6469,12 +6466,11 @@ function OutlineCombinedPanel(props: {
       ) : currentContent ? (
         /* —— 笔记本类纸：大纲 / 世界观 落地内容；点击纸区域直接进入编辑 —— */
         <div className="paper-notebook bible-paper outline-paper" data-dim={labelMap[subTab]} onClick={startEdit} style={{cursor:'text'}}>
-          <div className="paper-curl" aria-hidden="true" />
           <div className="paper-inner">
             <pre className="bible-text">{collapseNewlines(currentContent)}</pre>
             <div className="paper-footer" aria-hidden="true">
               <span className="paper-footer-left">— 蚂蚁世界观百科 —</span>
-              <span className="paper-footer-right">— Updated —</span>
+              <span className="paper-footer-right">— 智驾 —</span>
             </div>
           </div>
         </div>
@@ -6706,12 +6702,11 @@ function SettingsCombinedPanel(props: {
       ) : currentContent ? (
         /* —— 笔记本类纸：设定 / 文风 落地内容；点击纸区域直接进入编辑 —— */
         <div className="paper-notebook bible-paper setting-paper" data-dim={labelMap[subTab]} onClick={startEdit} style={{cursor:'text'}}>
-          <div className="paper-curl" aria-hidden="true" />
           <div className="paper-inner">
             <pre className="bible-text">{collapseNewlines(currentContent)}</pre>
             <div className="paper-footer" aria-hidden="true">
               <span className="paper-footer-left">— 蚂蚁世界观百科 —</span>
-              <span className="paper-footer-right">— Updated —</span>
+              <span className="paper-footer-right">— 智驾 —</span>
             </div>
           </div>
         </div>

@@ -881,23 +881,9 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 /* （旧便利贴 / 旧装订孔 样式彻底不生效） */
 .paper-binding,.paper-binding .hole,.paper-sticker,.paper-sticker::before,.paper-sticker--rose,.paper-sticker--blue,.paper-sticker--mint,.paper-sticker--yellow,.paper-sticker--purple,.paper-sticker--coral{display:none !important;width:0;height:0;visibility:hidden;overflow:hidden;opacity:0;pointer-events:none;position:fixed;left:-99999px}
 
-/* —— 右下卷角 —— */
-.paper-curl{
-  position: absolute;
-  right: 0; bottom: 0;
-  width: 30px; height: 30px;
-  background:
-    linear-gradient(135deg,
-      transparent 50%,
-      color-mix(in srgb, var(--text-primary) 12%, transparent) 50%,
-      color-mix(in srgb, var(--text-primary) 22%, transparent) 100%
-    );
-  border-top-left-radius: 10px;
-  box-shadow: -2px -2px 6px -3px color-mix(in srgb, var(--text-primary) 22%, transparent);
-  pointer-events: none;
-  z-index: 2;
-}
-@media (max-width: 767px){ .paper-curl{ width: 20px; height: 20px; } }
+/* —— 右下卷角：用户明确说太丑已删除 —— */
+.paper-curl{display:none !important;width:0;height:0;visibility:hidden;overflow:hidden;opacity:0;pointer-events:none;position:fixed;left:-99999px;clip:rect(0 0 0 0)}
+@media (max-width: 767px){ .paper-curl{display:none !important} }
 
 /* —— 纸内排版容器（横格不再画在此！只给标题/分隔/页脚当排版壳）
        横格只画在 3 个真正"正文文字容器"：
