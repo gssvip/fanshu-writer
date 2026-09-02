@@ -18,11 +18,11 @@ export default function MinePage() {
   const [stats, setStats] = useState({ totalBooks: 0, totalWords: 0, totalChapters: 0 });
   const [writingHist, setWritingHist] = useState({ todayWords: 0, streak: 0 });
 
-  // AI 调用账本
+  // AI 调用账本：range = today（今天） / 7d（近 7 天） / 30d（近 30 天）
   const [usageStats, setUsageStats] = useState<AIUsageStats | null>(null);
   const [usageLogs, setUsageLogs] = useState<AIUsageLogItem[]>([]);
   const [usageLoading, setUsageLoading] = useState(false);
-  const [usageDays, setUsageDays] = useState(7);
+  const [usageRange, setUsageRange] = useState<'today' | '7d' | '30d'>('7d');
   const [usageOnlyFail, setUsageOnlyFail] = useState(false);
 
   // AI 模型拉取与测试连接
@@ -149,14 +149,14 @@ export default function MinePage() {
   }
 
   // AI 调用账本
-  async function loadUsage(days?: number, onlyFail?: boolean) {
-    const d = days ?? usageDays;
+  async function loadUsage(range?: 'today' | '7d' | '30d', onlyFail?: boolean) {
+    const rng = range ?? usageRange;
     const of = onlyFail ?? usageOnlyFail;
     setUsageLoading(true);
     try {
       const [statsData, logs] = await Promise.all([
-        api.getAiUsageStats(d),
-        api.getAiUsage({ limit: 50, onlyFail: of }),
+        api.getAiUsageStats(rng),
+        api.getAiUsage({ limit: 50, onlyFail: of, range: rng }),
       ]);
       setUsageStats(statsData);
       setUsageLogs(logs.items);
@@ -731,40 +731,83 @@ export default function MinePage() {
             <h3>🧾 AI 调用账本</h3>
             <p className="text-muted">记录每一次AI调用的场景、模型、字数、耗时与成败，便于审计和成本掌控</p>
 
-            <div className="form-row" style={{alignItems:'flex-end',gap:8}}>
-              <div style={{flex:1}}>
-                <label className="input-label">统计周期</label>
-                <select className="input" value={usageDays} onChange={e => { const d = Number(e.target.value); setUsageDays(d); loadUsage(d, usageOnlyFail); }}>
-                  <option value={7}>近 7 天</option>
-                  <option value={30}>近 30 天</option>
-                  <option value={90}>近 90 天</option>
-                </select>
+            {/* 时间范围：今天 / 近 7 天 / 近 30 天 — 三枚胶囊按钮（桌面端一排，手机端等分换行） */}
+            <div className="ledger-range-row nr-filter-section" style={{
+              display:'flex',flexWrap:'wrap',gap:10,alignItems:'center',
+              width:'100%',boxSizing:'border-box',marginTop:4,
+            }}>
+              <span className="input-label" style={{minWidth:0,flexShrink:0,fontSize:13,color:'var(--text-muted)',fontWeight:600}}>统计周期</span>
+              <div className="ledger-range-tabs" style={{
+                display:'inline-flex',gap:8,flex:'1 1 auto',flexWrap:'wrap',minWidth:0,
+              }}>
+                {([
+                  {key:'today', label:'今天'},
+                  {key:'7d',    label:'近 7 天'},
+                  {key:'30d',   label:'近 30 天'},
+                ] as const).map(r => {
+                  const active = usageRange === r.key;
+                  return (
+                    <button
+                      key={r.key}
+                      type="button"
+                      className={`ledger-range-tab ${active ? 'active' : ''}`}
+                      onClick={() => { setUsageRange(r.key); loadUsage(r.key, usageOnlyFail); }}
+                      style={{
+                        padding:'8px 18px',minHeight:34,minWidth:84,
+                        borderRadius:999,fontSize:13,fontWeight:active?700:500,
+                        cursor:'pointer',transition:'all .15s ease-in-out',
+                        background: active
+                          ? 'linear-gradient(135deg, var(--accent), var(--accent-hover))'
+                          : 'var(--bg-tertiary)',
+                        color: active ? '#fff' : 'var(--text-secondary)',
+                        border: active ? '1px solid transparent' : '1px solid var(--border-color)',
+                        boxShadow: active ? '0 2px 8px color-mix(in srgb, var(--accent) 25%, transparent)' : 'none',
+                        whiteSpace:'nowrap',
+                      }}
+                    >{r.label}</button>
+                  );
+                })}
               </div>
-              <label style={{display:'flex',alignItems:'center',gap:6,fontSize:13}}>
-                <input type="checkbox" checked={usageOnlyFail} onChange={e => { const of = e.target.checked; setUsageOnlyFail(of); loadUsage(usageDays, of); }} /> 仅看失败
+              <label className="ledger-onlyfail" style={{display:'inline-flex',alignItems:'center',gap:6,fontSize:13,flexShrink:0}}>
+                <input type="checkbox" checked={usageOnlyFail}
+                       onChange={e => { const of = e.target.checked; setUsageOnlyFail(of); loadUsage(usageRange, of); }} />
+                仅看失败
               </label>
-              <button className="btn-primary" onClick={() => loadUsage()} disabled={usageLoading}>{usageLoading ? '加载中...' : '刷新'}</button>
+              <button className="btn-primary ledger-refresh-btn"
+                      onClick={() => loadUsage()} disabled={usageLoading}
+                      style={{flexShrink:0}}>
+                {usageLoading ? '加载中...' : '刷新'}
+              </button>
             </div>
 
             {usageStats && (
               <>
-                <div className="ledger-cards" style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginTop:16}}>
-                  <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
-                    <div style={{fontSize:22,fontWeight:800,color:'var(--accent)'}}>{usageStats.total_calls}</div>
-                    <div style={{fontSize:12,color:'var(--text-muted)'}}>总调用（{usageStats.days}天）</div>
-                  </div>
-                  <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
-                    <div style={{fontSize:22,fontWeight:800,color:'#27ae60'}}>{usageStats.success_rate}%</div>
-                    <div style={{fontSize:12,color:'var(--text-muted)'}}>成功率（失败{usageStats.failed}）</div>
-                  </div>
-                  <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
-                    <div style={{fontSize:22,fontWeight:800}}>{(usageStats.total_output_chars / 10000).toFixed(2)}万字</div>
-                    <div style={{fontSize:12,color:'var(--text-muted)'}}>累计输出字数</div>
-                  </div>
-                  <div className="ledger-card" style={{padding:12,background:'var(--bg-secondary)',borderRadius:'var(--radius-sm)',border:'1px solid var(--border-color)'}}>
-                    <div style={{fontSize:22,fontWeight:800}}>{(usageStats.total_duration_ms / 60000 / 60).toFixed(1)}h</div>
-                    <div style={{fontSize:12,color:'var(--text-muted)'}}>累计耗时时长</div>
-                  </div>
+                {/* 4 个指标：桌面端 4 列、手机端 2×2 两排对齐（由 CSS @media 控制） */}
+                <div className="ledger-cards">
+                  {(() => {
+                    const rangeLabel = (usageStats.range === 'today' || usageRange === 'today')
+                      ? '今天'
+                      : `近 ${usageStats.days} 天`;
+                    // 统一 4 张卡的结构：label 在上 value 在下 → 手机端 2×2、桌面 1×4 视觉对齐
+                    const cards: Array<{ value: string; label: string; valueColor?: string; }> = [
+                      { value: String(usageStats.total_calls),
+                        label: `总调用（${rangeLabel}）`,
+                        valueColor: 'var(--accent)' },
+                      { value: `${usageStats.success_rate}%`,
+                        label: `成功率（失败${usageStats.failed}）`,
+                        valueColor: '#27ae60' },
+                      { value: `${(usageStats.total_output_chars / 10000).toFixed(2)}万字`,
+                        label: '累计输出字数' },
+                      { value: `${(usageStats.total_duration_ms / 60000 / 60).toFixed(1)}h`,
+                        label: '累计耗时时长' },
+                    ];
+                    return cards.map((c, i) => (
+                      <div key={i} className="ledger-card">
+                        <div className="ledger-card-value" style={{color: c.valueColor || 'var(--text-primary)'}}>{c.value}</div>
+                        <div className="ledger-card-label">{c.label}</div>
+                      </div>
+                    ));
+                  })()}
                 </div>
 
                 {usageStats.by_scene.length > 0 && (

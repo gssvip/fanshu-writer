@@ -14471,9 +14471,19 @@ def export_analysis():
 # ============================================================
 @app.route('/api/ai/usage', methods=['GET'])
 def ai_usage_list():
-    """返回最近 N 条 AI 调用记录（可传 scene / book_id 过滤）。"""
+    """返回最近 N 条 AI 调用记录（可按时间范围 range=today/7d/30d 或旧 days=N；scene/book_id过滤）。"""
     limit = min(int(request.args.get('limit', 50)), 200)
     q = AIUsageLog.query
+
+    # ============= 时间范围过滤（today/7d/30d 优先级 > 旧 days 参数） =============
+    since = _ai_usage_since_from_request()
+    if since is not None:
+        q = q.filter(AIUsageLog.created_at >= since)
+    elif request.args.get('days'):
+        d = int(request.args.get('days'))
+        since = datetime.now(timezone.utc) - timedelta(days=d)
+        q = q.filter(AIUsageLog.created_at >= since)
+
     scene = request.args.get('scene')
     book_id = request.args.get('book_id')
     only_fail = request.args.get('only_fail') == '1'
@@ -14487,11 +14497,44 @@ def ai_usage_list():
     return jsonify({'items': [r.to_dict() for r in rows], 'total': len(rows)})
 
 
+def _ai_usage_since_from_request():
+    """根据 request range 参数返回 AI 调用账本的 since 时间（UTC aware）。
+    today: 按北京时间当天 00:00 → 转 UTC；7d: now-7天；30d: now-30天。
+    兼容旧 days 整数（用于旧前端，外层兜底处理）。"""
+    rng = (request.args.get('range') or '').strip()
+    now_utc = datetime.now(timezone.utc)
+    if rng == 'today':
+        # 北京时间 = UTC+8
+        bj_tz = timezone(timedelta(hours=8), name='Asia/Shanghai')
+        now_bj = now_utc.astimezone(bj_tz)
+        bj_midnight = now_bj.replace(hour=0, minute=0, second=0, microsecond=0)
+        # 北京 0 点转回 UTC 作为 since
+        return bj_midnight.astimezone(timezone.utc)
+    if rng == '7d':
+        return now_utc - timedelta(days=7)
+    if rng == '30d':
+        return now_utc - timedelta(days=30)
+    return None  # 未指定：交给 days 参数或无过滤（上游决定）
+
+
 @app.route('/api/ai/usage/stats', methods=['GET'])
 def ai_usage_stats():
-    """AI 调用账本汇总：总调用、成功率、输出字数、耗时、按场景/模型分组。"""
-    days = int(request.args.get('days', 7))
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    """AI 调用账本汇总：总调用、成功率、输出字数、耗时、按场景/模型分组。
+    优先 range=today/7d/30d；兼容旧 days=N（默认 7 天）。"""
+    # 优先按 range；否则按旧 days 回退
+    since = _ai_usage_since_from_request()
+    range_key = (request.args.get('range') or '').strip() or ''
+    days_used: int
+    if since is not None and range_key:
+        now_utc = datetime.now(timezone.utc)
+        delta_s = max(1.0, (now_utc - since).total_seconds())
+        days_used = int(delta_s // 86400) + (1 if delta_s % 86400 > 0 else 0)
+        days_used = max(1, days_used)
+    else:
+        days_used = int(request.args.get('days', 7))
+        since = datetime.now(timezone.utc) - timedelta(days=days_used)
+        range_key = f'{days_used}d'
+
     base = AIUsageLog.query.filter(AIUsageLog.created_at >= since)
     total = base.count()
     success = base.filter(AIUsageLog.success.is_(True)).count()
@@ -14509,7 +14552,8 @@ def ai_usage_stats():
         AIUsageLog.created_at >= since).group_by(AIUsageLog.model).order_by(db.func.count(AIUsageLog.id).desc()).limit(20).all()
 
     return jsonify({
-        'days': days,
+        'range': range_key,                # today / 7d / 30d
+        'days': days_used,                 # 供兼容显示
         'total_calls': total,
         'success_rate': round(success / total * 100, 1) if total else 100,
         'success': success,

@@ -322,12 +322,26 @@ export const api = {
     return res.json() as Promise<{ success: boolean; added: number; total: number }>;
   },
 
-  // AI 调用账本
-  getAiUsage: (opts?: { limit?: number; scene?: string; bookId?: string; onlyFail?: boolean }) =>
-    request<{ items: AIUsageLogItem[]; total: number }>(
-      `/ai/usage?limit=${opts?.limit || 50}${opts?.scene ? `&scene=${encodeURIComponent(opts.scene)}` : ''}${opts?.bookId ? `&book_id=${encodeURIComponent(opts.bookId)}` : ''}${opts?.onlyFail ? '&only_fail=1' : ''}`, { cache: 'no-store' }),
-  getAiUsageStats: (days = 7) =>
-    request<AIUsageStats>(`/ai/usage/stats?days=${days}`, { cache: 'no-store' }),
+  // AI 调用账本（range: today / 7d / 30d；保持旧 days 整数兼容回退）
+  getAiUsage: (opts?: { limit?: number; scene?: string; bookId?: string; onlyFail?: boolean; range?: 'today'|'7d'|'30d'|string; days?: number }) => {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(opts?.limit ?? 50));
+    if (opts?.range) qs.set('range', opts.range);
+    else if (opts?.days != null) qs.set('days', String(opts.days));
+    if (opts?.scene) qs.set('scene', opts.scene);
+    if (opts?.bookId) qs.set('book_id', opts.bookId);
+    if (opts?.onlyFail) qs.set('only_fail', '1');
+    return request<{ items: AIUsageLogItem[]; total: number }>(`/ai/usage?${qs.toString()}`, { cache: 'no-store' });
+  },
+  getAiUsageStats: (rangeOrDays: 'today'|'7d'|'30d'|number = '7d') => {
+    const qs = new URLSearchParams();
+    if (typeof rangeOrDays === 'number') {
+      qs.set('days', String(rangeOrDays));
+    } else {
+      qs.set('range', rangeOrDays);
+    }
+    return request<AIUsageStats>(`/ai/usage/stats?${qs.toString()}`, { cache: 'no-store' });
+  },
 
   // 榜单风向（老版聚合分析视图，兼容首页引用）
   getRankings: (platform = 'fanqie') =>

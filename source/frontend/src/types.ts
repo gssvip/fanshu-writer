@@ -251,6 +251,7 @@ export interface AIUsageLogItem {
 export interface AIUsageSceneStat { scene: string; count: number; output_chars: number }
 export interface AIUsageModelStat { model: string; count: number }
 export interface AIUsageStats {
+  range?: string;            // today / 7d / 30d（新 range 模式字段；旧 days 模式可能缺失）
   days: number; total_calls: number; success_rate: number;
   success: number; failed: number;
   total_output_chars: number; total_prompt_chars: number; total_duration_ms: number; avg_output_chars: number;

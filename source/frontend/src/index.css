@@ -713,6 +713,120 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   .book-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;padding:20px}
 }
 
+/* ============================================================
+   【AI 调用账本】时间胶囊 + 4 指标卡（桌面端 4 列 / 手机端 2×2 两排对齐）
+   ============================================================ */
+/* —— 桌面端默认 —— */
+.ledger-range-row { margin-top: 6px; }
+.ledger-range-tabs .ledger-range-tab:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border-color));
+}
+.ledger-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);   /* 桌面：总调用 / 成功率 / 字数 / 耗时 一排 4 个 */
+  gap: 12px;
+  margin-top: 16px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.ledger-card {
+  padding: 14px 16px;
+  background: linear-gradient(180deg, var(--bg-secondary), color-mix(in srgb, var(--bg-secondary) 95%, var(--accent) 5%));
+  border: 1.5px solid var(--border-color);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;    /* 垂直居中：2×2 时四张卡高低对齐 */
+  align-items: flex-start;    /* 左对齐：value / label 统一从左开始读 */
+  gap: 6px;
+  min-height: 86px;           /* 等高：手机 2 排视觉上下对齐；桌面 1 排也保证 4 卡高度一致 */
+  transition: all .2s ease;
+  box-sizing: border-box;
+}
+.ledger-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border-color));
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px -14px color-mix(in srgb, var(--accent) 30%, #000);
+}
+.ledger-card-value {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: .3px;
+  margin: 0;
+}
+.ledger-card-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.35;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+/* —— 手机端：时间胶囊 3 个一行 / 仅看失败和刷新各占新行；4 指标变 2×2 ===================================================== */
+@media (max-width: 767px) {
+  .ledger-range-row {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+  .ledger-range-row > .input-label {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  .ledger-range-tabs {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr);   /* 今天 / 近7天 / 近30天：3 等分一排，按钮宽度一致对齐好看 */
+    gap: 6px !important;
+  }
+  .ledger-range-tabs .ledger-range-tab {
+    width: 100%;
+    min-width: 0 !important;
+    padding: 8px 6px !important;
+    min-height: 34 !important;
+    font-size: 12.5px !important;
+    text-align: center;
+  }
+  .ledger-onlyfail {
+    justify-content: flex-start;
+    margin: 2px 2px 0;
+    padding: 2px 2px;
+  }
+  .ledger-refresh-btn {
+    width: 100% !important;
+    justify-content: center;
+  }
+  /* 4 指标卡：2×2 两排，严格两列等分，两排高度一致，label/value 居中对齐好看 */
+  .ledger-cards {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+    margin-top: 12px !important;
+  }
+  .ledger-card {
+    padding: 12px 12px !important;
+    border-radius: 12px !important;
+    min-height: 84px;
+    align-items: center !important;      /* 手机 2×2：整体居中，比左对齐更对称 */
+    justify-content: center !important;
+    text-align: center !important;
+    gap: 5px !important;
+  }
+  .ledger-card-value {
+    font-size: 20px !important;          /* 保证两排能看清，不与桌面端 24 冲突 */
+    line-height: 1.15;
+  }
+  .ledger-card-label {
+    font-size: 11.5px !important;
+    text-align: center !important;
+    white-space: normal;                 /* 手机窄：允许两行折行显示，比如"总调用（今天）"失败次数多时不被截断 */
+  }
+}
+
 /* Mobile only */
 @media (max-width: 767px) {
   .analyze-grid{grid-template-columns:1fr}
