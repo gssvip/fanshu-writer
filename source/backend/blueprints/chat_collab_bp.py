@@ -163,6 +163,88 @@ _RT_CONTINUE_HINTS = ('继续', '接着', '续会', '下次开', '往下')
 _RT_FULL_RE = re.compile(r'^(?:继续|继续会议|继续圆桌|继续圆桌会议|圆桌会议继续|会议继续|继续讨论|继续聊|继续开会|接着|接着聊|接着讨论|往下|再来|继续吧|继续\s*[。.!！，,？?]*\s*)$')
 
 
+# =============================================================================
+# P0 榜单风向 × 智驾：上下文注入
+#   - 前端先 POST /api/rank/scan-for-concept 拿到 RankScanReport（report），
+#     再把 report 作为 rank_scan 字段塞进智驾相关 API 请求体。
+#   - 后端统一用 _format_rank_context / _apply_rank_meta 两块：
+#       1) 在 system_prompt 末尾追加"【市场风向·扫榜情报】"
+#       2) 在 actionCard / 返回 meta 上附带 rankSourceLabel（前端副驾 subtitle 小字展示）
+# =============================================================================
+
+def _format_rank_context(rank_scan: dict | None) -> str:
+    """把 RankScanReport 格式化为一段可被 system_prompt 直接注入的中文块。"""
+    if not rank_scan or not isinstance(rank_scan, dict):
+        return ''
+    try:
+        agg_label = str(rank_scan.get('rank_aggregate_label') or '').strip()
+        meta = rank_scan.get('meta') or {}
+        cats = meta.get('matched_categories') or []
+        kws = meta.get('detected_keywords') or []
+        snap = rank_scan.get('market_snapshot') or {}
+        trend = (snap.get('trend_marker') or {}).get('label')
+        tone = (snap.get('trend_marker') or {}).get('tone')
+        openings = rank_scan.get('opening_patterns') or []
+        populars = rank_scan.get('popular_elements') or []
+        landmines = rank_scan.get('landmine_elements') or []
+        formulas = rank_scan.get('title_formulas') or []
+
+        def _join(arr, cap=7):
+            xs = [str(x).strip() for x in (arr or []) if str(x).strip()]
+            if not xs:
+                return '无'
+            xs = xs[:cap]
+            return '、'.join(xs)
+
+        lines = ['【市场风向·扫榜情报（本轮创作必须对照以下情报）】']
+        if agg_label:
+            lines.append(f'· 扫榜口径：{agg_label}')
+        if cats:
+            lines.append('· 匹配分类新书榜：' + '；'.join(str(x) for x in cats[:4]) + ('（等）' if len(cats) > 4 else ''))
+        if kws:
+            lines.append('· 命中关键词：' + _join(kws, cap=10))
+        if trend or tone:
+            lines.append(f'· 市场判断：{trend or ""}（{tone or ""}）')
+        lines.append('· 开篇钩子套路（新书榜 TOP 常用）：' + _join(openings))
+        lines.append('· 读者买单要素（流行卖点）：' + _join(populars))
+        lines.append('· 读者弃文毒点（务必回避）：' + _join(landmines))
+        lines.append('· 书名公式范例：' + _join(formulas))
+        lines.append('【执行要求】构思/设定/大纲/多选方案/圆桌讨论时：**优先吸收"读者买单要素"与"开篇钩子套路"并融合；避开"读者弃文毒点"；书名/方案标题可参考"书名公式范例"**。若情报与用户明确指定相悖，以用户指定为准但需在结论里提示"这样做会偏离市场风向"。')
+        return '\n'.join(lines)
+    except Exception:
+        return ''
+
+
+def _get_rank_label(rank_scan: dict | None) -> str:
+    if not rank_scan or not isinstance(rank_scan, dict):
+        return ''
+    return str(rank_scan.get('rank_aggregate_label') or '').strip()
+
+
+def _enrich_card_rank_meta(card: dict, rank_scan: dict | None, extra_meta: dict | None = None) -> dict:
+    """给落地卡片加 subtitle/rankSourceLabel 字段，便于前端 actionCard subtitle 展示风向来源。"""
+    if not card or not isinstance(card, dict):
+        return card
+    rank_label = _get_rank_label(rank_scan)
+    if rank_label:
+        card['rankSourceLabel'] = rank_label
+        card['subtitle'] = card.get('subtitle') or f"基于风向：{rank_label}"
+    if extra_meta and isinstance(extra_meta, dict):
+        for k, v in extra_meta.items():
+            if v is not None:
+                card[k] = v
+    return card
+
+
+def _persisted_rank_cards(cards, rank_scan):
+    out = []
+    for c in (cards or []):
+        c2 = dict(c)
+        _enrich_card_rank_meta(c2, rank_scan)
+        out.append(c2)
+    return out
+
+
 def _is_rt_continue(msg: str) -> bool:
     m = (msg or '').strip().lstrip('，。,.！!？? ').strip()
     if not m:
@@ -1590,10 +1672,12 @@ def _core_params_iron_block(bb, book):
         return ''
 
 
-def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapter_num: int = None, toc_block: str = None) -> str:
+def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapter_num: int = None, toc_block: str = None,
+                            rank_scan: dict | None = None) -> str:
     """构建维度感知的聊天 system_prompt。
 
     注入当前书的全部 bible 维度 + 章节目录 + Action Card 使用说明 + 创作进度。
+    可选 rank_scan：榜单风向扫榜情报，追加为"本轮市场风向执行要求"。
     维度内容完整注入，不截断（避免信息缺失导致错乱）。
     recent_chapters: 最近章节列表（dict: title/word_count/order_index），由 chat_smart 注入
     next_chapter_num: 下一章应使用的章节号（与写作/修改/去AI统一口径）
@@ -1734,6 +1818,12 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
                 parts.append('\n' + _pp)
         except Exception:
             pass
+
+    # P0 榜单风向：如果本轮有扫榜情报（match_categories/hot_elements/openings/landmines/title_formulas/top_books），
+    # 作为最终段注入。让智驾的通用聊天与副驾全部能自动对齐市场。
+    _rank_ctx = _format_rank_context(rank_scan)
+    if _rank_ctx:
+        parts.append('\n' + _rank_ctx)
 
     return '\n'.join(parts)
 
@@ -1948,6 +2038,8 @@ def chat_smart():
     req_role_id = (data.get('role_id') or '').strip() or None
     # 持久化在会话级 meta_json.role_id（下次沿用，除非用户切）
     scope = data.get('scope', 'general')
+    # P0 榜单风向：前端在聊智驾前先扫榜，把扫榜报告 rank_scan 塞进来；我们注入到 system_prompt 和所有落地卡片 subtitle
+    _rank_scan = data.get('rank_scan') if isinstance(data.get('rank_scan'), dict) else None
 
     if not book_id or not message:
         return jsonify({'error': '缺少 book_id 或 message'}), 400
@@ -1990,7 +2082,7 @@ def chat_smart():
 
     # 构建 system_prompt + 上下文（注入章节目录）
     toc_block = _build_toc_block(book_id)
-    system_prompt = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block)
+    system_prompt = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block, rank_scan=_rank_scan)
 
     # ===== 写正文意图·注入正文行文规范 =====
     # chat_smart（维度感知聊天）默认只注入 GENERAL_CORE_RULES，不注入 WRITING_STYLE_RULES（设计见
@@ -2103,6 +2195,7 @@ def chat_smart():
                 if c.get('title'):
                     c['title'] = _clean_text_to_plain(c['title'])
             for card in cards:
+                _enrich_card_rank_meta(card, _rank_scan)
                 yield f'data: {json.dumps({"type": "card", "card": card, "session_id": session_id}, ensure_ascii=False)}\n\n'
 
             # 持久化对话（剥离卡片标记后存历史，cards 单独存以便历史会话恢复）
@@ -2110,7 +2203,9 @@ def chat_smart():
             # 卡片持久化时标记为 pending，前端历史会话加载后可继续采纳
             persisted_cards = [{'id': c['id'], 'type': c['type'], 'title': c['title'],
                                 'content': c['content'], 'target': c['target'],
-                                'status': 'pending'} for c in cards]
+                                'status': 'pending',
+                                'rankSourceLabel': c.get('rankSourceLabel') or '',
+                                'subtitle': c.get('subtitle') or ''} for c in cards]
             history.append({'role': 'user', 'content': message})
             history.append({'role': 'assistant', 'content': clean_text,
                             'cards': persisted_cards})
@@ -5178,6 +5273,8 @@ def smart_general():
     message = (data.get('message') or '').strip()
     skill_pack_ids = data.get('skill_pack_ids') or []
     session_id = data.get('session_id')
+    # P0 榜单风向：前端先扫榜把 rank_scan 塞进来；注入 system prompt + 卡片 subtitle
+    _rank_scan = data.get('rank_scan') if isinstance(data.get('rank_scan'), dict) else None
 
     if not book_id or not message:
         return jsonify({'error': '缺少 book_id 或 message'}), 400
@@ -5231,7 +5328,7 @@ def smart_general():
 
     # ===== 复用 chat_smart 的 system prompt + TOC + 定位铁律（核心）=====
     toc_block = _build_toc_block(book_id)
-    base_system = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block)
+    base_system = build_chat_system_prompt(book, bb, recent_chapters, next_chapter_num, toc_block, rank_scan=_rank_scan)
 
     # 通用聊天专属追加：构思专属规则 + 关键词命中卡片产出提示 + 增强索要资料禁令（第二保险）
     extra_parts = []
@@ -5336,10 +5433,14 @@ def smart_general():
                     card['content'] = _clean_text_to_plain(card.get('content', ''))
                     if card.get('title'):
                         card['title'] = _clean_text_to_plain(card['title'])
+                _enrich_card_rank_meta(card, _rank_scan)
                 yield sse({'type': 'card', 'card': card, 'session_id': session_id})
             # 历史里保存作者原话（不保存注入引用块，避免多轮重复上下文）
             history = load_session_messages(session)
             history.append({'role': 'user', 'content': message})
+            # 历史保存的卡片也同步 enrich，后续复盘/多轮时仍带风向标签
+            for c in (cards or []):
+                _enrich_card_rank_meta(c, _rank_scan)
             history.append({'role': 'assistant', 'content': clean_content,
                             'cards': [{**c, 'status': 'pending'} for c in cards] if cards else None})
             _safe_save_session_messages(session, history)
@@ -5401,6 +5502,8 @@ def smart_suggest():
     # 用户在智驾窗口直接贴了自己的完整内容（>300字且维度空时前端会传）：
     # 把"用户方案"放在 AI 方案最前面，供作者选择"按我的直接落地"。
     user_paste = (data.get('user_paste') or '').strip()
+    # P0 榜单风向：前端扫榜结果 rank_scan 注入（可选；没扫则不注入）
+    _rank_scan = data.get('rank_scan') if isinstance(data.get('rank_scan'), dict) else None
 
     if not book_id or dim_key not in _DIM_KEY_TO_SPEC:
         return jsonify({'error': '缺少 book_id 或 dimension 无效'}), 400
@@ -5634,6 +5737,11 @@ def smart_suggest():
 1. 若本任务属于大纲/剧情/构思维度，每条 preview 必须显式包含"{tv_for_suggest if (tv_for_suggest and tv_for_suggest>=1) else '__'}卷"字样，不得写"十卷""五卷"等默认数字；
 2. 所有 preview 检查一遍：有没有英语？有没有复述本 prompt 里的规则/自检/格式说明？字数够 120-220？中文通顺？
 3. JSON 合法：无多余逗号，suggestions 长度 3-5，数组元素只含 title 与 preview。"""
+
+    # P0 榜单风向：把扫榜情报追加到 system_prompt。有多方案场景要求标题/卖点/钩子优先贴合。
+    _rank_ctx = _format_rank_context(_rank_scan)
+    if _rank_ctx:
+        sys_prompt = sys_prompt.rstrip() + '\n\n' + _rank_ctx
 
     messages = [{'role': 'system', 'content': sys_prompt},
                 {'role': 'user', 'content': f'请生成{spec["label"]}的多选方案'}]
@@ -5913,6 +6021,8 @@ def smart_generate():
     from_user_paste = bool(data.get('from_user_paste'))
     # 【direct 模式】整体重新生成（reroll）：换展开角度，方向仍锁定上游不变
     reroll = bool(data.get('reroll'))
+    # P0 榜单风向：前端先扫榜把 rank_scan 塞进来，注入 sys_prompt + 落地卡片 subtitle
+    _rank_scan = data.get('rank_scan') if isinstance(data.get('rank_scan'), dict) else None
 
     # reroll 允许 suggestion 为空：direct 模式的方向来自 DB 已定上游，不依赖方案卡片文本
     if not book_id or dim_key not in _DIM_KEY_TO_SPEC or (not suggestion and not reroll):
@@ -6639,6 +6749,11 @@ def smart_generate():
         except Exception:
             pass
 
+    # P0 榜单风向：把扫榜市场情报追加到 system prompt 末尾（用户点了扫榜才生效）
+    _rank_ctx = _format_rank_context(_rank_scan)
+    if _rank_ctx:
+        sys_prompt = sys_prompt.rstrip() + '\n\n' + _rank_ctx
+
     # ===== 会话（【会话隔离铁律】：session.book_id != book_id 就丢弃，不让旧书历史污染新书）=====
     session = _get_or_create_session_for_book(session_id, book_id, scope='smart_setting',
                                               title=f'{spec["label"]}生成')
@@ -6712,11 +6827,13 @@ def smart_generate():
                     'content': body,
                     'target': _CARD_TARGET.get(spec['card'], spec['label']),
                 }
+                _enrich_card_rank_meta(card, _rank_scan)
                 yield sse({'type': 'card', 'card': card, 'session_id': session_id})
                 for ec in extra_cards:
                     ec['content'] = _clean_text_to_plain(ec.get('content', ''))
                     if ec.get('title'):
                         ec['title'] = _clean_text_to_plain(ec['title'])
+                    _enrich_card_rank_meta(ec, _rank_scan)
                     yield sse({'type': 'card', 'card': ec, 'session_id': session_id})
                 history = load_session_messages(session)
                 history.append({'role': 'user', 'content': f'落地用户{spec["label"]}方案'})
@@ -6869,12 +6986,14 @@ def smart_generate():
                 'content': clean_content,
                 'target': _CARD_TARGET.get(spec['card'], spec['label']),
             }
+            _enrich_card_rank_meta(card, _rank_scan)
             card_meta = {'validation': validation_meta} if validation_meta else None  # 自检结果随卡片下发
             yield sse({'type': 'card', 'card': card, 'session_id': session_id, 'meta': card_meta})
             for ec in extra_cards:
                 ec['content'] = _clean_text_to_plain(ec.get('content', ''))
                 if ec.get('title'):
                     ec['title'] = _clean_text_to_plain(ec['title'])
+                _enrich_card_rank_meta(ec, _rank_scan)
                 yield sse({'type': 'card', 'card': ec, 'session_id': session_id})
             history = load_session_messages(session)
             history.append({'role': 'user', 'content': f'生成{spec["label"]}：{requirement or suggestion[:50]}'})
@@ -7099,6 +7218,7 @@ def smart_dim_edit():
                 'content': content,
                 'target': _CARD_TARGET.get(spec['card'], spec['label']),
             }
+            _enrich_card_rank_meta(card, _rank_scan)
             card_meta = {'validation': validation_meta} if validation_meta else None
             yield sse({'type': 'card', 'card': card, 'session_id': session_id, 'meta': card_meta})
             history = load_session_messages(session)
@@ -7345,6 +7465,7 @@ def smart_batch():
                     'content': content,
                     'target': _CARD_TARGET.get(spec['card'], label),
                 }
+                _enrich_card_rank_meta(card, _rank_scan)
                 card_meta = {'validation': validation_meta} if validation_meta else None
                 yield sse({'type': 'card', 'card': card, 'session_id': session_id, 'meta': card_meta})
 
@@ -7356,14 +7477,16 @@ def smart_batch():
                 c = generated.get(dim_key)
                 if c:
                     spec = _DIM_KEY_TO_SPEC[dim_key]
-                    cards.append({
+                    _cd = {
                         'id': str(uuid.uuid4())[:8],
                         'type': spec['card'],
                         'title': f'{spec["label"]}（AI智驾生成）',
                         'content': c,
                         'target': _CARD_TARGET.get(spec['card'], spec['label']),
                         'status': 'pending',
-                    })
+                    }
+                    _enrich_card_rank_meta(_cd, _rank_scan)
+                    cards.append(_cd)
             history.append({'role': 'assistant', 'content': f'已生成 {len(cards)} 个维度', 'cards': cards})
             _safe_save_session_messages(session, history)
             yield sse({'type': 'done', 'session_id': session_id})
@@ -9413,6 +9536,9 @@ def chat_roundtable():
     topic = (data.get('topic') or '').strip()
     # P0 深度思考级别：统一用标准思考，保证讨论质量
     deep_think = 1
+    # P0 榜单风向：先扫榜再开会，把市场风向注入主持人/所有专家/总结报告
+    _rank_scan = data.get('rank_scan') if isinstance(data.get('rank_scan'), dict) else None
+    _rank_ctx_global = _format_rank_context(_rank_scan)  # 一次计算，复用于下面所有 sys prompt
 
     if not topic:
         return jsonify({'error': '缺少讨论话题'}), 400
@@ -9647,6 +9773,8 @@ def chat_roundtable():
                     _create_msg = "\n\n📌 正在按讨论结果创作【" + _label + "】…\n\n"
                     yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": _create_msg}, ensure_ascii=False)}\n\n'
                     _sys = _rt_create_dimension_system(_dk, book, _iron, _consensus, _bb_existing.get(_dk, ''))
+                    if _rank_ctx_global:
+                        _sys = _sys.rstrip() + '\n\n' + _rank_ctx_global
                     _cre_full = []
                     for _tk2, _tp2 in _rt_stream_turn(_gw_c, [
                         {'role': 'system', 'content': _var_replace(_sys)},
@@ -9667,6 +9795,7 @@ def chat_roundtable():
                         'content': _content,
                         'target': _RT_CREATE_DIMS.get(_dk, (_dk, 'SAVE_CONCEPT'))[0],
                     }
+                    _enrich_card_rank_meta(_card, _rank_scan)
                     yield f'data: {json.dumps({"type": "card", "card": _card, "session_id": session_id}, ensure_ascii=False)}\n\n'
                 yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator_summary"}, ensure_ascii=False)}\n\n'
                 yield f'data: {json.dumps({"type": "done", "session_id": session_id}, ensure_ascii=False)}\n\n'
@@ -9721,6 +9850,8 @@ def chat_roundtable():
                 if book_id and base_system:
                     adj_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。\n\n" + adj_system
                 adj_system = adj_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+                if _rank_ctx_global:
+                    adj_system = adj_system.rstrip() + '\n\n' + _rank_ctx_global
                 adj_msgs = [{'role': 'system', 'content': _var_replace(adj_system)},
                             {'role': 'user', 'content': f'主持人开场，议题：{topic_final}，作者意见：{feedback}'}]
                 gw_mod = LLMGateway(_bg, _kg, _mg)
@@ -9771,6 +9902,8 @@ def chat_roundtable():
                 if book_id and base_system:
                     mod_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + mod_system
                 mod_system = mod_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+                if _rank_ctx_global:
+                    mod_system = mod_system.rstrip() + '\n\n' + _rank_ctx_global
                 mod_messages = [{'role': 'system', 'content': _var_replace(mod_system)}]
                 mod_messages.append({'role': 'user', 'content': f'请开始开场，议题是：{topic}'})
 
@@ -9820,6 +9953,8 @@ def chat_roundtable():
                 if book_id and base_system:
                     sp_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + sp_system
                 sp_system = sp_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+                if _rank_ctx_global:
+                    sp_system = sp_system.rstrip() + '\n\n' + _rank_ctx_global
 
                 sp_messages = [{'role': 'system', 'content': _var_replace(sp_system)}]
                 sp_messages.append({'role': 'user', 'content': (discussion_history + f"\n【轮次】第{round_num}轮 → 轮到【{sp_name}】发言，请开始：\n")[:12000]})
@@ -9903,6 +10038,8 @@ def chat_roundtable():
             if book_id and base_system:
                 sum_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。总结请以落地资料为准。\n\n" + sum_system
             sum_system = sum_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+            if _rank_ctx_global:
+                sum_system = sum_system.rstrip() + '\n\n' + _rank_ctx_global
             sum_messages = [{'role': 'system', 'content': _var_replace(sum_system)}]
             sum_messages.append({'role': 'user', 'content': '请输出总结报告'})
 
@@ -9940,6 +10077,7 @@ def chat_roundtable():
                 sum_cards = []
             # 下发卡片；顺带清理总结正文里可能残留的卡片标记
             for _card in sum_cards:
+                _enrich_card_rank_meta(_card, _rank_scan)
                 yield f'data: {json.dumps({"type": "card", "card": _card, "session_id": session_id}, ensure_ascii=False)}\n\n'
             sum_content = strip_cards(sum_content or '').strip()
             all_messages[-1]['content'] = f'【总结报告】\n{sum_content}'
@@ -9951,6 +10089,9 @@ def chat_roundtable():
 
             # 把整场（含追加轮）的可复盘消息落盘 → 刷新界面不丢
             _mod_open = state.get('moderator_open', '') if isinstance(state, dict) else ''
+            # 落盘的卡片也同步 enrich，保证后续复盘/续会仍保留风向来源
+            for _c in sum_cards:
+                _enrich_card_rank_meta(_c, _rank_scan)
             _rt_persist_messages(session, history, topic_final, _mod_open, done, sum_content, summary_cards=sum_cards)
 
             full_discussion = [

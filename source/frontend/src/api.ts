@@ -382,6 +382,34 @@ export const api = {
   nrForceCrawl: (sourceId: number) =>
     request<{ ok: boolean; itemCount?: number; fetchAt?: number; error?: string }>(`/rank/crawl`, { method: 'POST', body: JSON.stringify({ sourceId }) }),
 
+  // 榜单风向：基于构思匹配新书榜（番茄/起点）并抽取市场情报
+  rankScanForConcept: (concept: string, opts?: { platform?: 'fanqie' | 'qidian'; bookId?: string; gender?: 'male' | 'female' }) => {
+    const body: Record<string, unknown> = {
+      concept,
+      platform: opts?.platform ?? 'fanqie',
+    };
+    if (opts?.bookId) body.book_id = opts.bookId;
+    if (opts?.gender) body.gender = opts.gender;
+    return request<{
+      ok: boolean;
+      platform: 'fanqie' | 'qidian';
+      concept: string;
+      matched_categories?: Array<{ id?: string | number; name: string; score: number; sourceId?: number; platform?: string }>;
+      matched_books_count?: number;
+      market_intel?: {
+        opening_patterns: string[];
+        popular_elements: string[];
+        landmine_elements: string[];
+        title_formulas: string[];
+      };
+      category_keyword_match?: Record<string, unknown>;
+      report?: string;
+      sources_label?: string;
+      cached?: boolean;
+      error?: string;
+    }>('/rank/scan-for-concept', { method: 'POST', body: JSON.stringify(body) });
+  },
+
   // Stages
   listStages: (bookId: string) => request<StageItem[]>(`/books/${bookId}/stages`),
   getStage: (bookId: string, stageKey: string) => request<{ id?: string; book_id: string; stage_key: string; content: string }>(`/books/${bookId}/stages/${stageKey}`),
@@ -1015,22 +1043,24 @@ export const api = {
   // 副驾快捷动作（方案A：副驾做指挥官，调度总创作/章节创作能力）
   // action: master_create / continue / polish
   // 返回 SSE，统一副驾卡片协议（delta/card/done/error）
-  chatSmartAction: (bookId: string, action: 'master_create' | 'continue' | 'polish', opts?: { instruction?: string; target_chapter_num?: number; prev_chapter_content?: string; session_id?: string; skill_pack_ids?: string[] }, signal?: AbortSignal) => {
+  chatSmartAction: (bookId: string, action: 'master_create' | 'continue' | 'polish', opts?: { instruction?: string; target_chapter_num?: number; prev_chapter_content?: string; session_id?: string; skill_pack_ids?: string[]; rank_scan?: any }, signal?: AbortSignal) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
+    const body: Record<string, any> = {
+      book_id: bookId,
+      action,
+      instruction: opts?.instruction || '',
+      target_chapter_num: opts?.target_chapter_num,
+      prev_chapter_content: opts?.prev_chapter_content,
+      session_id: opts?.session_id,
+      skill_pack_ids: opts?.skill_pack_ids || [],
+    };
+    if (opts?.rank_scan) body.rank_scan = opts.rank_scan;
     const cfg: RequestInit = {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        book_id: bookId,
-        action,
-        instruction: opts?.instruction || '',
-        target_chapter_num: opts?.target_chapter_num,
-        prev_chapter_content: opts?.prev_chapter_content,
-        session_id: opts?.session_id,
-        skill_pack_ids: opts?.skill_pack_ids || [],
-      }),
+      body: JSON.stringify(body),
     };
     if (signal) cfg.signal = signal;
     return fetchStream(`${getApiBaseUrl()}/ai/chat/smart/action`, cfg, signal);
@@ -1045,20 +1075,26 @@ export const api = {
       '/ai/smart/dimensions'
     ),
   // 设定Tab：多选意见生成（用户提需求 → AI给 3-5 个方案）
-  smartSuggest: (bookId: string, dimension: string, requirement: string, skillPackIds: string[] = [], userPaste?: string) =>
-    request<{ suggestions: Array<{ id: string; title: string; preview: string; _from_user?: boolean; _full_content?: string }>; dimension: string; dimension_label: string; requirement: string }>(
+  smartSuggest: (bookId: string, dimension: string, requirement: string, skillPackIds: string[] = [], userPaste?: string, rankScan?: any) => {
+    const body: Record<string, any> = { book_id: bookId, dimension, requirement, skill_pack_ids: skillPackIds };
+    if (userPaste) body.user_paste = userPaste;
+    if (rankScan) body.rank_scan = rankScan;
+    return request<{ suggestions: Array<{ id: string; title: string; preview: string; _from_user?: boolean; _full_content?: string }>; dimension: string; dimension_label: string; requirement: string }>(
       '/ai/smart/suggest',
-      { method: 'POST', body: JSON.stringify({ book_id: bookId, dimension, requirement, skill_pack_ids: skillPackIds, user_paste: userPaste }) }
-    ),
+      { method: 'POST', body: JSON.stringify(body) }
+    );
+  },
   // 设定Tab：基于选中意见生成最终内容（SSE 流式）
-  smartGenerateStream: (bookId: string, dimension: string, suggestion: string, requirement: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal, fromUserPaste?: boolean) => {
+  smartGenerateStream: (bookId: string, dimension: string, suggestion: string, requirement: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal, fromUserPaste?: boolean, rankScan?: any) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
+    const body: Record<string, any> = { book_id: bookId, dimension, suggestion, requirement, skill_pack_ids: skillPackIds, session_id: sessionId, from_user_paste: fromUserPaste };
+    if (rankScan) body.rank_scan = rankScan;
     const cfg: RequestInit = {
       method: 'POST',
       headers,
-      body: JSON.stringify({ book_id: bookId, dimension, suggestion, requirement, skill_pack_ids: skillPackIds, session_id: sessionId, from_user_paste: fromUserPaste }),
+      body: JSON.stringify(body),
     };
     if (signal) cfg.signal = signal;
     return fetchStream(`${getApiBaseUrl()}/ai/smart/generate`, cfg, signal);
@@ -1128,14 +1164,16 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ book_id: bookId, chapter_id: chapterId }) }
     ),
   // 设定Tab·通用聊天：自由讨论，关键词触发填入维度（SSE 流式）
-  smartGeneralStream: (bookId: string, message: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal) => {
+  smartGeneralStream: (bookId: string, message: string, skillPackIds: string[] = [], sessionId?: string, signal?: AbortSignal, rankScan?: any) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
+    const body: Record<string, any> = { book_id: bookId, message, skill_pack_ids: skillPackIds, session_id: sessionId };
+    if (rankScan) body.rank_scan = rankScan;
     const cfg: RequestInit = {
       method: 'POST',
       headers,
-      body: JSON.stringify({ book_id: bookId, message, skill_pack_ids: skillPackIds, session_id: sessionId }),
+      body: JSON.stringify(body),
     };
     if (signal) cfg.signal = signal;
     return fetchStream(`${getApiBaseUrl()}/ai/smart/general`, cfg, signal);
@@ -1248,7 +1286,7 @@ export const api = {
   // ────────────────────────────────────────────────────────────────
 
   // 通用聊天模式（SSE）：不强制创作上下文，任意话题；命中维度时 meta.hit_suggestions 回传提示气泡
-  chatGeneralStream: (message: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; roleId?: string; deepThink?: number; webSearch?: boolean; truncateHistoryTo?: number }, signal?: AbortSignal) => {
+  chatGeneralStream: (message: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; roleId?: string; deepThink?: number; webSearch?: boolean; truncateHistoryTo?: number; rankScan?: any }, signal?: AbortSignal) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -1260,13 +1298,14 @@ export const api = {
     if (opts?.deepThink && opts.deepThink > 0) body.deep_think = opts.deepThink; // 0=关 1=标准 2=深度
     if (opts?.webSearch) body.web_search_enabled = true;
     if (typeof opts?.truncateHistoryTo === 'number') body.truncate_history_to = opts.truncateHistoryTo; // 重新生成：截断到前N条
+    if (opts?.rankScan) body.rank_scan = opts.rankScan;
     const cfg: RequestInit = { method: 'POST', headers, body: JSON.stringify(body) };
     if (signal) cfg.signal = signal;
     return fetchStream(`${getApiBaseUrl()}/ai/chat/general`, cfg, signal);
   },
 
   // 圆桌会议：6个专家Agent按两轮依次发言（主持人开场→讨论→总结报告），全程流式推送
-  chatRoundtableStream: (topic: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; rounds?: number }, signal?: AbortSignal) => {
+  chatRoundtableStream: (topic: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; rounds?: number; rankScan?: any }, signal?: AbortSignal) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -1275,6 +1314,7 @@ export const api = {
     if (opts?.sessionId) body.session_id = opts.sessionId;
     if (opts?.aiConfigId) body.ai_config_id = opts.aiConfigId;
     if (typeof opts?.rounds === 'number' && opts.rounds > 0) body.rounds = opts.rounds;
+    if (opts?.rankScan) body.rank_scan = opts.rankScan;
     const cfg: RequestInit = { method: 'POST', headers, body: JSON.stringify(body) };
     if (signal) cfg.signal = signal;
     return fetchStream(`${getApiBaseUrl()}/ai/chat/roundtable`, cfg, signal);

@@ -48,6 +48,9 @@ interface AppStore {
   bibleDirtySeq: number;
   // 预设的修正任务清单（从防遗忘报告违规项带入，支持多章/多维度连续修正并追踪进度）
   chatPanelPresetFixTasks: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> | null;
+  // P0 榜单风向：打开智驾时带入的扫榜报告（首条消息渲染 RankScanCard + 所有请求 rank_scan 字段）
+  chatPanelPresetRankScan: any | null;
+  chatPanelPresetRankScanPlatform: 'fanqie' | 'qidian' | null;
 
   setBooks: (books: Book[]) => void;
   setCurrentBook: (book: Book | null) => void;
@@ -60,12 +63,14 @@ interface AppStore {
   setRightPanel: (panel: 'ai' | 'characters' | 'outline' | 'stats' | null) => void;
   setRightPanelWidth: (width: number) => void;
   setLoading: (loading: boolean) => void;
-  openChatPanel: (bookId: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }>; role?: string; autoSubmit?: boolean }) => void;
+  openChatPanel: (bookId: string, sessionId?: string | null, preset?: any) => void;
   setChatPanelSessionId: (sessionId: string | null) => void;
   closeChatPanel: () => void;
   openNodeDesignView: (volumeIndex: number, volumeTitle: string) => void;
   closeNodeDesignView: () => void;
   markBibleDirty: () => void;
+  // 运行中更新 ChatPanel 的当前扫榜报告（用户点📈重扫后调用，请求时统一带）
+  setChatPanelRankScan: (rankScan: any, platform?: 'fanqie' | 'qidian') => void;
   logout: () => void;
 }
 
@@ -124,6 +129,8 @@ export const useStore = create<AppStore>((set) => ({
   nodeDesignView: null,
   bibleDirtySeq: 0,
   chatPanelPresetFixTasks: null,
+  chatPanelPresetRankScan: null,
+  chatPanelPresetRankScanPlatform: null,
 
   setBooks: (books) => set({ books }),
   setCurrentBook: (book) => set({ currentBook: book }),
@@ -154,12 +161,18 @@ export const useStore = create<AppStore>((set) => ({
     chatPanelPresetFixTasks: preset?.fixTasks ?? null,
     chatPanelPresetRole: preset?.role ?? null,
     chatPanelPresetAutoSubmit: !!preset?.autoSubmit,
+    chatPanelPresetRankScan: preset?.rankScan ?? null,
+    chatPanelPresetRankScanPlatform: preset?.rankScanPlatform ?? null,
   }),
   setChatPanelSessionId: (sessionId) => set({ chatPanelSessionId: sessionId }),
-  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelFixSessionBound: false, chatPanelPresetTab: null, chatPanelPresetInput: null, chatPanelPresetFixTasks: null, chatPanelPresetRole: null, chatPanelPresetAutoSubmit: false, nodeDesignView: null }),
+  closeChatPanel: () => set({ chatPanelOpen: false, chatPanelSessionId: null, chatPanelFixSessionBound: false, chatPanelPresetTab: null, chatPanelPresetInput: null, chatPanelPresetFixTasks: null, chatPanelPresetRole: null, chatPanelPresetAutoSubmit: false, chatPanelPresetRankScan: null, chatPanelPresetRankScanPlatform: null, nodeDesignView: null }),
   openNodeDesignView: (volumeIndex, volumeTitle) => set({ nodeDesignView: { volumeIndex, volumeTitle } }),
   closeNodeDesignView: () => set({ nodeDesignView: null }),
   markBibleDirty: () => set(state => ({ bibleDirtySeq: (state.bibleDirtySeq || 0) + 1 })),
+  setChatPanelRankScan: (rankScan, platform) => set({
+    chatPanelPresetRankScan: rankScan ?? null,
+    chatPanelPresetRankScanPlatform: platform ?? null,
+  }),
   logout: () => {
     try { localStorage.removeItem('fanshu-token'); } catch {}
     set({ currentUser: null, books: [], currentBook: null });

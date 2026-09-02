@@ -2229,11 +2229,71 @@ function ConceptPanel(props: {
     conceptAiMode, conceptAiPrompt, conceptAiAssisting, conceptAiError,
     onExecuteConceptAi, onCancelConceptAi, onEditConceptAiPrompt,
     skillPacks, selectedSkillPackIds, onToggleSkillPack, selectedSkillPacks,
-    bookId, aiSessions, onRefreshSessions, onDeleteAiSessions, onRenameAiSession, onResumeAiSession } = props;
-  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: { tab?: 'setting' | 'chapter' | 'deai' | 'review'; input?: string; fixTasks?: Array<{ location: string; desc: string; fix: string; severity?: string; dimKey?: string }> }) => void;
+    bookId, aiSessions, onRefreshSessions, onDeleteAiSessions, onRenameAiSession, onResumeAiSession,
+    concept, setConcept: _setConcept, bookTitle } = props;
+  void _setConcept;
+  const openChatPanel = useStore((s: any) => s.openChatPanel) as (bid: string, sessionId?: string | null, preset?: any) => void;
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const selectedCount = selectedSkillPackIds.length;
+
+  // P0 榜单风向：AI智驾·构思扫榜选项（默认勾选番茄，可切起点）
+  const [rankScanEnabled, setRankScanEnabled] = useState(true);
+  const [rankScanPlatform, setRankScanPlatform] = useState<'fanqie' | 'qidian'>('fanqie');
+  const [rankScanLoading, setRankScanLoading] = useState(false);
+
+  const handleOpenAiWithRankScan = async () => {
+    if (!bookId) return;
+    if (!rankScanEnabled) {
+      // 没开扫榜：直接打开智驾
+      openChatPanel(bookId, undefined, { tab: 'setting' });
+      return;
+    }
+    // 开了扫榜：先调 API，得到市场情报后再打开，并作为 preset 传进去
+    setRankScanLoading(true);
+    try {
+      // 扫榜的"构思文本"优先用 concept 已有内容；空则用 prompt；再空就用默认兜底
+      const scanConcept = (concept || '').trim() || (conceptAiPrompt || '').trim() || (bookTitle ? `我想写一本书，标题《${bookTitle}》` : '我想写一本网文，希望能贴合当下市场风向');
+      const resp = await api.rankScanForConcept(scanConcept, {
+        platform: rankScanPlatform,
+        bookId: bookId || undefined,
+      });
+      const rankScanPayload = (resp && resp.ok) ? {
+        platform: resp.platform,
+        concept: resp.concept,
+        matched_categories: resp.matched_categories,
+        matched_books_count: resp.matched_books_count,
+        market_intel: resp.market_intel,
+        report: resp.report,
+        sources_label: resp.sources_label,
+        error: resp.error,
+        ok: resp.ok,
+      } : {
+        ok: false,
+        platform: rankScanPlatform,
+        concept: scanConcept,
+        error: (resp && resp.error) || '扫榜失败，智驾将不使用市场情报继续',
+      };
+      openChatPanel(bookId, undefined, {
+        tab: 'setting',
+        rankScan: rankScanPayload,
+        rankScanPlatform,
+      });
+    } catch (e: any) {
+      // 扫榜失败不阻断：仍然打开智驾，但 rankScan 里带错误信息提示
+      openChatPanel(bookId, undefined, {
+        tab: 'setting',
+        rankScan: {
+          ok: false,
+          platform: rankScanPlatform,
+          concept: (concept || conceptAiPrompt || bookTitle || ''),
+          error: e?.message || '扫榜失败',
+        },
+      });
+    } finally {
+      setRankScanLoading(false);
+    }
+  };
 
   // 聊天记录管理状态（需求3）
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -2377,12 +2437,13 @@ function ConceptPanel(props: {
   return (
     <div className="concept-panel">
       {/* 构思维度：AI 智驾入口（四Tab：设定/正文/去AI/校审） */}
-      <div className="concept-input-section" style={{ alignItems: 'center', justifyContent: 'center', flex: 0 }}>
+      <div className="concept-input-section" style={{ alignItems: 'center', justifyContent: 'center', flex: 0, gap: 10, flexDirection: 'column' }}>
         <button
           className="btn-primary concept-ai-create-cta"
-          onClick={() => bookId && openChatPanel(bookId)}
-          title="打开 AI 智驾：设定/正文/去AI/校审 四Tab协作创作"
-          style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)' }}
+          onClick={handleOpenAiWithRankScan}
+          disabled={rankScanLoading || !bookId}
+          title="打开 AI 智驾：设定/正文/去AI/校审 四Tab协作创作。默认先扫番茄新书榜获取市场风向，可手动切换起点或关闭扫榜。"
+          style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)', opacity: rankScanLoading ? 0.75 : 1 }}
         >
           <div className="cta-main-row">
             <CarLogo size={90} />
@@ -2391,9 +2452,70 @@ function ConceptPanel(props: {
               <span>智</span>
               <span>驾</span>
             </span>
-            <span className="cta-sub-text"><span className="cta-ai">Ai</span>领航，人机共创</span>
+            <span className="cta-sub-text"><span className="cta-ai">Ai</span>领航，人机共创{rankScanEnabled ? ' + 📈市场风向' : ''}</span>
           </div>
+          {rankScanLoading && (
+            <div className="cta-rankscan-status" style={{ fontSize: 12, marginTop: 4, opacity: 0.92, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <span className="loading-spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+              {rankScanPlatform === 'fanqie' ? '扫描番茄新书榜中…（约 5-15 秒）' : '扫描起点新书榜中…（约 5-15 秒）'}
+            </div>
+          )}
         </button>
+
+        {/* 扫榜选项：默认勾选 + 番茄/起点切换 */}
+        <div className="rank-scan-options" style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          padding: '6px 12px',
+          borderRadius: 10,
+          background: 'var(--bg-tertiary)',
+          border: '1px solid var(--border-color)',
+          fontSize: 12,
+          color: 'var(--text-secondary)',
+          maxWidth: 560,
+          justifyContent: 'center',
+        }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: rankScanLoading ? 'not-allowed' : 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={rankScanEnabled}
+              onChange={e => setRankScanEnabled(e.target.checked)}
+              disabled={rankScanLoading}
+              style={{ cursor: rankScanLoading ? 'not-allowed' : 'pointer', width: 14, height: 14 }}
+            />
+            <span>📈 <strong style={{ color: 'var(--text-primary)' }}>扫榜</strong>获取市场风向（默认勾选）</span>
+          </label>
+          <div className="rank-scan-platform-chips" style={{ display: 'inline-flex', gap: 4, marginLeft: 4 }}>
+            {(['fanqie', 'qidian'] as const).map(p => {
+              const active = rankScanPlatform === p;
+              const disabled = !rankScanEnabled || rankScanLoading;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setRankScanPlatform(p)}
+                  disabled={disabled}
+                  title={p === 'fanqie' ? '番茄小说新书榜匹配 Top3 分类' : '起点中文网·大盘新书榜'}
+                  style={{
+                    padding: '3px 10px',
+                    fontSize: 12,
+                    fontWeight: active ? 700 : 500,
+                    borderRadius: 999,
+                    border: `1px solid ${active ? (p === 'fanqie' ? '#e74c3c' : '#1e88e5') : 'var(--border-color)'}`,
+                    background: active
+                      ? (p === 'fanqie' ? 'linear-gradient(135deg,#ffe0e0 0%,#fff0f0 100%)' : 'linear-gradient(135deg,#e3f2fd 0%,#f0f7ff 100%)')
+                      : 'var(--bg-secondary)',
+                    color: active ? (p === 'fanqie' ? '#c0392b' : '#1565c0') : 'var(--text-secondary)',
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    opacity: disabled ? 0.55 : 1,
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {p === 'fanqie' ? '🍅 番茄新书榜（默认）' : '📚 起点新书榜'}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {brainstormResult && (

@@ -548,15 +548,23 @@ const AdoptedCardCollapsed = memo(function AdoptedCardCollapsed({ card }: { card
       <div
         className="chat-card-head"
         onClick={() => setExpanded(e => !e)}
-        style={{ cursor: 'pointer' }}
+        style={{ cursor: 'pointer', flexWrap: 'wrap' }}
       >
         <span className="chat-card-icon">{CARD_ICON[card.type] || '📌'}</span>
         <span className="chat-card-title">{card.title}</span>
+        {card.rankSourceLabel && (
+          <span className="chat-card-rank-label" title="智驾已结合榜单风向生成" style={{ fontSize: 11, padding: '1px 7px', borderRadius: 999, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', marginLeft: 2 }}>
+            📈 {card.rankSourceLabel}
+          </span>
+        )}
         <span className="chat-card-status">✓ 已落地 · {card.target}{wc > 0 ? ` · ${wc}字` : ''}</span>
         <span className="chat-card-toggle" style={{ marginLeft: 'auto', fontSize: 12, color: '#999' }}>
           {expanded ? '收起 ▲' : '展开 ▼'}
         </span>
       </div>
+      {card.subtitle && (
+        <div style={{ padding: '2px 14px 4px', fontSize: 12, color: '#6b7280' }}>{card.subtitle}</div>
+      )}
       {expanded && <div className="chat-card-body">{card.content}</div>}
     </div>
   );
@@ -616,11 +624,17 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
   if (status === 'ignored') {
     return (
       <div className="chat-card chat-card-ignored">
-        <div className="chat-card-head">
+        <div className="chat-card-head" style={{ flexWrap: 'wrap' }}>
           <span className="chat-card-icon">{CARD_ICON[card.type] || '📌'}</span>
           <span className="chat-card-title">{card.title}</span>
+          {card.rankSourceLabel && (
+            <span style={{ fontSize: 11, padding: '1px 7px', borderRadius: 999, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', marginLeft: 2 }}>
+              📈 {card.rankSourceLabel}
+            </span>
+          )}
           <span className="chat-card-status">已忽略</span>
         </div>
+        {card.subtitle && <div style={{ padding: '2px 14px 6px', fontSize: 12, color: '#6b7280' }}>{card.subtitle}</div>}
       </div>
     );
   }
@@ -719,11 +733,19 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
 
   return (
     <div className="chat-card">
-      <div className="chat-card-head">
+      <div className="chat-card-head" style={{ flexWrap: 'wrap' }}>
         <span className="chat-card-icon">{CARD_ICON[card.type] || '📌'}</span>
         <span className="chat-card-title">{card.title}</span>
+        {card.rankSourceLabel && (
+          <span title="智驾已结合榜单风向生成" style={{ fontSize: 11, padding: '1px 7px', borderRadius: 999, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>
+            📈 {card.rankSourceLabel}
+          </span>
+        )}
         <span className="chat-card-target">→ {card.target}</span>
       </div>
+      {card.subtitle && (
+        <div style={{ padding: '2px 14px 4px', fontSize: 12, color: '#6b7280', marginTop: -2 }}>{card.subtitle}</div>
+      )}
       {validation.length > 0 && (
         <div style={{
           padding: '6px 10px',
@@ -824,6 +846,170 @@ const ProgressMapView = memo(function ProgressMapView({ progress, onClose }: { p
           </div>
         ))}
       </div>
+    </div>
+  );
+});
+
+// ============================================================================
+// 榜单风向·市场情报卡片（RankScanCard）：智驾首条消息展示，含📈重扫+切换平台
+// ============================================================================
+interface RankScanCardProps {
+  rankScan: any;
+  platform: 'fanqie' | 'qidian' | null;
+  concept?: string;
+  onRescan: (platform: 'fanqie' | 'qidian') => void;
+  rescanning?: boolean;
+}
+const RankScanCard = memo(function RankScanCard({ rankScan, platform, concept, onRescan, rescanning }: RankScanCardProps) {
+  const [expanded, setExpanded] = useState(true);
+  const curPlatform: 'fanqie' | 'qidian' = (rankScan?.platform || platform || 'fanqie') as any;
+  const platLabel = curPlatform === 'qidian' ? '📚 起点新书榜' : '🍅 番茄新书榜';
+  const platColor = curPlatform === 'qidian'
+    ? { from: '#1e40af', to: '#0369a1', soft: '#eff6ff', border: '#93c5fd' }
+    : { from: '#dc2626', to: '#ea580c', soft: '#fef2f2', border: '#fca5a5' };
+
+  if (!rankScan) return null;
+
+  const ok = !!rankScan.ok && !rankScan.error;
+  const intel = rankScan.market_intel || {};
+  const cats = rankScan.matched_categories || [];
+  const topCat = cats.length > 0 ? cats[0] : null;
+  const sourcesLabel = rankScan.sources_label || `${platLabel} · 匹配 ${rankScan.matched_books_count || 0} 本新书`;
+
+  const ItemList = ({ title, icon, items, color }: { title: string; icon: string; items: string[]; color: string }) => {
+    if (!items || items.length === 0) return null;
+    return (
+      <div style={{ marginTop: 10 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span>{icon}</span><span>{title}</span>
+          <span style={{ flex: 1 }} />
+          <span style={{ fontSize: 11, fontWeight: 400, color: '#9ca3af' }}>共{items.length}项</span>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+          {items.slice(0, expanded ? items.length : 5).map((it, i) => (
+            <span key={i} style={{
+              display: 'inline-flex', alignItems: 'center',
+              padding: '3px 9px', borderRadius: 999,
+              background: platColor.soft, border: `1px solid ${platColor.border}`,
+              fontSize: 12.5, lineHeight: '18px',
+              color: '#374151',
+              maxWidth: '100%',
+              wordBreak: 'break-all',
+            }}>
+              <span style={{ opacity: 0.55, marginRight: 4, fontSize: 10.5 }}>{i + 1}</span>
+              {String(it).length > 32 ? String(it).slice(0, 32) + '…' : it}
+            </span>
+          ))}
+          {!expanded && items.length > 5 && (
+            <span style={{ fontSize: 11, color: '#9ca3af', alignSelf: 'center', marginLeft: 2 }}>+{items.length - 5}更多</span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{
+      margin: '6px 2px 12px',
+      borderRadius: 14,
+      padding: '12px 12px 10px',
+      background: `linear-gradient(135deg, ${platColor.from}14 0%, ${platColor.to}12 100%)`,
+      border: `1px solid ${platColor.border}`,
+      boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+    }}>
+      {/* 头栏 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{
+          padding: '3px 10px', borderRadius: 999,
+          background: `linear-gradient(90deg, ${platColor.from}, ${platColor.to})`,
+          color: '#fff', fontSize: 12.5, fontWeight: 600, letterSpacing: 0.2,
+        }}>📈 榜单风向</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{platLabel}</span>
+        {topCat && (
+          <span style={{ fontSize: 12, color: '#4b5563', background: '#fff', padding: '2px 8px', borderRadius: 999, border: '1px solid #e5e7eb' }}>
+            🎯 匹配分类：{topCat.name}{topCat.score ? `（置信 ${Math.round(topCat.score * 100)}%）` : ''}
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        {/* 平台切换重扫 */}
+        <div style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+          {(['fanqie', 'qidian'] as const).map(p => {
+            const active = curPlatform === p;
+            return (
+              <button
+                key={p}
+                onClick={() => onRescan(p)}
+                disabled={rescanning}
+                title={`扫${p === 'fanqie' ? '番茄' : '起点'}新书榜`}
+                style={{
+                  padding: '3px 8px', borderRadius: 999, fontSize: 11.5,
+                  border: active ? `1px solid ${platColor.border}` : '1px solid #e5e7eb',
+                  background: active ? platColor.soft : '#fff',
+                  color: active ? '#111827' : '#6b7280',
+                  cursor: rescanning ? 'progress' : 'pointer',
+                  fontWeight: active ? 600 : 400,
+                }}
+              >
+                {p === 'fanqie' ? '🍅番茄' : '📚起点'}
+              </button>
+            );
+          })}
+          <button
+            onClick={() => onRescan(curPlatform)}
+            disabled={rescanning}
+            style={{
+              padding: '3px 10px', borderRadius: 999, fontSize: 11.5,
+              border: `1px solid ${platColor.border}`,
+              background: platColor.soft, color: '#111827',
+              cursor: rescanning ? 'progress' : 'pointer',
+              fontWeight: 600,
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+            }}
+          >
+            {rescanning ? <><span className="loading-spinner-sm" />扫描中…</> : <>🔄 重扫</>}
+          </button>
+          <button
+            onClick={() => setExpanded(e => !e)}
+            title={expanded ? '收起详情' : '展开详情'}
+            style={{
+              padding: '3px 8px', borderRadius: 999, fontSize: 11.5,
+              border: '1px solid #e5e7eb', background: '#fff', color: '#6b7280',
+              cursor: 'pointer',
+            }}
+          >{expanded ? '▲收起' : '▼展开'}</button>
+        </div>
+      </div>
+
+      {/* 数据来源 & 错误条 */}
+      {!ok && rankScan.error && (
+        <div style={{ marginTop: 8, fontSize: 12, color: '#b91c1c', padding: '6px 10px', borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca' }}>
+          ⚠️ {rankScan.error}
+        </div>
+      )}
+      <div style={{ marginTop: 6, fontSize: 11.5, color: '#6b7280' }}>
+        {sourcesLabel}{concept ? ` · 基于构思「${concept.length > 28 ? concept.slice(0, 28) + '…' : concept}」匹配` : ''}
+        {rankScan.cached && <span style={{ color: '#059669', marginLeft: 4 }}>🗄️ 命中缓存</span>}
+      </div>
+
+      {/* 展开内容：四项市场情报 */}
+      {expanded && (
+        <div style={{ marginTop: 2 }}>
+          {rankScan.report && (
+            <div style={{
+              marginTop: 10, padding: '8px 11px', borderRadius: 10,
+              fontSize: 13, lineHeight: 1.7, color: '#1f2937',
+              background: '#fff', border: '1px solid #f3f4f6',
+            }}>
+              <strong style={{ color: platColor.from }}>📊 风向速览：</strong>
+              <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{rankScan.report}</div>
+            </div>
+          )}
+          <ItemList title="开篇钩子套路" icon="🎣" items={intel.opening_patterns || []} color={platColor.from} />
+          <ItemList title="热门元素·爽点" icon="🔥" items={intel.popular_elements || []} color="#b45309" />
+          <ItemList title="雷区·毒点要素" icon="💣" items={intel.landmine_elements || []} color="#b91c1c" />
+          <ItemList title="书名公式参考" icon="📘" items={intel.title_formulas || []} color="#0369a1" />
+        </div>
+      )}
     </div>
   );
 });
@@ -1284,8 +1470,9 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
 // 主组件：AI 智驾
 // ============================================================================
 export default function ChatPanel() {
-  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetRole, chatPanelPresetAutoSubmit, chatPanelPresetFixTasks, closeChatPanel, nodeDesignView, closeNodeDesignView, markBibleDirty } = useStore() as any;
+  const { chatPanelOpen, chatPanelBookId, chatPanelSessionId, chatPanelPresetTab, chatPanelPresetInput, chatPanelPresetRole, chatPanelPresetAutoSubmit, chatPanelPresetFixTasks, chatPanelPresetRankScan, chatPanelPresetRankScanPlatform, closeChatPanel, nodeDesignView, closeNodeDesignView, markBibleDirty } = useStore() as any;
   const setChatPanelSessionId = useStore((s: any) => s.setChatPanelSessionId) as (id: string | null) => void;
+  const setChatPanelRankScan = useStore((s: any) => s.setChatPanelRankScan) as (rankScan: any, platform?: 'fanqie' | 'qidian') => void;
   const [activeTab, setActiveTab] = useState<SmartTab>('setting');
   // 手机端折叠：折叠"设定"Tab 的维度按钮三排（通用/构思/设定/世界观 + 大纲/剧情/人物/伏笔 + 助手选择器），
   // 为手机端输入/阅读区域留出更多空间
@@ -1408,6 +1595,48 @@ export default function ChatPanel() {
   const fixingDimKeyRef = useRef<string | null>(null);
 
   const bookId = chatPanelBookId;
+
+  // P0-6 榜单风向·扫榜重扫状态 + Ref 同步（所有回调通过 rankScanRef.current 读取，避免逐一补依赖）
+  const [rescanningRankScan, setRescanningRankScan] = useState(false);
+  const handleRescanRankScan = useCallback(async (platform: 'fanqie' | 'qidian') => {
+    const concept = (chatPanelPresetRankScan?.concept || '').trim() || '我想写一本贴合当前市场风向的网文';
+    setRescanningRankScan(true);
+    try {
+      const resp = await api.rankScanForConcept(concept, {
+        platform,
+        bookId: bookId || undefined,
+      });
+      const payload = (resp && resp.ok) ? {
+        platform: resp.platform,
+        concept: resp.concept,
+        matched_categories: resp.matched_categories,
+        matched_books_count: resp.matched_books_count,
+        market_intel: resp.market_intel,
+        report: resp.report,
+        sources_label: resp.sources_label,
+        cached: resp.cached,
+        error: resp.error,
+        ok: resp.ok,
+      } : {
+        ok: false,
+        platform,
+        concept,
+        error: (resp && resp.error) || '扫榜失败',
+      };
+      setChatPanelRankScan(payload, platform);
+    } catch (e: any) {
+      setChatPanelRankScan({
+        ok: false,
+        platform,
+        concept,
+        error: e?.message || '扫榜失败',
+      }, platform);
+    } finally {
+      setRescanningRankScan(false);
+    }
+  }, [bookId, chatPanelPresetRankScan, setChatPanelRankScan]);
+  const rankScanRef = useRef<any>(null);
+  useEffect(() => { rankScanRef.current = chatPanelPresetRankScan || null; }, [chatPanelPresetRankScan]);
 
   // P1-1 会话级切模型：加载AIConfig列表（供模型chip下拉用）
   useEffect(() => {
@@ -1983,7 +2212,7 @@ export default function ChatPanel() {
     setLoadingSuggest(true);
     appendUserAi(`【${dimensions.find(d => d.key === selectedDim)?.label || selectedDim}】${text}`);
     try {
-      const r = await api.smartSuggest(bookId, selectedDim, text, settingPacks, isUserPaste ? userRawContent : undefined);
+      const r = await api.smartSuggest(bookId, selectedDim, text, settingPacks, isUserPaste ? userRawContent : undefined, rankScanRef.current || undefined);
       // 给用户方案补充完整内容字段
       if (isUserPaste && r.suggestions?.length > 0 && r.suggestions[0]._from_user) {
         r.suggestions[0]._full_content = userRawContent;
@@ -2042,7 +2271,7 @@ export default function ChatPanel() {
     try {
       const isFromUser = !!selectedSuggestion._from_user;
       const suggestionContent = isFromUser ? (selectedSuggestion._full_content || selectedSuggestion.preview) : selectedSuggestion.preview;
-      const res = await api.smartGenerateStream(bookId, selectedDim, suggestionContent, modification, settingPacks, sessionId || undefined, ctrl.signal, isFromUser);
+      const res = await api.smartGenerateStream(bookId, selectedDim, suggestionContent, modification, settingPacks, sessionId || undefined, ctrl.signal, isFromUser, rankScanRef.current || undefined);
       await consumeSSE(res, ctrl);
       refreshProgress();
       refreshHistory();
@@ -2074,7 +2303,7 @@ export default function ChatPanel() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await api.smartGenerateStream(bookId, selectedDim, text, text, settingPacks, sessionId || undefined, ctrl.signal);
+      const res = await api.smartGenerateStream(bookId, selectedDim, text, text, settingPacks, sessionId || undefined, ctrl.signal, false, rankScanRef.current || undefined);
       await consumeSSE(res, ctrl);
       refreshProgress();
       refreshHistory();
@@ -2159,6 +2388,7 @@ export default function ChatPanel() {
         instruction: userNote || undefined,
         // doChapterAction 只有 continue/polish 两种，都是正文阶段 → 统一带 style（chapterTab）选中的技能包
         skill_pack_ids: chapterPacks,
+        rank_scan: rankScanRef.current || undefined,
       }, ctrl.signal);
       await consumeSSE(res, ctrl);
       refreshProgress();
@@ -2844,6 +3074,7 @@ export default function ChatPanel() {
               deepThink: generalDeepThink,
               webSearch: generalWebSearch,
               truncateHistoryTo: opts?.truncateHistoryTo,
+              rankScan: rankScanRef.current || undefined,
             },
             ctrl.signal
           );
@@ -2925,6 +3156,7 @@ export default function ChatPanel() {
               deepThink: generalDeepThink,
               webSearch: generalWebSearch,
               truncateHistoryTo: opts?.truncateHistoryTo,
+              rankScan: rankScanRef.current || undefined,
             },
             ctrl.signal
           );
@@ -2983,7 +3215,7 @@ export default function ChatPanel() {
       abortRef.current = ctrl;
       const _cfgId = sessionModelMap[_sid] || undefined;
       try {
-        const res = await api.chatRoundtableStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId }, ctrl.signal);
+        const res = await api.chatRoundtableStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId, rankScan: rankScanRef.current || undefined }, ctrl.signal);
         if (!res.ok) {
           const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
           throw new Error(err.error || `HTTP ${res.status}`);
@@ -3095,7 +3327,7 @@ export default function ChatPanel() {
       const _sid = _sidReal || _PREKEY;
       const _cfgId = sessionModelMap[_sid] || undefined;
       const _roleId = sessionRoleMap[_sid] || 'default';
-      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId, roleId: _roleId, deepThink: generalDeepThink, webSearch: generalWebSearch, truncateHistoryTo: opts?.truncateHistoryTo }, ctrl.signal);
+      const res = await api.chatGeneralStream(text, { bookId: bookId || undefined, sessionId: chatGeneralSessionId || undefined, aiConfigId: _cfgId, roleId: _roleId, deepThink: generalDeepThink, webSearch: generalWebSearch, truncateHistoryTo: opts?.truncateHistoryTo, rankScan: rankScanRef.current || undefined }, ctrl.signal);
       // consumeSSE 最后1个参数 onSessionId=setChatGeneralSessionId：把card/done帧带回的session_id只写入 chatGeneralSessionId，不污染全局 setSessionId（避免和其他创作维度会话互串）
       await consumeSSE(res, ctrl, undefined, (kind: string, info: any) => {
         // 【P1-3 角色同步】后端把真实生效的角色 + 上下文变量通过 kind=role_applied meta帧回传
@@ -4092,7 +4324,17 @@ export default function ChatPanel() {
 
             {/* 消息列表 */}
             <div className="chat-messages" ref={scrollRef}>
-              {messages.length === 0 && !loadingSuggest && (
+              {/* 榜单风向：首条位置渲染 RankScanCard（chatPanelPresetRankScan 非空时） */}
+              {chatPanelPresetRankScan && (
+                <RankScanCard
+                  rankScan={chatPanelPresetRankScan}
+                  platform={chatPanelPresetRankScanPlatform}
+                  concept={chatPanelPresetRankScan?.concept || undefined}
+                  onRescan={handleRescanRankScan}
+                  rescanning={rescanningRankScan}
+                />
+              )}
+              {messages.length === 0 && !loadingSuggest && !chatPanelPresetRankScan && (
                 <div className="chat-empty">
                   <div className="chat-empty-icon"><CarLogo size={56} /></div>
                   {activeTab === 'setting' && selectedDim === 'general' ? (
