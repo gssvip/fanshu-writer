@@ -3481,7 +3481,13 @@ export default function ChatPanel() {
   // 关键行为：不新增用户气泡、不新建助手消息 → 追加发言到被点击的那条roundtable消息里
   // 对应后端：resume_from_checkpoint=true → 强制resuming分支，跳过主持人开场，从state.done下一位继续
   const handleRoundtableResume = useCallback((sessionId: string, messageId: string | number) => {
-    if (streaming) return;
+    // 【G1】强制入口日志：用户点了继续，第一时间让我在界面上看到函数被触发了
+    appendAiNotice(`🧭 圆桌继续按钮：入口命中！streaming=${streaming}，messageId=${String(messageId)}`);
+    if (streaming) {
+      // 不再静默 return！有时停止按钮后 streaming 卡 true 就永远点不了继续了
+      appendAiNotice('🧭 圆桌继续：streaming 还未复位 → 先强制置 false，再续会');
+      setStreaming(false);
+    }
     // 1) 定位目标 roundtable 气泡：优先按 index 找（messageId 若为 number 就是 messages 索引）
     let targetIdx = -1;
     if (typeof messageId === 'number' && messageId >= 0 && messageId < messages.length) {
