@@ -910,22 +910,21 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 }
 @media (max-width: 767px){ .paper-curl{ width: 20px; height: 20px; } }
 
-/* —— 纸内排版容器：横线画在此处（正文首行 top=0 精准踩第 1 条线） —— */
+/* —— 纸内排版容器（横格不再画在此！只给标题/分隔/页脚当排版壳）
+       横格只画在 3 个真正"正文文字容器"：
+         1) chapter-paper .chapter-reading-content （章节查看正文）
+         2) bible-paper .bible-text                 （设定/大纲/通用 查看正文 pre）
+         3) paper-textarea                          （章节/设定/大纲/通用 编辑 textarea）
+       → 彻底避免：①标题下出现 2 条近横线（分隔线 + paper-inner 横格叠加）
+                  ②章节编辑后 2 层横格（paper-inner + paper-textarea 叠加）
+ —— */
 .paper-inner{
   width: 100%;
   box-sizing: border-box;
   position: relative;
   padding-bottom: 4px;
-  background-image: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent calc(var(--paper-line-h) - 1px),
-    color-mix(in srgb, var(--text-muted) 28%, transparent) calc(var(--paper-line-h) - 1px),
-    color-mix(in srgb, var(--text-muted) 28%, transparent) var(--paper-line-h),
-    transparent var(--paper-line-h)
-  );
-  background-repeat: repeat;
-  background-position: 0 0;
+  /* 无横格！横格只在 3 个正文容器 */
+  background-image: none !important;
 }
 /* 纸内底部仿手写页脚（自身纸底色覆盖最后几条横线，避免出现半条残线） */
 .paper-footer{
@@ -958,6 +957,17 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   color: color-mix(in srgb, var(--text-primary) 94%, #2b1f0b 20%);
   letter-spacing: .2px;
   text-indent: 0;
+  /* 横格只画在此（不再在 paper-inner）；top=0 第一行字正好踩 32px 横线 */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--paper-line-h) - 1px),
+    color-mix(in srgb, var(--text-muted) 28%, transparent) calc(var(--paper-line-h) - 1px),
+    color-mix(in srgb, var(--text-muted) 28%, transparent) var(--paper-line-h),
+    transparent var(--paper-line-h)
+  );
+  background-repeat: repeat;
+  background-position: 0 0;
 }
 
 /* —— 章节正文查看模式 —— */
@@ -977,7 +987,23 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
      标题高 36px + padding-bottom 12 + border 1.5 + margin-bottom 14 = 63.5；
      下一条横线应当正好落在 paper-inner 第一条 32 前，这里给 padding-top 8 给第一条正文留出缓冲 */
 }
-.chapter-paper .chapter-reading-content{ all: unset; display: block; padding-top: 8px; }
+.chapter-paper .chapter-reading-content{
+  all: unset;
+  display: block;
+  /* 横格画在此（不再在 paper-inner）。top=0 第一条线正好 32px，
+     正文首行字 line-height=32 → 正好踩在第1条线上；padding-top=0 避免出现"分隔线下 2 条近横线" */
+  padding-top: 0;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--paper-line-h) - 1px),
+    color-mix(in srgb, var(--text-muted) 28%, transparent) calc(var(--paper-line-h) - 1px),
+    color-mix(in srgb, var(--text-muted) 28%, transparent) var(--paper-line-h),
+    transparent var(--paper-line-h)
+  );
+  background-repeat: repeat;
+  background-position: 0 0;
+}
 .chapter-paper .novel-paragraph{
   display: block !important;
   /* 段末留 1 条横线（32px），保证下一段首行仍精准踩 32 的倍数横线 */
@@ -1034,16 +1060,19 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   box-shadow: 0 1.5px 0 -1px var(--accent) !important;
 }
 
-/* —— 纸质 textarea：设定/大纲/章节正文 编辑态 → 仍是笔记本横线纸 + 光标精准踩线 —— */
+/* —— 纸质 textarea：设定/大纲/章节正文 编辑态 → 仍是笔记本横线纸 + 光标精准踩线
+       两种场景：
+         ① 裸用（设定/大纲/通用维度 编辑，外层无 paper-notebook）：自己带纸底+边框+阴影+卷角padding
+         ② 被 paper-notebook 包裹（章节编辑态）：透明背景无框，直接透外层纸底
+ —— */
 .paper-textarea{
   display: block !important;
   width: 100% !important;
   box-sizing: border-box !important;
-  border: none !important;
   outline: none !important;
   resize: vertical !important;
   min-height: calc(var(--paper-line-h) * 18);
-  /* 纸质横线（与 paper-inner 完全一致，起点 0 0，line-height=32 → 每一行光标正好踩线） */
+  /* 横格（3 容器之一，另外俩：bible-text / chapter-reading-content） */
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
@@ -1052,20 +1081,26 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
     color-mix(in srgb, var(--text-muted) 28%, transparent) var(--paper-line-h),
     transparent var(--paper-line-h)
   );
-  background-color: transparent !important;   /* 背景透明 → 看见外层 paper-notebook 的纸底 */
+  /* 纸底（裸用场景自带纸底，主题 color-mix 不透明，不会"透明"） */
+  background-color: color-mix(in srgb, var(--bg-secondary) 84%, #f5e6c0 16%) !important;
   background-repeat: repeat;
   background-position: 0 0;
   background-attachment: local;            /* 滚动时横线跟随文字（编辑长文本不飘） */
-  padding: 0 0 0 0 !important;
+  /* 裸用场景：自带边框 + 纸外盒 padding + 阴影（像真的一张纸） */
+  padding: 18px 26px !important;
   margin: 10px 0 0 0 !important;
+  border: 1.5px solid color-mix(in srgb, var(--text-muted) 42%, transparent) !important;
+  border-radius: 6px 16px 10px 14px !important;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent),
+    0 10px 26px -18px color-mix(in srgb, var(--text-primary) 30%, transparent),
+    0 22px 44px -34px color-mix(in srgb, var(--text-primary) 24%, transparent) !important;
   font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "SimSun", "STSong", serif !important;
   font-size: var(--paper-font-size) !important;      /* 17px */
   line-height: var(--paper-line-h) !important;       /* 32px = 横线阶，光标必踩线 */
   color: color-mix(in srgb, var(--text-primary) 94%, #2b1f0b 20%) !important;
   letter-spacing: .25px !important;
   caret-color: color-mix(in srgb, var(--accent) 88%, #2b1f0b 20%);
-  border-radius: 0 !important;
-  box-shadow: none !important;
 }
 .paper-textarea::placeholder{
   color: color-mix(in srgb, var(--text-muted) 70%, transparent);
@@ -1076,8 +1111,6 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 }
 .paper-textarea:focus{
   outline: none !important;
-  border: none !important;
-  box-shadow: none !important;
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
@@ -1086,6 +1119,25 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
     color-mix(in srgb, var(--accent) 42%, transparent) var(--paper-line-h),
     transparent var(--paper-line-h)
   );
+  /* 裸用场景聚焦：边框变主色 + 阴影加深。
+     章节编辑态会被 *下面* 更后声明的 .paper-notebook .paper-textarea :focus 覆盖掉 → 章节继续无框 */
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--text-muted) 30%) !important;
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent),
+    0 16px 34px -18px color-mix(in srgb, var(--text-primary) 36%, transparent),
+    0 28px 54px -34px color-mix(in srgb, var(--text-primary) 28%, transparent) !important;
+}
+/* 被 paper-notebook 包裹时（章节编辑态）：透明、无边框、无阴影、无内边距
+   此段写在 .paper-textarea:focus 之后 → 同等特异性下后者赢：章节编辑聚焦时仍然保持无框无阴影，不会被裸用的 focus 边框污染 */
+.paper-notebook .paper-textarea,
+.paper-notebook .paper-textarea:focus{
+  background-color: transparent !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+  border-color: transparent !important;
 }
 /* 章节编辑 textarea 额外宽松 padding-top 8（与章节阅读一致，避开标题分隔线） */
 .chapter-paper-textarea{
