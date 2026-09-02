@@ -3005,11 +3005,121 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .search-toolbar { flex-wrap: wrap; width: 100%; box-sizing: border-box; }
 .search-toolbar .input { flex: 1 1 180px; min-width: 0; max-width: 100% !important; }
 
-/* --- 桌面端 (≥768px) 专属：排行榜筛选更紧凑、表格更易读 --- */
+/* --- 桌面端 (≥768px) 专属：排行榜筛选更紧凑、表格更易读 + 工具页统一宽度容器 + 卡片美化 --- */
 @media (min-width: 768px) {
-  .tool-panel { margin: 20px auto; padding: 20px 24px; max-width: 1180px; }
+  /* ============== ① 档位式统一宽度容器：解决顶部工具卡过宽 & 下面面板过窄（红框空白）问题 ============== */
+  /* 顶部工具箱（工具卡 + 选择作品）：卡片化，与下方面板 tool-panel 完全同宽同造型，视觉成对 */
+  .tools-top-section .nr-collapsible-body {
+    max-width: 1280px;
+    width: calc(100% - 40px);
+    margin: 18px auto 0;
+    padding: 6px 22px 2px;
+    box-sizing: border-box;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+  }
+  .tool-panel {
+    margin: 18px auto;
+    padding: 18px 22px;
+    max-width: 1280px;
+    width: calc(100% - 40px);
+    box-sizing: border-box;
+  }
   .tool-panel h3 { font-size: 17px; margin-bottom: 8px; }
-  .fusion-card { padding: 14px 18px; }
+
+  /* ============== ② 顶部四个工具 Tab 卡片：美化（图标圆底 + 精致 hover + 选中渐变金） ============== */
+  .tools-grid {
+    display: grid !important;
+    grid-template-columns: repeat(4, 1fr) !important;  /* 桌面端永远 4 列等分，不 auto-fill 变形 */
+    gap: 14px;
+    padding: 16px 0 10px !important;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .tools-top-section .form-row {
+    margin: 6px 0 16px !important;
+    padding: 0 !important;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .tool-card {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 12px !important;
+    padding: 16px 18px !important;
+    background: linear-gradient(180deg, var(--bg-secondary), color-mix(in srgb, var(--bg-secondary) 92%, var(--accent) 8%)) !important;
+    border: 1.5px solid var(--border-color) !important;
+    border-radius: 14px !important;
+    text-align: left !important;
+    transition: all .25s cubic-bezier(.2,.8,.2,1) !important;
+    box-shadow: 0 1px 2px color-mix(in srgb, #000 3%, transparent);
+    min-height: 68px;
+    cursor: pointer;
+    width: 100%;
+    box-sizing: border-box;
+    position: relative;
+    overflow: hidden;
+  }
+  .tool-card::before {
+    /* hover 时从左上角扫过的高光 — 精致小细节 */
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(200px 100px at 10% 10%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 70%);
+    opacity: 0;
+    transition: opacity .3s;
+    pointer-events: none;
+  }
+  .tool-card:hover {
+    background: linear-gradient(180deg, var(--bg-secondary), color-mix(in srgb, var(--bg-secondary) 85%, var(--accent) 15%)) !important;
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color)) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 10px 26px -18px color-mix(in srgb, var(--accent) 45%, #000), 0 4px 8px -4px color-mix(in srgb, #000 8%, transparent);
+  }
+  .tool-card:hover::before { opacity: 1; }
+  .tool-card.active {
+    border: 1.5px solid #d4a039 !important;
+    background: linear-gradient(135deg, #fff7e0 0%, #ffe8b3 55%, #ffd67b 100%) !important;
+    box-shadow: 0 6px 18px -10px #c28a1c, inset 0 0 0 1px rgba(255,255,255,0.6) !important;
+    transform: translateY(-1px);
+  }
+  .tool-card.active::after {
+    /* 选中卡片右上角的小勾 */
+    content: '✓';
+    position: absolute;
+    right: 10px; top: 8px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #c28a1c;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .tool-card-icon {
+    font-size: 26px !important;
+    width: 44px; height: 44px;
+    flex-shrink: 0;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent) 5%, transparent));
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+  .tool-card.active .tool-card-icon {
+    background: linear-gradient(135deg, #fff2c5, #f9c758);
+    border-color: #d4a039;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7);
+  }
+  .tool-card-name { font-size: 15px !important; font-weight: 700 !important; color: var(--text-primary); letter-spacing: .3px; }
+  .tool-card.active .tool-card-name { color: #7a5306; }
+  .tool-card-desc { font-size: 11.5px !important; color: var(--text-muted) !important; margin-top: 2px !important; opacity: .9; }
+
   .filter-tag { padding: 5px 12px; font-size: 13px; }
   .rank-books-table {
     width: 100%; border-collapse: separate; border-spacing: 0;
@@ -3054,8 +3164,20 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   }
 }
 
+/* （档位加宽已统一搬到文件底部 @media≥1100 / ≥1440 / ≥1760 三段，避免重复与优先级错乱） */
+
 /* --- 手机端 (≤767px) 专属：所有容器 box-sizing=border-box，根治横溢 --- */
 @media (max-width: 767px) {
+  /* 手机端：顶部 nr-collapsible-body 取消桌面端卡片化，保留原生折叠过渡（否则折叠时会看到一个空框） */
+  .tools-top-section .nr-collapsible-body {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+  }
   /* 根容器严格不超出屏幕 */
   .tool-panel {
     margin: 8px !important;
@@ -3446,12 +3568,45 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   .nr-sub-wrap.is-collapsed { margin-top: 0 !important; }
 }
 
-/* ≥1100px 大屏：tool-panel 固定居中宽度；表格指标/状态列略宽 */
+/* ≥1100px 大屏：档位式统一宽度 + 表格列宽微调（与 @media≥768 新档位联动，避免 1180 窄旧值冲突） */
 @media (min-width: 1100px) {
-  .tool-panel { max-width: 1180px; margin: 24px auto; }
+  /* 覆盖前面窄宽 1180 的旧写法 — 现在完全走档位式：工具卡行 / 选择作品 / 下方面板三处同宽 */
+  .tool-panel { max-width: 1280px !important; margin: 18px auto !important; }
+  .tools-top-section .nr-collapsible-body {
+    max-width: 1280px !important;
+    margin: 18px auto 0 !important;       /* 保持顶部卡片的 margin-top */
+    width: calc(100% - 40px);
+    padding: 8px 22px 4px !important;     /* 卡片内边距略增大，同 tool-panel 的 22 对齐 */
+    box-sizing: border-box;
+  }
   .rank-books-table th:nth-child(3) { width: auto; }
   .rank-books-table th:nth-child(4) { width: 130px; }
   .rank-books-table th:nth-child(5) { width: 160px; }
-  .rank-books-table th:nth-child(6) { width: 130px; }
+  .rank-books-table th:nth-child(6) { width: 140px; }
+  .rank-books-table th:nth-child(7) { width: 80px; }
+}
+/* ≥1440 二档加宽（承接上面 1100~1439 的 1280，此处再升级为 1540） */
+@media (min-width: 1440px) {
+  .tool-panel { max-width: 1540px !important; margin: 20px auto !important; }
+  .tools-top-section .nr-collapsible-body {
+    max-width: 1540px !important;
+    margin: 20px auto 0 !important;
+    width: calc(100% - 48px);
+    padding: 10px 24px 6px !important;
+  }
+  .rank-books-table th:nth-child(5) { width: 170px; }
+  .rank-books-table th:nth-child(6) { width: 150px; }
+}
+/* ≥1760 三档加宽（4K / 大屏），上限 1780 避免一行内容太长读起来累 */
+@media (min-width: 1760px) {
+  .tool-panel { max-width: 1780px !important; margin: 24px auto !important; width: calc(100% - 64px) !important; }
+  .tools-top-section .nr-collapsible-body {
+    max-width: 1780px !important;
+    margin: 24px auto 0 !important;
+    width: calc(100% - 64px) !important;
+    padding: 12px 28px 6px !important;
+  }
+  .rank-books-table th:nth-child(5) { width: 180px; }
+  .rank-books-table th:nth-child(6) { width: 160px; }
 }
 

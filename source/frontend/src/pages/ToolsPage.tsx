@@ -699,7 +699,7 @@ export default function ToolsPage() {
             ))}
           </div>
 
-          <div className="form-row" style={{margin:'0 16px',marginTop:12}}>
+          <div className="form-row nr-select-book-row" style={{marginTop:12}}>
             <label className="input-label">选择作品</label>
             <select className="input" value={selectedBookId} onChange={e => setSelectedBookId(e.target.value)}>
               <option value="">— 选择要操作的作品 —</option>
