@@ -10295,34 +10295,19 @@ def chat_roundtable():
                 # state is None（极少：DB 清理 / 首次开会被截断在主持人开场前）→ 不设置任何模式，
                 # 走 else 全新会议兜底，避免报错误死流程
 
-            # 【D3·诊断帧·透明可见】：往前端吐一条 roundtable_status 把实际运行时情况全写出来
-            #   用户截图/粘贴这条 = 我一秒知道为什么还是重新开了主持人
-            _diag_mode = (
-                '创作产出卡片' if create_mode else
-                '追加新一轮' if append_mode else
-                '调整反馈' if adjust_mode else
-                '断点续会接着开' if resuming else
-                '全新会议（主持人+榜单分析师从头来）'
-            )
+            # 【C2·干净版续会提示】仅保留关键提示：续会命中/追加→吐一条简短友好信息；
+            #    续会失败→仅一条告警；全新会议正常路径 = 静默，不弹任何调试通知
             _diag_done_n = len(state.get('done') or []) if isinstance(state, dict) else 0
-            _diag_flags = (f"resume_cp={('T' if resume_from_checkpoint else 'F')}, "
-                           f"state_loaded={('T' if isinstance(state, dict) else 'F')}, "
-                           f"done_n={_diag_done_n}, is_continue={('T' if is_continue else 'F')}, "
-                           f"create={('T' if create_mode else 'F')}, "
-                           f"append={('T' if append_mode else 'F')}, "
-                           f"adjust={('T' if adjust_mode else 'F')}, "
-                           f"resuming={('T' if resuming else 'F')}")
             if resume_from_checkpoint and not (create_mode or append_mode or adjust_mode or resuming):
-                _diag_prefix = "🔴🔴🔴【续会失败】 resume_from_checkpoint=true 但四种续会模式都没命中 → 即将走全新会议从主持人+榜单分析师重开场。flags=("
-                _diag_suffix = "). 请把这条完整状态发给工程师定位，多谢。"
-                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"{_diag_prefix}{_diag_flags}{_diag_suffix}"}}, ensure_ascii=False)}\n\n'
+                # 极少：用户点了继续，但 DB 真的找不到任何进度 → 告诉用户回退到新会议
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "🔴【续会失败】未找到已保存的会议进度，将开启新会议。请确保本次会议曾有≥1位专家讲完后再尝试继续。"}}, ensure_ascii=False)}\n\n'
             elif resume_from_checkpoint and (resuming or append_mode):
-                _nx = (
-                    f"下一位={_ROUNDTABLE_ORDER[_diag_done_n % len(_ROUNDTABLE_ORDER)] if 0 <= (_diag_done_n % len(_ROUNDTABLE_ORDER)) < len(_ROUNDTABLE_ORDER) else _ROUNDTABLE_ORDER[0]}（绝不再从榜单分析师重说）"
-                    if resuming else f"追加新一轮（{len(_ROUNDTABLE_ORDER)} 位专家）")
-                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"🟢【续会命中：{_diag_mode}】已保存发言 {_diag_done_n} 段；{_nx}。调试：{_diag_flags}"}}, ensure_ascii=False)}\n\n'
-            else:
-                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"ℹ️【{_diag_mode}】调试：{_diag_flags}"}}, ensure_ascii=False)}\n\n'
+                if resuming:
+                    _nx_id = _ROUNDTABLE_ORDER[_diag_done_n % len(_ROUNDTABLE_ORDER)] if 0 <= (_diag_done_n % len(_ROUNDTABLE_ORDER)) < len(_ROUNDTABLE_ORDER) else _ROUNDTABLE_ORDER[0]
+                    _nx_name = _PERSONAS[_nx_id][0] if _nx_id in _PERSONAS else _nx_id
+                    yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"🟢【续会命中·断点续会接着开】已保存发言 {_diag_done_n} 段；下一位 = {_nx_name}"}}, ensure_ascii=False)}\n\n'
+                else:
+                    yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"🟢【续会命中·追加新一轮】已保存发言 {_diag_done_n} 段；将追加本轮 {len(_ROUNDTABLE_ORDER)} 位专家讨论"}}, ensure_ascii=False)}\n\n'
 
             if create_mode:
                 # ========== 创作模式：按讨论共识创作维度 → 产出标准可采纳卡片 ==========
@@ -10453,8 +10438,7 @@ def chat_roundtable():
                 yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator"}, ensure_ascii=False)}\n\n'
                 state['moderator_open'] = adj_open
                 state['discussion_history'] = discussion_history
-                _sv_r = _rt_save_state(session, db, state)
-                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "ℹ️ 主持人已回应意见并保存：save=" + _sv_r}}, ensure_ascii=False)}\n\n'
+                _rt_save_state(session, db, state)
                 # 落盘一次（刷新可见历史 + 本轮作者意见）
                 _rt_persist_messages(session, history, topic_final, adj_open, done, '')
             elif resuming:
@@ -10584,8 +10568,7 @@ def chat_roundtable():
                          'topic': topic_final, 'moderator_open': mod_content,
                          'done': [], 'discussion_history': discussion_history,
                          'total_rounds_hint': (_round_req if _round_req else default_rounds)}
-                _sv0 = _rt_save_state(session, db, state)
-                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "ℹ️ 主持人开场保存到DB校验：save=" + _sv0}}, ensure_ascii=False)}\n\n'
+                _rt_save_state(session, db, state)
                 # 开场即落盘消息 → 刷新界面能看到开场
                 _rt_persist_messages(session, history, topic_final, mod_content, [], '')
 
@@ -10677,8 +10660,7 @@ def chat_roundtable():
                 state = {'active': True, 'completed': False, 'phase': 'discussion',
                          'topic': topic_final, 'moderator_open': _mod_open,
                          'done': done, 'discussion_history': discussion_history}
-                _sv_res = _rt_save_state(session, db, state)
-                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "✅ 已保存进度到DB（独立连接+双重校验）：save=" + _sv_res + "，点停止后随时可续"}}, ensure_ascii=False)}\n\n'
+                _rt_save_state(session, db, state)
                 # 同时把已讨论内容落盘到会话 → 中途断连/手动停止后刷新也能看到
                 _rt_persist_messages(session, history, topic_final, _mod_open, done, '')
                 done_count += 1
@@ -10789,8 +10771,7 @@ def chat_roundtable():
             # 落盘 + 标记会议完成（保留全量进度，供其后再"继续/追加一轮"）
             state['completed'] = True
             state['phase'] = 'done'
-            _sv_done = _rt_save_state(session, db, state)
-            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "ℹ️ 圆桌会议全部完成已持久化校验：save=" + _sv_done}}, ensure_ascii=False)}\n\n'
+            _rt_save_state(session, db, state)
 
             # 把整场（含追加轮）的可复盘消息落盘 → 刷新界面不丢
             _mod_open = state.get('moderator_open', '') if isinstance(state, dict) else ''

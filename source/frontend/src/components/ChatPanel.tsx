@@ -3299,8 +3299,11 @@ export default function ChatPanel() {
               return next;
             });
           } else if (evt.type === 'meta' && evt.kind === 'roundtable_status' && evt.info && typeof evt.info.text === 'string') {
-            // 诊断/续会提示：直接以通知形式出现，不污染发言段
-            appendAiNotice('🧭 圆桌诊断：' + evt.info.text);
+            // 【C1清理】save校验/全新会议调试帧静默忽略；仅显示续会命中成功 & 续会失败错误
+            const _t = evt.info.text;
+            if (/【续会命中|续会命中·|续会失败|续会：|⚠️|❌|🔴|⏭️ 续会/.test(_t)) {
+              appendAiNotice('🧭 ' + _t.replace(/🧭 圆桌诊断：/g, ''));
+            }
           } else if (evt.type === 'meta' && evt.kind === 'roundtable_speaker' && evt.info) {
             // 切换发言人：记录当前发言人名字，接下来的delta都算它的发言
             curName = String(evt.info.speaker_name || '').trim();
@@ -3481,13 +3484,7 @@ export default function ChatPanel() {
   // 关键行为：不新增用户气泡、不新建助手消息 → 追加发言到被点击的那条roundtable消息里
   // 对应后端：resume_from_checkpoint=true → 强制resuming分支，跳过主持人开场，从state.done下一位继续
   const handleRoundtableResume = useCallback((sessionId: string, messageId: string | number) => {
-    // 【G1】强制入口日志：用户点了继续，第一时间让我在界面上看到函数被触发了
-    appendAiNotice(`🧭 圆桌继续按钮：入口命中！streaming=${streaming}，messageId=${String(messageId)}`);
-    if (streaming) {
-      // 不再静默 return！有时停止按钮后 streaming 卡 true 就永远点不了继续了
-      appendAiNotice('🧭 圆桌继续：streaming 还未复位 → 先强制置 false，再续会');
-      setStreaming(false);
-    }
+    if (streaming) setStreaming(false); // 防止 streaming=true 卡住导致永远续不了
     // 1) 定位目标 roundtable 气泡：优先按 index 找（messageId 若为 number 就是 messages 索引）
     let targetIdx = -1;
     if (typeof messageId === 'number' && messageId >= 0 && messageId < messages.length) {
@@ -3518,9 +3515,6 @@ export default function ChatPanel() {
     const _bk_sid = String(_targetRt?._backend_session_id || '').trim() || '';
     const _sid = _bk_sid || chatGeneralSessionId || sessionId || undefined;
     const _cfgId = _sid ? (sessionModelMap[_bk_sid] || sessionModelMap[String(chatGeneralSessionId || '')] || undefined) : undefined;
-    if (_bk_sid) {
-      appendAiNotice('🧭 圆桌：使用后端真实会话 sid=' + _bk_sid.slice(0, 8) + '…（100% 对位续会）');
-    }
     api.chatRoundtableStream(topic, {
       bookId: bookId || undefined,
       sessionId: _sid,
@@ -3561,8 +3555,10 @@ export default function ChatPanel() {
             return next;
           });
         } else if (evt.type === 'meta' && evt.kind === 'roundtable_status' && evt.info && typeof evt.info.text === 'string') {
-          // 续会/模式诊断帧：把工程师写的🟢/🔴诊断信息变成可见通知（不要静默丢弃！）
-          appendAiNotice('🧭 圆桌诊断：' + evt.info.text);
+          const _t = evt.info.text;
+          if (/【续会命中|续会命中·|续会失败|续会：|⚠️|❌|🔴|⏭️ 续会/.test(_t)) {
+            appendAiNotice('🧭 ' + _t.replace(/🧭 圆桌诊断：/g, ''));
+          }
         } else if (evt.type === 'meta' && evt.kind === 'reasoning' && evt.info && typeof evt.info.text === 'string') {
           reasoningBufferRef.current += evt.info.text;
           const rbuf = reasoningBufferRef.current;
