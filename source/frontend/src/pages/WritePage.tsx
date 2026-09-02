@@ -3398,13 +3398,12 @@ function ChapterPanel(props: {
         <div className="chapter-detail-header">
           <button className="btn-ghost-sm" onClick={onBackToList}>← 返回列表</button>
           <div className="chapter-detail-actions">
-            <button className="btn-primary-sm" onClick={onStartEdit}>✏️ 编辑</button>
             <button className="btn-ghost-sm" style={{color:'#e74c3c'}} onClick={() => onDeleteChapter(activeChapter.id)}>🗑️</button>
           </div>
         </div>
 
-        {/* —— 笔记本类纸：章节落地正文 —— */}
-        <article className="paper-notebook chapter-paper">
+        {/* —— 笔记本类纸：章节落地正文；点击纸区域直接进入编辑 —— */}
+        <article className="paper-notebook chapter-paper" onClick={onStartEdit} style={{cursor:'text'}}>
           <div className="paper-curl" aria-hidden="true" />
 
           <div className="paper-inner">
@@ -3413,7 +3412,7 @@ function ChapterPanel(props: {
               {paragraphs.length > 0 ? paragraphs.map((para, i) => (
                 <p key={i} className="novel-paragraph">{para.trim()}</p>
               )) : (
-                <p className="novel-empty-hint">这一章还是空的，点击"编辑"开始写作</p>
+                <p className="novel-empty-hint">这一章还是空的，点击纸面开始写作</p>
               )}
             </div>
             <div className="paper-footer" aria-hidden="true">
@@ -6093,7 +6092,6 @@ function BibleEditPanel(props: {
               <button className="btn-ghost-sm" onClick={onAnalyzeDimension} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别此维度内容' : '需要先创建章节才能AI识别'}>
                 {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
-              <button className="btn-primary-sm" onClick={onStartEdit}>编辑</button>
               {content && (
                 <button className="btn-ghost-sm" onClick={onDelete} style={{color:'#e74c3c'}} title="清空此维度内容">🗑️</button>
               )}
@@ -6126,8 +6124,8 @@ function BibleEditPanel(props: {
         </>
       ) : content ? (
         <>
-          {/* —— 笔记本类纸：维度落地内容 —— */}
-          <div className="paper-notebook bible-paper" data-dim={tab.label} onClick={onStartEdit}>
+          {/* —— 笔记本类纸：维度落地内容；点击纸区域直接进入编辑 —— */}
+          <div className="paper-notebook bible-paper" data-dim={tab.label} onClick={onStartEdit} style={{cursor:'text'}}>
             <div className="paper-curl" aria-hidden="true" />
             <div className="paper-inner">
               <pre className="bible-text">{collapseNewlines(content)}</pre>
@@ -6415,7 +6413,6 @@ function OutlineCombinedPanel(props: {
               <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(subTab === 'outline' ? 'outline' : 'worldview')} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别' : '需要先创建章节才能AI识别'}>
                 {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
-              <button className="btn-primary-sm" onClick={startEdit}>编辑</button>
               {currentContent && (
                 <button className="btn-ghost-sm" onClick={handleDelete} style={{color:'#e74c3c'}}>🗑️ 删除</button>
               )}
@@ -6470,8 +6467,8 @@ function OutlineCombinedPanel(props: {
           autoFocus
         />
       ) : currentContent ? (
-        /* —— 笔记本类纸：大纲 / 世界观 落地内容 —— */
-        <div className="paper-notebook bible-paper outline-paper" data-dim={labelMap[subTab]} onClick={startEdit}>
+        /* —— 笔记本类纸：大纲 / 世界观 落地内容；点击纸区域直接进入编辑 —— */
+        <div className="paper-notebook bible-paper outline-paper" data-dim={labelMap[subTab]} onClick={startEdit} style={{cursor:'text'}}>
           <div className="paper-curl" aria-hidden="true" />
           <div className="paper-inner">
             <pre className="bible-text">{collapseNewlines(currentContent)}</pre>
@@ -6664,7 +6661,6 @@ function SettingsCombinedPanel(props: {
               <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(currentField)} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别此维度内容' : '需要先创建章节才能AI识别'}>
                 {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
-              <button className="btn-primary-sm" onClick={startEdit}>编辑</button>
               {currentContent && (
                 <button className="btn-ghost-sm" onClick={handleDelete} style={{color:'#e74c3c'}}>🗑️ 删除</button>
               )}
@@ -6708,8 +6704,8 @@ function SettingsCombinedPanel(props: {
         <textarea className="input bible-editor-textarea paper-textarea" rows={18} value={editValue}
           onChange={e => setEditValue(e.target.value)} placeholder={placeholderMap[subTab]} autoFocus />
       ) : currentContent ? (
-        /* —— 笔记本类纸：设定 / 文风 落地内容 —— */
-        <div className="paper-notebook bible-paper setting-paper" data-dim={labelMap[subTab]} onClick={startEdit}>
+        /* —— 笔记本类纸：设定 / 文风 落地内容；点击纸区域直接进入编辑 —— */
+        <div className="paper-notebook bible-paper setting-paper" data-dim={labelMap[subTab]} onClick={startEdit} style={{cursor:'text'}}>
           <div className="paper-curl" aria-hidden="true" />
           <div className="paper-inner">
             <pre className="bible-text">{collapseNewlines(currentContent)}</pre>
