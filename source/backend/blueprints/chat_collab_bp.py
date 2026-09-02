@@ -9099,61 +9099,25 @@ def chat_general():
         except Exception:
             pass
     _role_name, _role_extra = _BUILTIN_ROLES[chosen_role_id]
-    # =============================================
-    # 【榜单分析师角色专属】发言前自动扫榜（自然语言触发入口，完全不侵入其他角色原逻辑）
-    #  用户选了榜单分析师 = 他就是想先看风向再聊；强制扫榜一次，失败不报错。
-    # =============================================
-    if chosen_role_id == 'rank_analyst':
-        try:
-            _bb_fc = BookBible.query.filter_by(book_id=book_id).first() if book_id else None
-            _fc = (_bb_fc.concept or _bb_fc.master_outline or '').strip() if _bb_fc else ''
-            _rank_scan_fc, _rs_sse = _auto_rank_scan_from_nl(
-                # explicit_rank_scan=True => 强制命中（只要用户点了榜单分析师，就一定扫），
-                # 但 _auto_rank_scan_from_nl 仍会优先看用户消息里有没有说"番茄/起点"来选平台
-                message, fallback_concept=_fc, book_title=book_title or '',
-                explicit_rank_scan=True
-            )
-            if _rank_scan_fc:
-                def _md_report(rp: dict) -> str:
-                    lines: list[str] = []
-                    lines.append(f"📈 本轮真实扫榜情报（平台：{rp.get('platform_label','番茄新书榜')}）")
-                    if rp.get('scan_time'):  lines.append(f"· 扫榜时间：{rp['scan_time']}")
-                    if rp.get('subcategory_label'): lines.append(f"· 命中赛道：{rp['subcategory_label']}")
-                    if rp.get('books') and isinstance(rp['books'], list):
-                        tops = rp['books'][:5]
-                        lines.append(f"· TOP{len(tops)} 同类题材上榜书：")
-                        for i, b in enumerate(tops, 1):
-                            parts = []
-                            if b.get('title'): parts.append(str(b['title']))
-                            if b.get('hook_1line'): parts.append(str(b['hook_1line']))
-                            if b.get('author'): parts.append(f"作者：{b['author']}")
-                            lines.append(f"  {i}. " + " ｜ ".join(parts) if parts else f"  {i}. {b}")
-                    for key, zh in [('reader_buy_points', '读者买单要素（共性卖点）'),
-                                    ('reader_abandon_points', '读者弃文毒点（共性避坑）'),
-                                    ('title_formula_examples', '书名公式参考'),
-                                    ('opening_hook_templates', '开篇钩子套路模板'),
-                                    ('market_advice', '市场落地方向建议')]:
-                        v = rp.get(key)
-                        if isinstance(v, str) and v.strip():
-                            lines.append(f"\n【{zh}】\n{v.strip()}")
-                        elif isinstance(v, list) and v:
-                            lines.append(f"\n【{zh}】")
-                            for it in v:
-                                lines.append(f"- {it}")
-                    return "\n".join(lines).strip()
-                _report_md = _md_report(_rank_scan_fc)
-                if _report_md:
-                    _role_extra = (_role_extra or '').rstrip() + (
-                        "\n\n"
-                        "================================\n"
-                        "【★★★ 本轮对话前置·系统已自动扫榜成功 ★★★】\n"
-                        "以下是刚从番茄/起点新书榜抓回来的真实榜单风向情报（包含TOP书、卖点、毒点、书名公式、钩子）——"
-                        "**你必须优先吸收这些情报，回答前先给用户展示情报摘要，再基于情报回答问题，绝不拍脑袋。**\n\n"
-                        + _report_md + "\n================================\n"
-                    )
-        except Exception:
-            # 扫榜失败绝对不能导致整个 chat_general 崩溃（其他角色原逻辑必须完好）
-            pass
+    # ==================================================================
+    # 【榜单分析师角色专属·CRITICAL FIX】
+    #   自动扫榜 = 只在 generate() 内部、首帧心跳已经发出之后 执行。
+    #   ❌ 绝不能放这里（chat_general 外层=响应头还没返回=连接期卡死=前端fetchWithRetry 60s超时abort）。
+    #   所以这里把扫榜需要的参数提前快照下来 → 真正执行放在 generate() 首帧 meta 之后。
+    # ==================================================================
+    _fc_snapshot: str = ''
+    try:
+        _bb_fc_snap = BookBible.query.filter_by(book_id=book_id).first() if book_id else None
+        if _bb_fc_snap:
+            _fc_snapshot = (_bb_fc_snap.concept or _bb_fc_snap.master_outline or '').strip()
+    except Exception:
+        _fc_snapshot = ''
+    _rank_analyst_snapshot: Dict[str, Any] = {
+        'active': (chosen_role_id == 'rank_analyst'),
+        'message': message,
+        'fallback_concept': _fc_snapshot,
+        'book_title': book_title or '',
+    }
     # P1-3 提示词变量：{date} {time} {current_book} {model_name}，注入到 system_prompt + enriched user message
     from datetime import datetime, timezone, timedelta
     _tz = timezone(timedelta(hours=8))
@@ -9594,6 +9558,70 @@ def chat_general():
             except Exception:
                 _native_p = None
 
+            # ====================================================================
+            # 【榜单分析师专属·自动扫榜·流式响应期内执行（连接稳定=不超时）】
+            # ====================================================================
+            #   - 外层 _rank_analyst_snapshot.active = True 才进入；其他角色完全不沾
+            #   - 先推一帧 roundtable_status（通用聊天也能显示），用户感知"正在抓榜"
+            #   - 扫完把报告追加到 messages[0]（system prompt 末尾）→ LLM 立刻能基于风向回答
+            #   - 100% try/except：失败 = 当没发生，榜单分析师正常回答（不拍脑袋即可），绝不崩溃原聊天
+            # ====================================================================
+            nonlocal system_prompt
+            try:
+                if _rank_analyst_snapshot.get('active'):
+                    yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "🧾 榜单分析师正在扫描番茄/起点新书榜，整理市场风向…（约8-15秒，说起点即扫起点榜，默认番茄）"}}, ensure_ascii=False)}\n\n'
+                    _a = _rank_analyst_snapshot
+                    _rs_rank, _rs_sse = _auto_rank_scan_from_nl(
+                        _a.get('message', ''),
+                        fallback_concept=_a.get('fallback_concept', '') or '',
+                        book_title=_a.get('book_title', '') or '',
+                        explicit_rank_scan=True,
+                    )
+                    if _rs_rank:
+                        def _md_report_gen(rp: dict) -> str:
+                            lines: list[str] = []
+                            lines.append(f"📈 本轮真实扫榜情报（平台：{rp.get('platform_label','番茄新书榜')}）")
+                            if rp.get('scan_time'):  lines.append(f"· 扫榜时间：{rp['scan_time']}")
+                            if rp.get('subcategory_label'): lines.append(f"· 命中赛道：{rp['subcategory_label']}")
+                            if rp.get('books') and isinstance(rp['books'], list):
+                                tops = rp['books'][:5]
+                                lines.append(f"· TOP{len(tops)} 同类题材上榜书（书名+一句话钩子+作者）：")
+                                for i, b in enumerate(tops, 1):
+                                    parts = []
+                                    if b.get('title'): parts.append(str(b['title']))
+                                    if b.get('hook_1line'): parts.append(str(b['hook_1line']))
+                                    if b.get('author'): parts.append(f"作者：{b['author']}")
+                                    lines.append(f"  {i}. " + " ｜ ".join(parts) if parts else f"  {i}. {b}")
+                            for key, zh in [('reader_buy_points', '读者买单要素（共性卖点）'),
+                                            ('reader_abandon_points', '读者弃文毒点（共性避坑）'),
+                                            ('title_formula_examples', '书名公式参考'),
+                                            ('opening_hook_templates', '开篇钩子套路模板'),
+                                            ('market_advice', '市场落地方向建议')]:
+                                v = rp.get(key)
+                                if isinstance(v, str) and v.strip():
+                                    lines.append(f"\n【{zh}】\n{v.strip()}")
+                                elif isinstance(v, list) and v:
+                                    lines.append(f"\n【{zh}】")
+                                    for it in v:
+                                        lines.append(f"- {it}")
+                            return "\n".join(lines).strip()
+                        _report_gen = _md_report_gen(_rs_rank)
+                        if _report_gen:
+                            # 把扫榜报告追加到 system prompt 末尾（对榜单分析师 persona 再强化一次）
+                            _appendix = (
+                                "\n\n================================\n"
+                                "【★★★ 本轮对话前置·系统已自动扫榜成功 ★★★】\n"
+                                "下面是刚从番茄/起点新书榜抓回来的真实榜单风向情报（TOP5/买卖点/书名公式/钩子/建议）——"
+                                "**你必须优先吸收：回答开头先给用户展示情报摘要，再基于这些情报回答，不拍脑袋。**\n\n"
+                                + _report_gen + "\n================================\n"
+                            )
+                            system_prompt = system_prompt.rstrip() + _appendix
+                            if messages and messages[0].get('role') == 'system':
+                                messages[0]['content'] = system_prompt
+                            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"✅ 扫榜完成：{_rs_rank.get(\"platform_label\",\"番茄新书榜\")}｜命中 {len(_rs_rank.get(\"books\") or [])} 本TOP书，接下来基于风向构思。"}})}, ensure_ascii=False)}\n\n'
+            except Exception:
+                pass  # 扫榜失败 = 静默跳过，不打断任何主流程
+
             # 原生思考推理程度控制（智谱 GLM）：GLM-5.3 强制思考、思考与正文共享
             # max_tokens——无法"思考不计入消耗"，只能按 deep_think 下发 reasoning_effort
             # 控制思考深度，避免思考先占满 max_tokens 导致正文为空（配合 chat_stream 的
@@ -9778,62 +9806,15 @@ def chat_roundtable():
     deep_think = 1
     # P0 榜单风向：先扫榜再开会，把市场风向注入主持人/所有专家/总结报告
     _rank_scan = data.get('rank_scan') if isinstance(data.get('rank_scan'), dict) else None
-    # ================== 【圆桌·自动扫榜增强】==================
-    # 【用户新方案】：第一位专家=榜单分析师，圆桌本身开新会议时若用户没显式传 rank_scan，自动扫1次：
-    #   · 扫榜平台：议题里说"起点/qd/qidian"→起点新书榜；其他→番茄新书榜（默认）
-    #   · 扫榜失败→静默跳过，不影响原圆桌任何流程（其他6位专家功能完好）
-    #   · 扫榜结果：
-    #     1) 拼入 _rank_ctx_global → 7位专家+主持人+总结 所有人都能看到「市场基准」
-    #     2) 存到 _rank_analyst_report → 第1位榜单分析师自己发言时 完整拼进 persona，
-    #        让他第一个就给全桌摊开 TOP 书 / 卖点 / 毒点 / 书名公式 / 钩子套路
+    # ================== 【圆桌·自动扫榜增强·安全版】==================
+    # 自动扫榜 = 只在"全新会议"里触发一次（generate() 内部的全新会议分支里执行）。
+    # 绝对不在续会/追加/调整/创作阶段触发，因为：
+    #   1) 续会时用户的 topic 是"继续"两字，用它去扫榜 = 扫出一堆无关的TOP书 = 垃圾数据
+    #   2) 扫榜要8~20s 网络/LLM 调用 → 放 chat_roundtable 外层 = 任何"继续"都先卡8~20s = 用户感知"继续功能没了/卡死/断掉"
+    #   3) 调整阶段用户 topic 是"对总结的修改意见"= 也不该扫，拿上次议题扫出来的用就行
+    # 所以下面两个变量只做占位，真正赋值在 generate() 内部"全新会议"分支：
+    _rank_ctx_global = _format_rank_context(_rank_scan)
     _rank_analyst_report: str = ''
-    try:
-        # 只有"新开会且没传 preset rank_scan"才触发自动扫榜（续会/追加/调整 不重复扫，省时间省token）
-        if not _rank_scan and topic:
-            _rt_bb_fc = BookBible.query.filter_by(book_id=book_id).first() if book_id else None
-            _rt_fc = (_rt_bb_fc.concept or _rt_bb_fc.master_outline or '').strip() if _rt_bb_fc else ''
-            _auto_rs, _auto_sse = _auto_rank_scan_from_nl(
-                topic,
-                fallback_concept=_rt_fc,
-                book_title=book_title or '',
-                explicit_rank_scan=True
-            )
-            if _auto_rs:
-                _rank_scan = _auto_rs  # 后续 _format_rank_context 会复用 preset 那套逻辑
-
-                # 生成一份榜单分析师专属的详细报告（TOP5书/买卖点/公式/钩子/建议）
-                def _rt_report_md(rp: dict) -> str:
-                    lines: list[str] = []
-                    lines.append(f"📈 圆桌开场前系统已自动扫榜成功｜平台：{rp.get('platform_label','番茄新书榜')}")
-                    if rp.get('scan_time'):  lines.append(f"· 扫榜时间：{rp['scan_time']}")
-                    if rp.get('subcategory_label'): lines.append(f"· 命中赛道：{rp['subcategory_label']}")
-                    if rp.get('books') and isinstance(rp['books'], list):
-                        tops = rp['books'][:5]
-                        lines.append(f"· TOP{len(tops)} 同类题材上榜书（书名+一句话钩子+作者）：")
-                        for i, b in enumerate(tops, 1):
-                            parts = []
-                            if b.get('title'): parts.append(str(b['title']))
-                            if b.get('hook_1line'): parts.append(str(b['hook_1line']))
-                            if b.get('author'): parts.append(f"作者：{b['author']}")
-                            lines.append(f"  {i}. " + " ｜ ".join(parts) if parts else f"  {i}. {b}")
-                    for key, zh in [('reader_buy_points', '读者买单要素·共性卖点'),
-                                    ('reader_abandon_points', '读者弃文毒点·共性避坑'),
-                                    ('title_formula_examples', '书名公式范例'),
-                                    ('opening_hook_templates', '开篇钩子套路模板'),
-                                    ('market_advice', '市场落地方向建议')]:
-                        v = rp.get(key)
-                        if isinstance(v, str) and v.strip():
-                            lines.append(f"\n【{zh}】\n{v.strip()}")
-                        elif isinstance(v, list) and v:
-                            lines.append(f"\n【{zh}】")
-                            for it in v:
-                                lines.append(f"- {it}")
-                    return "\n".join(lines).strip()
-                _rank_analyst_report = _rt_report_md(_rank_scan)
-    except Exception:
-        # 绝对安全：扫榜失败/网络超时/没网 → 当没发生，原圆桌6专家+总结照常开
-        pass
-    _rank_ctx_global = _format_rank_context(_rank_scan)  # 一次计算，复用于下面所有 sys prompt
 
     if not topic:
         return jsonify({'error': '缺少讨论话题'}), 400
@@ -9979,6 +9960,7 @@ def chat_roundtable():
 
     def generate():
         yield ': ping-heartbeat-keepalive\n\n'
+        nonlocal _rank_ctx_global, _rank_analyst_report, _rank_scan
         all_messages = []
 
         def _emit(gen, speaker_id):
@@ -10183,6 +10165,57 @@ def chat_roundtable():
                 _rt_persist_messages(session, history, topic_final, state.get('moderator_open', '') if isinstance(state, dict) else '', done, '')
             else:
                 # ========== 全新会议：主持人开场 ==========
+                # --- Step 0：【圆桌自动扫榜·只在全新会议触发】---
+                # 续会/追加/调整/创作模式一律跳过，避免卡死用户"继续"按钮的响应。
+                # 如果用户没传 preset rank_scan → 按"议题关键词决定平台"自动扫一次
+                if not _rank_scan and topic:
+                    try:
+                        # 先给前端推一帧扫榜提示（用户感知到"正在抓榜"，不会以为卡死）
+                        yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "🧾 榜单分析师正在扫描番茄/起点新书榜，整理市场风向…（约8-15秒）"}}, ensure_ascii=False)}\n\n'
+                        _rt_bb_fc2 = BookBible.query.filter_by(book_id=book_id).first() if book_id else None
+                        _rt_fc2 = (_rt_bb_fc2.concept or _rt_bb_fc2.master_outline or '').strip() if _rt_bb_fc2 else ''
+                        _auto_rs2, _auto_sse2 = _auto_rank_scan_from_nl(
+                            topic, fallback_concept=_rt_fc2, book_title=book_title or '',
+                            explicit_rank_scan=True
+                        )
+                        if _auto_rs2:
+                            _rank_scan = _auto_rs2
+                            # 重构两个全局供后续所有 expert/moderator/summary 使用
+                            _rank_ctx_global = _format_rank_context(_rank_scan)
+
+                            def _rt_report_md2(rp: dict) -> str:
+                                lines: list[str] = []
+                                lines.append(f"📈 圆桌开场前系统已自动扫榜成功｜平台：{rp.get('platform_label','番茄新书榜')}")
+                                if rp.get('scan_time'):  lines.append(f"· 扫榜时间：{rp['scan_time']}")
+                                if rp.get('subcategory_label'): lines.append(f"· 命中赛道：{rp['subcategory_label']}")
+                                if rp.get('books') and isinstance(rp['books'], list):
+                                    tops = rp['books'][:5]
+                                    lines.append(f"· TOP{len(tops)} 同类题材上榜书（书名+一句话钩子+作者）：")
+                                    for i, b in enumerate(tops, 1):
+                                        parts = []
+                                        if b.get('title'): parts.append(str(b['title']))
+                                        if b.get('hook_1line'): parts.append(str(b['hook_1line']))
+                                        if b.get('author'): parts.append(f"作者：{b['author']}")
+                                        lines.append(f"  {i}. " + " ｜ ".join(parts) if parts else f"  {i}. {b}")
+                                for key, zh in [('reader_buy_points', '读者买单要素·共性卖点'),
+                                                ('reader_abandon_points', '读者弃文毒点·共性避坑'),
+                                                ('title_formula_examples', '书名公式范例'),
+                                                ('opening_hook_templates', '开篇钩子套路模板'),
+                                                ('market_advice', '市场落地方向建议')]:
+                                    v = rp.get(key)
+                                    if isinstance(v, str) and v.strip():
+                                        lines.append(f"\n【{zh}】\n{v.strip()}")
+                                    elif isinstance(v, list) and v:
+                                        lines.append(f"\n【{zh}】")
+                                        for it in v:
+                                            lines.append(f"- {it}")
+                                return "\n".join(lines).strip()
+                            _rank_analyst_report = _rt_report_md2(_rank_scan)
+                            # 扫榜完成给用户一帧提示（可选）
+                            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"✅ 扫榜完成：{_rank_scan.get(\"platform_label\",\"番茄新书榜\")}｜命中 {len(_rank_scan.get(\"books\") or [])} 本TOP书，榜单分析师第一个发言会展示。"}})}, ensure_ascii=False)}\n\n'
+                    except Exception:
+                        # 扫榜失败 = 当没发生，继续让主持人+后续7位专家正常讨论
+                        pass
                 yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator", "speaker_name": _MODERATOR_ROLE[0]}}, ensure_ascii=False)}\n\n'
                 mod_system = _MODERATOR_ROLE[1] + f"""
 
