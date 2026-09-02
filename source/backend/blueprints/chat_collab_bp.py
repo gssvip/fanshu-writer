@@ -9823,6 +9823,9 @@ def chat_roundtable():
     deep_think = 1
     # P0 榜单风向：先扫榜再开会，把市场风向注入主持人/所有专家/总结报告
     _rank_scan = data.get('rank_scan') if isinstance(data.get('rank_scan'), dict) else None
+    # 【rt-header右上角"继续"按钮专用】：前端点继续不新增用户气泡，传的 topic 仍是原始议题（不是"继续"）
+    # 所以必须靠这个独立布尔位强制命中 resuming/append_mode，避免走到"全新会议"分支重开场（榜单分析师从头来）
+    resume_from_checkpoint = bool(data.get('resume_from_checkpoint'))
     # ================== 【圆桌·自动扫榜增强·安全版】==================
     # 自动扫榜 = 只在"全新会议"里触发一次（generate() 内部的全新会议分支里执行）。
     # 绝对不在续会/追加/调整/创作阶段触发，因为：
@@ -10027,6 +10030,23 @@ def chat_roundtable():
             # 已完成 + 用户发的不是"继续"/创作指令而是自然反馈 → 进入调整阶段，复用上次议题与讨论上下文
             adjust_mode = bool(not is_continue and not create_mode and state and state.get('completed') and (topic or '').strip())
             resuming = bool(is_continue and state and state.get('active') and not state.get('completed'))
+
+            # ⭐【rt-header右上角绿色"继续"按钮强制续会覆盖】
+            # 用户点击继续按钮，前端不传"继续"topic（传原始议题），所以上面 is_continue=False，
+            # 必须在 resume_from_checkpoint=true 时强制 is_continue=True 并重算 append_mode/resuming。
+            if resume_from_checkpoint:
+                is_continue = True
+                # state 存在时，按状态重续：已完成→追加新一轮；中途断开→接着开剩余回合
+                if state and state.get('completed'):
+                    append_mode = True
+                    resuming = False
+                    adjust_mode = False
+                elif state and state.get('active') and not state.get('completed'):
+                    append_mode = False
+                    resuming = True
+                    adjust_mode = False
+                # state 不存在（极少数异常情况，如数据库清空）→ 保持现有模式，代码自然落到"全新会议"分支兜底
+                #   不新增额外逻辑，避免重复开场
 
             if create_mode:
                 # ========== 创作模式：按讨论共识创作维度 → 产出标准可采纳卡片 ==========

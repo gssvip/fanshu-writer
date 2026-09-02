@@ -1305,7 +1305,8 @@ export const api = {
   },
 
   // 圆桌会议：6个专家Agent按两轮依次发言（主持人开场→讨论→总结报告），全程流式推送
-  chatRoundtableStream: (topic: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; rounds?: number; rankScan?: any }, signal?: AbortSignal) => {
+  // resume_from_checkpoint=true: 从上次中断处继续（跳过主持人开场，不新增用户气泡）
+  chatRoundtableStream: (topic: string, opts?: { bookId?: string; sessionId?: string; aiConfigId?: string; rounds?: number; rankScan?: any; resume_from_checkpoint?: boolean }, signal?: AbortSignal) => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -1315,6 +1316,7 @@ export const api = {
     if (opts?.aiConfigId) body.ai_config_id = opts.aiConfigId;
     if (typeof opts?.rounds === 'number' && opts.rounds > 0) body.rounds = opts.rounds;
     if (opts?.rankScan) body.rank_scan = opts.rankScan;
+    if (opts?.resume_from_checkpoint) body.resume_from_checkpoint = true;
     const cfg: RequestInit = { method: 'POST', headers, body: JSON.stringify(body) };
     if (signal) cfg.signal = signal;
     return fetchStream(`${getApiBaseUrl()}/ai/chat/roundtable`, cfg, signal);

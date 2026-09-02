@@ -1037,12 +1037,15 @@ interface MessageBubbleProps {
   chaptersPerVolume?: number;
   // 节点设计师中途半截卡片：一键发送『继续』
   onQuickContinue?: () => void;
+  // 圆桌会议专用：rt-header右上角『继续』按钮（对齐节点设计师"卡片右侧继续"）
+  // 主 ChatPanel 组件收到回调后直接 POST /ai/chat/roundtable，不新增"继续"用户气泡
+  onRoundtableResume?: (sessionId: string, messageId: string | number) => void;
 }
 
 // 长按计时器
 const LONG_PRESS_MS = 500;
 
-const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onEdit, onIgnore, applyingCardId, streaming, onReplaceChapter, onEditMessage, onDeleteMessage, onRegenerate, bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume, onQuickContinue }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onEdit, onIgnore, applyingCardId, streaming, onReplaceChapter, onEditMessage, onDeleteMessage, onRegenerate, bookId, bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume, onQuickContinue, onRoundtableResume }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isRoundtable = !isUser && message.roundtable !== undefined;
   const [collapsed, setCollapsed] = useState(true);
@@ -1134,10 +1137,33 @@ const MessageBubble = memo(function MessageBubble({ message, index, onAdopt, onE
       <div className="chat-msg-body">
         {isRoundtable && (
           <div className="rt-box">
-            <div className="rt-header">
-              <span className="rt-title">🪑 圆桌会议</span>
-              {message.roundtable?.status === 'open' && <span className="rt-live">● 进行中</span>}
-              {message.roundtable?.status === 'done' && <span className="rt-done">✓ 已结束</span>}
+            <div className="rt-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="rt-title">🪑 圆桌会议</span>
+                {message.roundtable?.status === 'open' && <span className="rt-live">● 进行中</span>}
+                {message.roundtable?.status === 'done' && <span className="rt-done">✓ 已结束</span>}
+              </div>
+              {/* 断点续会"继续"按钮：对齐节点设计师卡片右侧的继续按钮，点击后不新增用户气泡 */}
+              {onRoundtableResume && message.roundtable?.status !== 'done' && !streaming && (
+                <button
+                  className="chat-card-btn primary"
+                  style={{
+                    padding: '3px 14px',
+                    minHeight: 28,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    borderRadius: 6,
+                    background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
+                    boxShadow: '0 2px 6px rgba(82,196,26,.3)',
+                    border: 'none',
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // sessionId 主组件优先读 chatGeneralSessionId state；index 是 messages 数组下标 = 可靠定位器
+                    onRoundtableResume('', index);
+                  }}
+                >继续</button>
+              )}
             </div>
             {message.roundtable?.speech && message.roundtable.speech.length > 0 ? (
               <div className="rt-discussion">
@@ -3433,6 +3459,134 @@ export default function ChatPanel() {
     handleGeneral({ text: promptText });
   }, [streaming, messages, parseNodeDesignerProgress, handleGeneral]);
 
+  // 圆桌会议断点续会（点击rt-header右上角绿色"继续"按钮触发）
+  // 关键行为：不新增用户气泡、不新建助手消息 → 追加发言到被点击的那条roundtable消息里
+  // 对应后端：resume_from_checkpoint=true → 强制resuming分支，跳过主持人开场，从state.done下一位继续
+  const handleRoundtableResume = useCallback((sessionId: string, messageId: string | number) => {
+    if (streaming) return;
+    // 1) 定位目标 roundtable 气泡：优先按 index 找（messageId 若为 number 就是 messages 索引）
+    let targetIdx = -1;
+    if (typeof messageId === 'number' && messageId >= 0 && messageId < messages.length) {
+      const m = messages[messageId];
+      if (m && m.role === 'assistant' && m.roundtable) targetIdx = messageId;
+    }
+    if (targetIdx < 0) {
+      // fallback：向前找最后一条 assistant+roundtable 消息
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m && m.role === 'assistant' && m.roundtable) { targetIdx = i; break; }
+      }
+    }
+    if (targetIdx < 0) return;
+    // 2) 提取原始 topic：目标 roundtable 的前一条用户消息就是用户当时发起的话题
+    let topic = '';
+    for (let i = targetIdx - 1; i >= 0; i--) {
+      if (messages[i] && messages[i].role === 'user') { topic = messages[i].content; break; }
+    }
+    // 3) 不 setMessages 新增任何用户气泡 → 不新增助手 roundtable 起始消息 → 直接流式追加到目标消息
+    setStreaming(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    const _sid = chatGeneralSessionId || sessionId || undefined;
+    const _cfgId = _sid ? (sessionModelMap[_sid] || undefined) : undefined;
+    api.chatRoundtableStream(topic, {
+      bookId: bookId || undefined,
+      sessionId: _sid,
+      aiConfigId: _cfgId,
+      rankScan: rankScanRef.current || undefined,
+      resume_from_checkpoint: true, // ⭐ 核心：强制后端断点续会分支（跳过主持人开场）
+    }, ctrl.signal).then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      let curName = '';
+      for await (const evt of parseSSE(res)) {
+        if (ctrl.signal.aborted) break;
+        if (evt.type === 'error') throw new Error(evt.error);
+        if (evt.type === 'meta' && evt.kind === 'roundtable_start' && evt.info) {
+          curName = '';
+        } else if (evt.type === 'meta' && evt.kind === 'roundtable_speaker' && evt.info) {
+          curName = String(evt.info.speaker_name || '').trim();
+          setMessages(prev => {
+            const next = [...prev];
+            const tgt = next[targetIdx];
+            if (tgt && tgt.role === 'assistant' && tgt.roundtable) {
+              const rt = { ...tgt.roundtable, currentSpeaker: curName };
+              next[targetIdx] = { ...tgt, roundtable: rt };
+            }
+            return next;
+          });
+        } else if (evt.type === 'meta' && evt.kind === 'reasoning' && evt.info && typeof evt.info.text === 'string') {
+          reasoningBufferRef.current += evt.info.text;
+          const rbuf = reasoningBufferRef.current;
+          setMessages(prev => {
+            const next = [...prev];
+            const tgt = next[targetIdx];
+            if (tgt && tgt.role === 'assistant') next[targetIdx] = { ...tgt, reasoning: (tgt.reasoning || '') + evt.info!.text };
+            // (keep reasoningBufferRef accumulated above — 这里下面 delta 分支用)
+            void rbuf;
+            return next;
+          });
+        } else if (evt.type === 'delta' && typeof evt.content === 'string') {
+          const sp = String((evt as any).speaker || '');
+          const c = evt.content;
+          setMessages(prev => {
+            const next = [...prev];
+            const tgt = next[targetIdx];
+            if (tgt && tgt.role === 'assistant' && tgt.roundtable) {
+              const rt = { ...tgt.roundtable };
+              const speech = [...rt.speech];
+              const lastSeg = speech[speech.length - 1];
+              if (lastSeg && lastSeg.speaker === sp) {
+                lastSeg.content += c;
+                speech[speech.length - 1] = lastSeg;
+              } else {
+                speech.push({ speaker: sp, name: curName || sp, content: c });
+              }
+              rt.speech = speech;
+              rt.currentSpeaker = curName || rt.currentSpeaker;
+              next[targetIdx] = { ...tgt, roundtable: rt };
+            }
+            return next;
+          });
+        } else if (evt.type === 'speaker_done' && (evt as any).speaker === 'moderator_summary') {
+          setMessages(prev => {
+            const next = [...prev];
+            const tgt = next[targetIdx];
+            if (tgt && tgt.role === 'assistant' && tgt.roundtable) {
+              next[targetIdx] = { ...tgt, roundtable: { ...tgt.roundtable, status: 'done' as const } };
+            }
+            return next;
+          });
+        } else if (evt.type === 'card' && (evt as any).card) {
+          const card = (evt as any).card as ActionCard;
+          setMessages(prev => {
+            const next = [...prev];
+            const tgt = next[targetIdx];
+            if (tgt && tgt.role === 'assistant') {
+              const cards = [...(tgt.cards || [])];
+              if (!cards.some(c => c.id === card.id)) cards.push(card);
+              next[targetIdx] = { ...tgt, cards };
+            }
+            return next;
+          });
+        } else if (evt.type === 'done') {
+          if (evt.session_id) setChatGeneralSessionId(evt.session_id);
+        }
+      }
+    }).catch((e: any) => {
+      if (e.name !== 'AbortError') {
+        const msg = (e?.message || e?.error || '圆桌续会失败').trim() || '圆桌续会失败';
+        appendAiNotice('❌ 圆桌续会失败：' + msg + '\n\n常见原因&解决：\n1) LLM上游限流 → 等30秒后重点继续\n2) 会话 state 丢失 → 重新发起一个新圆桌');
+        setStreamError('');
+      }
+    }).finally(() => {
+      setStreaming(false);
+      abortRef.current = null;
+    });
+  }, [streaming, messages, chatGeneralSessionId, sessionModelMap, bookId, rankScanRef, appendAiNotice, setStreamError, setStreaming, abortRef, setMessages, setChatGeneralSessionId, reasoningBufferRef]);
+
   // 主发送动作（设定Tab：通用走general，维度已有内容走dim-edit，否则走suggest）
   const handleMainSend = useCallback(() => {
     if (activeTab !== 'setting' || !selectedDim) return;
@@ -4403,6 +4557,7 @@ export default function ChatPanel() {
                   selectedSkillPackIds={activeTab === 'deai' ? deaiPacks_selected : activeTab === 'chapter' ? chapterPacks : settingPacks}
                   chaptersPerVolume={50}
                   onQuickContinue={handleQuickContinue}
+                  onRoundtableResume={handleRoundtableResume}
                 />
               ))}
               {streamError && <div className="chat-error">{streamError}</div>}
