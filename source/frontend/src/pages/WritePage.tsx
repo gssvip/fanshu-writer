@@ -2704,41 +2704,7 @@ function ChapterPanel(props: {
 
   const [skillExpanded, setSkillExpanded] = useState(false);
   const [langStyleExpanded, setLangStyleExpanded] = useState(false);
-  // 【正文幽灵字续写】在章节编辑器中展示浅灰续写建议，按 Tab 一键采纳
-  const [ghostSug, setGhostSug] = useState('');
-  const [ghostBusy, setGhostBusy] = useState(false);
-  const ghostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const taRef = useRef<HTMLTextAreaElement>(null);
-  const mirrorRef = useRef<HTMLDivElement>(null);
-  const syncGhostScroll = useCallback(() => {
-    if (mirrorRef.current && taRef.current) {
-      mirrorRef.current.style.transform = `translateY(${-taRef.current.scrollTop}px)`;
-    }
-  }, []);
-  // 输入暂停后自动抓取幽灵字建议（防抖 700ms，仅章节编辑态且内容足够时触发）
-  useEffect(() => {
-    if (!chapterEditing) { setGhostSug(''); return; }
-    if (ghostTimer.current) clearTimeout(ghostTimer.current);
-    const text = chapterEditContent || '';
-    if (!bookId || !activeChapter || text.trim().length < 10) { setGhostSug(''); return; }
-    ghostTimer.current = setTimeout(async () => {
-      if (ghostBusy) return;
-      setGhostBusy(true);
-      try {
-        const r = await api.ghostSuggest(bookId, activeChapter.id, text);
-        setGhostSug(r?.suggestion ? (r.suggestion as string) : '');
-      } catch { setGhostSug(''); } finally { setGhostBusy(false); }
-    }, 700);
-    return () => { if (ghostTimer.current) clearTimeout(ghostTimer.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chapterEditContent, chapterEditing, activeChapter, bookId]);
-  const handleGhostKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Tab' && ghostSug && !e.shiftKey) {
-      e.preventDefault();
-      onEditContent((chapterEditContent || '') + ghostSug);
-      setGhostSug('');
-    }
-  };
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [expandedVolumes, setExpandedVolumes] = useState<Record<string, boolean>>({});
   // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
   const chapterCollapseInitRef = useRef(false);
@@ -3407,7 +3373,7 @@ function ChapterPanel(props: {
     );
   }
 
-  // 章节详情查看（小说阅读排版）
+  // 章节详情查看（笔记本类纸）
   if (activeChapter && !chapterEditing) {
     const paragraphs = (activeChapter.content || '').split(/\n+/).filter(p => p.trim());
     return (
@@ -3419,15 +3385,33 @@ function ChapterPanel(props: {
             <button className="btn-ghost-sm" style={{color:'#e74c3c'}} onClick={() => onDeleteChapter(activeChapter.id)}>🗑️</button>
           </div>
         </div>
-        <h3 className="chapter-detail-title">{activeChapter.title}</h3>
-        <div className="chapter-detail-meta">{activeChapter.word_count} 字</div>
-        <div className="chapter-reading-content">
-          {paragraphs.length > 0 ? paragraphs.map((para, i) => (
-            <p key={i} className="novel-paragraph">{para.trim()}</p>
-          )) : (
-            <p className="novel-empty-hint">这一章还是空的，点击"编辑"开始写作</p>
-          )}
-        </div>
+
+        {/* —— 笔记本类纸：章节落地正文 —— */}
+        <article className="paper-notebook chapter-paper">
+          <div className="paper-binding" aria-hidden="true">
+            <span className="hole" /><span className="hole" /><span className="hole" />
+          </div>
+          <div className="paper-sticker paper-sticker--rose" aria-hidden="true">
+            <b>章节·正文</b>
+            <span>{activeChapter.word_count || 0} 字 · 落地稿</span>
+          </div>
+          <div className="paper-curl" aria-hidden="true" />
+
+          <div className="paper-inner">
+            <h3 className="chapter-detail-title paper-title">{activeChapter.title}</h3>
+            <div className="chapter-reading-content">
+              {paragraphs.length > 0 ? paragraphs.map((para, i) => (
+                <p key={i} className="novel-paragraph">{para.trim()}</p>
+              )) : (
+                <p className="novel-empty-hint">这一章还是空的，点击"编辑"开始写作</p>
+              )}
+            </div>
+            <div className="paper-footer" aria-hidden="true">
+              <span className="paper-footer-left">— 凡书创作笔记 —</span>
+              <span className="paper-footer-right">— No. {activeChapter.order_index ?? '—'} —</span>
+            </div>
+          </div>
+        </article>
       </div>
     );
   }
@@ -3448,24 +3432,15 @@ function ChapterPanel(props: {
           onChange={e => onEditTitle(e.target.value)}
           placeholder="章节标题"
         />
-        <div className="chapter-ghost-wrap">
-          <div className="chapter-ghost-mirror" ref={mirrorRef} aria-hidden="true">
-            <span className="ghost-real">{chapterEditContent}</span>{ghostSug && <span className="ghost-suffix">{ghostSug}</span>}
-          </div>
-          <textarea
-            ref={taRef}
-            className="input chapter-edit-textarea"
-            value={chapterEditContent}
-            onChange={e => onEditContent(e.target.value)}
-            onScroll={syncGhostScroll}
-            onKeyDown={handleGhostKey}
-            onBlur={() => syncGhostScroll()}
-            placeholder="开始写作..."
-            rows={20}
-            spellCheck={false}
-          />
-          {ghostBusy && <div className="ghost-busy-hint">⋯ 生成续写建议中</div>}
-        </div>
+        <textarea
+          ref={textareaRef}
+          className="input chapter-edit-textarea clean-editor"
+          value={chapterEditContent}
+          onChange={e => onEditContent(e.target.value)}
+          placeholder="开始写作..."
+          rows={20}
+          spellCheck={false}
+        />
       </div>
     );
   }
@@ -6130,8 +6105,23 @@ function BibleEditPanel(props: {
         </>
       ) : content ? (
         <>
-          <div className="bible-display" onClick={onStartEdit}>
-            <pre className="bible-text">{content}</pre>
+          {/* —— 笔记本类纸：维度落地内容 —— */}
+          <div className="paper-notebook bible-paper" data-dim={tab.label} onClick={onStartEdit}>
+            <div className="paper-binding paper-binding--left" aria-hidden="true">
+              <span className="hole" /><span className="hole" /><span className="hole" />
+            </div>
+            <div className="paper-sticker paper-sticker--blue" aria-hidden="true">
+              <b>{tab.icon} {tab.label}</b>
+              <span>落地稿 · {content.length} 字</span>
+            </div>
+            <div className="paper-curl" aria-hidden="true" />
+            <div className="paper-inner">
+              <pre className="bible-text">{content}</pre>
+              <div className="paper-footer" aria-hidden="true">
+                <span className="paper-footer-left">— 凡书世界观百科 —</span>
+                <span className="paper-footer-right">— Updated —</span>
+              </div>
+            </div>
           </div>
           <button className="bible-tips-toggle" onClick={() => setShowTips(v => !v)}>
             {showTips ? '▼ 收起提示' : '▶ 创作提示'}
@@ -6465,8 +6455,23 @@ function OutlineCombinedPanel(props: {
           autoFocus
         />
       ) : currentContent ? (
-        <div className="bible-display" onClick={startEdit}>
-          <pre className="bible-text">{currentContent}</pre>
+        /* —— 笔记本类纸：大纲 / 世界观 落地内容 —— */
+        <div className="paper-notebook bible-paper outline-paper" data-dim={labelMap[subTab]} onClick={startEdit}>
+          <div className="paper-binding paper-binding--left" aria-hidden="true">
+            <span className="hole" /><span className="hole" /><span className="hole" />
+          </div>
+          <div className={`paper-sticker ${subTab === 'outline' ? 'paper-sticker--mint' : 'paper-sticker--yellow'}`} aria-hidden="true">
+            <b>{subTab === 'outline' ? '📋 大纲' : '🌍 世界观'}</b>
+            <span>落地稿 · {currentContent.length} 字</span>
+          </div>
+          <div className="paper-curl" aria-hidden="true" />
+          <div className="paper-inner">
+            <pre className="bible-text">{currentContent}</pre>
+            <div className="paper-footer" aria-hidden="true">
+              <span className="paper-footer-left">— 凡书世界观百科 —</span>
+              <span className="paper-footer-right">— Updated —</span>
+            </div>
+          </div>
         </div>
       ) : (
         <div className="bible-empty" onClick={startEdit}>
@@ -6694,8 +6699,23 @@ function SettingsCombinedPanel(props: {
         <textarea className="input bible-editor-textarea" rows={16} value={editValue}
           onChange={e => setEditValue(e.target.value)} placeholder={placeholderMap[subTab]} autoFocus />
       ) : currentContent ? (
-        <div className="bible-display" onClick={startEdit}>
-          <pre className="bible-text">{currentContent}</pre>
+        /* —— 笔记本类纸：设定 / 文风 落地内容 —— */
+        <div className="paper-notebook bible-paper setting-paper" data-dim={labelMap[subTab]} onClick={startEdit}>
+          <div className="paper-binding paper-binding--left" aria-hidden="true">
+            <span className="hole" /><span className="hole" /><span className="hole" />
+          </div>
+          <div className={`paper-sticker ${subTab === 'rules' ? 'paper-sticker--purple' : 'paper-sticker--coral'}`} aria-hidden="true">
+            <b>{iconMap[subTab]} {labelMap[subTab]}</b>
+            <span>落地稿 · {currentContent.length} 字</span>
+          </div>
+          <div className="paper-curl" aria-hidden="true" />
+          <div className="paper-inner">
+            <pre className="bible-text">{currentContent}</pre>
+            <div className="paper-footer" aria-hidden="true">
+              <span className="paper-footer-left">— 凡书世界观百科 —</span>
+              <span className="paper-footer-right">— Updated —</span>
+            </div>
+          </div>
         </div>
       ) : (
         <div className="bible-empty" onClick={startEdit}>
