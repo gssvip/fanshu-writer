@@ -2052,6 +2052,35 @@ export default function ChatPanel() {
     for await (const evt of parseSSE(res)) {
       if (ctrl.signal.aborted) break;
       if (evt.type === 'meta') {
+        // P0 榜单风向（自然语言触发）：用户说「扫番茄新书榜」→ 后端扫完立即推此 meta，前端 setRankScan 渲染卡片
+        if (evt.kind === 'rank_scan' && evt.info && typeof evt.info === 'object') {
+          const info = evt.info as any;
+          const platform: 'fanqie' | 'qidian' = info.platform === 'qidian' ? 'qidian' : 'fanqie';
+          // info 本身就是扁平结构，直接作为 chatPanelPresetRankScan，格式与 RankScanCard props 对齐
+          const payload: any = {
+            ok: !!info.ok,
+            from_nl: !!info.from_nl,
+            from_cache: !!info.from_cache,
+            platform,
+            concept: info.concept || '',
+            error: info.error || undefined,
+            report: info.report || null,
+            matched_categories: info.matched_categories || [],
+            matched_books_count: Number(info.matched_books_count) || 0,
+            rank_aggregate_label: info.rank_aggregate_label || '',
+            opening_patterns: info.opening_patterns || [],
+            popular_elements: info.popular_elements || [],
+            landmine_elements: info.landmine_elements || [],
+            title_formulas: info.title_formulas || [],
+            market_snapshot: info.market_snapshot || {},
+            market_intel: info.market_intel || {},
+            scanned_at: info.scanned_at || '',
+            sources_label: info.rank_aggregate_label || '',
+          };
+          const setChatPanelRankScan = (useStore.getState() as any).setChatPanelRankScan;
+          if (setChatPanelRankScan) setChatPanelRankScan(payload, platform);
+          rankScanRef.current = payload;
+        }
         if (evt.kind === 'auto_context' && evt.info) {
           setAutoContextNotice({
             chapters: Array.isArray(evt.info.chapters) ? evt.info.chapters : [],

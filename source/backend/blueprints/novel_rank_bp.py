@@ -1979,44 +1979,39 @@ _SCAN_CACHE: dict[str, tuple[float, dict]] = {}
 _SCAN_CACHE_TTL = 300
 
 
-@novel_rank_bp.route('/api/rank/scan-for-concept', methods=['POST'])
-def api_rank_scan_for_concept():
-    """智驾入口：根据构想，匹配同题材新书榜 → 抓取 TopN → LLM 抽市场情报 → 返回 RankScanReport。
-    Request JSON：
-      concept: str             必填
-      platform?: 'fanqie'|'qidian' 默认 fanqie；用户指定起点时扫起点大盘新书榜
-      gender?:  'male'|'female'  可选，不填则根据关键词粗判
-      book_id?: str             可选（前端传了可用于后续落地缓存）
-      session_id?: str          可选
-      top_n_categories?: int    默认 3
-      force?: bool              默认 false；true 时忽略缓存
+def _core_rank_scan_for_concept(concept: str, platform: str = 'fanqie',
+                                gender: str | None = None,
+                                top_n: int = 3,
+                                force: bool = False) -> dict:
+    """【内部函数】根据构思匹配新书榜→抓榜→LLM聚合市场情报→返回完整payload。
+    被 chat_collab_bp 的自然语言扫榜触发直接调用，跳过 HTTP 包装层，省时间 & 无缓存击穿。
+    返回 dict：{ 'ok': True/False, 'error': str?, 'from_cache': bool, 'report': {...}? }
+    注意：返回 payload 结构与 /api/rank/scan-for-concept HTTP 响应完全一致，
+          前端 RankScanCard 可以直接渲染。
     """
-    body = request.get_json(silent=True) or {}
-    concept = _clean(body.get('concept') or '')
-    if len(concept) < 4:
-        return jsonify({'error': '构想太短，不足以匹配同类题材（至少 4 字）'}), 400
-    platform = (body.get('platform') or 'fanqie').strip() or 'fanqie'
+    concept = _clean(concept or '')
+    if len(concept) < 2:
+        return {'ok': False, 'error': '构想太短，不足以匹配同类题材（至少 2 字）'}
+    platform = platform or 'fanqie'
     if platform not in ('fanqie', 'qidian'):
-        return jsonify({'error': 'platform 只支持 fanqie（默认）或 qidian'}), 400
-    gender = body.get('gender') or None
+        return {'ok': False, 'error': 'platform 只支持 fanqie（默认）或 qidian'}
     if gender not in ('male', 'female', None):
         gender = None
-    top_n = max(1, min(5, int(body.get('top_n_categories') or 3)))
-    force = bool(body.get('force'))
+    top_n = max(1, min(5, int(top_n or 3)))
 
     cache_key = f'{platform}|{gender or "auto"}|{top_n}|{concept[:120]}'
     now = time.time()
     with _SCAN_CACHE_LOCK:
         cached = _SCAN_CACHE.get(cache_key)
         if (not force) and cached and now - cached[0] < _SCAN_CACHE_TTL:
-            return jsonify({'ok': True, 'from_cache': True, 'report': cached[1]})
+            return {'ok': True, 'from_cache': True, 'report': cached[1]}
 
     gender = gender or _detect_gender_by_keywords(concept)
 
-    # 1) 匹配榜单源（只选新书榜）
+    # 1) 匹配榜单源（只选【新书榜】）
     sources = _match_rank_new_book_sources(concept, platform, gender, max_sources=top_n)
     if not sources:
-        return jsonify({'error': '没有匹配到可用的新书榜源'}), 500
+        return {'ok': False, 'error': '没有匹配到可用的新书榜源'}
 
     # 2) 抓榜（复用 crawl_rank_source，带缓存 + 熔断）
     all_items: list[dict] = []
@@ -2028,9 +2023,11 @@ def api_rank_scan_for_concept():
         except Exception:
             continue
         cat = _find_category(s.get('categoryLegacyId')) if s.get('categoryLegacyId') else None
+        site_name = next((x.get('name') or x.get('code') or x.get('code') for x in RANK_SITES if x.get('code') == s.get('siteCode')), '')
+        s_gender = (s.get('meta') or {}).get('gender') or (cat.get('gender') if cat else None)
         label = (
-            f"{next((x.get('name') or x.get('code') or x.get('code') for x in RANK_SITES if x.get('code') == s.get('siteCode')), '')}"
-            f"·{'男频' if ((s.get('meta') or {}).get('gender') or (cat.get('gender') if cat else None)) == 'male' else '女频'}"
+            f"{site_name}"
+            f"·{'男频' if s_gender == 'male' else '女频'}"
             f"·{cat.get('name') if cat else '大盘'}"
             f"·{s.get('title') or s.get('rankType')}"
         )
@@ -2075,7 +2072,6 @@ def api_rank_scan_for_concept():
         for tag in (it.get('tags') or []):
             if 1 <= len(tag) <= 16:
                 keyword_set.add(tag)
-    # 再从用户构想里切 2~6 字连续 token（简单 N-gram，中文按长度）
     for l in (6, 4, 2):
         for i in range(0, max(0, len(concept) - l + 1)):
             sub = concept[i:i + l]
@@ -2092,7 +2088,7 @@ def api_rank_scan_for_concept():
             break
     detected_keywords = sorted(keyword_set)[:16]
 
-    # 5) trend_marker 打标（规则 + 命中榜的标签）：根据 popular/openings 多寡
+    # 5) trend_marker 打标
     pop_count = len(agg.get('popular_elements') or [])
     trend_label = '新梗求变' if pop_count >= 6 else ('稳中求变' if pop_count >= 3 else '稳妥保底')
     tone_label = '新梗融合·差异化创新' if trend_label == '新梗求变' else (
@@ -2124,11 +2120,37 @@ def api_rank_scan_for_concept():
     # 缓存 5 分钟
     with _SCAN_CACHE_LOCK:
         _SCAN_CACHE[cache_key] = (time.time(), report)
-        # 简单限制 size
         if len(_SCAN_CACHE) > 200:
             try:
                 oldest = min(_SCAN_CACHE.items(), key=lambda kv: kv[1][0])
                 _SCAN_CACHE.pop(oldest[0], None)
             except Exception:
                 pass
-    return jsonify({'ok': True, 'from_cache': False, 'report': report})
+    return {'ok': True, 'from_cache': False, 'report': report}
+
+
+@novel_rank_bp.route('/api/rank/scan-for-concept', methods=['POST'])
+def api_rank_scan_for_concept():
+    """智驾入口：根据构想，匹配同题材新书榜 → 抓取 TopN → LLM 抽市场情报 → 返回 RankScanReport。
+    Request JSON：
+      concept: str             必填
+      platform?: 'fanqie'|'qidian' 默认 fanqie；用户指定起点时扫起点大盘新书榜
+      gender?:  'male'|'female'  可选，不填则根据关键词粗判
+      book_id?: str             可选（前端传了可用于后续落地缓存）
+      session_id?: str          可选
+      top_n_categories?: int    默认 3
+      force?: bool              默认 false；true 时忽略缓存
+    """
+    body = request.get_json(silent=True) or {}
+    concept = _clean(body.get('concept') or '')
+    if len(concept) < 4:
+        return jsonify({'error': '构想太短，不足以匹配同类题材（至少 4 字）'}), 400
+    platform = (body.get('platform') or 'fanqie').strip() or 'fanqie'
+    gender = body.get('gender') or None
+    top_n = max(1, min(5, int(body.get('top_n_categories') or 3)))
+    force = bool(body.get('force'))
+
+    result = _core_rank_scan_for_concept(concept, platform, gender, top_n, force)
+    if not result.get('ok'):
+        return jsonify({'error': result.get('error') or '扫榜失败'}), 400
+    return jsonify({'ok': True, **{k: v for k, v in result.items() if k != 'ok'}})

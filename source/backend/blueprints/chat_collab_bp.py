@@ -245,6 +245,182 @@ def _persisted_rank_cards(cards, rank_scan):
     return out
 
 
+# =============================================================================
+# P0 榜单风向 × 智驾（自然语言触发）：用户在智驾对话框里用自然语言触发扫榜
+#   支持句式：
+#     · "先扫下番茄新书榜/起点新书榜再出设定"
+#     · "扫榜看看市场风向"
+#     · "先扫一下同类题材"
+#     · "都市重生文，先扫番茄榜"
+#   命中后：自动取「用户消息 + 构思/大纲上下文」作为扫榜 concept，
+#           调 _core_rank_scan_for_concept() 拿到 report → 合并写入 _rank_scan
+#           → 首帧 SSE 推送 meta kind=rank_scan 让前端实时渲染 RankScanCard
+# =============================================================================
+
+_RANK_SCAN_TRIGGER_RE = re.compile(
+    r'(扫榜|扫.*榜|扫一下.*榜|看.*榜|查.*榜|分析.*榜|市场风向|风向|爆款分析|新书榜)',
+    re.IGNORECASE
+)
+_RANK_SCAN_PLATFORM_FQ_RE = re.compile(r'(番茄|番茄榜|fanqie|fq|飞卢|小说榜|番茄新书榜)', re.IGNORECASE)
+_RANK_SCAN_PLATFORM_QD_RE = re.compile(r'(起点|qidian|qd|起点榜|起点新书榜|起点中文网)', re.IGNORECASE)
+_RANK_SCAN_STOP_RE = re.compile(r'(不要扫榜|不用扫榜|别扫榜|跳过扫榜|取消扫榜|忽略榜单|no rank|不扫榜|无需扫榜)', re.IGNORECASE)
+
+
+def _auto_rank_scan_from_nl(message: str, *,
+                            fallback_concept: str = '',
+                            book_title: str = '',
+                            explicit_rank_scan: dict | None = None) -> tuple[dict | None, dict | None]:
+    """自然语言扫榜触发。
+    返回 (rank_scan_payload, sse_meta_payload)：
+      - rank_scan_payload 用于：_format_rank_context 注入 system prompt / _enrich_card_rank_meta 卡片打标
+      - sse_meta_payload   用于：SSE 首帧 `meta kind=rank_scan` 推送，前端渲染 RankScanCard
+    未触发时返回 (explicit_rank_scan, None)
+    """
+    # ① 若前端已通过 body.rank_scan 显式传了报告 → 沿用，但仍尝试 NL 触发做平台切换
+    message = (message or '').strip()
+    f_concept = (fallback_concept or '').strip()
+
+    triggered = False
+    if not _RANK_SCAN_STOP_RE.search(message) and _RANK_SCAN_TRIGGER_RE.search(message):
+        triggered = True
+    # ② 宽松触发：用户即使没说"扫榜"，直接说「番茄榜」「起点新书榜」+ 创作意图（≥15字）也命中
+    if not triggered and (
+            _RANK_SCAN_PLATFORM_FQ_RE.search(message) or _RANK_SCAN_PLATFORM_QD_RE.search(message)) \
+            and len(message) >= 6:
+        triggered = True
+
+    # 平台优先级：NL 提到哪个平台 > explicit_rank_scan 里的 platform > 默认 fanqie
+    platform = None
+    if triggered:
+        if _RANK_SCAN_PLATFORM_QD_RE.search(message):
+            platform = 'qidian'
+        elif _RANK_SCAN_PLATFORM_FQ_RE.search(message):
+            platform = 'fanqie'
+        elif explicit_rank_scan and isinstance(explicit_rank_scan, dict):
+            platform = explicit_rank_scan.get('platform') or 'fanqie'
+        else:
+            platform = 'fanqie'
+
+    # ③ 如果有显式传了 rank_scan 且 NL 没有任何新平台/触发意图 → 直接沿用原报告
+    if not triggered and explicit_rank_scan:
+        # 没触发但有 preset：作为 SSE 首帧仍然推一次，保证前端打开会话时能看到卡片
+        report = _report_from_payload(explicit_rank_scan)
+        if report:
+            sse_meta = _rank_scan_to_sse_meta(explicit_rank_scan, platform or explicit_rank_scan.get('platform') or 'fanqie',
+                                               from_nl=False, from_cache=bool(explicit_rank_scan.get('from_cache')),
+                                               concept=explicit_rank_scan.get('concept') or f_concept or message)
+            return explicit_rank_scan, sse_meta
+        return explicit_rank_scan, None
+
+    if not triggered:
+        return explicit_rank_scan or None, None
+
+    # ④ 构造扫榜 concept：message 本身（含触发词但不剥离，留作分类匹配信息）+ fallback + book_title
+    candidates = [message]
+    if f_concept and f_concept not in message:
+        candidates.append(f_concept)
+    if book_title and f'《{book_title}》' not in message:
+        candidates.insert(0, f'《{book_title}》')
+    scan_concept = '；'.join(x for x in candidates if x)[:500]
+
+    # ⑤ 调内部核心函数（走同一缓存）
+    try:
+        from blueprints.novel_rank_bp import _core_rank_scan_for_concept  # 延迟导入避免循环
+    except Exception:
+        try:
+            from novel_rank_bp import _core_rank_scan_for_concept  # type: ignore
+        except Exception:
+            # 兜底失败：把触发提示写成错误，不阻塞创作
+            err_payload = {'ok': False, 'platform': platform, 'concept': scan_concept,
+                           'error': '扫榜模块暂时不可用（import失败），创作继续'}
+            return err_payload, _rank_scan_to_sse_meta(err_payload, platform or 'fanqie', from_nl=True, from_cache=False, concept=scan_concept)
+
+    result = _core_rank_scan_for_concept(scan_concept, platform=platform or 'fanqie')
+    if not result.get('ok'):
+        err_payload = {'ok': False, 'platform': platform or 'fanqie', 'concept': scan_concept,
+                       'error': result.get('error') or '扫榜失败，创作继续'}
+        return err_payload, _rank_scan_to_sse_meta(err_payload, platform or 'fanqie', from_nl=True, from_cache=False, concept=scan_concept)
+
+    report = result.get('report') or {}
+    from_cache = bool(result.get('from_cache'))
+    # 组装 rank_scan（格式与前端 preset 完全一致，保证 _format_rank_context / _enrich_card 复用）
+    rank_scan = {
+        'ok': True,
+        'from_cache': from_cache,
+        'platform': platform or 'fanqie',
+        'concept': scan_concept,
+        'report': report,
+        # 展开扁平化字段：便于 _format_rank_context / 前端 RankScanCard 直接取
+        **_flatten_report_fields(report),
+    }
+    sse_meta = _rank_scan_to_sse_meta(rank_scan, platform or 'fanqie', from_nl=True,
+                                      from_cache=from_cache, concept=scan_concept)
+    return rank_scan, sse_meta
+
+
+def _flatten_report_fields(report: dict) -> dict:
+    """把 report 里 meta/market_snapshot 字段扁平一层，供 _format_rank_context 的分支直接读。"""
+    if not report or not isinstance(report, dict):
+        return {}
+    meta = report.get('meta') or {}
+    snap = report.get('market_snapshot') or {}
+    return {
+        'rank_aggregate_label': report.get('rank_aggregate_label') or '',
+        'meta': meta,
+        'market_snapshot': snap,
+        'matched_categories': meta.get('matched_categories') or [],
+        'matched_books_count': len(report.get('top_books') or []),
+        'opening_patterns': report.get('opening_patterns') or [],
+        'popular_elements': report.get('popular_elements') or [],
+        'landmine_elements': report.get('landmine_elements') or [],
+        'title_formulas': report.get('title_formulas') or [],
+        'sources_label': report.get('rank_aggregate_label') or '',
+    }
+
+
+def _report_from_payload(rank_scan: dict) -> dict | None:
+    """从前端 preset 的 rank_scan dict 里取 report（兼容多种结构）。"""
+    if not rank_scan or not isinstance(rank_scan, dict):
+        return None
+    r = rank_scan.get('report')
+    if r and isinstance(r, dict):
+        return r
+    # 兜底：payload 本身就是 report
+    if any(k in rank_scan for k in ('rank_aggregate_label', 'market_intel', 'matched_categories')):
+        return rank_scan
+    return None
+
+
+def _rank_scan_to_sse_meta(rank_scan: dict, platform: str, *, from_nl: bool,
+                           from_cache: bool, concept: str) -> dict:
+    """包装为 SSE `type=meta kind=rank_scan` 消息体：前端直接 setRankScan(payload) 渲染 RankScanCard。"""
+    report = _report_from_payload(rank_scan) or {}
+    ok = bool(rank_scan.get('ok'))
+    return {
+        'type': 'meta',
+        'kind': 'rank_scan',
+        'info': {
+            'ok': ok,
+            'from_nl': from_nl,
+            'from_cache': from_cache,
+            'platform': platform,
+            'concept': concept,
+            'error': None if ok else rank_scan.get('error'),
+            'report': report,
+            'matched_categories': (report.get('meta') or {}).get('matched_categories') or rank_scan.get('matched_categories') or [],
+            'matched_books_count': rank_scan.get('matched_books_count') or len(report.get('top_books') or []),
+            'rank_aggregate_label': report.get('rank_aggregate_label') or rank_scan.get('rank_aggregate_label') or '',
+            'opening_patterns': report.get('opening_patterns') or rank_scan.get('opening_patterns') or [],
+            'popular_elements': report.get('popular_elements') or rank_scan.get('popular_elements') or [],
+            'landmine_elements': report.get('landmine_elements') or rank_scan.get('landmine_elements') or [],
+            'title_formulas': report.get('title_formulas') or rank_scan.get('title_formulas') or [],
+            'market_snapshot': report.get('market_snapshot') or rank_scan.get('market_snapshot') or {},
+            'market_intel': rank_scan.get('market_intel') or {},
+            'scanned_at': report.get('scanned_at') or rank_scan.get('scanned_at') or '',
+        }
+    }
+
+
 def _is_rt_continue(msg: str) -> bool:
     m = (msg or '').strip().lstrip('，。,.！!？? ').strip()
     if not m:
@@ -2049,6 +2225,18 @@ def chat_smart():
         return jsonify({'error': '书籍不存在'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
+    # ===== P0 榜单风向（自然语言触发）—— chat_smart =====
+    # 用户在智驾对话框用自然语言说「扫一下番茄新书榜再出设定」→ 后端自动完成抓榜+LLM情报
+    # 产出 rank_scan_sse_meta 会在 SSE 首帧里作为 meta kind=rank_scan 推给前端，前端立即渲染 RankScanCard
+    _fallback_concept = ''
+    if bb:
+        _fallback_concept = (bb.concept or bb.master_outline or '').strip()
+    _book_title = (book.title or '').strip() if book else ''
+    _rank_scan, _rank_scan_sse_meta = _auto_rank_scan_from_nl(
+        message, fallback_concept=_fallback_concept, book_title=_book_title,
+        explicit_rank_scan=_rank_scan
+    )
+
     # ===== 【卷数/章数意图·落地前置】先于 LLM 调用执行 =====
     # 用户在智驾里说"改成25卷/每卷60章"时，必须真正写入 DB，
     # 否则后续 build_chat_system_prompt → _core_params_iron_block 读到的还是旧值，用户等于白说。
@@ -2169,6 +2357,9 @@ def chat_smart():
         yield ': ping-heartbeat-keepalive\n\n'
         full_text = []
         try:
+            # SSE 首帧 0：自然语言扫榜 → RankScanCard 首条消息渲染（NL 命中 / preset rank_scan 时推送）
+            if _rank_scan_sse_meta:
+                yield f'data: {json.dumps(_rank_scan_sse_meta, ensure_ascii=False)}\n\n'
             # SSE 首帧 ①：核心创作参数同步结果（若用户这条消息触发了卷数/章数调整，先告诉前端已落地）
             if params_sync_notes:
                 yield f'data: {json.dumps({"type": "meta", "kind": "params_sync", "info": {"notes": params_sync_notes}}, ensure_ascii=False)}\n\n'
