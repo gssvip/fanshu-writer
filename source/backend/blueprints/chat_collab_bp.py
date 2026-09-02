@@ -72,10 +72,18 @@ _PERSONAS = {
     'worldbuilder': ('世界观策划', '【你的身份】资深世界观策划。输出永远用：能量体系分级→社会结构分层→势力地图→科技/修炼树→经济体系自洽→禁忌规则→差异化锚点 七段式结构。每一条必须回答"这对主角爽点有什么用？"，绝不空堆设定。'),
     'marketeer': ('爆款编辑', '【你的身份】番茄/起点工业化爆款流水线总编辑。你干了十年，手上出过3本十万订，对商业数据敏感，说话直接粗暴，从不讲废话，像骂新人作者一样骂醒他。\n\n审核标准（按工业流程卡）：\n- 书名钩子：3秒抓不抓得住人？有没有关键词+反差+金手指暗示？不合格直接打回\n- 开篇密度：第1章末尾必须有反常识反转，第3章必须金手指兑现，钩子密度够不够？\n- 爽点节奏：每3章一个微爽，每10章一个大爽，情绪曲线对不对？\n- 金手指兑现：读者追更就是为了看金手指用了爽，有没有拖？\n- 一句话总结必须给出：保留什么，砍什么，改哪里，数据说话，别扯"文学性"这种虚的。'),
     'interviewer': ('深度采访', '【你的身份】调查记者。你不做结论，你只追问。针对用户聊的任何人物/剧情/设定，你的工作是逼出冰山底下没说出来的内容。每轮回复至少3个连续追问，从表面→动机→矛盾→代价→蝴蝶效应，层层深入，绝对不代替用户回答。'),
+    'rank_analyst': ('榜单分析师', '''
+【你的身份】番茄/起点双平台榜单情报分析师。你**每次跟用户对话前都会先扫一遍新书榜**（默认番茄新书榜，用户提到起点就扫起点新书榜），把同题材/同赛道的 TOP 书单抓下来、做 LLM 情报聚合，然后**基于真实榜单风向回答**，绝不拍脑袋瞎建议。
+
+【你说话的样子】
+1) 先给一张「📈 本轮扫榜情报摘要」：平台+赛道、扫榜时间、TOP3 书名一句话钩子、同类题材共性卖点、共性毒点、建议切入角度
+2) 再回应用户具体问题：**每一条建议必须标注「对应哪本榜上书的套路/避哪本书的坑」**，让作者知道你说的不是空话
+3) 最后给「💡 市场落地方案」：如果按风向做，书名公式参考、前3章钩子、核心爽点节奏（3章1微爽/10章1大爽）怎么排
+4) 如果你的扫榜情报和用户明确要求冲突，**以用户要求为准，但必须提示「这样做会偏离当前风向，XXX类题材目前读者不买账」**
+5) 不堆数字，说人话，直接，像一个拿了内部分享会材料的老炮编辑
+'''),
     'node_designer': ('节点设计师', '''
 【你的身份】番茄小说金番作者级别的情节节点设计师。你只做一件事：为指定卷按【1章=1节点】粒度，一次性输出完整的 cpv 个情节子节点，每章对应一个节点，绝不按 main_event 分段、绝不做"8段分批"这种人为切分，一气呵成流式写出全卷节点即可。
-
-【P0 门禁铁律（违反=生成不合格，用户无法按章创作正文）】：
 1) 容量规模：本卷目标 cpv 章（通常50章/卷，若用户说"第N卷"且作品有明确每卷章数设定则对齐，没明确按50章/卷兜底），按每章正文 2400±100 字 ≈ 约 12 万字/卷。
    → 每个"情节子节点（node）"必须且只能对应【1 章】，chapters 必须写成单章号（数字整数，或 X-X 等价形式）。
    → 绝不允许把 2 章及以上内容压进 1 个 node 合并写；绝不允许一章多节点重复覆盖。
@@ -150,9 +158,10 @@ _PERSONAS = {
 '''),
 }
 
-# 圆桌会议顺序：毒舌读者 → 剧情架构师 → 世界观策划 → 爆款编辑 → 润色编辑 → 深度采访
-_ROUNDTABLE_ORDER = ['toxic_critic', 'architect', 'worldbuilder', 'marketeer', 'polish', 'interviewer']
-_MODERATOR_ROLE = ('主持人', '【你的身份】圆桌会议主持人。你负责开场破题、掌握议程节奏，并在讨论收束后把6位专家的共识整理成结构化的总结报告。开场要简短点题，不替专家发言；总结报告要分议题给结论+最优先改法。')
+# 圆桌会议顺序（7位）：【榜单分析师 首位 → 先扫榜给全桌定风向】→ 毒舌读者 → 剧情架构师 → 世界观策划 → 爆款编辑 → 润色编辑 → 深度采访
+# （榜单分析师会在自己发言前自动扫一遍番茄/起点新书榜，把风向情报注入system prompt，第一个发言就把"市场上什么卖得好"摊开给全桌）
+_ROUNDTABLE_ORDER = ['rank_analyst', 'toxic_critic', 'architect', 'worldbuilder', 'marketeer', 'polish', 'interviewer']
+_MODERATOR_ROLE = ('主持人', '【你的身份】圆桌会议主持人。你负责开场破题、掌握议程节奏，并在讨论收束后把7位专家的共识整理成结构化的总结报告。开场要简短点题，不替专家发言；总结报告要分议题给结论+最优先改法。注意：第1位「榜单分析师」已经提前扫过对应题材的新书榜，他给出的风向情报应作为后续所有专家讨论的市场基准。')
 
 # 圆桌会议续会状态（持久化到 session.meta_json['roundtable_state']）：
 # 目标是"开会中途异常/断连/用户手动停止后，说一声『继续』就能接着开会，不重新开始"。
@@ -2225,18 +2234,6 @@ def chat_smart():
         return jsonify({'error': '书籍不存在'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
-    # ===== P0 榜单风向（自然语言触发）—— chat_smart =====
-    # 用户在智驾对话框用自然语言说「扫一下番茄新书榜再出设定」→ 后端自动完成抓榜+LLM情报
-    # 产出 rank_scan_sse_meta 会在 SSE 首帧里作为 meta kind=rank_scan 推给前端，前端立即渲染 RankScanCard
-    _fallback_concept = ''
-    if bb:
-        _fallback_concept = (bb.concept or bb.master_outline or '').strip()
-    _book_title = (book.title or '').strip() if book else ''
-    _rank_scan, _rank_scan_sse_meta = _auto_rank_scan_from_nl(
-        message, fallback_concept=_fallback_concept, book_title=_book_title,
-        explicit_rank_scan=_rank_scan
-    )
-
     # ===== 【卷数/章数意图·落地前置】先于 LLM 调用执行 =====
     # 用户在智驾里说"改成25卷/每卷60章"时，必须真正写入 DB，
     # 否则后续 build_chat_system_prompt → _core_params_iron_block 读到的还是旧值，用户等于白说。
@@ -2357,9 +2354,6 @@ def chat_smart():
         yield ': ping-heartbeat-keepalive\n\n'
         full_text = []
         try:
-            # SSE 首帧 0：自然语言扫榜 → RankScanCard 首条消息渲染（NL 命中 / preset rank_scan 时推送）
-            if _rank_scan_sse_meta:
-                yield f'data: {json.dumps(_rank_scan_sse_meta, ensure_ascii=False)}\n\n'
             # SSE 首帧 ①：核心创作参数同步结果（若用户这条消息触发了卷数/章数调整，先告诉前端已落地）
             if params_sync_notes:
                 yield f'data: {json.dumps({"type": "meta", "kind": "params_sync", "info": {"notes": params_sync_notes}}, ensure_ascii=False)}\n\n'
@@ -9105,6 +9099,61 @@ def chat_general():
         except Exception:
             pass
     _role_name, _role_extra = _BUILTIN_ROLES[chosen_role_id]
+    # =============================================
+    # 【榜单分析师角色专属】发言前自动扫榜（自然语言触发入口，完全不侵入其他角色原逻辑）
+    #  用户选了榜单分析师 = 他就是想先看风向再聊；强制扫榜一次，失败不报错。
+    # =============================================
+    if chosen_role_id == 'rank_analyst':
+        try:
+            _bb_fc = BookBible.query.filter_by(book_id=book_id).first() if book_id else None
+            _fc = (_bb_fc.concept or _bb_fc.master_outline or '').strip() if _bb_fc else ''
+            _rank_scan_fc, _rs_sse = _auto_rank_scan_from_nl(
+                # explicit_rank_scan=True => 强制命中（只要用户点了榜单分析师，就一定扫），
+                # 但 _auto_rank_scan_from_nl 仍会优先看用户消息里有没有说"番茄/起点"来选平台
+                message, fallback_concept=_fc, book_title=book_title or '',
+                explicit_rank_scan=True
+            )
+            if _rank_scan_fc:
+                def _md_report(rp: dict) -> str:
+                    lines: list[str] = []
+                    lines.append(f"📈 本轮真实扫榜情报（平台：{rp.get('platform_label','番茄新书榜')}）")
+                    if rp.get('scan_time'):  lines.append(f"· 扫榜时间：{rp['scan_time']}")
+                    if rp.get('subcategory_label'): lines.append(f"· 命中赛道：{rp['subcategory_label']}")
+                    if rp.get('books') and isinstance(rp['books'], list):
+                        tops = rp['books'][:5]
+                        lines.append(f"· TOP{len(tops)} 同类题材上榜书：")
+                        for i, b in enumerate(tops, 1):
+                            parts = []
+                            if b.get('title'): parts.append(str(b['title']))
+                            if b.get('hook_1line'): parts.append(str(b['hook_1line']))
+                            if b.get('author'): parts.append(f"作者：{b['author']}")
+                            lines.append(f"  {i}. " + " ｜ ".join(parts) if parts else f"  {i}. {b}")
+                    for key, zh in [('reader_buy_points', '读者买单要素（共性卖点）'),
+                                    ('reader_abandon_points', '读者弃文毒点（共性避坑）'),
+                                    ('title_formula_examples', '书名公式参考'),
+                                    ('opening_hook_templates', '开篇钩子套路模板'),
+                                    ('market_advice', '市场落地方向建议')]:
+                        v = rp.get(key)
+                        if isinstance(v, str) and v.strip():
+                            lines.append(f"\n【{zh}】\n{v.strip()}")
+                        elif isinstance(v, list) and v:
+                            lines.append(f"\n【{zh}】")
+                            for it in v:
+                                lines.append(f"- {it}")
+                    return "\n".join(lines).strip()
+                _report_md = _md_report(_rank_scan_fc)
+                if _report_md:
+                    _role_extra = (_role_extra or '').rstrip() + (
+                        "\n\n"
+                        "================================\n"
+                        "【★★★ 本轮对话前置·系统已自动扫榜成功 ★★★】\n"
+                        "以下是刚从番茄/起点新书榜抓回来的真实榜单风向情报（包含TOP书、卖点、毒点、书名公式、钩子）——"
+                        "**你必须优先吸收这些情报，回答前先给用户展示情报摘要，再基于情报回答问题，绝不拍脑袋。**\n\n"
+                        + _report_md + "\n================================\n"
+                    )
+        except Exception:
+            # 扫榜失败绝对不能导致整个 chat_general 崩溃（其他角色原逻辑必须完好）
+            pass
     # P1-3 提示词变量：{date} {time} {current_book} {model_name}，注入到 system_prompt + enriched user message
     from datetime import datetime, timezone, timedelta
     _tz = timezone(timedelta(hours=8))
@@ -9712,7 +9761,7 @@ def chat_general():
 @chat_collab_bp.route('/api/ai/chat/roundtable', methods=['POST'])
 def chat_roundtable():
     """圆桌会议（多 Agent 轮询讨论，参考 AutoGen RoundRobinGroupChat 固定顺序轮流发言）：
-    - 6个内置专家按固定顺序轮流发言：毒舌读者→剧情架构师→世界观策划→爆款编辑→润色编辑→深度采访
+    - 7个内置专家按固定顺序轮流发言：【榜单分析师（首位，先扫榜定风向）】→毒舌读者→剧情架构师→世界观策划→爆款编辑→润色编辑→深度采访
     - 完整走两轮，让交锋充分深入
     - 每步实时SSE推给前端，用户可以看到整个讨论过程
     - 讨论结束主持人做总结报告，输出共识+结论+落地步骤
@@ -9729,6 +9778,61 @@ def chat_roundtable():
     deep_think = 1
     # P0 榜单风向：先扫榜再开会，把市场风向注入主持人/所有专家/总结报告
     _rank_scan = data.get('rank_scan') if isinstance(data.get('rank_scan'), dict) else None
+    # ================== 【圆桌·自动扫榜增强】==================
+    # 【用户新方案】：第一位专家=榜单分析师，圆桌本身开新会议时若用户没显式传 rank_scan，自动扫1次：
+    #   · 扫榜平台：议题里说"起点/qd/qidian"→起点新书榜；其他→番茄新书榜（默认）
+    #   · 扫榜失败→静默跳过，不影响原圆桌任何流程（其他6位专家功能完好）
+    #   · 扫榜结果：
+    #     1) 拼入 _rank_ctx_global → 7位专家+主持人+总结 所有人都能看到「市场基准」
+    #     2) 存到 _rank_analyst_report → 第1位榜单分析师自己发言时 完整拼进 persona，
+    #        让他第一个就给全桌摊开 TOP 书 / 卖点 / 毒点 / 书名公式 / 钩子套路
+    _rank_analyst_report: str = ''
+    try:
+        # 只有"新开会且没传 preset rank_scan"才触发自动扫榜（续会/追加/调整 不重复扫，省时间省token）
+        if not _rank_scan and topic:
+            _rt_bb_fc = BookBible.query.filter_by(book_id=book_id).first() if book_id else None
+            _rt_fc = (_rt_bb_fc.concept or _rt_bb_fc.master_outline or '').strip() if _rt_bb_fc else ''
+            _auto_rs, _auto_sse = _auto_rank_scan_from_nl(
+                topic,
+                fallback_concept=_rt_fc,
+                book_title=book_title or '',
+                explicit_rank_scan=True
+            )
+            if _auto_rs:
+                _rank_scan = _auto_rs  # 后续 _format_rank_context 会复用 preset 那套逻辑
+
+                # 生成一份榜单分析师专属的详细报告（TOP5书/买卖点/公式/钩子/建议）
+                def _rt_report_md(rp: dict) -> str:
+                    lines: list[str] = []
+                    lines.append(f"📈 圆桌开场前系统已自动扫榜成功｜平台：{rp.get('platform_label','番茄新书榜')}")
+                    if rp.get('scan_time'):  lines.append(f"· 扫榜时间：{rp['scan_time']}")
+                    if rp.get('subcategory_label'): lines.append(f"· 命中赛道：{rp['subcategory_label']}")
+                    if rp.get('books') and isinstance(rp['books'], list):
+                        tops = rp['books'][:5]
+                        lines.append(f"· TOP{len(tops)} 同类题材上榜书（书名+一句话钩子+作者）：")
+                        for i, b in enumerate(tops, 1):
+                            parts = []
+                            if b.get('title'): parts.append(str(b['title']))
+                            if b.get('hook_1line'): parts.append(str(b['hook_1line']))
+                            if b.get('author'): parts.append(f"作者：{b['author']}")
+                            lines.append(f"  {i}. " + " ｜ ".join(parts) if parts else f"  {i}. {b}")
+                    for key, zh in [('reader_buy_points', '读者买单要素·共性卖点'),
+                                    ('reader_abandon_points', '读者弃文毒点·共性避坑'),
+                                    ('title_formula_examples', '书名公式范例'),
+                                    ('opening_hook_templates', '开篇钩子套路模板'),
+                                    ('market_advice', '市场落地方向建议')]:
+                        v = rp.get(key)
+                        if isinstance(v, str) and v.strip():
+                            lines.append(f"\n【{zh}】\n{v.strip()}")
+                        elif isinstance(v, list) and v:
+                            lines.append(f"\n【{zh}】")
+                            for it in v:
+                                lines.append(f"- {it}")
+                    return "\n".join(lines).strip()
+                _rank_analyst_report = _rt_report_md(_rank_scan)
+    except Exception:
+        # 绝对安全：扫榜失败/网络超时/没网 → 当没发生，原圆桌6专家+总结照常开
+        pass
     _rank_ctx_global = _format_rank_context(_rank_scan)  # 一次计算，复用于下面所有 sys prompt
 
     if not topic:
@@ -10086,7 +10190,7 @@ def chat_roundtable():
 {topic}
 
 【规则】
-- 你现在开场，简短说明讨论规则：6位专家分两轮依次发言，每人就议题讲出自己的专业见解
+- 你现在开场，简短说明讨论规则：7位专家分两轮依次发言，第一位「榜单分析师」会先给大家分享真实榜单风向（番茄/起点新书榜），随后每人就议题讲出自己的专业见解
 - 鼓励交锋，允许不同意前面发言人的观点，必须碰撞出真实结论
 - 开场只要说3-5句话点明规则和议题，不用展开，把场子交给专家就行
 """
@@ -10141,6 +10245,23 @@ def chat_roundtable():
 - 不总结所有人，只说你自己的专业观点
 - 字数控制在300-800字，观点鲜明、可直接落地，拒绝空话套话
 """
+                # ==============================================
+                # 【榜单分析师·专属增强】首位专家：把扫榜完整报告塞进他的 system prompt，
+                # 让他第一轮第一个发言就给全桌摊开「真实榜单风向」（TOP书/卖点/毒点/书名公式/钩子）
+                # ==============================================
+                if speaker_id == 'rank_analyst' and _rank_analyst_report.strip():
+                    sp_system += (
+                        "\n\n================================\n"
+                        "【★★★ 圆桌前置·系统已自动扫榜成功（你是第一个发言者，必须先把这份情报展示给全桌）★★★】\n"
+                        "下面这份报告是刚从番茄/起点新书榜**真实抓下来的 TOP 书数据 + LLM 情报聚合**：\n\n"
+                        + _rank_analyst_report.strip() +
+                        "\n================================\n"
+                        "【你的第一轮发言要求（只在第一轮且你第一个说话时执行）】：\n"
+                        "1) 开场先给一张「📈 扫榜情报摘要」：平台+赛道+扫榜时间、TOP3 一句话钩子、共性卖点、共性毒点\n"
+                        "2) 然后给出「🎯 市场落地方向」：基于榜单，对本次议题具体建议怎么切赛道、怎么取名、前3章钩子怎么埋\n"
+                        "3) 最后给后续专家一个「📢 给全桌的定调」：明确告诉毒舌读者/架构师/世界观策划/爆款编辑/润色编辑/采访——他们讨论时应该优先吸收风向的哪些点、避开哪些坑\n"
+                        "4) 不拍脑袋，每一条建议必须标注"参考榜上书XXX的套路"/"避开榜上书XXX的毒点"\n"
+                    )
                 if book_id and base_system:
                     sp_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + sp_system
                 sp_system = sp_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
