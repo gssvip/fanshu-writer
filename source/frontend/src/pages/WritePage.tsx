@@ -2394,7 +2394,7 @@ function ConceptPanel(props: {
               <span>智</span>
               <span>驾</span>
             </span>
-            <span className="cta-sub-text"><span className="cta-ai">Ai</span>领航，人机共创（对话框说「扫番茄/起点新书榜」即可联动）</span>
+            <span className="cta-sub-text"><span className="cta-ai">Ai</span>领航，人机共创</span>
           </div>
         </button>
       </div>
