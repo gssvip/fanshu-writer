@@ -8,6 +8,19 @@ import EntityRegistryModal from './EntityRegistryModal';
 import CarLogo from '../components/CarLogo';
 import { CHAPTER_LANG_STYLES } from '../constants';
 
+/**
+ * 全局采纳落地内容 → 行与行之间「不留空一行」（用户明确要求）
+ * 根因：用户数据 / AI生成结果 默认用 Markdown 段间空行（\n\n）分隔段落；
+ *       在 pre-wrap / <textarea> / novel-paragraph 下 就产生"空一整条32px横格"。
+ * 统一把「连续 2 个及以上换行」压缩为 1 个换行；同时归一化 CRLF → LF。
+ * 覆盖：章节查看/编辑、设定查看/编辑、大纲/世界观查看/编辑、DynamicReport、GlobalLocations、所有 AI 创作结果写入、所有 save 写入后端。
+ * 声明为顶层纯函数 → WritePage 内部所有子组件（BibleEditPanel / OutlineCombinedPanel / SettingsCombinedPanel / DynamicReportPanel / GlobalLocationsPanel）都可直接调用，无需传 props。
+ */
+function collapseNewlines(s: unknown): string {
+  if (typeof s !== 'string') return s == null ? '' : String(s);
+  return s.replace(/\r\n?/g, '\n').replace(/\n{2,}/g, '\n');
+}
+
 // 两行 Tab 布局：上下各 5 个维度
 const TAB_ROW_1 = [
   { key: 'concept', label: '构思', icon: '💡', field: 'concept', placeholder: '一句话描述你的故事核心创意...' },
@@ -452,7 +465,7 @@ export default function WritePage() {
   const currentContent = bible ? (bible as any)[currentTab.field] || '' : '';
 
   function startEdit() {
-    setEditValue(currentContent);
+    setEditValue(collapseNewlines(currentContent));  // 全局：段间不留空一行
     setEditing(true);
   }
 
@@ -460,7 +473,8 @@ export default function WritePage() {
     if (!bookId) return;
     setSaving(true);
     try {
-      const updated = await api.updateBible(bookId, { [currentTab.field]: editValue } as any);
+      // 全局：段间不留空一行 → 保存时压缩，后端存储就没有双换行
+      const updated = await api.updateBible(bookId, { [currentTab.field]: collapseNewlines(editValue) } as any);
       setBible(updated);
       setEditing(false);
       if (currentTab.field === 'concept') {
@@ -586,7 +600,7 @@ export default function WritePage() {
         { role: 'user', content: `${prompt}\n\n构思：${contextConcept}\n\n已有内容：${currentContent.slice(0, 1000) || '无'}\n\n用户具体要求：${bibleAiPrompt}` },
       ];
       const result = await api.aiChat(messages);
-      setEditValue(result.content);
+      setEditValue(collapseNewlines(result.content));  // 全局：段间不留空一行
       setEditing(true);
       setBibleAiMode(false);
     } catch (e: any) {
@@ -691,7 +705,7 @@ export default function WritePage() {
   function startChapterEdit() {
     if (!activeChapter) return;
     setChapterEditTitle(activeChapter.title);
-    setChapterEditContent(activeChapter.content || '');
+    setChapterEditContent(collapseNewlines(activeChapter.content || ''));  // 全局：段间不留空一行
     setChapterEditing(true);
   }
 
@@ -701,7 +715,7 @@ export default function WritePage() {
       const ch = await api.getChapter(bookId, chId);
       setActiveChapter(ch);
       setChapterEditTitle(ch.title);
-      setChapterEditContent(ch.content || '');
+      setChapterEditContent(collapseNewlines(ch.content || ''));  // 全局：段间不留空一行
     } catch (e: any) {
       alert('加载章节失败: ' + e.message);
     }
@@ -849,7 +863,8 @@ export default function WritePage() {
     try {
       const updated = await api.updateChapter(bookId, activeChapter.id, {
         title: chapterEditTitle,
-        content: chapterEditContent,
+        // 全局：段间不留空一行 → 保存时统一压缩，后端存的就没有双换行
+        content: collapseNewlines(chapterEditContent),
       });
       setChapters(prev => prev.map(c => c.id === updated.id ? updated : c));
       setActiveChapter(updated);
@@ -958,7 +973,7 @@ export default function WritePage() {
       setAiTargetChapterId(saveTarget.id);
       setActiveChapter(saveTarget);
       setChapterEditTitle(saveTarget.title);
-      setChapterEditContent(saveTarget.content || '');
+      setChapterEditContent(collapseNewlines(saveTarget.content || ''));  // 全局：段间不留空一行
     } else {
       // 新建章节占位
       setAiTargetChapterId(null);
@@ -1465,9 +1480,11 @@ ${chapterEditContent}`;
     setSavingChapter(true);
     let content = aiGeneratedContent;
     if (aiCreateMode === 'continue') {
-      content = chapterEditContent
-        ? chapterEditContent.replace(/\s+$/, '') + '\n\n' + content
-        : content;
+      const current = collapseNewlines(chapterEditContent);  // 段间不留空一行
+      const incoming = collapseNewlines(content);            // 段间不留空一行
+      content = current
+        ? current.replace(/\s+$/, '') + '\n' + incoming      // 段间只用单换行（不用 \n\n 产生空横格）
+        : incoming;
     }
     const savedTitle = chapterEditTitle;
     const savedWordCount = content.length;
@@ -2098,7 +2115,7 @@ ${chapterEditContent}`;
           <BibleEditPanel
             tab={currentTab}
             bookTitle={book?.title || ''}
-            content={currentContent}
+            content={collapseNewlines(currentContent)}
             editing={editing}
             editValue={editValue}
             saving={saving}
@@ -6113,7 +6130,7 @@ function BibleEditPanel(props: {
           <div className="paper-notebook bible-paper" data-dim={tab.label} onClick={onStartEdit}>
             <div className="paper-curl" aria-hidden="true" />
             <div className="paper-inner">
-              <pre className="bible-text">{content}</pre>
+              <pre className="bible-text">{collapseNewlines(content)}</pre>
               <div className="paper-footer" aria-hidden="true">
                 <span className="paper-footer-left">— 蚂蚁世界观百科 —</span>
                 <span className="paper-footer-right">— Updated —</span>
@@ -6199,7 +6216,7 @@ function OutlineCombinedPanel(props: {
   const currentContent = bible ? (bible as any)[currentField] || '' : '';
 
   function startEdit() {
-    setEditValue(currentContent);
+    setEditValue(collapseNewlines(currentContent));  // 全局：段间不留空一行
     setEditing(true);
   }
 
@@ -6207,7 +6224,8 @@ function OutlineCombinedPanel(props: {
     if (!bookId) return;
     setSaving(true);
     try {
-      const updated = await api.updateBible(bookId, { [currentField]: editValue } as any);
+      // 全局：段间不留空一行 → 保存时压缩，后端存储就没有双换行
+      const updated = await api.updateBible(bookId, { [currentField]: collapseNewlines(editValue) } as any);
       onBibleUpdate(updated);
       setEditing(false);
       try { window.dispatchEvent(new CustomEvent('fanshu:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
@@ -6237,7 +6255,7 @@ function OutlineCombinedPanel(props: {
         { role: 'user', content: `${prompt}\n\n构思：${contextConcept}\n\n已有内容：${currentContent.slice(0, 1000) || '无'}\n\n用户具体要求：${aiPrompt}` },
       ];
       const result = await api.aiChat(messages);
-      setEditValue(result.content);
+      setEditValue(collapseNewlines(result.content));  // 全局：段间不留空一行
       setEditing(true);
       setAiMode(false);
     } catch (e: any) {
@@ -6305,9 +6323,9 @@ function OutlineCombinedPanel(props: {
     try {
       const result = await api.aiOutlineMaster(bookId, selectedSkillPackIds, undefined, CHAPTERS_PER_VOLUME, volumeCount);
       // 把返回的 master_outline 填入大纲编辑器（设置 plotDesign state）
-      const updated = await api.updateBible(bookId, { plot_design: result.master_outline } as any);
+      const updated = await api.updateBible(bookId, { plot_design: collapseNewlines(result.master_outline) } as any);  // 段间不留空一行
       onBibleUpdate(updated);
-      setEditValue(result.master_outline);
+      setEditValue(collapseNewlines(result.master_outline));  // 段间不留空一行
       setEditing(true);
       setOutlineWorkflowProgress('');
       alert(`五幕式总纲已生成并填入大纲（共 ${result.volume_count} 卷）`);
@@ -6456,7 +6474,7 @@ function OutlineCombinedPanel(props: {
         <div className="paper-notebook bible-paper outline-paper" data-dim={labelMap[subTab]} onClick={startEdit}>
           <div className="paper-curl" aria-hidden="true" />
           <div className="paper-inner">
-            <pre className="bible-text">{currentContent}</pre>
+            <pre className="bible-text">{collapseNewlines(currentContent)}</pre>
             <div className="paper-footer" aria-hidden="true">
               <span className="paper-footer-left">— 蚂蚁世界观百科 —</span>
               <span className="paper-footer-right">— Updated —</span>
@@ -6515,13 +6533,14 @@ function SettingsCombinedPanel(props: {
   const currentField = fieldMap[subTab];
   const currentContent = bible ? (bible as any)[currentField] || '' : '';
 
-  function startEdit() { setEditValue(currentContent); setEditing(true); }
+  function startEdit() { setEditValue(collapseNewlines(currentContent)); setEditing(true); }  // 全局：段间不留空一行
 
   async function saveEdit() {
     if (!bookId) return;
     setSaving(true);
     try {
-      const updated = await api.updateBible(bookId, { [currentField]: editValue } as any);
+      // 全局：段间不留空一行 → 保存时压缩
+      const updated = await api.updateBible(bookId, { [currentField]: collapseNewlines(editValue) } as any);
       onBibleUpdate(updated);
       setEditing(false);
       // 保存后派发自定义事件，通知AI智驾刷新创作进度
@@ -6550,7 +6569,7 @@ function SettingsCombinedPanel(props: {
         { role: 'user', content: `${prompt}\n\n构思：${contextConcept}\n\n已有内容：${currentContent.slice(0, 1000) || '无'}\n\n用户具体要求：${aiPrompt}` },
       ];
       const result = await api.aiChat(messages);
-      setEditValue(result.content);
+      setEditValue(collapseNewlines(result.content));  // 全局：段间不留空一行
       setEditing(true);
       setAiMode(false);
     } catch (e: any) { setAiError(e.message || 'AI辅助失败'); }
@@ -6693,7 +6712,7 @@ function SettingsCombinedPanel(props: {
         <div className="paper-notebook bible-paper setting-paper" data-dim={labelMap[subTab]} onClick={startEdit}>
           <div className="paper-curl" aria-hidden="true" />
           <div className="paper-inner">
-            <pre className="bible-text">{currentContent}</pre>
+            <pre className="bible-text">{collapseNewlines(currentContent)}</pre>
             <div className="paper-footer" aria-hidden="true">
               <span className="paper-footer-left">— 蚂蚁世界观百科 —</span>
               <span className="paper-footer-right">— Updated —</span>
@@ -6799,7 +6818,7 @@ function DynamicMemoryPanel(props: {
     if (reports.length > 0 && !selectedId) {
       const r = reports[0];
       setSelectedId(r.id);
-      setEditValue(r.content);
+      setEditValue(collapseNewlines(r.content));
       setEditTitle(r.title);
     }
     if (reports.length === 0) setSelectedId(null);
@@ -7047,7 +7066,7 @@ function DynamicMemoryPanel(props: {
   function selectReport(r: DynamicReport) {
     setSelectedId(r.id);
     setEditMode(false);
-    setEditValue(r.content);
+    setEditValue(collapseNewlines(r.content));
     setEditTitle(r.title);
     setEditorCollapsed(false);
   }
@@ -7055,7 +7074,7 @@ function DynamicMemoryPanel(props: {
   function startEditSelected() {
     if (!selectedReport) return;
     setEditMode(true);
-    setEditValue(selectedReport.content);
+    setEditValue(collapseNewlines(selectedReport.content));
     setEditTitle(selectedReport.title);
     setEditorCollapsed(false);
   }
@@ -7065,7 +7084,7 @@ function DynamicMemoryPanel(props: {
     setSaving(true);
     try {
       const updated = await api.updateDynamicReport(bookId, selectedId, {
-        content: editValue,
+        content: collapseNewlines(editValue),
         title: editTitle,
       });
       setReports(prev => prev.map(r => r.id === selectedId ? updated : r));
@@ -7084,7 +7103,7 @@ function DynamicMemoryPanel(props: {
       const updated = await api.regenerateDynamicReport(bookId, r.id);
       setReports(prev => prev.map(rep => rep.id === r.id ? updated : rep));
       if (selectedId === r.id) {
-        setEditValue(updated.content);
+        setEditValue(collapseNewlines(updated.content));
         setEditTitle(updated.title);
       }
     } catch (e: any) {
@@ -7101,7 +7120,7 @@ function DynamicMemoryPanel(props: {
           const filtered = prev.filter(rep => rep.id !== r.id);
           if (selectedId === r.id && filtered.length > 0) {
             setSelectedId(filtered[0].id);
-            setEditValue(filtered[0].content);
+            setEditValue(collapseNewlines(filtered[0].content));
             setEditTitle(filtered[0].title);
           } else if (selectedId === r.id) {
             setSelectedId(null);
@@ -7149,7 +7168,7 @@ function DynamicMemoryPanel(props: {
           if (selectedId && deletedSet.has(selectedId)) {
             if (filtered.length > 0) {
               setSelectedId(filtered[0].id);
-              setEditValue(filtered[0].content);
+              setEditValue(collapseNewlines(filtered[0].content));
               setEditTitle(filtered[0].title);
             } else {
               setSelectedId(null);
@@ -7532,7 +7551,7 @@ function DynamicMemoryPanel(props: {
                     />
                   ) : (
                     <div className="dm-report-content">
-                      {selectedReport.content ? selectedReport.content.split('\n').map((line, i) => (
+                      {selectedReport.content ? collapseNewlines(selectedReport.content).split('\n').filter((l: string) => l.trim() !== '').map((line: string, i: number) => (
                         <p key={i}>{line}</p>
                       )) : <p className="text-muted">暂无内容</p>}
                     </div>
@@ -8614,10 +8633,10 @@ function LocationsPanel(props: {
         >
           <b>📝 全局地点档案 <span style={{fontSize:10,color:'var(--text-muted)'}}>{globalLocCollapsed ? '▶ 点击展开' : '▼ 点击折叠'}</span></b>
           {!editing ? (
-            <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); setEditing(true); setEditValue(locations); setGlobalLocCollapsed(false); }}>✏️ 编辑</button>
+            <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); setEditing(true); setEditValue(collapseNewlines(locations)); setGlobalLocCollapsed(false); }}>✏️ 编辑</button>
           ) : (
             <div style={{display:'flex',gap:6}} onClick={e => e.stopPropagation()}>
-              <button className="btn-primary-sm" onClick={() => { saveLocations(editValue); setEditing(false); }} disabled={saving}>{saving ? '保存中...' : '💾 保存'}</button>
+              <button className="btn-primary-sm" onClick={() => { saveLocations(collapseNewlines(editValue)); setEditing(false); }} disabled={saving}>{saving ? '保存中...' : '💾 保存'}</button>
               <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
             </div>
           )}
@@ -8627,7 +8646,7 @@ function LocationsPanel(props: {
             <textarea className="input" rows={12} value={editValue} onChange={e => setEditValue(e.target.value)} placeholder="记录主要地点、区域、地理特征..." />
           ) : (
             <div className="bible-content-view" style={{whiteSpace:'pre-wrap',minHeight:80,padding:12,background:'var(--bg-tertiary)',borderRadius:8}}>
-              {locations || <span className="text-muted">暂无全局地点档案，点击「编辑」手动添加</span>}
+              {collapseNewlines(locations) || <span className="text-muted">暂无全局地点档案，点击「编辑」手动添加</span>}
             </div>
           )
         )}
