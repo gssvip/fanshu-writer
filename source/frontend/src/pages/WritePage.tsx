@@ -3407,7 +3407,7 @@ function ChapterPanel(props: {
               )}
             </div>
             <div className="paper-footer" aria-hidden="true">
-              <span className="paper-footer-left">— 凡书创作笔记 —</span>
+              <span className="paper-footer-left">— 蚂蚁写作笔记 —</span>
               <span className="paper-footer-right">— No. {activeChapter.order_index ?? '—'} —</span>
             </div>
           </div>
@@ -6118,7 +6118,7 @@ function BibleEditPanel(props: {
             <div className="paper-inner">
               <pre className="bible-text">{content}</pre>
               <div className="paper-footer" aria-hidden="true">
-                <span className="paper-footer-left">— 凡书世界观百科 —</span>
+                <span className="paper-footer-left">— 蚂蚁世界观百科 —</span>
                 <span className="paper-footer-right">— Updated —</span>
               </div>
             </div>
@@ -6468,7 +6468,7 @@ function OutlineCombinedPanel(props: {
           <div className="paper-inner">
             <pre className="bible-text">{currentContent}</pre>
             <div className="paper-footer" aria-hidden="true">
-              <span className="paper-footer-left">— 凡书世界观百科 —</span>
+              <span className="paper-footer-left">— 蚂蚁世界观百科 —</span>
               <span className="paper-footer-right">— Updated —</span>
             </div>
           </div>
@@ -6712,7 +6712,7 @@ function SettingsCombinedPanel(props: {
           <div className="paper-inner">
             <pre className="bible-text">{currentContent}</pre>
             <div className="paper-footer" aria-hidden="true">
-              <span className="paper-footer-left">— 凡书世界观百科 —</span>
+              <span className="paper-footer-left">— 蚂蚁世界观百科 —</span>
               <span className="paper-footer-right">— Updated —</span>
             </div>
           </div>
