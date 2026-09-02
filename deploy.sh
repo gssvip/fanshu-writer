@@ -117,10 +117,10 @@ BACKEND_PYS=(
   "source/backend/app.py"
   "source/backend/blueprints/chat_collab_bp.py"
   "source/backend/blueprints/novel_rank_bp.py"
-  "source/backend/blueprints/chat_general_bp.py"
-  "source/backend/blueprints/smart_assist_bp.py"
-  "source/backend/blueprints/ai_ledger_bp.py"
-  "source/backend/blueprints/admin_bp.py"
+  "source/backend/blueprints/ai_config_bp.py"
+  "source/backend/blueprints/health_bp.py"
+  "source/backend/blueprints/context_ranker.py"
+  "source/backend/blueprints/post_gen_validator.py"
 )
 for pyf in "${BACKEND_PYS[@]}"; do
   if [ -f "$pyf" ]; then

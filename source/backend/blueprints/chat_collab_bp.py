@@ -169,7 +169,7 @@ _RT_STATE_KEY = 'roundtable_state'
 
 # 用户"继续"指令识别：部分命中即可，避免误抢普通新话题。
 _RT_CONTINUE_HINTS = ('继续', '接着', '续会', '下次开', '往下')
-_RT_FULL_RE = re.compile(r'^(?:继续|继续会议|继续圆桌|继续圆桌会议|圆桌会议继续|会议继续|继续讨论|继续聊|继续开会|接着|接着聊|接着讨论|往下|再来|继续吧|继续\s*[。.!！，,？?]*\s*)$')
+_RT_FULL_RE = re.compile(r'^\s*(?:继续圆桌会议|圆桌会议继续|继续圆桌|继续会议|会议继续|继续讨论|继续开会|接着开会|接着讨论|接着聊|接着|继续吧|继续|续会|没开完|没结束|往下开|往下聊|再来一轮|再来一次|再来|继续这轮|继续这轮[。.!！，,？?]*)\s*[。.!！，,？?]*\s*$')
 
 
 # =============================================================================
@@ -431,14 +431,21 @@ def _rank_scan_to_sse_meta(rank_scan: dict, platform: str, *, from_nl: bool,
 
 
 def _is_rt_continue(msg: str) -> bool:
+    """圆桌会议「继续」指令识别：完全对齐节点设计师 _is_nd_continue 口径。
+    - 严格命中 _RT_FULL_RE → True
+    - 宽松版：开头是"继续/接着/往下"且整句极短（≤12字），不包含明确新议题关键词（含"讨论/议题：/开几轮/说一下/XXX的设定"等新议题 → 不判 continue）
+    """
     m = (msg or '').strip().lstrip('，。,.！!？? ').strip()
     if not m:
         return False
     if _RT_FULL_RE.match(m):
         return True
-    # 宽松版："继续..." 且带"继续"二字且整句很短（≤12字），判定为续会指令
-    if m.startswith('继续') and len(m) <= 12:
-        return True
+    # 宽松版：和节点设计师一致口径
+    if any(m.startswith(h) for h in ('继续', '接着', '往下开', '往下聊', '续会', '续开', '没开完', '没结束', '接着开')) and len(m) <= 12:
+        # 避免"继续讨论一下新话题 XXX的设定"这种明确新议题
+        new_issue_signals = ('讨论一下', '讨论：', '议题：', '说一下', '谈谈', '分析', '关于', '新议题', '开会讨论', '开个会')
+        if not any(k in m for k in new_issue_signals):
+            return True
     return False
 
 
@@ -10153,7 +10160,6 @@ def chat_roundtable():
                 _rt_save_state(session, db, state)
                 # 落盘一次（刷新可见历史 + 本轮作者意见）
                 _rt_persist_messages(session, history, topic_final, adj_open, done, '')
-                target_total = len(done) + N
             elif resuming:
                 # ========== 续会：沿用上次的议题与进度，接着剩余回合开会 ==========
                 topic_final = state.get('topic') or topic
@@ -10170,7 +10176,6 @@ def chat_roundtable():
                     # 极端情况：连开场都没存上，则这次视为新会议
                     resuming = False
                     state = None
-                target_total = 2 * N
                 # 立即落盘一次（刷新即可见已完成的发言）
                 _rt_persist_messages(session, history, topic_final, state.get('moderator_open', '') if isinstance(state, dict) else '', done, '')
             else:
@@ -10267,18 +10272,43 @@ def chat_roundtable():
                 done = []
                 discussion_history = f'【原始议题】\n{topic_final}\n\n【主持人开场】\n{mod_content}\n\n'
                 # 开场完成即落一次进度 → 之后任何一步断掉都能续会
+                # total_rounds_hint = 用户明确指定的轮数（_round_req），否则按默认 2；resuming/append/adjust 都读这个字段
                 state = {'active': True, 'completed': False, 'phase': 'discussion',
                          'topic': topic_final, 'moderator_open': mod_content,
-                         'done': [], 'discussion_history': discussion_history}
+                         'done': [], 'discussion_history': discussion_history,
+                         'total_rounds_hint': (_round_req if _round_req else default_rounds)}
                 _rt_save_state(session, db, state)
                 # 开场即落盘消息 → 刷新界面能看到开场
                 _rt_persist_messages(session, history, topic_final, mod_content, [], '')
-                # 【轮数可配】全新会议：默认2轮；作者明确要求则按作者指定轮数（如"讨论3轮"→3×6位专家）
-                target_total = (_round_req if _round_req else default_rounds) * N
 
-            # ========== 讨论：从断点/开头继续，按 target_total 轮×6位依次发言 ==========
+            # ========== 讨论：从断点/开头继续，按 target_total 轮×N位依次发言 ==========
             done_count = len(done)
             gw_sp0 = LLMGateway(_bg, _kg, _mg)
+            # 计算 target_total 的统一公式（新会议/resuming/append/adjust 都复用）：
+            #   · state.total_rounds_hint = 作者指定的总轮数 或 默认2轮
+            #   · 全新会议 = (_round_req or default_rounds)，并且写入 state
+            #   · resuming = 读 state.total_rounds_hint，不写死 2
+            #   · adjust_mode 阶段 = 开一轮（N位专家逐一回应反馈），target_total = len(done) + N
+            #   · append_mode 追加一轮 = len(done) + N（保持原有逻辑）
+            if adjust_mode:
+                target_total = len(done) + N
+            else:
+                # 解析应开的总轮数（按用户指定或state中保存的）
+                _rounds_hint_cur = state.get('total_rounds_hint') if isinstance(state, dict) and state else None
+                if _rounds_hint_cur is None:
+                    _rounds_hint_cur = (_round_req if _round_req else default_rounds)
+                try:
+                    _rounds_hint_cur = max(1, min(99, int(_rounds_hint_cur)))
+                except Exception:
+                    _rounds_hint_cur = default_rounds
+                target_total = _rounds_hint_cur * N
+            # 如果用户进入 append_mode 时显式说"继续"但实际还差很远就追加到满轮 → 保持 append_mode 原语义"追加一轮"：
+            if append_mode:
+                target_total = len(done) + N
+            # 把 total_rounds_hint 写入 state（供 resuming/下一次 append 使用）
+            if isinstance(state, dict) and not state.get('total_rounds_hint') and not adjust_mode and not append_mode:
+                state['total_rounds_hint'] = _rounds_hint_cur
+                _rt_save_state(session, db, state)
             while done_count < target_total:
                 seq_abs = done_count
                 round_num = 1 + seq_abs // len(_ROUNDTABLE_ORDER)
@@ -10468,6 +10498,41 @@ def chat_roundtable():
         except Exception as e:
             import traceback
             traceback.print_exc()
+            # ======= 圆桌会议：异常退出（断连/超时/模型错误）也要存 state，支持"继续"断点续会 =======
+            # 对齐节点设计师 L9778-L9790 异常存进度逻辑：
+            # 把已经完整生成完毕并 append 到 done 的发言、discussion_history 全部存进 meta_json，
+            # 防止"开到一半崩溃 → 用户说继续 → state 丢了 → 当成新会议/追加一轮"
+            try:
+                if session:
+                    _st_save = dict(state) if isinstance(state, dict) else {}
+                    # 异常前做一些兜底：把 discussion_history / done 字段都写全，缺的就用局部变量
+                    if 'done' not in _st_save or not isinstance(_st_save.get('done'), list):
+                        try: _st_save['done'] = list(locals().get('done') or [])
+                        except Exception: _st_save['done'] = []
+                    if 'discussion_history' not in _st_save or not isinstance(_st_save.get('discussion_history'), str):
+                        try: _st_save['discussion_history'] = str(locals().get('discussion_history') or '')
+                        except Exception: _st_save['discussion_history'] = ''
+                    if 'topic' not in _st_save:
+                        try: _st_save['topic'] = str(locals().get('topic_final') or topic or '')
+                        except Exception: _st_save['topic'] = ''
+                    if 'moderator_open' not in _st_save:
+                        try: _st_save['moderator_open'] = str(locals().get('state', {}).get('moderator_open', '') if isinstance(state, dict) else '')
+                        except Exception: pass
+                    if 'active' not in _st_save: _st_save['active'] = True
+                    if 'completed' not in _st_save: _st_save['completed'] = False
+                    if 'phase' not in _st_save: _st_save['phase'] = 'interrupted'
+                    _st_save['updated_at'] = datetime.now(timezone.utc).isoformat() if 'timezone' in dir() else __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()
+                    _rt_save_state(session, db, _st_save)
+                    # 同时落盘一次历史（刷新就能看到已完成的发言）
+                    try:
+                        _mod_for_save = _st_save.get('moderator_open', '') if isinstance(_st_save, dict) else ''
+                        _topic_for_save = _st_save.get('topic', '') if isinstance(_st_save, dict) else ''
+                        _done_for_save = _st_save.get('done', []) if isinstance(_st_save, dict) else []
+                        _rt_persist_messages(session, history, _topic_for_save, _mod_for_save, _done_for_save, '')
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
