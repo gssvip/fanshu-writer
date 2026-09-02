@@ -10036,17 +10036,24 @@ def chat_roundtable():
             # 必须在 resume_from_checkpoint=true 时强制 is_continue=True 并重算 append_mode/resuming。
             if resume_from_checkpoint:
                 is_continue = True
-                # state 存在时，按状态重续：已完成→追加新一轮；中途断开→接着开剩余回合
-                if state and state.get('completed'):
-                    append_mode = True
-                    resuming = False
-                    adjust_mode = False
-                elif state and state.get('active') and not state.get('completed'):
-                    append_mode = False
-                    resuming = True
-                    adjust_mode = False
-                # state 不存在（极少数异常情况，如数据库清空）→ 保持现有模式，代码自然落到"全新会议"分支兜底
-                #   不新增额外逻辑，避免重复开场
+                if state and isinstance(state, dict):
+                    if state.get('completed'):
+                        # 已完成一轮以上 → 追加新一轮（与 append_mode 原语义一致）
+                        append_mode = True
+                        resuming = False
+                        adjust_mode = False
+                    else:
+                        # 任何中途未完成状态：active=True/False/缺失 → 一律进入 resuming，绝不再走全新会议
+                        # （之前 active 标志可能被异常路径漏写，这里兜底强制续会）
+                        append_mode = False
+                        resuming = True
+                        adjust_mode = False
+                        state['active'] = True
+                        state['completed'] = False
+                        if not state.get('phase'):
+                            state['phase'] = 'resumed'
+                # state is None（极少：DB 清理 / 首次开会被截断在主持人开场前）→ 不设置任何模式，
+                # 走 else 全新会议兜底，避免报错误死流程
 
             if create_mode:
                 # ========== 创作模式：按讨论共识创作维度 → 产出标准可采纳卡片 ==========
@@ -10189,13 +10196,23 @@ def chat_roundtable():
                     all_messages.append({'role': 'assistant', 'content': f"【{_MODERATOR_ROLE[0]}】\n{state['moderator_open']}"})
                 for d in done:
                     all_messages.append({'role': 'assistant', 'content': f"【{d.get('name','')}】\n{d.get('content','')}"})
-                _nxt = 1 + len(done) // N
-                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": "moderator", "speaker_name": _MODERATOR_ROLE[0], "round": _nxt}}, ensure_ascii=False)}\n\n'
-                yield f'data: {json.dumps({"type": "delta", "speaker": "moderator", "content": f"（已自动保留到此前的进度，现在接着开第{_nxt}轮讨论…）"}, ensure_ascii=False)}\n\n'
-                if not state.get('moderator_open'):
-                    # 极端情况：连开场都没存上，则这次视为新会议
+                # ⚠️ 【关键修复】绝对不要再 yield roundtable_speaker(moderator)！
+                #    之前的写法会触发前端切换"当前发言人=主持人"→追加一个主持人 speech 气泡
+                #    → 用户观感：点继续后"又从主持人开始重新说了"。
+                # 正确做法：静默给一条 roundtable_status 状态提示（不进 speech、不切发言人），
+                # 然后直接 fall-through 到 while 循环，从 len(done) 对应的下一位专家继续。
+                _len_done = len(done)
+                if _len_done == 0 and not state.get('moderator_open'):
+                    # 极端兜底：连主持人开场都没存上（例如用户在主持人 LLM 生成时就强制关流），
+                    # 视为新会议重开，保证不空白卡死 / 不产出 0 条讨论记录
                     resuming = False
                     state = None
+                else:
+                    _next_round = 1 + _len_done // N
+                    _next_idx = _len_done % len(_ROUNDTABLE_ORDER)
+                    _next_id = _ROUNDTABLE_ORDER[_next_idx] if 0 <= _next_idx < len(_ROUNDTABLE_ORDER) else _ROUNDTABLE_ORDER[0]
+                    _next_name = _PERSONAS[_next_id][0] if _next_id in _PERSONAS else _next_id
+                    yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"⏯️ 续会：已保留 {_len_done} 位发言 · 第{_next_round}轮 · 下一位：{_next_name}（不重复开场、不重复榜单分析师）"}}, ensure_ascii=False)}\n\n'
                 # 立即落盘一次（刷新即可见已完成的发言）
                 _rt_persist_messages(session, history, topic_final, state.get('moderator_open', '') if isinstance(state, dict) else '', done, '')
             else:
@@ -10554,6 +10571,79 @@ def chat_roundtable():
             except Exception:
                 pass
             yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
+        finally:
+            # ==============================================
+            # ⭐【断点续会·终极兜底：finally 存 state】
+            # ==============================================
+            # 覆盖【用户点"停止"/刷新页面/关闭浏览器】场景：SSE 连接断 = Python 抛 GeneratorExit
+            # GeneratorExit 是 BaseException 子类 ❗NOT Exception❗，所以上面的 except Exception 抓不到，
+            # 之前就是这里漏了 → state 没存 → 下次点继续 state=None → 全新会议从主持人+榜单分析师重开场。
+            # finally 在正常完成 / Exception / GeneratorExit（任何 BaseException）三条路径上都会执行，
+            # 是目前 Python 中唯一能保证 SSE 断连场景下一定落地 state 的方案。
+            try:
+                if session is None or 'db' not in dir() or db is None:
+                    pass  # 最早的初始化阶段报错（如 AIConfig 缺失）还没拿到 session/db → 跳过
+                else:
+                    # 读取所有运行时变量：优先 locals() 里的当前值，其次 state 字典，最后兜底空值
+                    _fin_state = dict(state) if isinstance(state, dict) else {}
+                    # —— done：已完整发言并 append 到 local.done 的专家记录，是续会最核心的数据 ——
+                    try:
+                        _local_done = locals().get('done')
+                        if isinstance(_local_done, list) and _local_done:
+                            _fin_state['done'] = list(_local_done)
+                        elif 'done' not in _fin_state or not isinstance(_fin_state['done'], list):
+                            _fin_state['done'] = []
+                    except Exception:
+                        if 'done' not in _fin_state: _fin_state['done'] = []
+                    # —— discussion_history：上下文拼接给下一位专家作为前置摘要
+                    try:
+                        _local_hist = locals().get('discussion_history')
+                        if isinstance(_local_hist, str) and _local_hist:
+                            _fin_state['discussion_history'] = _local_hist
+                    except Exception:
+                        pass
+                    # —— topic / moderator_open / rounds / book-level 元数据
+                    try:
+                        _local_topic = locals().get('topic_final') or _fin_state.get('topic') or topic or ''
+                        if _local_topic: _fin_state.setdefault('topic', str(_local_topic))
+                    except Exception:
+                        pass
+                    try:
+                        if 'moderator_open' not in _fin_state or not _fin_state.get('moderator_open'):
+                            try: _fin_state['moderator_open'] = str(locals().get('mod_content') or _fin_state.get('moderator_open') or '')
+                            except Exception: pass
+                    except Exception:
+                        pass
+                    try:
+                        if not _fin_state.get('total_rounds_hint'):
+                            try:
+                                _rh = locals().get('_rounds_hint_cur') or _fin_state.get('total_rounds_hint') or 2
+                                _fin_state['total_rounds_hint'] = max(1, min(99, int(_rh)))
+                            except Exception:
+                                _fin_state['total_rounds_hint'] = 2
+                    except Exception:
+                        _fin_state['total_rounds_hint'] = 2
+                    # —— 标记位（除非真的完成了 completed=True，否则任何退出都视为可续会的中断）
+                    if not _fin_state.get('completed'):
+                        _fin_state['active'] = True
+                        _fin_state['completed'] = False
+                    if not _fin_state.get('phase'):
+                        _fin_state['phase'] = 'interrupted' if not _fin_state.get('completed') else 'done'
+                    # —— DB 持久化保存
+                    _rt_save_state(session, db, _fin_state)
+                    # —— 同时落盘历史消息（刷新界面即可见，用户看到确实保留了已发言内容）
+                    try:
+                        _h = history if 'history' in locals() else []
+                        _h = _h if isinstance(_h, list) else []
+                        _tp = str(_fin_state.get('topic') or topic or '')
+                        _mo = str(_fin_state.get('moderator_open') or '')
+                        _dn = list(_fin_state.get('done') or [])
+                        _rt_persist_messages(session, _h, _tp, _mo, _dn, '')
+                    except Exception:
+                        pass
+            except Exception:
+                # finally 内任何存盘错误 = 静默吞，绝不能污染 SSE 流或造成 Python 生成器异常
+                pass
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',
                     headers={'Cache-Control': 'no-cache, no-transform',
