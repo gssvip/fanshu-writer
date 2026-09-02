@@ -9618,7 +9618,17 @@ def chat_general():
                             system_prompt = system_prompt.rstrip() + _appendix
                             if messages and messages[0].get('role') == 'system':
                                 messages[0]['content'] = system_prompt
-                            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"✅ 扫榜完成：{_rs_rank.get(\"platform_label\",\"番茄新书榜\")}｜命中 {len(_rs_rank.get(\"books\") or [])} 本TOP书，接下来基于风向构思。"}})}, ensure_ascii=False)}\n\n'
+                            # 把复杂 text 先提变量，彻底避免嵌套 f-string + json.dumps 里写 \"（Python 语法不允许在 f-string {} 内用 backslash）
+                            _plat = _rs_rank.get('platform_label', '番茄新书榜') if isinstance(_rs_rank, dict) else '番茄新书榜'
+                            _nb = len((_rs_rank.get('books') or []) if isinstance(_rs_rank, dict) else [])
+                            _sse_meta_obj = {
+                                'type': 'meta',
+                                'kind': 'roundtable_status',
+                                'info': {
+                                    'text': f'✅ 扫榜完成：{_plat}｜命中 {_nb} 本TOP书，接下来基于风向构思。'
+                                }
+                            }
+                            yield f'data: {json.dumps(_sse_meta_obj, ensure_ascii=False)}\n\n'
             except Exception:
                 pass  # 扫榜失败 = 静默跳过，不打断任何主流程
 
@@ -10212,7 +10222,17 @@ def chat_roundtable():
                                 return "\n".join(lines).strip()
                             _rank_analyst_report = _rt_report_md2(_rank_scan)
                             # 扫榜完成给用户一帧提示（可选）
-                            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": f"✅ 扫榜完成：{_rank_scan.get(\"platform_label\",\"番茄新书榜\")}｜命中 {len(_rank_scan.get(\"books\") or [])} 本TOP书，榜单分析师第一个发言会展示。"}})}, ensure_ascii=False)}\n\n'
+                            # 提变量，避免嵌套 f-string + json.dumps 里 \" 导致 SyntaxError（Python 不允许 f-string {} 内有反斜杠）
+                            _plat2 = _rank_scan.get('platform_label', '番茄新书榜') if isinstance(_rank_scan, dict) else '番茄新书榜'
+                            _nb2 = len((_rank_scan.get('books') or []) if isinstance(_rank_scan, dict) else [])
+                            _sse_meta_obj2 = {
+                                'type': 'meta',
+                                'kind': 'roundtable_status',
+                                'info': {
+                                    'text': f'✅ 扫榜完成：{_plat2}｜命中 {_nb2} 本TOP书，榜单分析师第一个发言会展示。'
+                                }
+                            }
+                            yield f'data: {json.dumps(_sse_meta_obj2, ensure_ascii=False)}\n\n'
                     except Exception:
                         # 扫榜失败 = 当没发生，继续让主持人+后续7位专家正常讨论
                         pass
@@ -10293,7 +10313,7 @@ def chat_roundtable():
                         "1) 开场先给一张「📈 扫榜情报摘要」：平台+赛道+扫榜时间、TOP3 一句话钩子、共性卖点、共性毒点\n"
                         "2) 然后给出「🎯 市场落地方向」：基于榜单，对本次议题具体建议怎么切赛道、怎么取名、前3章钩子怎么埋\n"
                         "3) 最后给后续专家一个「📢 给全桌的定调」：明确告诉毒舌读者/架构师/世界观策划/爆款编辑/润色编辑/采访——他们讨论时应该优先吸收风向的哪些点、避开哪些坑\n"
-                        "4) 不拍脑袋，每一条建议必须标注"参考榜上书XXX的套路"/"避开榜上书XXX的毒点"\n"
+                        "4) 不拍脑袋，每一条建议必须标注'参考榜上书XXX的套路'/'避开榜上书XXX的毒点'\n"
                     )
                 if book_id and base_system:
                     sp_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + sp_system

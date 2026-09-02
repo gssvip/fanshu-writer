@@ -109,6 +109,30 @@ echo "    ✓ 榜单分析师：       $HIT_RANK 次（期望≥2）"
 [ "$HIT_OLD_2" = "0" ] || die "门禁失败：最新 JS 里仍含「节点设计师.*助手可生成情节节点」$HIT_OLD_2 次（红圈第二行没真正删除）"
 [ "$HIT_RANK" -ge 2 ] || die "门禁失败：最新 JS 里「榜单分析师」只有 $HIT_RANK 次，期望≥2（说明 BUILTIN_ROLES 没真正打进去）"
 
+# =============【★ 永久防呆·第二层-B · 后端 Python .py 语法门禁（不达标 die）★】=============
+# Render 已经三次因为后端 SyntaxError 启动失败 -> 持续 fallback 老版本 -> 用户"刷新还是旧界面"
+# 直接 py_compile 所有核心后端 py；有语法错误绝不允许 push。任何新增 blueprint 请加进这个数组。
+log "2d/6 🔐 构建门禁：后端 Python 语法校验（py_compile 不通过就拒绝 push）"
+BACKEND_PYS=(
+  "source/backend/app.py"
+  "source/backend/blueprints/chat_collab_bp.py"
+  "source/backend/blueprints/novel_rank_bp.py"
+  "source/backend/blueprints/chat_general_bp.py"
+  "source/backend/blueprints/smart_assist_bp.py"
+  "source/backend/blueprints/ai_ledger_bp.py"
+  "source/backend/blueprints/admin_bp.py"
+)
+for pyf in "${BACKEND_PYS[@]}"; do
+  if [ -f "$pyf" ]; then
+    if python3 -m py_compile "$pyf" 2>/dev/null; then
+      echo "    ✓ OK  $pyf"
+    else
+      die "后端语法错误！文件：$pyf 。本地执行 python3 -m py_compile $pyf 查看具体行号，修完再 bash deploy.sh"
+    fi
+  fi
+done
+echo "    ✓ 全部后端 py 语法 OK"
+
 # ---------- 3. 二次对账（防 vite 插件没跑/老版本 vite 没触发 closeBundle） ----------
 log "3/6 哈希二次对账：dist/index.html == backend/static/index.html"
 [ -f "$DIST_DIR/index.html" ]            || die "DIST_DIR/index.html 不存在：$DIST_DIR/index.html"
