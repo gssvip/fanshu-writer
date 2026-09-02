@@ -2,6 +2,7 @@ import { useState, useEffect, useContext, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, legacyKey } from '../api';
 import { AuthContext } from '../App';
+import { useStore } from '../store';
 import type { Book } from '../types';
 import { GENRES, GENRE_GROUPS, getStylesForGenre, filterStylesByGenre, getVolumeRange } from '../constants';
 import CarLogo from '../components/CarLogo';
@@ -9,12 +10,21 @@ import CarLogo from '../components/CarLogo';
 export default function WorkbenchPage() {
   const navigate = useNavigate();
   const { requireAuth } = useContext(AuthContext);
+  const { currentUser } = useStore() as any;
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewBook, setShowNewBook] = useState(false);
   const [newBookForm, setNewBookForm] = useState({ title: '', genre: 'other', book_type: 'novel', synopsis: '', total_volumes: 0, novel_styles: [] as string[] });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
+  // 会员升级弹窗（创建第二本小说触发）
+  const [showVipModal, setShowVipModal] = useState(false);
+  const [vipInfo, setVipInfo] = useState<{ message: string; vip_price: number; vip_tier: string; code?: string }>({
+    message: '开通永久会员即可无限创建新书',
+    vip_price: 19.9,
+    vip_tier: 'lifetime',
+  });
+  const [vipUpgrading, setVipUpgrading] = useState(false);
 
   const [todayStats, setTodayStats] = useState({ words: 0, chapters: 0 });
   const [streak, setStreak] = useState(0);
@@ -188,9 +198,51 @@ export default function WorkbenchPage() {
       setNewBookForm({ title: '', genre: 'other', book_type: 'novel', synopsis: '', total_volumes: 0, novel_styles: [] });
       navigate(`/write?book=${book.id}`);
     } catch (e: any) {
-      setCreateError(e.message || '创建失败，请重试');
+      if ((e.status === 402 || e?.data?.code === 'UPGRADE_REQUIRED') && e?.data) {
+        setVipInfo({
+          message: e.data.message || vipInfo.message,
+          vip_price: e.data.vip_price ?? vipInfo.vip_price,
+          vip_tier: e.data.vip_tier || vipInfo.vip_tier,
+          code: e.data.code,
+        });
+        setShowVipModal(true);
+        setCreateError('');
+      } else {
+        setCreateError(e.message || '创建失败，请重试');
+      }
     }
     setCreating(false);
+  }
+
+  // 开通会员（占位流程）
+  async function handleUpgradeVip() {
+    if (!confirm('确认开通网站永久会员？支付 ¥' + vipInfo.vip_price + ' 后即可无限创建新书。\n\n（当前为演示环境，管理员可直接开通）')) return;
+    setVipUpgrading(true);
+    try {
+      const adminKey = prompt('请输入管理员密钥开通（或请联系站点管理员）：', '');
+      if (adminKey === null) { setVipUpgrading(false); return; }
+      const r = await api.vipUpgrade({ admin_key: adminKey || undefined });
+      if (r.success) {
+        alert('🎉 恭喜！您已开通永久会员，现在可以无限创建新书了！');
+        setShowVipModal(false);
+        try {
+          const me = await api.getMe();
+          const state = (useStore as any).getState?.();
+          if (state?.setCurrentUser) state.setCurrentUser(me);
+        } catch {}
+        setTimeout(() => handleCreateBook(), 300);
+      } else {
+        alert('开通失败，请稍后重试或联系管理员');
+      }
+    } catch (err: any) {
+      if (err?.status === 401) {
+        alert('密钥错误，开通失败。请联系站点管理员获取正确的开通方式。');
+      } else {
+        alert('开通异常：' + (err?.message || '请稍后重试'));
+      }
+    } finally {
+      setVipUpgrading(false);
+    }
   }
 
   function handleFilePick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -818,6 +870,83 @@ export default function WorkbenchPage() {
             )}
             <div className="modal-actions" style={{ marginTop: 16 }}>
               <button className="btn-ghost" onClick={() => setShowMasterCreateModal(false)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 开通永久会员弹窗 */}
+      {showVipModal && (
+        <div className="modal-overlay" onClick={()=>!vipUpgrading && setShowVipModal(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420,padding:0,overflow:'hidden'}}>
+            <div style={{
+              padding:'28px 24px 20px',
+              background:'linear-gradient(135deg,#f8e7b8 0%,#e8c87a 55%,#d4a84a 100%)',
+              color:'#5a3e0a',
+              textAlign:'center',
+            }}>
+              <div style={{fontSize:42,marginBottom:6}}>👑</div>
+              <h2 style={{margin:0,fontSize:20,color:'#5a3e0a'}}>开通网站永久会员</h2>
+              <div style={{marginTop:4,fontSize:13,opacity:0.85}}>一次开通，终身免费，高级权益随版本持续扩充</div>
+            </div>
+            <div style={{padding:'20px 24px 24px',background:'var(--bg-secondary)'}}>
+              <div style={{textAlign:'center',marginBottom:16}}>
+                <div style={{fontSize:14,color:'var(--text-muted)',marginBottom:6}}>会员价</div>
+                <div style={{fontSize:38,fontWeight:700,color:'var(--accent)',lineHeight:1}}>
+                  <span style={{fontSize:22,verticalAlign:'top'}}>¥</span>{vipInfo.vip_price}
+                </div>
+                <div style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>永久 · Lifetime</div>
+              </div>
+              <div style={{
+                background:'var(--bg-primary)',
+                borderRadius:10,
+                padding:'14px 16px',
+                marginBottom:20,
+                fontSize:14,
+                color:'var(--text-primary)',
+                lineHeight:1.9,
+              }}>
+                <div style={{fontWeight:600,marginBottom:6,color:'var(--accent)'}}>✨ 永久会员专享权益</div>
+                <div>✅ 无限创建新书，不再受限 1 本</div>
+                <div>✅ 解锁更多高级 AI 创作功能</div>
+                <div>✅ 未来会员专属更新优先体验</div>
+              </div>
+              <div style={{
+                background: currentUser?.is_vip ? 'var(--bg-primary)' : 'rgba(231,76,60,0.08)',
+                border: currentUser?.is_vip ? '1px solid var(--border-color)' : '1px dashed rgba(231,76,60,0.4)',
+                borderRadius:8,
+                padding:'10px 14px',
+                fontSize:13,
+                color: currentUser?.is_vip ? 'var(--text-muted)' : '#c0392b',
+                marginBottom:20,
+                textAlign:'center',
+              }}>
+                {currentUser?.is_vip ? '您当前已是会员，可无限创建。' : '💡 ' + vipInfo.message}
+              </div>
+              <div style={{display:'flex',gap:10}}>
+                <button
+                  className="btn-secondary"
+                  style={{flex:1}}
+                  onClick={()=>setShowVipModal(false)}
+                  disabled={vipUpgrading}
+                >稍后再说</button>
+                <button
+                  className="btn-primary"
+                  style={{
+                    flex:1,
+                    background:'linear-gradient(135deg,#e67e22 0%,#d35400 100%)',
+                    border:'none',
+                    fontWeight:600,
+                  }}
+                  onClick={handleUpgradeVip}
+                  disabled={vipUpgrading || !!currentUser?.is_vip}
+                >
+                  {vipUpgrading ? '开通中…' : (currentUser?.is_vip ? '已是会员' : '立即开通 ¥' + vipInfo.vip_price)}
+                </button>
+              </div>
+              <div style={{marginTop:14,textAlign:'center',fontSize:11,color:'var(--text-muted)'}}>
+                开通后遇到任何问题，可随时联系站点管理员
+              </div>
             </div>
           </div>
         </div>

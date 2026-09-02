@@ -25,6 +25,14 @@ export default function Home() {
   const [exportType, setExportType] = useState<'full'|'single'>('full');
   const [exportFormat, setExportFormat] = useState('zip');
   const [exporting, setExporting] = useState(false);
+  // 会员升级弹窗（创建第二本小说触发）
+  const [showVipModal, setShowVipModal] = useState(false);
+  const [vipInfo, setVipInfo] = useState<{ message: string; vip_price: number; vip_tier: string; code?: string }>({
+    message: '开通永久会员即可无限创建新书',
+    vip_price: 19.9,
+    vip_tier: 'lifetime',
+  });
+  const [vipUpgrading, setVipUpgrading] = useState(false);
 
   useEffect(() => { api.listTemplates().then(setTemplates).catch(()=>{}); }, []);
 
@@ -62,8 +70,55 @@ export default function Home() {
 
   const create = async () => {
     try { const b = await api.createBook(nf); setShowNew(false); refresh(); navigate(`/write?book=${b.id}`); }
-    catch(e:any){ alert(e.message); }
+    catch(e:any){
+      if ((e.status === 402 || e?.data?.code === 'UPGRADE_REQUIRED') && e?.data) {
+        setVipInfo({
+          message: e.data.message || vipInfo.message,
+          vip_price: e.data.vip_price ?? vipInfo.vip_price,
+          vip_tier: e.data.vip_tier || vipInfo.vip_tier,
+          code: e.data.code,
+        });
+        setShowVipModal(true);
+      } else {
+        alert(e.message);
+      }
+    }
   };
+
+  // 开通会员（占位流程：真实部署时应跳转到支付页面/唤起支付）
+  async function handleUpgradeVip() {
+    if (!confirm('确认开通网站永久会员？支付 ¥' + vipInfo.vip_price + ' 后即可无限创建新书。\n\n（当前为演示环境，管理员可直接开通）')) return;
+    setVipUpgrading(true);
+    try {
+      // 优先调用后端 vipUpgrade。真实部署时这里应当跳转第三方支付，
+      // 支付平台通过 vip/upgrade-callback 接口异步开通。
+      const adminKey = prompt('请输入管理员密钥开通（或请联系站点管理员）：', '');
+      if (adminKey === null) { setVipUpgrading(false); return; }
+      const r = await api.vipUpgrade({ admin_key: adminKey || undefined });
+      if (r.success) {
+        alert('🎉 恭喜！您已开通永久会员，现在可以无限创建新书了！');
+        setShowVipModal(false);
+        // 刷新 store 中的 currentUser（如果有）
+        try {
+          const me = await api.getMe();
+          const state = (useStore as any).getState?.();
+          if (state?.setCurrentUser) state.setCurrentUser(me);
+        } catch {}
+        // 给用户体验：点创建重试，自动再次尝试创建当前新书
+        setTimeout(() => create(), 300);
+      } else {
+        alert('开通失败，请稍后重试或联系管理员');
+      }
+    } catch (err: any) {
+      if (err?.status === 401) {
+        alert('密钥错误，开通失败。请联系站点管理员获取正确的开通方式。');
+      } else {
+        alert('开通异常：' + (err?.message || '请稍后重试'));
+      }
+    } finally {
+      setVipUpgrading(false);
+    }
+  }
 
   const del = async (id:string,t:string) => {
     if(!confirm(`删除《${t}》？`))return;
@@ -355,6 +410,83 @@ export default function Home() {
               <button className="btn-primary" onClick={handleExportDownload} disabled={!exportBookId || exporting}>
                 {exporting ? '⏳ 导出中...' : '开始导出'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 开通永久会员弹窗 */}
+      {showVipModal && (
+        <div className="modal-overlay" onClick={()=>!vipUpgrading && setShowVipModal(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:420,padding:0,overflow:'hidden'}}>
+            <div style={{
+              padding:'28px 24px 20px',
+              background:'linear-gradient(135deg,#f8e7b8 0%,#e8c87a 55%,#d4a84a 100%)',
+              color:'#5a3e0a',
+              textAlign:'center',
+            }}>
+              <div style={{fontSize:42,marginBottom:6}}>👑</div>
+              <h2 style={{margin:0,fontSize:20,color:'#5a3e0a'}}>开通网站永久会员</h2>
+              <div style={{marginTop:4,fontSize:13,opacity:0.85}}>一次开通，终身免费，高级权益随版本持续扩充</div>
+            </div>
+            <div style={{padding:'20px 24px 24px',background:'var(--bg-secondary)'}}>
+              <div style={{textAlign:'center',marginBottom:16}}>
+                <div style={{fontSize:14,color:'var(--text-muted)',marginBottom:6}}>会员价</div>
+                <div style={{fontSize:38,fontWeight:700,color:'var(--accent)',lineHeight:1}}>
+                  <span style={{fontSize:22,verticalAlign:'top'}}>¥</span>{vipInfo.vip_price}
+                </div>
+                <div style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>永久 · Lifetime</div>
+              </div>
+              <div style={{
+                background:'var(--bg-primary)',
+                borderRadius:10,
+                padding:'14px 16px',
+                marginBottom:20,
+                fontSize:14,
+                color:'var(--text-primary)',
+                lineHeight:1.9,
+              }}>
+                <div style={{fontWeight:600,marginBottom:6,color:'var(--accent)'}}>✨ 永久会员专享权益</div>
+                <div>✅ 无限创建新书，不再受限 1 本</div>
+                <div>✅ 解锁更多高级 AI 创作功能</div>
+                <div>✅ 未来会员专属更新优先体验</div>
+              </div>
+              <div style={{
+                background: currentUser?.is_vip ? 'var(--bg-primary)' : 'rgba(231,76,60,0.08)',
+                border: currentUser?.is_vip ? '1px solid var(--border-color)' : '1px dashed rgba(231,76,60,0.4)',
+                borderRadius:8,
+                padding:'10px 14px',
+                fontSize:13,
+                color: currentUser?.is_vip ? 'var(--text-muted)' : '#c0392b',
+                marginBottom:20,
+                textAlign:'center',
+              }}>
+                {currentUser?.is_vip ? '您当前已是会员，可无限创建。' : '💡 ' + vipInfo.message}
+              </div>
+              <div style={{display:'flex',gap:10}}>
+                <button
+                  className="btn-secondary"
+                  style={{flex:1}}
+                  onClick={()=>setShowVipModal(false)}
+                  disabled={vipUpgrading}
+                >稍后再说</button>
+                <button
+                  className="btn-primary"
+                  style={{
+                    flex:1,
+                    background:'linear-gradient(135deg,#e67e22 0%,#d35400 100%)',
+                    border:'none',
+                    fontWeight:600,
+                  }}
+                  onClick={handleUpgradeVip}
+                  disabled={vipUpgrading || !!currentUser?.is_vip}
+                >
+                  {vipUpgrading ? '开通中…' : (currentUser?.is_vip ? '已是会员' : '立即开通 ¥' + vipInfo.vip_price)}
+                </button>
+              </div>
+              <div style={{marginTop:14,textAlign:'center',fontSize:11,color:'var(--text-muted)'}}>
+                开通后遇到任何问题，可随时联系站点管理员
+              </div>
             </div>
           </div>
         </div>

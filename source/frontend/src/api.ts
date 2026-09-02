@@ -130,8 +130,11 @@ async function request<T>(url: string, options?: RequestInit, signal?: AbortSign
     const res = await fetchWithRetry(`${getApiBaseUrl()}${url}`, { ...options, headers }, signal);
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
-      throw new Error(err.error || `HTTP ${res.status}`);
+      const data = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
+      const err = new Error(data.error || data.message || `HTTP ${res.status}`);
+      (err as any).status = res.status;
+      (err as any).data = data;
+      throw err;
     }
     if (res.headers.get('content-type')?.includes('application/json')) {
       return res.json();
@@ -153,7 +156,7 @@ async function request<T>(url: string, options?: RequestInit, signal?: AbortSign
   }
 }
 
-export interface User { id: string; username: string; email: string; created_at: string; }
+export interface User { id: string; username: string; email: string; created_at: string; is_vip?: boolean; }
 
 export const api = {
   // Auth
@@ -178,6 +181,11 @@ export const api = {
   // 重置密码
   resetPassword: (token: string, newPassword: string) =>
     request<{ success: boolean; message?: string }>('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, new_password: newPassword }) }),
+  // 会员信息与开通
+  vipInfo: () =>
+    request<{ is_vip: boolean; vip_price: number; vip_tier: string; message: string }>('/auth/vip/info'),
+  vipUpgrade: (payload: { admin_key?: string; proof?: string }) =>
+    request<{ success: boolean; user?: User }>('/auth/vip/upgrade-callback', { method: 'POST', body: JSON.stringify(payload) }),
 
   // Books
   listBooks: () => request<Book[]>('/books'),

@@ -238,10 +238,13 @@ class User(db.Model):
     password_hash = db.Column(db.String(200), nullable=False)
     email = db.Column(db.String(100), default='')
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    # 会员：True = 已开通网站永久会员（¥19.9，享无限创建书等权益）
+    is_vip = db.Column(db.Boolean, default=False, nullable=False, server_default=db.false())
 
     def to_dict(self):
         return {'id': self.id, 'username': self.username, 'email': self.email,
-                'created_at': self.created_at.isoformat() if self.created_at else None}
+                'created_at': self.created_at.isoformat() if self.created_at else None,
+                'is_vip': bool(getattr(self, 'is_vip', False))}
 
 class AuthToken(db.Model):
     __tablename__ = 'auth_tokens'
@@ -1204,12 +1207,47 @@ def build_outline_tree(outlines):
 
 # ==== Auth API ====
 
+# 会员价格（全站统一，展示+接口回调共用）
+VIP_LIFETIME_PRICE = 19.9
+
+# 保留用户名白名单（即使命中保留规则也允许注册）
+_RESERVED_WHITELIST = frozenset({'666', '888'})
+
+
+def _is_reserved_username(username: str) -> bool:
+    """判断用户名是否属于"保留给未来会员"的短号。
+
+    规则：
+      - 1~5 位纯数字 → 保留
+      - 1~5 位纯字母（大小写都算）→ 保留
+      - 白名单 {'666','888'} → 即使命中也"不"保留
+    """
+    if not isinstance(username, str):
+        return False
+    u = username.strip()
+    if not u:
+        return False
+    if u in _RESERVED_WHITELIST:
+        return False
+    if len(u) < 1 or len(u) > 5:
+        return False
+    if u.isdigit():
+        return True
+    if u.isalpha():
+        return True
+    return False
+
+
 @app.route('/api/auth/register', methods=['POST'])
 def register():
     data = request.json
     username = (data.get('username', '')).strip()
     password = (data.get('password', '')).strip()
     email = (data.get('email', '')).strip()
+    # 保留号检测放在最前面：命中就直接 409"用户名已存在"，文案与真实冲突保持一致，
+    # 不对外暴露"这是预留号"的机制。
+    if _is_reserved_username(username):
+        return jsonify({'error': '用户名已存在'}), 409
     if len(username) < 2 or len(username) > 30:
         return jsonify({'error': '用户名需2-30个字符'}), 400
     if len(password) < 4:
@@ -1258,6 +1296,45 @@ def logout():
     AuthToken.query.filter_by(token=token).delete()
     db.session.commit()
     return jsonify({'success': True})
+
+
+@app.route('/api/auth/vip/info', methods=['GET'])
+@login_required
+def vip_info():
+    """前端展示会员信息：当前身份、永久会员价等（未开通时创建第二本小说的提示也用此价格）。"""
+    user = User.query.get(request.current_user_id)
+    return jsonify({
+        'is_vip': bool(getattr(user, 'is_vip', False)) if user else False,
+        'vip_price': VIP_LIFETIME_PRICE,
+        'vip_tier': 'lifetime',
+        'message': '开通永久会员，享无限创建作品等高级权益',
+    })
+
+
+@app.route('/api/auth/vip/upgrade-callback', methods=['POST'])
+@login_required
+def vip_upgrade_callback():
+    """
+    支付成功回调（演示/占位接口）：
+    真实部署时应该走支付网关回调验签；这里做一个最小开关，接口需传入
+    { admin_key: <APP_ADMIN_KEY> } 或 { proof: <支付平台验证签名的 payload> }
+    目前仅支持本地/管理员使用 APP_ADMIN_KEY 环境变量开通，防止用户自己调接口绕过。
+    """
+    data = request.json or {}
+    admin_key = os.environ.get('APP_ADMIN_KEY', '')
+    if admin_key and data.get('admin_key') == admin_key:
+        ok = True
+    else:
+        # 未来支付平台回调时在此处做签名/订单校验；如果既没有 admin_key 也没有验签通过，拒绝。
+        ok = False
+    if not ok:
+        return jsonify({'error': '回调校验失败'}), 401
+    user = User.query.get(request.current_user_id)
+    if user is None:
+        return jsonify({'error': '用户不存在'}), 404
+    user.is_vip = True
+    db.session.commit()
+    return jsonify({'success': True, 'user': user.to_dict()})
 
 # ==== 邮件发送（用于找回密码） ====
 # SMTP 配置通过环境变量覆盖；默认发件邮箱为 xiyiji@88.com
@@ -1445,6 +1522,29 @@ def get_book(book_id):
 @login_required
 def create_book():
     data = request.json
+    user_id = request.current_user_id
+    # ---- 创作数量限制（新用户/存量/VIP 分档）----
+    # 规则：
+    #   1) is_vip=True → 无限
+    #   2) 否则：如果当前 books 数量 >= 1，就需要判断是否"grandfathered"
+    #      —— grandfathered = 用户改造规则之前已经有多本书（book_count > 1），则保持无限
+    #      —— book_count == 1 的普通用户：只能再建 0 本 → 提示开通永久会员
+    user = User.query.get(user_id)
+    if user is not None and not bool(getattr(user, 'is_vip', False)):
+        book_count = Book.query.filter_by(user_id=user_id).count()
+        # grandfathered: 之前已经有 >1 本的用户不受影响
+        # 普通用户（book_count == 0 或 1）：超过 1 本就触发升级会员
+        if book_count >= 1:
+            # 只有 grandfathered（book_count > 1）允许；book_count == 1 不允许创建第 2 本
+            if book_count > 1:
+                pass  # grandfathered → 放行
+            else:
+                return jsonify({
+                    'code': 'UPGRADE_REQUIRED',
+                    'message': '开通网站永久会员即可无限创建新书',
+                    'vip_price': VIP_LIFETIME_PRICE,
+                    'vip_tier': 'lifetime',
+                }), 402
     # 总卷数：长篇默认10，短篇默认1。卷数不设上限，由用户自行决定（不钳制）
     book_type = data.get('book_type', 'novel')
     default_vols = 1 if book_type == 'short_story' else 10
@@ -14842,7 +14942,7 @@ def rankings_analyse():
 
 # 【冷启动提速·2026-08-20】schema+seed 版本号：改动数据库结构（新表/新列/迁移）
 # 或种子数据（SEED_SKILL_PACKS / 内置模板）时必须递增此版本，老库才会重新走全量初始化。
-SCHEMA_SEED_VERSION = '2026-09-01.1'  # 新增 ai_usage_logs 表（AI调用账本），老库需重建
+SCHEMA_SEED_VERSION = '2026-09-02.1'  # 新增 users.is_vip 永久会员列 + 会员创作上限规则、保留账号规则
 
 class AppMeta(db.Model):
     """应用元数据 KV 表：记录 schema/seed 版本，支持启动快速路径。"""
@@ -14941,6 +15041,8 @@ def init_db():
         # Migration M4b: 用户采纳的 prompt 补丁列表 + 忽略的失败 bucket
         _add_column('book_bible', 'prompt_patches_json TEXT')
         _add_column('book_bible', 'ignored_failure_buckets_json TEXT')
+        # Migration 2026-09-02.1: users.is_vip 永久会员标志（老用户默认 FALSE）
+        _add_column('users', "is_vip BOOLEAN DEFAULT FALSE NOT NULL")
         seed_prompt_templates()
         seed_skill_packs()
         # 版本落库：下次启动命中快速路径，跳过全部迁移与种子同步
