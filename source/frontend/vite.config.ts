@@ -65,11 +65,23 @@ function fanshuAlignPlugin() {
       console.log('   commit =', shortCommitId(), '  indexMd5 =', indexMd5)
 
       // ---------- B. cp -rf dist/* → backend/static/ ----------
-      // 关键：使用 recursive cpSync，仅覆盖 dist 里"有的"文件/文件夹，
-      // static 根目录下 logo.png / dian.jpg / favicon.svg 等 dist 中没有的资源不会被删
+      // 关键（v2·根治旧 JS 不消失）：
+      // 同步前先删掉 BACKEND_STATIC/assets 里 所有带 hash 的旧构建产物（index-*.js/css, chunk-*.js/css, *.woff/ttf 字体文件），
+      // 防止上一次构建的旧 JS/CSS 留在 static → GitHub/Rundle/Service Worker 还能命中旧版本，导致用户"刷新后还是旧界面"。
+      // static 根目录下 logo.png/dian.jpg/favicon.svg 等 dist 中没有的资源不动。
       if (!existsSync(BACKEND_STATIC)) {
         mkdirSync(BACKEND_STATIC, { recursive: true })
       }
+      const dstAssets = join(BACKEND_STATIC, 'assets')
+      try {
+        if (existsSync(dstAssets)) {
+          // 用 find 删：只删带短横杠hash典型命名的资产（index-*.js, index-*.css, chunk-*.js, 字体KaTeX_*-hash.* 等）
+          // 若未来用户放自定义 assets，文件不要用 "xxx-xxxxxx.ext"（横杠后跟一串hash）命名即可安全。
+          execSync(
+            `cd ${JSON.stringify(dstAssets)} && find . -maxdepth 1 -type f \\( -name 'index-*' -o -name 'chunk-*' -o -name 'KaTeX_*' -o -name '*-????????.*' \\) -delete 2>/dev/null || true`
+          )
+        }
+      } catch { /* noop */ }
       const entries = ['index.html', 'assets', 'version.json']
       for (const name of entries) {
         const src = join(distDir, name)

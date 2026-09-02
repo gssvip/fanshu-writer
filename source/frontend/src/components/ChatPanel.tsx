@@ -3617,7 +3617,7 @@ export default function ChatPanel() {
                           setMessages([]); setAutoContextNotice(null); setFixTasks([]); setStreamError('');
                         }}
                         disabled={streaming || loadingSuggest}
-                        title="通用聊天：自由讨论任何话题，命中创作关键词自动提示一键入库。自然语言直接说需求即可。"
+                        title="通用聊天：自由讨论任何话题，自然语言直接说需求即可。"
                       >💬 通用</button>
                       {dimensions.filter(d => ['concept', 'key_rules', 'worldbuilding'].includes(d.key)).map(d => (
                         <button
