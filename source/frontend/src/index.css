@@ -828,40 +828,32 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 }
 
 /* ============================================================
-   【章节 / 设定 / 大纲】落地内容 笔记本类纸 美化
-   · 米色纸底 + 横线纹理 + 左侧装订线+圆孔 + 便利贴标 + 微卷角
-   · 正文：中文衬线、28px 行距（与横线对齐）、段首 2em 缩进
+   【章节 / 设定 / 大纲】落地内容 + 编辑态 → 笔记本类纸（v3 纯净无贴纸/装订线/孔）
+   · 纸质底 + 横线纹理（仅画在正文 paper-inner / paper-textarea，保证每行精准踩线）
+   · 纸底用 color-mix 主题 bg-secondary 叠加暖色 → 贴合主题
+   · 字体全部加大：正文 17+ / 标题 26 / 页脚 12 / 编辑 textarea 17
+   · 横线阶 --paper-line-h=32px，与正文/编辑 line-height 严格一致
    ============================================================ */
 
-/* —— 纸张底座（底色+主题色自适应，横线移至 paper-inner 精准踩线） —— */
+/* —— 纸张底座（主题色自适应，无装订线/无贴纸） —— */
 :root{
-  --paper-bind-x: 30px;        /* 装订线/孔 水平位置（距离纸张容器左边缘） */
-  --paper-line-h: 28px;        /* 横线阶 = 正文行高（必须严格一致） */
+  --paper-line-h: 32px;        /* 正文/编辑 统一横线阶（与 line-height 完全相等） */
+  --paper-font-size: 17px;     /* 正文基准字号 */
+  --paper-accent-h: 26px;      /* 章节标题字号 */
 }
 .paper-notebook{
   position: relative;
   width: 100%;
   box-sizing: border-box;
   margin-top: 10px;
-  padding: 18px 24px 20px calc(var(--paper-bind-x) + 24px);  /* 装订线 x + 内边距 24 → 文字绝对不压线 */
-  border-radius: 6px 18px 10px 14px;
-  /* 纸色：用主题的 bg-secondary 混合暖色米黄 20% → 亮/暗主题都自然贴合 */
+  padding: 18px 26px 18px 26px;
+  border-radius: 6px 16px 10px 14px;
+  /* 底：主题 bg-secondary 叠暖黄 + 极淡 45° 斜纹噪点（防纯色发死） */
   background:
-    /* 装订红线：2.5px 加粗，双线质感（主红 + 左 1 条副深红微边） */
-    linear-gradient(90deg,
-      transparent 0,
-      transparent calc(var(--paper-bind-x) - 2px),
-      rgba(170, 60, 60, 0.35) calc(var(--paper-bind-x) - 2px),
-      rgba(230, 100, 100, 0.95) calc(var(--paper-bind-x) - 1.25px),
-      rgba(230, 100, 100, 0.95) calc(var(--paper-bind-x) + 1.25px),
-      rgba(170, 60, 60, 0.35) calc(var(--paper-bind-x) + 2px),
-      transparent calc(var(--paper-bind-x) + 2px)
-    ),
-    /* 底：主色 + 极淡的 45° 斜纹噪点（防纯色发死） */
     repeating-linear-gradient(
       45deg,
-      transparent 0, transparent 6px,
-      color-mix(in srgb, #000 1.2%, transparent) 6px, color-mix(in srgb, #000 1.2%, transparent) 7px
+      transparent 0, transparent 7px,
+      color-mix(in srgb, #000 1%, transparent) 7px, color-mix(in srgb, #000 1%, transparent) 8px
     ),
     color-mix(in srgb, var(--bg-secondary) 82%, #f5e6c0 18%);
   background-color: color-mix(in srgb, var(--bg-secondary) 82%, #f5e6c0 18%);
@@ -882,127 +874,23 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
     0 16px 34px -18px color-mix(in srgb, var(--text-primary) 36%, transparent),
     0 28px 54px -34px color-mix(in srgb, var(--text-primary) 28%, transparent);
 }
+/* 章节编辑纸：不触发点击旋转（不然编辑中会抖动），cursor 默认 */
+.chapter-edit-paper{ cursor: default; }
+.chapter-edit-paper:hover{ transform: none; }
+
 @media (max-width: 767px) {
-  :root{ --paper-bind-x: 22px; }
   .paper-notebook{
-    padding: 16px 12px 16px calc(var(--paper-bind-x) + 14px) !important;
+    padding: 16px 14px 16px 14px !important;
     border-radius: 4px 12px 8px 10px !important;
   }
-}
-
-/* —— 装订孔（固定 top 百分比，不再依赖 flex space-around 漂移） —— */
-.paper-binding{
-  position: absolute;
-  top: 0; bottom: 0; left: 0;
-  width: calc(var(--paper-bind-x) + 18px);
-  pointer-events: none;
-}
-.paper-binding .hole{
-  position: absolute;
-  left: calc(var(--paper-bind-x) - 8px);
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 35% 32%, var(--bg-tertiary, #f2efe7) 0 40%, color-mix(in srgb, var(--bg-tertiary, #f2efe7) 70%, #000 6%) 42% 100%);
-  border: 2px solid color-mix(in srgb, var(--text-muted) 55%, transparent);
-  box-shadow:
-    inset 0 1px 3px color-mix(in srgb, #000 18%, transparent),
-    0 0 0 3px color-mix(in srgb, rgba(255,255,255,1) 30%, transparent);
-}
-.paper-binding .hole:nth-child(1){ top: 14%; transform: translateY(-50%); }
-.paper-binding .hole:nth-child(2){ top: 50%; transform: translateY(-50%); }
-.paper-binding .hole:nth-child(3){ top: 86%; transform: translateY(-50%); }
-/* 章节纸：避让标题 / 页脚 */
-.chapter-paper .paper-binding .hole:nth-child(1){ top: 110px; }
-.chapter-paper .paper-binding .hole:nth-child(3){ top: auto; bottom: 90px; transform: none; }
-@media (max-width: 767px){
-  .paper-binding .hole{
-    left: calc(var(--paper-bind-x) - 6px);
-    width: 13px; height: 13px;
-    box-shadow: inset 0 1px 2px color-mix(in srgb, #000 16%, transparent), 0 0 0 2px color-mix(in srgb, rgba(255,255,255,1) 25%, transparent);
+  :root{
+    --paper-font-size: 16px;
+    --paper-accent-h: 22px;
   }
-  .chapter-paper .paper-binding .hole:nth-child(1){ top: 84px; }
-  .chapter-paper .paper-binding .hole:nth-child(3){ bottom: 66px; }
 }
 
-/* —— 便利贴（贴纸）美化：渐变 + 顶部透明胶带 + 右下撕口 clip-path + 翘边投影 —— */
-.paper-sticker{
-  position: absolute;
-  top: -12px;
-  right: 26px;
-  min-width: 154px;
-  max-width: 48%;
-  padding: 10px 14px 12px;
-  display: inline-flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 11.5px;
-  line-height: 1.35;
-  transform: rotate(2.2deg);
-  z-index: 3;
-  user-select: none;
-  pointer-events: none;
-  font-weight: 500;
-  color: #3b2c10;
-  /* 右下撕口（3 个小锯齿） */
-  clip-path: polygon(
-    0 0, 100% 0, 100% 80%, 97% 84%, 100% 88%, 97% 92%, 100% 96%, 92% 100%, 0 100%
-  );
-  filter: drop-shadow(0 8px 8px -6px rgba(0,0,0,0.22)) drop-shadow(0 2px 0 rgba(0,0,0,0.04));
-}
-/* 顶部透明胶带 */
-.paper-sticker::before{
-  content:"";
-  position: absolute;
-  top: -6px; left: 50%;
-  transform: translateX(-50%) rotate(-3deg);
-  width: 56%; height: 12px;
-  background: rgba(255, 255, 255, 0.52);
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
-  backdrop-filter: blur(2px);
-}
-.paper-sticker b{ font-size: 13.5px; line-height: 1.25; display: block; font-weight: 800; }
-.paper-sticker span{ opacity: .86; font-size: 10.5px; }
-
-/* 6 色渐变贴（左上浅 → 右下稍深，模拟光照便利贴） */
-.paper-sticker--rose   { /* 章节·玫红 */
-  background-image: linear-gradient(135deg, #ffe1e5 0%, #ffc2cb 72%, #ffa9b5 100%);
-  color: #8c2234;
-}
-.paper-sticker--blue   { /* 通用维度·蓝 */
-  background-image: linear-gradient(135deg, #e3effc 0%, #bcdbf7 72%, #9ec8ef 100%);
-  color: #183f6d;
-}
-.paper-sticker--mint   { /* 大纲·薄荷 */
-  background-image: linear-gradient(135deg, #dff3e8 0%, #b6e5cd 72%, #8fd6b1 100%);
-  color: #175941;
-}
-.paper-sticker--yellow { /* 世界观·黄 */
-  background-image: linear-gradient(135deg, #fff7c2 0%, #ffe888 72%, #ffd85a 100%);
-  color: #7a5b00;
-}
-.paper-sticker--purple { /* 设定·规则 紫 */
-  background-image: linear-gradient(135deg, #ecdfeb 0%, #d1b3e8 72%, #b791da 100%);
-  color: #42218b;
-}
-.paper-sticker--coral  { /* 设定·文风 珊瑚 */
-  background-image: linear-gradient(135deg, #ffe4cf 0%, #ffc195 72%, #ffa266 100%);
-  color: #77360c;
-}
-@media (max-width: 767px){
-  .paper-sticker{
-    right: 12px; top: -10px;
-    min-width: 118px; max-width: 55%;
-    padding: 8px 10px 10px;
-    font-size: 10.5px;
-    transform: rotate(1.6deg);
-  }
-  .paper-sticker b{ font-size: 12px; }
-  .paper-sticker span{ font-size: 9.5px; }
-  .paper-sticker::before{ width: 60%; height: 10px; }
-}
+/* （旧便利贴 / 旧装订孔 样式彻底不生效） */
+.paper-binding,.paper-binding .hole,.paper-sticker,.paper-sticker::before,.paper-sticker--rose,.paper-sticker--blue,.paper-sticker--mint,.paper-sticker--yellow,.paper-sticker--purple,.paper-sticker--coral{display:none !important;width:0;height:0;visibility:hidden;overflow:hidden;opacity:0;pointer-events:none;position:fixed;left:-99999px}
 
 /* —— 右下卷角 —— */
 .paper-curl{
@@ -1022,43 +910,42 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 }
 @media (max-width: 767px){ .paper-curl{ width: 20px; height: 20px; } }
 
-/* —— 纸内排版容器：横线在此渲染（让横线严格与正文首行对齐，避开贴纸/标题） —— */
+/* —— 纸内排版容器：横线画在此处（正文首行 top=0 精准踩第 1 条线） —— */
 .paper-inner{
   width: 100%;
   box-sizing: border-box;
   position: relative;
   padding-bottom: 4px;
-  /* 横线：每 28px 1 条，起点 0（第一行文字 top=0 正好踩线，页脚 padding-bottom 4 做最后一条横线下方留白） */
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
     transparent calc(var(--paper-line-h) - 1px),
-    color-mix(in srgb, var(--text-muted) 30%, transparent) calc(var(--paper-line-h) - 1px),
-    color-mix(in srgb, var(--text-muted) 30%, transparent) var(--paper-line-h),
+    color-mix(in srgb, var(--text-muted) 28%, transparent) calc(var(--paper-line-h) - 1px),
+    color-mix(in srgb, var(--text-muted) 28%, transparent) var(--paper-line-h),
     transparent var(--paper-line-h)
   );
   background-repeat: repeat;
   background-position: 0 0;
 }
-/* 纸内底部仿手写页脚 */
+/* 纸内底部仿手写页脚（自身纸底色覆盖最后几条横线，避免出现半条残线） */
 .paper-footer{
-  margin-top: 18px;
+  margin-top: 20px;
   padding-top: 10px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
   color: color-mix(in srgb, var(--text-muted) 88%, #8a6a2e 20%);
   letter-spacing: .6px;
   border-top: 1px dashed color-mix(in srgb, var(--text-muted) 42%, transparent);
-  /* 页脚自身背景盖住横线（这样虚线页脚上方不再出现半条横线干扰视觉） */
-  background: linear-gradient(to top, color-mix(in srgb, var(--bg-secondary) 82%, #f5e6c0 18%) 0 100%);
+  background: color-mix(in srgb, var(--bg-secondary) 82%, #f5e6c0 18%);
   position: relative;
   margin-bottom: -4px;
   padding-bottom: 6px;
 }
 
-/* —— bible 类纸：维度正文排版（严格 line-height = 28px 横线阶） —— */
+/* —— bible 类纸：设定/大纲/通用维度 正文 —— */
 .bible-paper .paper-inner{ padding-top: 2px; }
 .bible-paper .bible-text{
   all: unset;
@@ -1066,43 +953,44 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   white-space: pre-wrap;
   word-break: break-word;
   font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "SimSun", "STSong", serif;
-  font-size: 15px;
-  line-height: var(--paper-line-h);   /* 28px —— 必须与横线阶相同 */
-  color: color-mix(in srgb, var(--text-primary) 92%, #2b1f0b 20%);
+  font-size: var(--paper-font-size);   /* 17px */
+  line-height: var(--paper-line-h);    /* 32px = 横线阶 */
+  color: color-mix(in srgb, var(--text-primary) 94%, #2b1f0b 20%);
   letter-spacing: .2px;
   text-indent: 0;
-  /* 段与段分隔：每两个 \n 之间的空行 = 28px 空一行，天然踩在下一段首行的横线上，不再额外加 margin-bottom */
 }
 
-/* —— 章节正文排版：首行 2em 缩进，严格 28px 行距踩横线；段间距 28px（整数倍保证下一段首行也踩线） —— */
-.chapter-paper{ padding-top: 34px !important; }
+/* —— 章节正文查看模式 —— */
+.chapter-paper{ padding-top: 14px !important; }
 .chapter-paper .paper-title{
   font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "SimSun", serif;
-  font-size: 22px !important;
-  line-height: 32px !important;
+  font-size: var(--paper-accent-h) !important;   /* 26px */
+  line-height: 36px !important;
   font-weight: 800 !important;
-  color: color-mix(in srgb, var(--text-primary) 94%, #1a1206 30%) !important;
+  color: color-mix(in srgb, var(--text-primary) 96%, #1a1206 30%) !important;
   text-align: center !important;
-  margin: 4px 0 16px 0 !important;
+  margin: 0 0 14px 0 !important;
   letter-spacing: 3px !important;
   padding-bottom: 12px !important;
   border-bottom: 1.5px solid color-mix(in srgb, var(--accent) 36%, var(--text-muted) 25%);
-  /* 标题不在横线上：给标题下方额外 0px（直接接着第一条横线开始正文）——用 padding-bottom 12 + margin-bottom 16 正好到纸标题与正文分隔点，paper-inner 正文第一行 top=0 开始踩线 */
+  /* 标题区本身不踩横线：给底部 + margin-bottom 总计 N×32 对齐下一条横线
+     标题高 36px + padding-bottom 12 + border 1.5 + margin-bottom 14 = 63.5；
+     下一条横线应当正好落在 paper-inner 第一条 32 前，这里给 padding-top 8 给第一条正文留出缓冲 */
 }
-.chapter-paper .chapter-reading-content{ all: unset; display: block; }
+.chapter-paper .chapter-reading-content{ all: unset; display: block; padding-top: 8px; }
 .chapter-paper .novel-paragraph{
-  display: block !important;             /* 严格 block：保证每段单独占行，解决"好几段都在一大行中" */
-  margin: 0 0 var(--paper-line-h) 0 !important;  /* 段末留 1 条横线的空白（= 空 1 行），保证下一段首行仍从 28×N 位置开始精准踩线 */
+  display: block !important;
+  /* 段末留 1 条横线（32px），保证下一段首行仍精准踩 32 的倍数横线 */
+  margin: 0 0 var(--paper-line-h) 0 !important;
   padding: 0 !important;
   text-indent: 2em !important;
   font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "SimSun", "STSong", serif;
-  font-size: 15.5px !important;
-  line-height: var(--paper-line-h) !important;  /* 28px 踩线 */
-  color: color-mix(in srgb, var(--text-primary) 92%, #2b1f0b 20%) !important;
+  font-size: calc(var(--paper-font-size) + 0.5px) !important;   /* 17.5px */
+  line-height: var(--paper-line-h) !important;
+  color: color-mix(in srgb, var(--text-primary) 94%, #2b1f0b 20%) !important;
   text-align: justify !important;
   letter-spacing: .25px !important;
 }
-/* 最后一段去掉段末 1 行空行（让页脚紧跟，不留额外空白） */
 .chapter-paper .novel-paragraph:last-child{ margin-bottom: 4px !important; }
 .chapter-paper .novel-empty-hint{
   color: color-mix(in srgb, var(--text-muted) 94%, #8a5b00 20%);
@@ -1110,17 +998,112 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   text-align: center;
   padding: 24px 0;
   line-height: var(--paper-line-h);
-}
-@media (max-width: 767px){
-  .chapter-paper .paper-title{ font-size: 18px !important; letter-spacing: 1.5px !important; margin-bottom: 12px !important; padding-bottom: 10px !important; }
-  .chapter-paper .novel-paragraph{ font-size: 14.5px !important; }
+  font-size: var(--paper-font-size);
 }
 
-/* 暗色模式下：额外保证横线与纸色仍然自然（因为之前我们已经用了 color-mix(var(--bg-secondary) + 暖黄)，这里只是微调装订线红与便利贴亮度过） */
+/* —— 章节编辑：标题 input —— */
+.paper-title-input{
+  display: block !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  padding: 0 0 12px 0 !important;
+  margin: 0 0 14px 0 !important;
+  border: none !important;
+  outline: none !important;
+  background: transparent !important;
+  border-bottom: 1.5px solid color-mix(in srgb, var(--accent) 36%, var(--text-muted) 25%) !important;
+  text-align: center !important;
+  font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "SimSun", serif !important;
+  font-size: var(--paper-accent-h) !important;
+  line-height: 36px !important;
+  font-weight: 800 !important;
+  letter-spacing: 3px !important;
+  color: color-mix(in srgb, var(--text-primary) 96%, #1a1206 30%) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.paper-title-input::placeholder{
+  color: color-mix(in srgb, var(--text-muted) 72%, transparent);
+  font-weight: 500;
+  letter-spacing: 1px;
+  font-size: 16px;
+}
+.paper-title-input:focus{
+  outline: none !important;
+  border-bottom-color: var(--accent) !important;
+  box-shadow: 0 1.5px 0 -1px var(--accent) !important;
+}
+
+/* —— 纸质 textarea：设定/大纲/章节正文 编辑态 → 仍是笔记本横线纸 + 光标精准踩线 —— */
+.paper-textarea{
+  display: block !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  border: none !important;
+  outline: none !important;
+  resize: vertical !important;
+  min-height: calc(var(--paper-line-h) * 18);
+  /* 纸质横线（与 paper-inner 完全一致，起点 0 0，line-height=32 → 每一行光标正好踩线） */
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--paper-line-h) - 1px),
+    color-mix(in srgb, var(--text-muted) 28%, transparent) calc(var(--paper-line-h) - 1px),
+    color-mix(in srgb, var(--text-muted) 28%, transparent) var(--paper-line-h),
+    transparent var(--paper-line-h)
+  );
+  background-color: transparent !important;   /* 背景透明 → 看见外层 paper-notebook 的纸底 */
+  background-repeat: repeat;
+  background-position: 0 0;
+  background-attachment: local;            /* 滚动时横线跟随文字（编辑长文本不飘） */
+  padding: 0 0 0 0 !important;
+  margin: 10px 0 0 0 !important;
+  font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "SimSun", "STSong", serif !important;
+  font-size: var(--paper-font-size) !important;      /* 17px */
+  line-height: var(--paper-line-h) !important;       /* 32px = 横线阶，光标必踩线 */
+  color: color-mix(in srgb, var(--text-primary) 94%, #2b1f0b 20%) !important;
+  letter-spacing: .25px !important;
+  caret-color: color-mix(in srgb, var(--accent) 88%, #2b1f0b 20%);
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.paper-textarea::placeholder{
+  color: color-mix(in srgb, var(--text-muted) 70%, transparent);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 15px;
+  line-height: var(--paper-line-h);
+}
+.paper-textarea:focus{
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--paper-line-h) - 1px),
+    color-mix(in srgb, var(--accent) 42%, transparent) calc(var(--paper-line-h) - 1px),
+    color-mix(in srgb, var(--accent) 42%, transparent) var(--paper-line-h),
+    transparent var(--paper-line-h)
+  );
+}
+/* 章节编辑 textarea 额外宽松 padding-top 8（与章节阅读一致，避开标题分隔线） */
+.chapter-paper-textarea{
+  margin-top: 8px !important;
+}
+
+/* —— 手机端字号再微调（保持"字体加大"体感，--paper-font-size 已由 :root 16px 覆盖）—— */
+@media (max-width: 767px){
+  .chapter-paper .paper-title,
+  .paper-title-input{ letter-spacing: 1.5px !important; }
+  .paper-textarea{ min-height: calc(var(--paper-line-h) * 14); font-size: var(--paper-font-size) !important; }
+}
+
+/* 暗色模式：便利贴/装订线被硬隐藏 亮度兜底 */
 @media (prefers-color-scheme: dark){
-  body[data-theme='dark'] .paper-sticker,
-  :root:has(#theme-toggle:checked) .paper-sticker{
-    filter: brightness(0.92) saturate(0.9);
+  body[data-theme='dark'] .paper-footer,
+  :root:has(#theme-toggle:checked) .paper-footer{
+    background: color-mix(in srgb, var(--bg-secondary) 82%, #f5e6c0 18%);
   }
 }
 

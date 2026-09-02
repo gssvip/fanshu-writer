@@ -3388,13 +3388,6 @@ function ChapterPanel(props: {
 
         {/* —— 笔记本类纸：章节落地正文 —— */}
         <article className="paper-notebook chapter-paper">
-          <div className="paper-binding" aria-hidden="true">
-            <span className="hole" /><span className="hole" /><span className="hole" />
-          </div>
-          <div className="paper-sticker paper-sticker--rose" aria-hidden="true">
-            <b>章节·正文</b>
-            <span>{activeChapter.word_count || 0} 字 · 落地稿</span>
-          </div>
           <div className="paper-curl" aria-hidden="true" />
 
           <div className="paper-inner">
@@ -3416,7 +3409,7 @@ function ChapterPanel(props: {
     );
   }
 
-  // 章节编辑
+  // 章节编辑（编辑中也要保持笔记本类纸 + 横线 + 衬线大字体）
   if (activeChapter && chapterEditing) {
     return (
       <div className="chapter-edit-panel">
@@ -3426,21 +3419,32 @@ function ChapterPanel(props: {
             {chapterSaving ? '保存中...' : '💾 保存'}
           </button>
         </div>
-        <input
-          className="input chapter-edit-title-input"
-          value={chapterEditTitle}
-          onChange={e => onEditTitle(e.target.value)}
-          placeholder="章节标题"
-        />
-        <textarea
-          ref={textareaRef}
-          className="input chapter-edit-textarea clean-editor"
-          value={chapterEditContent}
-          onChange={e => onEditContent(e.target.value)}
-          placeholder="开始写作..."
-          rows={20}
-          spellCheck={false}
-        />
+
+        {/* —— 笔记本类纸编辑纸 —— */}
+        <article className="paper-notebook chapter-paper chapter-edit-paper">
+          <div className="paper-curl" aria-hidden="true" />
+          <div className="paper-inner">
+            <input
+              className="paper-title-input"
+              value={chapterEditTitle}
+              onChange={e => onEditTitle(e.target.value)}
+              placeholder="章节标题（居中显示，保存后就是正文标题）"
+            />
+            <textarea
+              ref={textareaRef}
+              className="paper-textarea chapter-paper-textarea"
+              value={chapterEditContent}
+              onChange={e => onEditContent(e.target.value)}
+              placeholder="开始写作…（保持笔记本横格纸效果，输入时光标会精准踩在每一条横线上）"
+              rows={18}
+              spellCheck={false}
+            />
+            <div className="paper-footer" aria-hidden="true">
+              <span className="paper-footer-left">— 蚂蚁写作笔记 · 编辑中 —</span>
+              <span className="paper-footer-right">— 字数 {(chapterEditContent||'').length} —</span>
+            </div>
+          </div>
+        </article>
       </div>
     );
   }
@@ -6091,8 +6095,8 @@ function BibleEditPanel(props: {
       {editing ? (
         <>
           <textarea
-            className="input bible-editor-textarea"
-            rows={16}
+            className="input bible-editor-textarea paper-textarea"
+            rows={18}
             value={editValue}
             onChange={e => onEditChange(e.target.value)}
             placeholder={tab.placeholder}
@@ -6107,13 +6111,6 @@ function BibleEditPanel(props: {
         <>
           {/* —— 笔记本类纸：维度落地内容 —— */}
           <div className="paper-notebook bible-paper" data-dim={tab.label} onClick={onStartEdit}>
-            <div className="paper-binding paper-binding--left" aria-hidden="true">
-              <span className="hole" /><span className="hole" /><span className="hole" />
-            </div>
-            <div className="paper-sticker paper-sticker--blue" aria-hidden="true">
-              <b>{tab.icon} {tab.label}</b>
-              <span>落地稿 · {content.length} 字</span>
-            </div>
             <div className="paper-curl" aria-hidden="true" />
             <div className="paper-inner">
               <pre className="bible-text">{content}</pre>
@@ -6457,13 +6454,6 @@ function OutlineCombinedPanel(props: {
       ) : currentContent ? (
         /* —— 笔记本类纸：大纲 / 世界观 落地内容 —— */
         <div className="paper-notebook bible-paper outline-paper" data-dim={labelMap[subTab]} onClick={startEdit}>
-          <div className="paper-binding paper-binding--left" aria-hidden="true">
-            <span className="hole" /><span className="hole" /><span className="hole" />
-          </div>
-          <div className={`paper-sticker ${subTab === 'outline' ? 'paper-sticker--mint' : 'paper-sticker--yellow'}`} aria-hidden="true">
-            <b>{subTab === 'outline' ? '📋 大纲' : '🌍 世界观'}</b>
-            <span>落地稿 · {currentContent.length} 字</span>
-          </div>
           <div className="paper-curl" aria-hidden="true" />
           <div className="paper-inner">
             <pre className="bible-text">{currentContent}</pre>
@@ -6696,18 +6686,11 @@ function SettingsCombinedPanel(props: {
       )}
 
       {editing ? (
-        <textarea className="input bible-editor-textarea" rows={16} value={editValue}
+        <textarea className="input bible-editor-textarea paper-textarea" rows={18} value={editValue}
           onChange={e => setEditValue(e.target.value)} placeholder={placeholderMap[subTab]} autoFocus />
       ) : currentContent ? (
         /* —— 笔记本类纸：设定 / 文风 落地内容 —— */
         <div className="paper-notebook bible-paper setting-paper" data-dim={labelMap[subTab]} onClick={startEdit}>
-          <div className="paper-binding paper-binding--left" aria-hidden="true">
-            <span className="hole" /><span className="hole" /><span className="hole" />
-          </div>
-          <div className={`paper-sticker ${subTab === 'rules' ? 'paper-sticker--purple' : 'paper-sticker--coral'}`} aria-hidden="true">
-            <b>{iconMap[subTab]} {labelMap[subTab]}</b>
-            <span>落地稿 · {currentContent.length} 字</span>
-          </div>
           <div className="paper-curl" aria-hidden="true" />
           <div className="paper-inner">
             <pre className="bible-text">{currentContent}</pre>
