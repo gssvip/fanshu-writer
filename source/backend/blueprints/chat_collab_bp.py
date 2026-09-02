@@ -507,18 +507,85 @@ def _rt_stream_turn(gw, messages, temperature, max_tokens, attempts: int = 2):
             raise
 
 
-def _rt_save_state(session, db, state: dict) -> None:
-    """把圆桌会议进度合并写回 session.meta_json（保留已有键，如 ai_config_id）。"""
+def _rt_save_state(session, db, state: dict) -> str:
+    """【N2·绝对可靠】圆桌进度存 DB。
+
+    为什么重写？—— 之前直接用请求绑定的 db.session → 用户点"停止"AbortController 断 SSE，
+    Python 抛 GeneratorExit（BaseException 子类），Flask 请求收尾时把 db.session 标记为 rollback-only，
+    finally 里那行 db.session.commit() **被回滚当垃圾扔掉了** → meta_json 里永远没 roundtable_state → state_loaded=F。
+
+    修复：开一条完全独立的 SQLAlchemy session（新建 engine+session 连接，与请求范围 db.session 物理隔离），
+    按 id 重新查询 AISession → 修改 meta_json → 独立 commit → 关闭。就算主请求全滚了，这里写的 DB 行也稳在磁盘。
+
+    返回：str 描述（"ok:3saved" / "fail:xxx"），前端诊断帧可直接显示。
+    """
+    _sid = str(getattr(session, 'id', '') or '').strip()
+    _msg = 'ok:noop'
     try:
-        meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
-        if not isinstance(meta, dict):
-            meta = {}
-        meta[_RT_STATE_KEY] = state
-        session.meta_json = json.dumps(meta, ensure_ascii=False)
-        db.session.add(session)
-        db.session.commit()
-    except Exception:
-        pass
+        if not _sid:
+            return 'fail:no_sid'
+        from sqlalchemy import create_engine as _sa_ce
+        import os as _os_rt
+        # 与 app.py SQLALCHEMY_DATABASE_URI 同源（flask env 里总是有）
+        _db_uri = (_os_rt.environ.get('DATABASE_URL')
+                   or _os_rt.environ.get('SQLALCHEMY_DATABASE_URI')
+                   or 'sqlite:///' + _os_rt.path.join(_os_rt.path.dirname(_os_rt.path.abspath(__file__)), '..', 'app.db'))
+        _eng = _sa_ce(_db_uri, pool_pre_ping=True, connect_args={'check_same_thread': False} if _db_uri.startswith('sqlite') else {})
+        from sqlalchemy.orm import sessionmaker as _sa_sm
+        _SM = _sa_sm(bind=_eng, autoflush=False, expire_on_commit=False)
+        _ind_sess = _SM()
+        try:
+            # 反射 / 直接文本 SQL 更新都行，用 text SQL 最省事不依赖导入 AISession 类
+            from sqlalchemy import text as _sa_text
+            _row = _ind_sess.execute(_sa_text('SELECT id, meta_json FROM ai_sessions WHERE id = :sid LIMIT 1'), {'sid': _sid}).fetchone()
+            if _row is None:
+                _msg = 'fail:ai_session_row_not_found(id=' + _sid[:8] + '…)'
+                return _msg
+            _cur_meta_str = (str(_row[1]) if _row[1] is not None else '') or '{}'
+            try:
+                _cur_meta = json.loads(_cur_meta_str) if isinstance(_cur_meta_str, str) else _cur_meta_str
+            except Exception:
+                _cur_meta = {}
+            if not isinstance(_cur_meta, dict):
+                _cur_meta = {}
+            _cur_meta[_RT_STATE_KEY] = state
+            _new_meta_str = json.dumps(_cur_meta, ensure_ascii=False)
+            _ind_sess.execute(
+                _sa_text('UPDATE ai_sessions SET meta_json = :mj, updated_at = CURRENT_TIMESTAMP WHERE id = :sid'),
+                {'mj': _new_meta_str, 'sid': _sid}
+            )
+            _ind_sess.commit()
+            # ====== 双重校验：独立新 session 再 SELECT 一次，确认真的落盘 ======
+            _ind2 = _SM()
+            try:
+                _ch = _ind2.execute(_sa_text('SELECT meta_json FROM ai_sessions WHERE id = :sid LIMIT 1'), {'sid': _sid}).fetchone()
+                if _ch is None:
+                    _msg = 'fail:verify_select_none'
+                else:
+                    try:
+                        _ch_m = json.loads(str(_ch[0]) or '{}')
+                        _st = _ch_m.get(_RT_STATE_KEY) if isinstance(_ch_m, dict) else None
+                        _dn = len((_st or {}).get('done') or []) if isinstance(_st, dict) else -1
+                        if _st is None:
+                            _msg = 'fail:verify_state_missing_after_write'
+                        else:
+                            _msg = f'ok:verify_ok,done={_dn}'
+                    except Exception as _e2:
+                        _msg = 'fail:verify_parse:' + str(_e2)[:40]
+            finally:
+                try: _ind2.close()
+                except Exception: pass
+        finally:
+            try: _ind_sess.close()
+            except Exception: pass
+            try: _eng.dispose()
+            except Exception: pass
+    except Exception as _e:
+        try:
+            _msg = 'fail:' + type(_e).__name__ + ':' + str(_e)[:80]
+        except Exception:
+            _msg = 'fail:unknown'
+    return _msg
 
 
 def _rt_load_state(session):
@@ -527,6 +594,37 @@ def _rt_load_state(session):
         if isinstance(meta, dict):
             st = meta.get(_RT_STATE_KEY)
             return st if isinstance(st, dict) else None
+    except Exception:
+        pass
+    return None
+
+
+def _rt_load_state_by_sid_independent(sid: str):
+    """独立新连接读 state，绕过请求db.session可能的回滚脏数据；用于D3终极兜底。返回 dict|None。"""
+    try:
+        sid = str(sid or '').strip()
+        if not sid: return None
+        from sqlalchemy import create_engine as _sa_ce, text as _sa_text
+        import os as _os_rt
+        _db_uri = (_os_rt.environ.get('DATABASE_URL')
+                   or _os_rt.environ.get('SQLALCHEMY_DATABASE_URI')
+                   or 'sqlite:///' + _os_rt.path.join(_os_rt.path.dirname(_os_rt.path.abspath(__file__)), '..', 'app.db'))
+        _eng = _sa_ce(_db_uri, connect_args={'check_same_thread': False} if _db_uri.startswith('sqlite') else {})
+        from sqlalchemy.orm import sessionmaker as _sa_sm
+        _SM = _sa_sm(bind=_eng)
+        _s = _SM()
+        try:
+            _r = _s.execute(_sa_text('SELECT meta_json FROM ai_sessions WHERE id = :sid LIMIT 1'), {'sid': sid}).fetchone()
+            if _r is None: return None
+            _m = json.loads(str(_r[0]) or '{}') if _r[0] is not None else {}
+            if isinstance(_m, dict):
+                _st = _m.get(_RT_STATE_KEY)
+                return _st if isinstance(_st, dict) else None
+        finally:
+            try: _s.close()
+            except Exception: pass
+            try: _eng.dispose()
+            except Exception: pass
     except Exception:
         pass
     return None
@@ -10052,6 +10150,27 @@ def chat_roundtable():
             is_continue = _is_rt_continue(topic)
             state = _rt_load_state(session)
 
+            # 【D3-0：独立连接读 state】resume_from_checkpoint=true 时，先按_req_session_id开全新连接读DB，
+            #    绕过请求db.session的回滚脏数据（刚才N2修复了写时独立连接，读这里也对齐彻底隔离）
+            if resume_from_checkpoint and (not state or not isinstance(state, dict) or len(state.get('done') or []) == 0):
+                try:
+                    if _req_session_id:
+                        _st_ind = _rt_load_state_by_sid_independent(_req_session_id)
+                        if isinstance(_st_ind, dict) and (
+                            len(_st_ind.get('done') or []) > 0 or _st_ind.get('moderator_open') or _st_ind.get('topic')
+                        ):
+                            state = _st_ind
+                            # 尝试把 session 对象切到独立读命中的那条，保证后续 _rt_save_state 存到同一个地方
+                            try:
+                                _rs_match = AISession.query.filter_by(id=_req_session_id).first()
+                                if _rs_match is not None:
+                                    session = _rs_match
+                                    session_id = session.id
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
             # 【D3·终极兜底捞 state】：resume_from_checkpoint=true 时，
             # 如果上面仍然拿到 state=None 或空 dict（比如 session/scope 彻底错位、state 存在别的会话里），
             # 直接扫 DB 所有 AISession 里 meta_json 有 _RT_STATE_KEY 的记录，挑出"有 done/moderator_open/topic"
@@ -10288,7 +10407,8 @@ def chat_roundtable():
                 yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator"}, ensure_ascii=False)}\n\n'
                 state['moderator_open'] = adj_open
                 state['discussion_history'] = discussion_history
-                _rt_save_state(session, db, state)
+                _sv_r = _rt_save_state(session, db, state)
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "ℹ️ 主持人已回应意见并保存：save=" + _sv_r}}, ensure_ascii=False)}\n\n'
                 # 落盘一次（刷新可见历史 + 本轮作者意见）
                 _rt_persist_messages(session, history, topic_final, adj_open, done, '')
             elif resuming:
@@ -10418,7 +10538,8 @@ def chat_roundtable():
                          'topic': topic_final, 'moderator_open': mod_content,
                          'done': [], 'discussion_history': discussion_history,
                          'total_rounds_hint': (_round_req if _round_req else default_rounds)}
-                _rt_save_state(session, db, state)
+                _sv0 = _rt_save_state(session, db, state)
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "ℹ️ 主持人开场保存到DB校验：save=" + _sv0}}, ensure_ascii=False)}\n\n'
                 # 开场即落盘消息 → 刷新界面能看到开场
                 _rt_persist_messages(session, history, topic_final, mod_content, [], '')
 
@@ -10510,7 +10631,8 @@ def chat_roundtable():
                 state = {'active': True, 'completed': False, 'phase': 'discussion',
                          'topic': topic_final, 'moderator_open': _mod_open,
                          'done': done, 'discussion_history': discussion_history}
-                _rt_save_state(session, db, state)
+                _sv_res = _rt_save_state(session, db, state)
+                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "✅ 已保存进度到DB（独立连接+双重校验）：save=" + _sv_res + "，点停止后随时可续"}}, ensure_ascii=False)}\n\n'
                 # 同时把已讨论内容落盘到会话 → 中途断连/手动停止后刷新也能看到
                 _rt_persist_messages(session, history, topic_final, _mod_open, done, '')
                 done_count += 1
@@ -10621,7 +10743,8 @@ def chat_roundtable():
             # 落盘 + 标记会议完成（保留全量进度，供其后再"继续/追加一轮"）
             state['completed'] = True
             state['phase'] = 'done'
-            _rt_save_state(session, db, state)
+            _sv_done = _rt_save_state(session, db, state)
+            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "ℹ️ 圆桌会议全部完成已持久化校验：save=" + _sv_done}}, ensure_ascii=False)}\n\n'
 
             # 把整场（含追加轮）的可复盘消息落盘 → 刷新界面不丢
             _mod_open = state.get('moderator_open', '') if isinstance(state, dict) else ''
