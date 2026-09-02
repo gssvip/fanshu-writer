@@ -3283,6 +3283,24 @@ export default function ChatPanel() {
           if (evt.type === 'error') throw new Error(evt.error);
           if (evt.type === 'meta' && evt.kind === 'roundtable_start' && evt.info) {
             curName = '';
+          } else if (evt.type === 'meta' && evt.kind === 'roundtable_session' && evt.info && evt.info.session_id) {
+            // 【R3】后端把真实用的 session_id 推过来 → 存到本条 roundtable 气泡上，
+            // 下次点右上角绿色继续按钮时直接带这个 sid，不会再因为 scope 错位捞不到 state
+            const _bkSid = String(evt.info.session_id);
+            setMessages(prev => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant' && last.roundtable) {
+                next[next.length - 1] = {
+                  ...last,
+                  roundtable: { ...last.roundtable, _backend_session_id: _bkSid } as any,
+                };
+              }
+              return next;
+            });
+          } else if (evt.type === 'meta' && evt.kind === 'roundtable_status' && evt.info && typeof evt.info.text === 'string') {
+            // 诊断/续会提示：直接以通知形式出现，不污染发言段
+            appendAiNotice('🧭 圆桌诊断：' + evt.info.text);
           } else if (evt.type === 'meta' && evt.kind === 'roundtable_speaker' && evt.info) {
             // 切换发言人：记录当前发言人名字，接下来的delta都算它的发言
             curName = String(evt.info.speaker_name || '').trim();
@@ -3478,6 +3496,7 @@ export default function ChatPanel() {
       }
     }
     if (targetIdx < 0) return;
+    const _targetRt = (messages[targetIdx]?.roundtable as any) || undefined as any;
     // 2) 提取原始 topic：目标 roundtable 的前一条用户消息就是用户当时发起的话题
     let topic = '';
     for (let i = targetIdx - 1; i >= 0; i--) {
@@ -3487,8 +3506,15 @@ export default function ChatPanel() {
     setStreaming(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-    const _sid = chatGeneralSessionId || sessionId || undefined;
-    const _cfgId = _sid ? (sessionModelMap[_sid] || undefined) : undefined;
+    // 【R3·核心】session_id 优先用后端首次开会时通过 roundtable_session meta 推过来、存在本气泡上的真实 sid！
+    //   未绑书场景：后端强制切到 roundtable_global session，chatGeneralSessionId 是"通用对话"的另一条，
+    //   state 就存在 _backend_session_id 指向那条里。以前传 chatGeneralSessionId → state_loaded=F。
+    const _bk_sid = String(_targetRt?._backend_session_id || '').trim() || '';
+    const _sid = _bk_sid || chatGeneralSessionId || sessionId || undefined;
+    const _cfgId = _sid ? (sessionModelMap[_bk_sid] || sessionModelMap[String(chatGeneralSessionId || '')] || undefined) : undefined;
+    if (_bk_sid) {
+      appendAiNotice('🧭 圆桌：使用后端真实会话 sid=' + _bk_sid.slice(0, 8) + '…（100% 对位续会）');
+    }
     api.chatRoundtableStream(topic, {
       bookId: bookId || undefined,
       sessionId: _sid,
@@ -3506,6 +3532,17 @@ export default function ChatPanel() {
         if (evt.type === 'error') throw new Error(evt.error);
         if (evt.type === 'meta' && evt.kind === 'roundtable_start' && evt.info) {
           curName = '';
+        } else if (evt.type === 'meta' && evt.kind === 'roundtable_session' && evt.info && evt.info.session_id) {
+          // 续会过程中如后端重新返回了真实 session_id → 继续更新到本条气泡，后续再继续更准
+          const _rbsid = String(evt.info.session_id);
+          setMessages(prev => {
+            const next = [...prev];
+            const tgt = next[targetIdx];
+            if (tgt && tgt.role === 'assistant' && tgt.roundtable) {
+              next[targetIdx] = { ...tgt, roundtable: { ...tgt.roundtable, _backend_session_id: _rbsid } as any };
+            }
+            return next;
+          });
         } else if (evt.type === 'meta' && evt.kind === 'roundtable_speaker' && evt.info) {
           curName = String(evt.info.speaker_name || '').trim();
           setMessages(prev => {

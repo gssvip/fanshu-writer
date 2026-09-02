@@ -10042,6 +10042,12 @@ def chat_roundtable():
             # 首帧meta：告诉前端这是圆桌模式（rounds 反映实际轮数：默认2轮；作者指定则按指定值）
             _hint_rounds = (_round_req if _round_req else default_rounds)
             yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_start", "info": {"rounds": _hint_rounds, "speakers": N}}, ensure_ascii=False)}\n\n'
+            # 【R3·终极修复session错位】把后端**真实用的 session_id** 推给前端。
+            # 之前 bug：未绑书时后端强制用 roundtable_global session，save_state 存在那里；
+            #        但前端"继续"按钮传的是 chatGeneralSessionId（general scope）→ 两条 session 彻底错开
+            #        → state_loaded=F。 现在前端存好后端的 session_id，下次续会直接带它回来，100% 对位。
+            _rt_real_sid = str(getattr(session, 'id', '') or session_id or '')
+            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_session", "info": {"session_id": _rt_real_sid, "scope": (scope or ''), "book_id": (str(book_id) if book_id else None)}}, ensure_ascii=False)}\n\n'
 
             is_continue = _is_rt_continue(topic)
             state = _rt_load_state(session)
