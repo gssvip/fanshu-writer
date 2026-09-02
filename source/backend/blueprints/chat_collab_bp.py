@@ -10009,7 +10009,10 @@ def chat_roundtable():
 
     def generate():
         yield ': ping-heartbeat-keepalive\n\n'
-        nonlocal _rank_ctx_global, _rank_analyst_report, _rank_scan
+        # ⭐ nonlocal session：修复 D3 中 `session = rs` 导致 Python 把 session 当成 generate() 局部变量，
+        #     结果在之前的 _rt_load_state(session) 就读到"没赋值的 local var"→ UnboundLocalError 崩溃。
+        #     加上 nonlocal 后 session=rs 会写回外层 chat_roundtable 的 session，内外看到同一个指针。
+        nonlocal _rank_ctx_global, _rank_analyst_report, _rank_scan, session
         all_messages = []
 
         def _emit(gen, speaker_id):
