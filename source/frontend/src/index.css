@@ -53,9 +53,7 @@
   background-attachment: fixed, fixed;
   color: var(--text-primary);
 }
-/* 右下角印签：用户要求移除（手机/桌面端一律隐藏） */
-[data-theme="dark"] body::after{ display: none !important; }
-/* 桌面端 ≥900px：保持默认 landscape 不变，明确声明一下 */
+/* 桌面端 ≥900px：横幅 landscape 江南山水图 */
 @media (min-width: 900px){
   [data-theme="dark"] body{
     background-image:
@@ -63,15 +61,13 @@
       url("/assets/ink-landscape.jpg");
   }
 }
-/* 手机端 ≤899px：切换为 portrait 竖幅立轴图（高叠山瀑布古松），遮字冷白调到 86%更清晰 */
+/* 手机端 ≤899px：竖幅 portrait 高远山立轴图（顶/底留空白给 UI bar） */
 @media (max-width: 899px){
   [data-theme="dark"] body{
     background-image:
       linear-gradient(180deg, rgba(255,255,255,0.88) 0%, rgba(255,255,255,0.72) 50%, rgba(255,255,255,0.92) 100%),
       url("/assets/ink-portrait.jpg");
   }
-  /* 手机端：移除闲章上移/缩小声明（已被隐藏） */
-  [data-theme="dark"] body::after{ display: none !important; }
 }
 
 /* ===== 国风水墨画 组件：冷白 石青 清雅系 ===== */
