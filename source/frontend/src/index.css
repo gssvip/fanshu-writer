@@ -11,6 +11,402 @@
   --font-serif: 'Georgia','Noto Serif SC','STSong',serif;
   --font-sans: -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif;
 }
+/* ===== v6 J1 浅色主题【限定作用域】Design Tokens：暖白干净（玉版宣脏黄→不脏版）=====
+   ★ 严格作用域 [data-theme="light"]：只在用户切"浅色主题"时生效，绝不污染 :root / 其他主题
+   旧 :root 玉版宣（#faf9f5/边#e0d8c0/金#d4a017）→ 新纯净暖白 + 暖棕金主色（唯一饱和色）*/
+[data-theme="light"] {
+  /* 背景 4 阶：暖白纯净不脏（不发黄、不脏）*/
+  --bg-primary:    #fdfcfb;   /* 主背景 暖纯白 */
+  --bg-secondary:  #f8f5f0;   /* 侧栏/浮层 极淡奶油 */
+  --bg-tertiary:   #f3eee6;   /* 卡内 */
+  --border-color:  #e6dfd3;   /* 1px 淡边 */
+  /* 字 4 级：暖灰（全部过 WCAG）*/
+  --text-primary:    #2c261d; /* 浓墨 12.9:1 AAA */
+  --text-secondary:  #5c5242; /* 副字 5.9:1 AA */
+  --text-muted:      #8d8270; /* 辅助 3.1:1 */
+  --text-subtle:     #a89e8c; /* 最淡 */
+  /* 唯一饱和色：暖棕金 #9c7b2e（浓金不亮金）*/
+  --accent:        #9c7b2e;   /* 5.6:1 AA */
+  /* ===== color-mix 自动衍生 14 个派生变量（衍生全在这个作用域里生效，不外溢）*/
+  --accent-hover:   color-mix(in srgb, var(--accent) 78%, black);
+  --accent-soft:    color-mix(in srgb, var(--accent) 62%, white);
+  --accent-light:   color-mix(in srgb, var(--accent) 10%, transparent);
+  --bg-card:        color-mix(in srgb, var(--bg-secondary) 98%, white);
+  --bg-elevated:    #ffffff;
+  --bg-hover:       color-mix(in srgb, var(--bg-secondary) 93%, black);
+  --bg-active:      color-mix(in srgb, var(--bg-secondary) 87%, black);
+  --shadow-sm: 0 1px 3px  color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --shadow-md: 0 4px 14px color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --shadow-lg: 0 8px 28px color-mix(in srgb, var(--text-primary) 8%, transparent);
+  /* 3 圆角 + 3 过渡（所有主题同一规范）*/
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+  --tr-fast: 0.10s ease-in-out; --tr-base: 0.18s ease-out; --tr-slow: 0.25s ease;
+}
+
+/* ===== v6 J2 护眼绿主题【限定作用域】Design Tokens：翠绿单色系（AppleBooks/Kindle 护眼风）=====
+   ★ 严格作用域 [data-theme="green"]：之前"护眼绿"根本没定义→一直fallback到脏黄:root；现在补上 */
+[data-theme="green"] {
+  /* 背景 4 阶：淡豆绿 + 柔草绿（纯护眼不花哨）*/
+  --bg-primary:    #f2f7f0;   /* 主背景 淡豆绿 */
+  --bg-secondary:  #eaf3e6;   /* 侧栏/浮层 柔草绿（比主背景略深一格）*/
+  --bg-tertiary:   #e2ede0;   /* 卡内 */
+  --border-color:  #cfdfc9;   /* 1px 淡草绿边 */
+  /* 字 4 级：褐绿灰（长时间阅读比纯黑护眼）*/
+  --text-primary:    #34402f; /* 浓褐绿灰 11.4:1 AAA */
+  --text-secondary:  #576350; /* 副字 6.1:1 AA */
+  --text-muted:      #8a9782; /* 辅助 3.2:1 */
+  --text-subtle:     #a6b19d; /* 最淡 */
+  /* 唯一饱和色：深翠绿 #4e7a52 */
+  --accent:        #4e7a52;   /* 5.8:1 AA */
+  /* ===== color-mix 自动衍生 14 个派生变量（限定作用域）*/
+  --accent-hover:   color-mix(in srgb, var(--accent) 78%, black);
+  --accent-soft:    color-mix(in srgb, var(--accent) 62%, white);
+  --accent-light:   color-mix(in srgb, var(--accent) 10%, transparent);
+  --bg-card:        color-mix(in srgb, var(--bg-secondary) 98%, white);
+  --bg-elevated:    #ffffff;
+  --bg-hover:       color-mix(in srgb, var(--bg-secondary) 93%, black);
+  --bg-active:      color-mix(in srgb, var(--bg-secondary) 87%, black);
+  --shadow-sm: 0 1px 3px  color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --shadow-md: 0 4px 14px color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --shadow-lg: 0 8px 28px color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+  --tr-fast: 0.10s ease-in-out; --tr-base: 0.18s ease-out; --tr-slow: 0.25s ease;
+}
+
+/* ===== v6 J4 自定义主题【限定作用域】color-mix 自动衍生：用户只需在 App.tsx 写入 8 个基础变量，
+   以下 23 个衍生变量全部自动 color-mix 匹配 → 保证用户改任意 accent/bg/text，色彩系统立即自动正确 */
+[data-theme="custom"] {
+  --accent-hover:   color-mix(in srgb, var(--accent) 78%, black);
+  --accent-soft:    color-mix(in srgb, var(--accent) 62%, white);
+  --accent-light:   color-mix(in srgb, var(--accent) 10%, transparent);
+  --bg-card:        color-mix(in srgb, var(--bg-secondary) 98%, white);
+  --bg-elevated:    #ffffff;
+  --bg-hover:       color-mix(in srgb, var(--bg-secondary) 93%, black);
+  --bg-active:      color-mix(in srgb, var(--bg-secondary) 87%, black);
+  --text-subtle:    color-mix(in srgb, var(--text-muted) 70%, white);
+  --shadow-sm: 0 1px 3px  color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --shadow-md: 0 4px 14px color-mix(in srgb, var(--text-primary) 6%, transparent);
+  --shadow-lg: 0 8px 28px color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
+  --tr-fast: 0.10s ease-in-out; --tr-base: 0.18s ease-out; --tr-slow: 0.25s ease;
+}
+
+/* ===== v6 J3：3 主题组件样式（light/green/custom 限定作用域 + 同规则并列，绝不global）=====
+   ★ 铁律：每条选择器都以 [data-theme="light/green/custom"] 前缀开头 → 绝对不污染:root/水墨国风
+   ★ 保守增量：只改用户能直接看出色彩不协调的视觉组件；不改layout(h1/sidebar-item padding/page padding)避免再出现「蚂叠logo」类错位事故
+   覆盖 7 类关键组件：①body背景 ②统计banner ③按钮 ④输入框 ⑤底部Tab ⑥标签/封面 ⑦卡片hover边框淡主色 */
+
+/* ① body 背景：用各自主题的 bg-primary（作用域限定里的变量自动生效）*/
+[data-theme="light"] body,
+[data-theme="green"] body,
+[data-theme="custom"] body{
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+/* ② 顶部 stats-banner（4 格对齐 + 极淡渐变，和水墨风G2同形状，但 var 驱动自动配色）*/
+[data-theme="light"] .home-stats-banner,
+[data-theme="green"] .home-stats-banner,
+[data-theme="custom"] .home-stats-banner{
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, color-mix(in srgb, var(--bg-secondary) 92%, var(--accent)) 100%) !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border-color)) !important;
+  box-shadow: var(--shadow-md) !important;
+  color: var(--text-primary) !important;
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  position: relative;
+  overflow: hidden;
+}
+[data-theme="light"] .home-stats-hero,
+[data-theme="light"] .home-stats-item,
+[data-theme="green"] .home-stats-hero,
+[data-theme="green"] .home-stats-item,
+[data-theme="custom"] .home-stats-hero,
+[data-theme="custom"] .home-stats-item{
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  text-align: center !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  padding: 2px 6px !important;
+}
+[data-theme="light"] .home-stats-hero-value,
+[data-theme="light"] .home-stats-item-value,
+[data-theme="green"] .home-stats-hero-value,
+[data-theme="green"] .home-stats-item-value,
+[data-theme="custom"] .home-stats-hero-value,
+[data-theme="custom"] .home-stats-item-value{
+  color: var(--accent) !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.3px !important;
+  opacity: 1 !important;
+  font-size: 22px !important;
+  line-height: 1 !important;
+  text-align: center !important;
+}
+[data-theme="light"] .home-stats-hero-label,
+[data-theme="light"] .home-stats-item-label,
+[data-theme="green"] .home-stats-hero-label,
+[data-theme="green"] .home-stats-item-label,
+[data-theme="custom"] .home-stats-hero-label,
+[data-theme="custom"] .home-stats-item-label{
+  color: var(--text-muted) !important;
+  font-weight: 500 !important;
+  letter-spacing: 1px !important;
+  opacity: 1 !important;
+  font-size: 12px !important;
+  margin-top: 4px !important;
+  text-align: center !important;
+}
+[data-theme="light"] .home-stats-divider,
+[data-theme="green"] .home-stats-divider,
+[data-theme="custom"] .home-stats-divider{
+  background: color-mix(in srgb, var(--accent) 12%, transparent) !important;
+  opacity: 1 !important;
+  height: 40% !important;
+  align-self: center !important;
+  width: 1px !important;
+  margin: 0 !important;
+}
+@media (max-width: 899px){
+  [data-theme="light"] .home-stats-banner,
+  [data-theme="green"] .home-stats-banner,
+  [data-theme="custom"] .home-stats-banner{ padding: 12px 14px; }
+  [data-theme="light"] .home-stats-hero-value,
+  [data-theme="green"] .home-stats-hero-value,
+  [data-theme="custom"] .home-stats-hero-value,
+  [data-theme="light"] .home-stats-item-value,
+  [data-theme="green"] .home-stats-item-value,
+  [data-theme="custom"] .home-stats-item-value{ font-size: 20px !important; }
+  [data-theme="light"] .home-stats-hero-label,
+  [data-theme="green"] .home-stats-hero-label,
+  [data-theme="custom"] .home-stats-hero-label,
+  [data-theme="light"] .home-stats-item-label,
+  [data-theme="green"] .home-stats-item-label,
+  [data-theme="custom"] .home-stats-item-label{ font-size: 11px !important; letter-spacing: 0.6px !important; }
+  [data-theme="light"] .home-stats-divider,
+  [data-theme="green"] .home-stats-divider,
+  [data-theme="custom"] .home-stats-divider{ height: 45% !important; }
+}
+
+/* ③ 两级按钮（主渐变光影 / 副白底淡边）var 驱动自动配色 */
+[data-theme="light"] .btn-primary,
+[data-theme="light"] .btn-primary-sm,
+[data-theme="green"] .btn-primary,
+[data-theme="green"] .btn-primary-sm,
+[data-theme="custom"] .btn-primary,
+[data-theme="custom"] .btn-primary-sm{
+  background-image: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
+  color: #fff !important;
+  border: 1px solid var(--accent-hover);
+  border-radius: var(--radius-sm);
+  padding: 9px 18px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--accent) 26%, transparent),
+              inset 0 1px 0 rgba(255,255,255,0.20),
+              inset 0 -2px 0 rgba(0,0,0,0.20);
+  cursor: pointer;
+  transition: transform var(--tr-fast), filter var(--tr-fast);
+}
+[data-theme="light"] .btn-primary-sm,
+[data-theme="green"] .btn-primary-sm,
+[data-theme="custom"] .btn-primary-sm{ padding: 6px 12px; font-size: 13px; letter-spacing: 0.5px;}
+[data-theme="light"] .btn-primary:hover,
+[data-theme="light"] .btn-primary-sm:hover,
+[data-theme="green"] .btn-primary:hover,
+[data-theme="green"] .btn-primary-sm:hover,
+[data-theme="custom"] .btn-primary:hover,
+[data-theme="custom"] .btn-primary-sm:hover{ filter: brightness(1.04); }
+[data-theme="light"] .btn-primary:active,
+[data-theme="light"] .btn-primary-sm:active,
+[data-theme="green"] .btn-primary:active,
+[data-theme="green"] .btn-primary-sm:active,
+[data-theme="custom"] .btn-primary:active,
+[data-theme="custom"] .btn-primary-sm:active{ transform: scale(0.98); }
+[data-theme="light"] .btn-secondary,
+[data-theme="light"] .btn-ghost,
+[data-theme="light"] .btn-ghost-sm,
+[data-theme="green"] .btn-secondary,
+[data-theme="green"] .btn-ghost,
+[data-theme="green"] .btn-ghost-sm,
+[data-theme="custom"] .btn-secondary,
+[data-theme="custom"] .btn-ghost,
+[data-theme="custom"] .btn-ghost-sm{
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background var(--tr-fast), border-color var(--tr-fast), color var(--tr-fast);
+}
+[data-theme="light"] .btn-ghost-sm,
+[data-theme="green"] .btn-ghost-sm,
+[data-theme="custom"] .btn-ghost-sm{ padding: 5px 10px; font-size: 13px;}
+[data-theme="light"] .btn-secondary:hover,
+[data-theme="light"] .btn-ghost:hover,
+[data-theme="light"] .btn-ghost-sm:hover,
+[data-theme="green"] .btn-secondary:hover,
+[data-theme="green"] .btn-ghost:hover,
+[data-theme="green"] .btn-ghost-sm:hover,
+[data-theme="custom"] .btn-secondary:hover,
+[data-theme="custom"] .btn-ghost:hover,
+[data-theme="custom"] .btn-ghost-sm:hover{
+  background: var(--bg-hover);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-color));
+  color: var(--accent);
+}
+
+/* ④ 输入框：焦点 3px 淡主色光环 */
+[data-theme="light"] .input,
+[data-theme="light"] select,
+[data-theme="light"] textarea,
+[data-theme="light"] input[type=text],
+[data-theme="light"] input[type=password],
+[data-theme="light"] input[type=email],
+[data-theme="light"] input[type=number],
+[data-theme="green"] .input,
+[data-theme="green"] select,
+[data-theme="green"] textarea,
+[data-theme="green"] input[type=text],
+[data-theme="green"] input[type=password],
+[data-theme="green"] input[type=email],
+[data-theme="green"] input[type=number],
+[data-theme="custom"] .input,
+[data-theme="custom"] select,
+[data-theme="custom"] textarea,
+[data-theme="custom"] input[type=text],
+[data-theme="custom"] input[type=password],
+[data-theme="custom"] input[type=email],
+[data-theme="custom"] input[type=number]{
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  outline: none;
+  transition: border-color var(--tr-fast), box-shadow var(--tr-fast);
+}
+[data-theme="light"] .input:focus,
+[data-theme="light"] select:focus,
+[data-theme="light"] textarea:focus,
+[data-theme="green"] .input:focus,
+[data-theme="green"] select:focus,
+[data-theme="green"] textarea:focus,
+[data-theme="custom"] .input:focus,
+[data-theme="custom"] select:focus,
+[data-theme="custom"] textarea:focus{
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+[data-theme="light"] ::placeholder,
+[data-theme="green"] ::placeholder,
+[data-theme="custom"] ::placeholder{ color: var(--text-subtle); opacity: 1; }
+
+/* ⑤ 底部 Tab Bar：选中 10%淡主色底 + 浓主色；未选中 text-muted，绝不用灰度→不发白蒙蒙 */
+[data-theme="light"] .tab-item.active,
+[data-theme="green"] .tab-item.active,
+[data-theme="custom"] .tab-item.active{
+  background: var(--accent-light);
+  color: var(--accent);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+}
+[data-theme="light"] .tab-item:not(.active),
+[data-theme="green"] .tab-item:not(.active),
+[data-theme="custom"] .tab-item:not(.active){
+  color: var(--text-muted);
+  font-weight: 500;
+}
+[data-theme="light"] .tab-item:not(.active) .tab-icon,
+[data-theme="green"] .tab-item:not(.active) .tab-icon,
+[data-theme="custom"] .tab-item:not(.active) .tab-icon{
+  filter: brightness(0.92) saturate(0.88);
+}
+
+/* ⑥ 标签（tag-sm / status-tag）+ 书封面渐变 + 箭头：var 驱动自动配色 */
+[data-theme="light"] .tag-sm,
+[data-theme="light"] .status-tag,
+[data-theme="green"] .tag-sm,
+[data-theme="green"] .status-tag,
+[data-theme="custom"] .tag-sm,
+[data-theme="custom"] .status-tag{
+  background: var(--accent-light);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: 12px;
+}
+[data-theme="light"] .status-tag.draft,
+[data-theme="green"] .status-tag.draft,
+[data-theme="custom"] .status-tag.draft{
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border-color: var(--border-color);
+}
+[data-theme="light"] .book-card-cover,
+[data-theme="light"] .home-book-cover,
+[data-theme="light"] .recent-book-cover,
+[data-theme="green"] .book-card-cover,
+[data-theme="green"] .home-book-cover,
+[data-theme="green"] .recent-book-cover,
+[data-theme="custom"] .book-card-cover,
+[data-theme="custom"] .home-book-cover,
+[data-theme="custom"] .recent-book-cover{
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--accent) 8%, white) 0%,
+    color-mix(in srgb, var(--accent) 38%, white) 100%);
+  border-radius: var(--radius-md);
+}
+[data-theme="light"] .home-book-arrow,
+[data-theme="light"] .recent-book-arrow,
+[data-theme="light"] .master-create-entry-arrow,
+[data-theme="green"] .home-book-arrow,
+[data-theme="green"] .recent-book-arrow,
+[data-theme="green"] .master-create-entry-arrow,
+[data-theme="custom"] .home-book-arrow,
+[data-theme="custom"] .recent-book-arrow,
+[data-theme="custom"] .master-create-entry-arrow{
+  color: var(--accent);
+}
+
+/* ⑦ 卡片 hover：边框淡主色（给用户一种"主题色在流动"的感觉）*/
+[data-theme="light"] .home-action-btn:hover,
+[data-theme="light"] .home-book-item:hover,
+[data-theme="light"] .recent-book-card:hover,
+[data-theme="light"] .master-create-entry:hover,
+[data-theme="green"] .home-action-btn:hover,
+[data-theme="green"] .home-book-item:hover,
+[data-theme="green"] .recent-book-card:hover,
+[data-theme="green"] .master-create-entry:hover,
+[data-theme="custom"] .home-action-btn:hover,
+[data-theme="custom"] .home-book-item:hover,
+[data-theme="custom"] .recent-book-card:hover,
+[data-theme="custom"] .master-create-entry:hover{
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-color)) !important;
+}
+/* reduced-motion 尊重（同样限定作用域，不覆盖全局）*/
+@media (prefers-reduced-motion: reduce){
+  [data-theme="light"] *,
+  [data-theme="green"] *,
+  [data-theme="custom"] *,
+  [data-theme="light"] *::before,
+  [data-theme="green"] *::before,
+  [data-theme="custom"] *::before,
+  [data-theme="light"] *::after,
+  [data-theme="green"] *::after,
+  [data-theme="custom"] *::after{
+    transition: none !important;
+    animation: none !important;
+    transform: none !important;
+  }
+}
+
 /* ===== 国风水墨画 v6 B1 Design Tokens：石青4阶 + 冷白 + 冷灰5阶 =====
    单主色体系：饱和色永远只有石青1个（不打架不花哨）
    正文 WCAG AA 全通过（已手算比值） */
