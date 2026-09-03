@@ -38,30 +38,31 @@
   --shadow-md: 0 4px 16px rgba(60,48,30,0.10);
 }
 
-/* ===== 水墨国风：全局背景层（三远法山水构图 + 宣纸帘纹） ===== */
+/* ===== 水墨国风：全局背景层（三远法山水构图 + 宣纸帘纹） =====
+   ⚠️ 调整原则：浓度是 v2 约 3 倍——远山 14%~25%，肉眼"若隐若现"（之前 5%~9% 人眼完全看不到）*/
 [data-theme="dark"] body{
   background-color: var(--bg-primary);
   background-image:
-    /* ① 远层远山：天头最高处（极淡 4% → 3%），只露山顶尖，仿远景平远 */
-    radial-gradient(ellipse 110% 28% at 50% -5%, rgba(68,58,42,0.05) 0%, rgba(68,58,42,0.03) 42%, transparent 78%),
-    /* ② 中层远山：略低略深，仿中景（平远与深远过渡） */
-    radial-gradient(ellipse 95% 34% at 42% 2%, rgba(78,66,48,0.07) 0%, rgba(78,66,48,0.04) 48%, transparent 82%),
-    /* ③ 近层山丘：左下角/右下角偏重（但仍淡，仿近景山麓） */
-    radial-gradient(ellipse 55% 20% at 6% 102%, rgba(85,70,50,0.09) 0%, transparent 75%),
-    radial-gradient(ellipse 45% 18% at 97% 104%, rgba(90,72,50,0.07) 0%, transparent 75%),
-    /* 宣纸肌理：竖帘纹（手工宣纸竹帘痕迹）+ 横布纹（绢布感） */
-    repeating-linear-gradient( 90deg, rgba(120,95,60,0.022) 0 1px, transparent 1px 4px),
-    repeating-linear-gradient(  0deg, rgba(120,95,60,0.014) 0 1px, transparent 1px 5px),
+    /* ① 远景山顶尖：天头最高处，只有山顶冒出来（0.14 → 0.09 → 透明）*/
+    radial-gradient(ellipse 110% 28% at 50% -5%, rgba(68,58,42,0.14) 0%, rgba(68,58,42,0.09) 42%, transparent 78%),
+    /* ② 中景山脉：偏左略低，墨色加浓（0.19 → 0.12）*/
+    radial-gradient(ellipse 95% 34% at 42% 2%, rgba(78,66,48,0.19) 0%, rgba(78,66,48,0.12) 48%, transparent 82%),
+    /* ③ 近景山麓：左下 & 右下，墨色最浓（0.25 / 0.20 — 能清晰看出山水轮廓但不抢内容） */
+    radial-gradient(ellipse 55% 20% at 6% 102%, rgba(85,70,50,0.25) 0%, transparent 75%),
+    radial-gradient(ellipse 45% 18% at 97% 104%, rgba(90,72,50,0.20) 0%, transparent 75%),
+    /* 宣纸肌理：竖帘纹（手工宣纸竹帘痕迹）+ 横布纹（绢布感）— 纹理也加倍到可感知 */
+    repeating-linear-gradient( 90deg, rgba(120,95,60,0.045) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(  0deg, rgba(120,95,60,0.028) 0 1px, transparent 1px 5px),
     /* 整体底色渐变：天头略白 → 地脚略暖（仿老宣纸受氧化） */
     linear-gradient(180deg, #f7f3e8 0%, var(--bg-primary) 22%, #f1ebdd 100%);
   background-attachment: fixed;
-  position: relative; /* 为 ::after 闲章定位提供父层 */
 }
-/* 右下角 朱砂闲章（"静心"方印）— opacity 6%，仿画卷压脚，不抢内容 */
+/* 右下角 朱砂闲章（"静心"方印）— v2 加浓 4 倍：0.055 → 0.22，并放大 46→64px
+   z-index:0 放在背景层；.app-layout 显式声明 z-index:1 保证内容盖在印章之上 */
 [data-theme="dark"] body::after{
   content:"";
-  position:fixed; right:26px; bottom:30px; width:46px; height:46px; z-index:0;
-  pointer-events:none; opacity:0.055;
+  position:fixed; right:30px; bottom:34px; width:64px; height:64px; z-index:0;
+  pointer-events:none; opacity:0.22;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 46'><rect x='1' y='1' width='44' height='44' rx='3' ry='3' fill='%239a3324' stroke='%237e2a1d' stroke-width='2'/><path d='M13 10h6c0 5-2 8-6 8zM23 10h10v4H27v8h-4zM10 24h26v4h-10v14h-6V28H10z' fill='%23fff' fill-opacity='0.95'/></svg>");
   background-repeat:no-repeat; background-size:contain;
 }
@@ -213,7 +214,7 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .tag.platform{background:var(--accent-light);color:var(--accent)}
 
 /* Layout */
-.app-layout{display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
+.app-layout{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
 .desktop-sidebar{width:210px;min-width:210px;background:var(--bg-secondary);display:none;flex-direction:column;overflow-y:auto}
 .main-content{flex:1;overflow-y:auto;min-height:0}
 
@@ -701,23 +702,24 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .theme-preview.light{background:#faf9f5}
 .theme-preview.green{background:#e8f3e8}
 .theme-preview.dark{background:#1a1a1a}
-/* 水墨国风预览卡（Miniature 预览）：三远法山水 + 朱砂方印「静心」 + 帘纹 */
+/* 水墨国风预览卡（Miniature 预览）：三远法山水 + 朱砂方印「静心」 + 帘纹
+   预览卡只有 60px 高，墨色比全局山水更浓 2 倍，让缩略图上也一眼识别 */
 .theme-preview.ink-wash{
   background-color:#f5f1e6;
   background-image:
-    /* 远景山顶尖 */
-    radial-gradient(ellipse 120% 28% at 50% -10%, rgba(68,58,42,0.14) 0%, rgba(68,58,42,0.06) 42%, transparent 78%),
-    /* 中景山 */
-    radial-gradient(ellipse 90% 32% at 38% 12%, rgba(78,66,48,0.20) 0%, rgba(78,66,48,0.08) 48%, transparent 82%),
-    /* 近景山麓 */
-    radial-gradient(ellipse 55% 24% at 8% 106%, rgba(85,70,50,0.25) 0%, transparent 72%),
-    radial-gradient(ellipse 50% 22% at 96% 108%, rgba(90,72,50,0.22) 0%, transparent 75%),
-    /* 预览卡右下角朱砂方印（和全局闲章呼应） */
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' x='78%25' y='65%25' width='14' height='14' preserveAspectRatio='xMidYMid meet'><rect x='0.5' y='0.5' width='9' height='9' rx='0.8' ry='0.8' fill='%239a3324' stroke='%237e2a1d' stroke-width='0.6'/><path d='M2.5 2.3h1.4c0 1-0.4 1.8-1.4 1.8zM5.1 2.3h2.3v0.9H6v1.8H5.1zM2 5.2h6v0.9H4.5v3.1H3.2V6.1H2z' fill='%23fff' fill-opacity='0.95'/></svg>"),
-    /* 宣纸帘纹 */
-    repeating-linear-gradient( 90deg, rgba(120,95,60,0.06) 0 1px, transparent 1px 4px);
+    /* 远景山顶尖（缩略图加浓：0.30→0.18） */
+    radial-gradient(ellipse 120% 30% at 50% -15%, rgba(68,58,42,0.30) 0%, rgba(68,58,42,0.18) 45%, transparent 82%),
+    /* 中景山（缩略图加浓：0.42→0.20） */
+    radial-gradient(ellipse 92% 38% at 35% 12%, rgba(78,66,48,0.42) 0%, rgba(78,66,48,0.20) 50%, transparent 88%),
+    /* 近景山麓（缩略图加浓：0.52 / 0.46） */
+    radial-gradient(ellipse 58% 28% at 4% 108%, rgba(85,70,50,0.52) 0%, transparent 78%),
+    radial-gradient(ellipse 52% 25% at 98% 110%, rgba(90,72,50,0.46) 0%, transparent 78%),
+    /* 预览卡右下角朱砂方印（和全局闲章呼应，100%不透明） */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' x='78%25' y='62%25' width='16' height='16' preserveAspectRatio='xMidYMid meet'><rect x='0.5' y='0.5' width='9' height='9' rx='0.8' ry='0.8' fill='%239a3324' stroke='%237e2a1d' stroke-width='0.6'/><path d='M2.5 2.3h1.4c0 1-0.4 1.8-1.4 1.8zM5.1 2.3h2.3v0.9H6v1.8H5.1zM2 5.2h6v0.9H4.5v3.1H3.2V6.1H2z' fill='%23fff' fill-opacity='0.95'/></svg>"),
+    /* 宣纸帘纹（加倍） */
+    repeating-linear-gradient( 90deg, rgba(120,95,60,0.11) 0 1px, transparent 1px 4px);
   border:1px solid #d3c7ad;
-  box-shadow: inset 0 0 0 1px rgba(154,51,36,0.10);
+  box-shadow: inset 0 0 0 1px rgba(154,51,36,0.28);
 }
 .theme-card span{font-size:13px}
 
