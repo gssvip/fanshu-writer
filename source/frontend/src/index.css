@@ -11,13 +11,60 @@
   --font-serif: 'Georgia','Noto Serif SC','STSong',serif;
   --font-sans: -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif;
 }
+/* ===== 山水水墨画 · 国风主题（原 dark 位复用，淡色大气低对比） =====
+   颜色逻辑：宣纸米白做底 + 墨色浓淡分层（不使用纯黑）+ 朱砂印章红点缀
+   背景叠加：宣纸绢纹 + 远山淡墨晕染（纯CSS，无外部资源）*/
 [data-theme="dark"] {
-  --bg-primary: #1a1a1a; --bg-secondary: #242424; --bg-tertiary: #2d2d2d;
-  --bg-card: #2a2a2a; --bg-elevated: #333333;
-  --bg-hover: #363636; --bg-active: #404040;
-  --text-primary: #e8e0cc; --text-secondary: #b5a888; --text-muted: #7a7058;
-  --border-color: #3d3d3d;
-  --accent: #e6b422; --accent-hover: #f0c040; --accent-light: #3d3420;
+  /* 宣纸色阶（背景越靠后越白，越靠前越暖黄） */
+  --bg-primary:    #f5f1e6;   /* 主背景：宣纸本白 */
+  --bg-secondary:  #ede6d4;   /* 侧边栏/次级：旧宣纸条 */
+  --bg-tertiary:   #e4dcc7;   /* 卡片内/悬浮：淡牙黄 */
+  --bg-card:       #f0ebe0;   /* 卡片 */
+  --bg-elevated:   #e8e0cb;   /* 浮层 Modal */
+  --bg-hover:      #d9d0b9;   /* hover 交互 */
+  --bg-active:     #cac0a7;   /* pressed 按下 */
+  /* 墨色字阶：焦墨→浓墨→中墨→淡墨，不使用 #000 追求国画质感 */
+  --text-primary:  #3b3429;   /* 浓墨主字色 */
+  --text-secondary:#655a49;   /* 中墨：副文字 */
+  --text-muted:    #928672;   /* 淡墨：辅助/占位 */
+  --border-color:  #d3c7ad;   /* 淡墨描边 */
+  /* 朱砂印章红：国风强调色 */
+  --accent:        #9a3324;
+  --accent-hover:  #7e2a1d;
+  --accent-light:  rgba(154,51,36,0.14);
+  /* 国风阴影：暖灰淡影（非冷蓝灰） */
+  --shadow-sm: 0 1px 3px rgba(60,48,30,0.07);
+  --shadow-md: 0 4px 14px rgba(60,48,30,0.10);
+}
+
+/* 水墨国风专属：宣纸绢纹 + 远山淡晕染 全局背景层
+   —— 全部用纯 CSS/SVG dataURI，零额外请求 */
+[data-theme="dark"] body{
+  background-color: var(--bg-primary);
+  background-image:
+    /* 顶部远山剪影：两重淡墨山（灰褐墨色，opacity 很低避免干扰）*/
+    radial-gradient(ellipse 90% 40% at 50% -10%, rgba(70,60,45,0.08) 0%, rgba(70,60,45,0.04) 38%, transparent 70%),
+    /* 右下角落的墨点晕染（仿落款位置的淡墨团） */
+    radial-gradient(ellipse 35% 22% at 92% 105%, rgba(100,80,55,0.08) 0%, transparent 70%),
+    /* 宣纸肌理：超细条纹（仿帘纹/绢布纹） */
+    repeating-linear-gradient( 90deg, rgba(120,95,60,0.022) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(  0deg, rgba(120,95,60,0.015) 0 1px, transparent 1px 5px),
+    /* 整体底色（保证覆盖全屏） */
+    linear-gradient(180deg, var(--bg-primary) 0%, #f1ece0 100%);
+  background-attachment: fixed;
+}
+/* 纸张类纸（paper-notebook）在水墨风下：背景和横线调整为更贴合宣纸质感 */
+[data-theme="dark"] .paper-notebook,
+[data-theme="dark"] .paper-inner,
+[data-theme="dark"] .paper-textarea{
+  background-color: #f6f1e4 !important;
+}
+/* 水墨主题下，主按钮（朱砂）加一点印章立体感 */
+[data-theme="dark"] .btn-primary,
+[data-theme="dark"] .btn-primary-sm{
+  background: linear-gradient(180deg, #a33828 0%, #8d2e20 100%);
+  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.15), 0 2px 6px rgba(154,51,36,0.22);
+  letter-spacing: 1px;
 }
 [data-theme="green"] {
   --bg-primary: #e8f3e8; --bg-secondary: #f0f7f0; --bg-tertiary: #d6e8d6;
@@ -106,12 +153,15 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .main-content{flex:1;overflow-y:auto;min-height:0}
 
 /* 侧边栏品牌/Logo：底色完全自适应主题；
-   默认(浅色) / 护眼绿(背景浅) → mix-blend-mode:multiply 消除 PNG/WebP 自带白底（白色像素被背景色"乘"掉）
-   深色主题 → invert(1)+hue-rotate(180) 双重滤镜：白底变黑(融入背景)，同时尽量保住彩色 logo 原色相 */
+   三套主题的 Logo 容器均为浅色（水墨国风为宣纸白，不再是纯黑深色），
+   所以统一使用 multiply 混合模式一键消除 PNG/WebP 自带白底 */
 .sidebar-brand{display:flex;align-items:center;justify-content:center;padding:14px 12px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary)}
 .sidebar-logo{display:flex;align-items:center;justify-content:center;background:transparent;padding:4px 6px;border-radius:10px}
 .sidebar-logo img{display:block;mix-blend-mode:multiply;isolation:isolate;image-rendering:-webkit-optimize-quality}
-[data-theme="dark"] .sidebar-logo img{mix-blend-mode:normal;filter:invert(1) hue-rotate(180deg) saturate(1.2) brightness(0.95)}
+[data-theme="dark"] .sidebar-logo img{
+  /* 水墨国风现在为浅宣纸白背景 → 使用 multiply 和默认浅色一样消除白底 */
+  mix-blend-mode:multiply;filter:none;
+}
 .sidebar-nav{flex:1;padding:8px}
 .sidebar-item{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;font-size:14px;border-radius:8px;margin:2px 0;transition:all .15s}
 .sidebar-item:hover{background:var(--bg-hover)}
@@ -586,6 +636,15 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .theme-preview.light{background:#faf9f5}
 .theme-preview.green{background:#e8f3e8}
 .theme-preview.dark{background:#1a1a1a}
+/* 水墨国风预览卡：宣纸白 + 顶部远山淡墨晕染 + 朱砂红章角落款 */
+.theme-preview.ink-wash{
+  background-color:#f5f1e6;
+  background-image:
+    radial-gradient(ellipse 100% 50% at 50% -5%, rgba(70,60,45,0.16) 0%, rgba(70,60,45,0.08) 40%, transparent 75%),
+    radial-gradient(circle 10px at 88% 82%, #9a3324 0%, #7e2a1d 100%);
+  border:1px solid #d3c7ad;
+  box-shadow: inset 0 0 0 1px rgba(154,51,36,0.08);
+}
 .theme-card span{font-size:13px}
 
 /* 自定义主题编辑器 */
@@ -1128,7 +1187,7 @@ textarea.input.paper-textarea{
   .paper-textarea{ min-height: calc(var(--paper-line-h) * 14); font-size: var(--paper-font-size) !important; }
 }
 
-/* 暗色模式：页脚贴合用户主题色 bg-secondary，不做暖黄彩纸 */
+/* 当用户 OS 为暗色偏好，但在 APP 内选择了水墨国风主题时，类纸页脚统一用 bg-secondary（宣纸色）保持一致 */
 @media (prefers-color-scheme: dark){
   body[data-theme='dark'] .paper-footer,
   :root:has(#theme-toggle:checked) .paper-footer{

@@ -1040,15 +1040,15 @@ export default function MinePage() {
                 <span>护眼绿</span>
               </button>
               <button className={`theme-card ${theme === 'dark' ? 'active' : ''}`} onClick={() => setTheme('dark')}>
-                <div className="theme-preview dark" />
-                <span>深色</span>
+                <div className="theme-preview ink-wash" />
+                <span>水墨国风</span>
               </button>
               <button className={`theme-card ${theme === 'custom' ? 'active' : ''}`} onClick={() => setTheme('custom')}>
                 <div className="theme-preview custom" style={{ background: customColors?.bgPrimary || '#f0f7f0' }} />
                 <span>自定义</span>
               </button>
             </div>
-            <p className="text-muted" style={{ marginTop: 10 }}>护眼绿适合长时间码字，深色适合夜间写作</p>
+            <p className="text-muted" style={{ marginTop: 10 }}>护眼绿适合长时间码字，水墨国风为淡色宣纸主题，大气雅致，夜间码字推荐切换护眼绿</p>
 
             {theme === 'custom' && customColors && (
               <div className="custom-theme-editor">
