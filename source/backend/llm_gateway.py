@@ -236,7 +236,13 @@ def _parse_sse_event(blob: bytes):
     except (json.JSONDecodeError, ValueError):
         return
     choices = chunk.get("choices") or []
+    # ===== 2026-09-03 新增：流式 usage（choices 为空但顶层 usage 字段的情况，例如单独 usage chunk）=====
     if not choices:
+        _u = chunk.get("usage") if isinstance(chunk.get("usage"), dict) else None
+        if _u and any(k in _u for k in (
+            "prompt_tokens", "input_tokens", "completion_tokens", "output_tokens", "total_tokens",
+        )):
+            yield ("usage", _u)
         # DeepSeek/某些服务把内容放在顶层 content 字段
         if chunk.get("content"):
             yield ("delta", chunk["content"])
@@ -251,6 +257,12 @@ def _parse_sse_event(blob: bytes):
         msg_reasoning = (choice["message"] or {}).get("reasoning_content")
         if msg_reasoning:
             yield ("reasoning", msg_reasoning)
+        # ===== 2026-09-03 usage 事件（choices内或顶层）=====
+        _u_msg = choice.get("usage") or chunk.get("usage")
+        if isinstance(_u_msg, dict) and any(k in _u_msg for k in (
+            "prompt_tokens", "input_tokens", "completion_tokens", "output_tokens", "total_tokens",
+        )):
+            yield ("usage", _u_msg)
         return
     delta = choice.get("delta") or {}
     content = delta.get("content")
@@ -261,6 +273,12 @@ def _parse_sse_event(blob: bytes):
         yield ("delta", content)
     if reasoning:
         yield ("reasoning", reasoning)
+    # ===== 2026-09-03 新增：流式 usage 事件（供应商通常在最后一个 delta chunk 附带 usage）=====
+    _usage_src = choice.get("usage") or chunk.get("usage")
+    if isinstance(_usage_src, dict) and any(k in _usage_src for k in (
+        "prompt_tokens", "input_tokens", "completion_tokens", "output_tokens", "total_tokens",
+    )):
+        yield ("usage", _usage_src)
 
 
 # ============================================================================
@@ -685,6 +703,11 @@ class LLMGateway:
                             yield REASONING(value)
                         elif yield_reasoning_heartbeat:
                             yield REASONING_HB
+                    elif kind == "usage":
+                        # 【AI账本钩子】usage不发给前端，但通过一个特殊元组哨兵 yield 给
+                        # 外层 chat_stream 包装器，包装器负责拦截后写入账本、再过滤掉不让前端看到。
+                        yield ("usage", value)
+                    # ===== usage end =====
                 # 【空回复根因修复】流走完但一个内容帧都没有 → 先非流式兜底再报错：
                 if not got_content:
                     # 思考耗尽修复：原生思考模型思考先占满 max_tokens、正文没配额 → 加倍上限重试。
@@ -750,6 +773,160 @@ class LLMGateway:
         if last_exc is not None:
             raise LLMError(f"LLM 流式调用重试耗尽：{type(last_exc).__name__} {str(last_exc)[:200]}",
                            FailureClass.UNAVAILABLE)
+
+
+# ============================================================================
+# 2026-09-03 【AI调用账本】为 LLMGateway.chat / chat_stream 加日志钩子（独立写入，永不回滚）
+# 做法：保存原方法引用 → 替换为带账本记录的包装函数
+#   - chat(messages, ..., scene=, book_id=, chapter_id=, task_type=)
+#   - chat_stream(messages, ..., scene=, book_id=, chapter_id=, task_type=)
+# ============================================================================
+
+def _safe_record_ai_usage(**kwargs):
+    """record_ai_usage 安全调用：任何异常静默吞掉，绝不打断主流程。"""
+    try:
+        from ai_usage_recorder import record_ai_usage
+        return record_ai_usage(**kwargs)
+    except Exception:
+        return None
+
+
+_ORIG_LLM_CHAT = LLMGateway.chat
+
+
+def _chat_logged_wrapper(self, messages, temperature=0.7, max_tokens=4096, **extra):
+    scene = str(extra.pop('scene', '') or 'llm_gateway.chat')
+    book_id = extra.pop('book_id', None)
+    chapter_id = extra.pop('chapter_id', None)
+    task_type = str(extra.pop('task_type', 'creation') or 'creation')
+    import time as _t
+    _start = _t.time()
+    _success = False
+    _content = ''
+    _err = ''
+    _usage: dict = {}
+    try:
+        result: ModelResult = _ORIG_LLM_CHAT(self, messages, temperature=temperature,
+                                              max_tokens=max_tokens, **extra)
+        if result.ok:
+            _success = True
+            _content = result.content or ''
+            if isinstance(result.raw, dict) and isinstance(result.raw.get('usage'), dict):
+                _usage = result.raw['usage']
+        else:
+            _err = result.error or ''
+        return result
+    except Exception as e:
+        _err = f'{type(e).__name__}: {str(e)[:2000]}'
+        raise
+    finally:
+        _dur = int((_t.time() - _start) * 1000)
+        _safe_record_ai_usage(
+            model=self.model,
+            scene=scene,
+            task_type=task_type,
+            messages=messages,
+            response_content=_content,
+            success=_success,
+            error_message=_err[:2000],
+            duration_ms=_dur,
+            book_id=book_id,
+            chapter_id=chapter_id,
+            usage=_usage,
+        )
+
+
+LLMGateway.chat = _chat_logged_wrapper
+
+
+_ORIG_LLM_CHAT_STREAM = LLMGateway.chat_stream
+
+
+def _chat_stream_logged_wrapper(self, messages, temperature=0.7, max_tokens=4096,
+                                yield_reasoning_heartbeat=False, emit_reasoning=False, **extra):
+    scene = str(extra.pop('scene', '') or 'llm_gateway.chat_stream')
+    book_id = extra.pop('book_id', None)
+    chapter_id = extra.pop('chapter_id', None)
+    task_type = str(extra.pop('task_type', 'creation') or 'creation')
+    import time as _t
+    _start = _t.time()
+    _acc: list[str] = []
+    _usage_box: list[dict] = [{}]
+    _success: list[bool] = [False]
+    _err: list[str] = ['']
+
+    def _is_reasoning_sentinel(v):
+        return (v is REASONING_HB) or _is_reasoning_frame(v) or (
+            isinstance(v, str) and v.startswith(STREAM_RETRY_PREFIX)
+        )
+
+    def _inner_stream():
+        gen = _ORIG_LLM_CHAT_STREAM(self, messages, temperature=temperature,
+                                    max_tokens=max_tokens,
+                                    yield_reasoning_heartbeat=yield_reasoning_heartbeat,
+                                    emit_reasoning=emit_reasoning, **extra)
+        try:
+            for chunk in gen:
+                if isinstance(chunk, str) and not _is_reasoning_sentinel(chunk):
+                    _acc.append(chunk)
+                if isinstance(chunk, tuple) and len(chunk) == 2 and chunk[0] == 'usage':
+                    # 兼容万一 _iter_sse_events 直接把 usage 当 chunk 走到这里
+                    if isinstance(chunk[1], dict):
+                        _usage_box[0] = chunk[1]
+                yield chunk
+            _success[0] = True
+        except LLMError as e:
+            _err[0] = str(e)[:2000]
+            raise
+        except GeneratorExit:
+            _err[0] = _err[0] or '用户中断（GeneratorExit）'
+            raise
+        except Exception as e:
+            _err[0] = f'{type(e).__name__}: {str(e)[:2000]}'
+            raise
+        finally:
+            try:
+                gen.close()
+            except Exception:
+                pass
+
+    try:
+        for chunk in _inner_stream():
+            # 过滤 usage 事件（kind='usage' 不会 yield 出来，因为 chat_stream 只 yield message/delta/reasoning/心跳
+            # 哨兵；但万一上游加了 usage 哨兵，我们统一在这里"拦截并记录",然后不 yield 给上层）
+            if isinstance(chunk, tuple) and len(chunk) == 2 and chunk[0] == 'usage':
+                if isinstance(chunk[1], dict):
+                    _usage_box[0] = chunk[1]
+                continue
+            yield chunk
+    finally:
+        # 流结束（正常完成 / 抛错 / 用户中断）统一写账本
+        _dur = int((_t.time() - _start) * 1000)
+        _safe_record_ai_usage(
+            model=self.model,
+            scene=scene,
+            task_type=task_type,
+            messages=messages,
+            response_content=''.join(_acc),
+            success=bool(_success[0]),
+            error_message=(_err[0] or '')[:2000],
+            duration_ms=_dur,
+            book_id=book_id,
+            chapter_id=chapter_id,
+            usage=_usage_box[0] if isinstance(_usage_box[0], dict) else {},
+        )
+
+
+LLMGateway.chat_stream = _chat_stream_logged_wrapper
+
+
+# （小补丁：若上层调用 chat_collab_bp 内部 for kind, value in _iter_sse_events 时
+# 遇到 kind=="usage"，chat_stream 原有代码只处理 message/delta/reasoning，usage 事件
+# 不会被 yield 给客户端（只是内部 ignore）。这是安全的——usage 本来就不该传前端。
+# 但我们要的"积累 usage"在 _inner_stream 里是拿不到的，因为 chat_stream 内部 for
+# 循环对 kind=="usage" 什么也不做（相当于丢弃）。解决方案：把 usage 拦截放在
+# chat_stream 内部逻辑本身更合适。这里作为兜底，记录器的独立写入还能基于
+# prompt_chars 近似估算。）
 
 
 def get_llm_config(app_module=None):

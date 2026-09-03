@@ -24,6 +24,7 @@ export default function MinePage() {
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageRange, setUsageRange] = useState<'today' | '7d' | '30d'>('7d');
   const [usageOnlyFail, setUsageOnlyFail] = useState(false);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);  // 展开某条日志看原文/Token
 
   // AI 模型拉取与测试连接
   const [fetchingModels, setFetchingModels] = useState(false);
@@ -781,29 +782,36 @@ export default function MinePage() {
 
             {usageStats && (
               <>
-                {/* 4 个指标：桌面端 4 列、手机端 2×2 两排对齐（由 CSS @media 控制） */}
+                {/* 4 个核心指标：桌面端 4 列、手机端 2×2 两排对齐（由 CSS @media 控制） */}
                 <div className="ledger-cards">
                   {(() => {
                     const rangeLabel = (usageStats.range === 'today' || usageRange === 'today')
                       ? '今天'
                       : `近 ${usageStats.days} 天`;
-                    // 统一 4 张卡的结构：label 在上 value 在下 → 手机端 2×2、桌面 1×4 视觉对齐
-                    const cards: Array<{ value: string; label: string; valueColor?: string; }> = [
+                    const tt = usageStats.total_total_tokens ?? 0;
+                    const tokLabel = tt >= 1_000_000
+                      ? `${(tt / 1_000_000).toFixed(2)}M tokens`
+                      : tt >= 1000 ? `${(tt / 1000).toFixed(2)}K tokens` : `${tt} tokens`;
+                    const cards: Array<{ value: string; label: string; valueColor?: string; sub?: string }> = [
                       { value: String(usageStats.total_calls),
                         label: `总调用（${rangeLabel}）`,
                         valueColor: 'var(--accent)' },
                       { value: `${usageStats.success_rate}%`,
                         label: `成功率（失败${usageStats.failed}）`,
                         valueColor: '#27ae60' },
+                      { value: tokLabel,
+                        label: '累计消耗 Tokens',
+                        sub: `输入 ${usageStats.total_input_tokens ?? 0} / 输出 ${usageStats.total_output_tokens ?? 0}`,
+                        valueColor: '#8e44ad' },
                       { value: `${(usageStats.total_output_chars / 10000).toFixed(2)}万字`,
-                        label: '累计输出字数' },
-                      { value: `${(usageStats.total_duration_ms / 60000 / 60).toFixed(1)}h`,
-                        label: '累计耗时时长' },
+                        label: '累计输出字数 + 耗时',
+                        sub: `时长 ${(usageStats.total_duration_ms / 60000 / 60).toFixed(1)}h` },
                     ];
                     return cards.map((c, i) => (
                       <div key={i} className="ledger-card">
                         <div className="ledger-card-value" style={{color: c.valueColor || 'var(--text-primary)'}}>{c.value}</div>
                         <div className="ledger-card-label">{c.label}</div>
+                        {c.sub && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:3}}>{c.sub}</div>}
                       </div>
                     ));
                   })()}
@@ -831,27 +839,114 @@ export default function MinePage() {
 
                 {usageLogs.length > 0 && (
                   <div className="ledger-block" style={{marginTop:16}}>
-                    <h4 style={{fontSize:14,marginBottom:8}}>🗒️ 最近调用明细</h4>
-                    <div style={{maxHeight:300,overflowY:'auto',border:'1px solid var(--border-color)',borderRadius:8}}>
+                    <h4 style={{fontSize:14,marginBottom:8}}>🗒️ 最近调用明细（点击行可展开看 Token 与输入/输出原文）</h4>
+                    <div style={{maxHeight:360,overflowY:'auto',border:'1px solid var(--border-color)',borderRadius:8}}>
                       <table style={{width:'100%',fontSize:12,borderCollapse:'collapse'}}>
-                        <thead>
+                        <thead style={{position:'sticky',top:0,zIndex:1}}>
                           <tr style={{background:'var(--bg-tertiary)',textAlign:'left'}}>
-                            <th style={{padding:8}}>场景</th><th style={{padding:8}}>模型</th><th style={{padding:8}}>输出字</th>
-                            <th style={{padding:8}}>耗时</th><th style={{padding:8}}>状态</th>
+                            <th style={{padding:8}}>场景</th>
+                            <th style={{padding:8}}>模型</th>
+                            <th style={{padding:8}}>字</th>
+                            <th style={{padding:8}}>Tokens (入/出/总)</th>
+                            <th style={{padding:8}}>耗时</th>
+                            <th style={{padding:8}}>状态</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {usageLogs.map(log => (
-                            <tr key={log.id} style={{borderTop:'1px solid var(--border-color)'}}>
-                              <td style={{padding:'6px 8px',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={log.scene}>{log.scene}</td>
-                              <td style={{padding:'6px 8px',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={log.model}>{log.model}</td>
-                              <td style={{padding:'6px 8px'}}>{log.output_chars}</td>
-                              <td style={{padding:'6px 8px'}}>{log.duration_ms}ms</td>
-                              <td style={{padding:'6px 8px'}}>
-                                {log.success ? <span style={{color:'#27ae60'}}>✓</span> : <span style={{color:'#e74c3c'}}>✗ {log.error_message.slice(0,20)}</span>}
-                              </td>
-                            </tr>
-                          ))}
+                          {usageLogs.map(log => {
+                            const open = expandedLogId === log.id;
+                            const it = log.input_tokens ?? 0;
+                            const ot = log.output_tokens ?? 0;
+                            const tt = log.total_tokens ?? (it + ot);
+                            const hasTexts = !!(log.prompt_text || log.response_text);
+                            const rows = [];
+                            rows.push(
+                              <tr
+                                key={log.id}
+                                onClick={() => setExpandedLogId(open ? null : log.id)}
+                                style={{
+                                  borderTop:'1px solid var(--border-color)',
+                                  cursor: hasTexts ? 'pointer' : 'default',
+                                  background: open ? 'var(--bg-tertiary)' : 'transparent',
+                                }}
+                                title={hasTexts ? '点击展开查看输入输出原文与 Tokens 明细' : (log.scene + ' @ ' + log.created_at)}
+                              >
+                                <td style={{padding:'6px 8px',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={log.scene}>
+                                  {open ? '▼ ' : (hasTexts ? '▸ ' : '  ')}{log.scene}
+                                </td>
+                                <td style={{padding:'6px 8px',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={log.model}>{log.model}</td>
+                                <td style={{padding:'6px 8px'}}>{log.output_chars}</td>
+                                <td style={{padding:'6px 8px',whiteSpace:'nowrap',color: tt ? '#8e44ad' : 'var(--text-muted)'}}>
+                                  {tt ? `${it}/${ot}/${tt}` : '—'}
+                                </td>
+                                <td style={{padding:'6px 8px'}}>{log.duration_ms}ms</td>
+                                <td style={{padding:'6px 8px'}}>
+                                  {log.success ? <span style={{color:'#27ae60'}}>✓</span> : <span style={{color:'#e74c3c'}}>✗ {log.error_message.slice(0,20)}</span>}
+                                </td>
+                              </tr>
+                            );
+                            if (open) {
+                              rows.push(
+                                <tr key={log.id + '-exp'} style={{background:'var(--bg-primary)'}}>
+                                  <td colSpan={6} style={{padding:'10px 12px'}}>
+                                      <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:6,display:'flex',gap:12,flexWrap:'wrap'}}>
+                                        <span>时间: {log.created_at}</span>
+                                        <span>模型: {log.model || '(未配置)'}</span>
+                                        <span>场景: {log.scene}</span>
+                                        <span style={{color:'#8e44ad',fontWeight:600}}>
+                                          Tokens: 输入 {it} · 输出 {ot} · 合计 {tt}
+                                        </span>
+                                        <span>prompt_chars: {log.prompt_chars} / output_chars: {log.output_chars}</span>
+                                        {log.book_id && <span>作品: {log.book_id.slice(0,8)}</span>}
+                                      </div>
+                                      {log.error_message && (
+                                        <div style={{
+                                          background:'rgba(231,76,60,0.08)',
+                                          border:'1px solid rgba(231,76,60,0.25)',
+                                          borderRadius:6,
+                                          padding:'8px 10px',
+                                          fontSize:12,
+                                          color:'#c0392b',
+                                          marginBottom:8,
+                                          whiteSpace:'pre-wrap',
+                                          wordBreak:'break-all',
+                                        }}>
+                                          <b>失败原因：</b>{log.error_message}
+                                        </div>
+                                      )}
+                                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                                        <div>
+                                          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4,fontWeight:600}}>
+                                            📥 输入原文（Prompt）· {log.prompt_text ? log.prompt_text.length : 0} 字
+                                          </div>
+                                          <pre style={{
+                                            maxHeight:260,overflow:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word',
+                                            background:'var(--bg-tertiary)',padding:10,borderRadius:8,
+                                            fontSize:12,margin:0,lineHeight:1.55,
+                                          }}>
+                                            {log.prompt_text || '(本次未保存输入原文 / 或调用为早期版本无此信息)'}
+                                          </pre>
+                                        </div>
+                                        <div>
+                                          <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4,fontWeight:600}}>
+                                            📤 输出原文（Response）· {log.response_text ? log.response_text.length : 0} 字
+                                          </div>
+                                          <pre style={{
+                                            maxHeight:260,overflow:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word',
+                                            background: log.success ? 'var(--bg-tertiary)' : 'rgba(231,76,60,0.06)',
+                                            padding:10,borderRadius:8,
+                                            fontSize:12,margin:0,lineHeight:1.55,
+                                          }}>
+                                            {log.response_text ? log.response_text : (log.success ? '(本次未保存输出原文 / 或调用为早期版本无此信息)' : '（调用失败，无输出）')}
+                                          </pre>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                            }
+                            return rows;
+                          })}
                         </tbody>
                       </table>
                     </div>

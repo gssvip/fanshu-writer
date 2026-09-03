@@ -566,7 +566,7 @@ class AIConfig(db.Model):
 
 
 class AIUsageLog(db.Model):
-    """【AI调用账本】记录每次LLM调用的场景、模型、字数、Token、成败等信息，用于审计与成本统计。"""
+    """【AI调用账本】记录每次LLM调用的场景、模型、字数、Token、成败、完整输入输出文本，用于审计与成本统计。"""
     __tablename__ = 'ai_usage_logs'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     book_id = db.Column(db.String(36), db.ForeignKey('books.id'), nullable=True, index=True)
@@ -576,6 +576,12 @@ class AIUsageLog(db.Model):
     model = db.Column(db.String(100), default='')
     prompt_chars = db.Column(db.Integer, default=0)               # 输入字数
     output_chars = db.Column(db.Integer, default=0)               # 输出字数
+    # ===== 2026-09-03 新增 Tokens & 原文 =====
+    input_tokens = db.Column(db.Integer, default=0, server_default=db.text('0'))   # 供应商返回 prompt_tokens
+    output_tokens = db.Column(db.Integer, default=0, server_default=db.text('0'))  # 供应商返回 completion_tokens
+    total_tokens = db.Column(db.Integer, default=0, server_default=db.text('0'))   # 供应商返回 total_tokens
+    prompt_text = db.Column(db.Text, default='', server_default=db.text("''"))     # 完整请求文本（截断 8k）
+    response_text = db.Column(db.Text, default='', server_default=db.text("''"))   # 完整响应文本（截断 8k）
     success = db.Column(db.Boolean, default=True)
     error_message = db.Column(db.Text, default='')
     duration_ms = db.Column(db.Integer, default=0)
@@ -586,6 +592,11 @@ class AIUsageLog(db.Model):
             'id': self.id, 'book_id': self.book_id, 'chapter_id': self.chapter_id,
             'scene': self.scene, 'task_type': self.task_type, 'model': self.model,
             'prompt_chars': self.prompt_chars, 'output_chars': self.output_chars,
+            'input_tokens': int(getattr(self, 'input_tokens', 0) or 0),
+            'output_tokens': int(getattr(self, 'output_tokens', 0) or 0),
+            'total_tokens': int(getattr(self, 'total_tokens', 0) or 0),
+            'prompt_text': getattr(self, 'prompt_text', '') or '',
+            'response_text': getattr(self, 'response_text', '') or '',
             'success': self.success, 'error_message': self.error_message,
             'duration_ms': self.duration_ms,
             'created_at': self.created_at.isoformat() if self.created_at else None,
@@ -9328,44 +9339,47 @@ def _derive_llm_scene():
 
 def _call_llm(messages, max_tokens=None, temperature=None, task_type='creation', retry_count=2, timeout=300,
               scene_label=None, book_id=None, chapter_id=None):
-    """统一 LLM 调用入口。包装真正的调用逻辑 _call_llm_impl，并在每次调用后写入【AI调用账本】。
-    比 impl 额外接受 scene_label / book_id / chapter_id 用于账本埋点（可省略，会自动推导场景）。"""
+    """统一 LLM 调用入口。包装真正的调用逻辑 _call_llm_impl，并在每次调用后写入【AI调用账本】
+    （使用 ai_usage_recorder 独立写入器，永不回滚）。
+    """
     _cfg = AIConfig.get_active()
     _model = _cfg.get_model_for_task(task_type) if (_cfg and _cfg.api_key) else ('(未配置)' if not _cfg or not _cfg.api_key else '')
     import time as _t
     _start = _t.time()
-    content, error = _call_llm_impl(messages, max_tokens=max_tokens, temperature=temperature,
-                                    task_type=task_type, retry_count=retry_count, timeout=timeout)
+    content, error, usage = _call_llm_impl(messages, max_tokens=max_tokens, temperature=temperature,
+                                           task_type=task_type, retry_count=retry_count, timeout=timeout)
+    _dur = int((_t.time() - _start) * 1000)
     try:
-        AIUsageLog(
+        from ai_usage_recorder import record_ai_usage
+        record_ai_usage(
+            model=_model,
             scene=scene_label or _derive_llm_scene(),
             task_type=task_type,
-            model=_model,
-            prompt_chars=sum(len(str(m.get('content', ''))) for m in (messages or [])),
-            output_chars=len(content or ''),
+            messages=messages,
+            response_content=content or '',
             success=(error is None),
-            error_message=((error or '')[:500]) if error else '',
-            duration_ms=int((_t.time() - _start) * 1000),
+            error_message=((error or '')[:2000]) if error else '',
+            duration_ms=_dur,
             book_id=book_id,
             chapter_id=chapter_id,
+            usage=usage if isinstance(usage, dict) else {},
         )
-        db.session.commit()
     except Exception:
-        try:
-            db.session.rollback()
-        except Exception:
-            pass
+        pass  # 日志失败不影响主流程返回
     return content, error
 
 
 def _call_llm_impl(messages, max_tokens=None, temperature=None, task_type='creation', retry_count=2, timeout=300):
-    """统一的 LLM 调用辅助函数，返回 (content, error)
-    task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)
-    max_tokens 语义：None → 用 cfg.max_tokens；0 → 不限制（不下发该字段，用模型自身默认上限）；正整数 → 显式限定。
-    retry_count: 临时性错误（空响应/5xx/连接异常）的重试次数，默认 2 次（共 3 次尝试）。"""
+    """统一的 LLM 调用辅助函数，返回 (content, error, usage_dict)
+
+    - usage_dict：优先来自供应商响应的 usage 字段（prompt_tokens / completion_tokens / total_tokens），
+      失败时返回空字典 {}。
+    - task_type: 'creation'用主模型(创作/写作)，'recognition'用识别模型(识别/分析/检查，为空时回退主模型)
+    - max_tokens 语义：None → 用 cfg.max_tokens；0 → 不限制（不下发该字段，用模型自身默认上限）；正整数 → 显式限定。
+    - retry_count: 临时性错误（空响应/5xx/连接异常）的重试次数，默认 2 次（共 3 次尝试）。"""
     cfg = AIConfig.get_active()
     if not cfg or not cfg.api_key:
-        return None, '请先配置 AI 模型 API Key'
+        return None, '请先配置 AI 模型 API Key', {}
 
     base = cfg.base_url.rstrip('/')
     if not base.endswith('/v1'):
@@ -9401,7 +9415,7 @@ def _call_llm_impl(messages, max_tokens=None, temperature=None, task_type='creat
                     import time as _time
                     _time.sleep(1.5 * (attempt + 1))
                     continue
-                return None, last_error
+                return None, last_error, {}
             if resp.status_code >= 400:
                 try:
                     err_body = resp.json()
@@ -9409,17 +9423,18 @@ def _call_llm_impl(messages, max_tokens=None, temperature=None, task_type='creat
                 except Exception:
                     err_msg = resp.text[:200]
                 last_error = f'LLM 请求被拒绝 (HTTP {resp.status_code}): {err_msg}'
-                return None, last_error
+                return None, last_error, {}
 
             result = resp.json()
             if 'choices' in result and len(result['choices']) > 0:
-                return result['choices'][0]['message']['content'], None
+                usage = result.get('usage') if isinstance(result, dict) else None
+                return result['choices'][0]['message']['content'], None, (usage if isinstance(usage, dict) else {})
             last_error = f'LLM 返回格式异常: {str(result)[:200]}'
             if attempt < retry_count:
                 import time as _time
                 _time.sleep(1.5 * (attempt + 1))
                 continue
-            return None, last_error
+            return None, last_error, result.get('usage') if isinstance(result, dict) and isinstance(result.get('usage'), dict) else {}
 
         except requests.exceptions.Timeout:
             last_error = f'LLM 请求超时（第{attempt+1}次）'
@@ -9427,30 +9442,30 @@ def _call_llm_impl(messages, max_tokens=None, temperature=None, task_type='creat
                 import time as _time
                 _time.sleep(1.5 * (attempt + 1))
                 continue
-            return None, f'LLM 请求超时，已重试{retry_count}次仍失败'
+            return None, f'LLM 请求超时，已重试{retry_count}次仍失败', {}
         except requests.exceptions.ConnectionError:
             last_error = f'LLM 连接失败（第{attempt+1}次）'
             if attempt < retry_count:
                 import time as _time
                 _time.sleep(2 * (attempt + 1))
                 continue
-            return None, f'LLM 连接失败，请检查 API 地址配置'
+            return None, f'LLM 连接失败，请检查 API 地址配置', {}
         except json.JSONDecodeError as e:
             last_error = f'LLM 返回内容为空或非JSON格式: {str(e)}'
             if attempt < retry_count:
                 import time as _time
                 _time.sleep(1.5 * (attempt + 1))
                 continue
-            return None, f'LLM 返回内容为空，已重试{retry_count}次仍失败，请检查模型是否可用或稍候重试'
+            return None, f'LLM 返回内容为空，已重试{retry_count}次仍失败，请检查模型是否可用或稍候重试', {}
         except Exception as e:
             last_error = str(e)
             if attempt < retry_count:
                 import time as _time
                 _time.sleep(1.5 * (attempt + 1))
                 continue
-            return None, str(e)
+            return None, str(e), {}
 
-    return None, last_error or 'LLM 调用失败（未知错误）'
+    return None, last_error or 'LLM 调用失败（未知错误）', {}
 
 def _get_skill_prompts(skill_pack_ids, prompt_keys, max_per_prompt=1500, mode='agent'):
     """从技能包提取指定 prompt_keys 的提示词（agent 协同模式：所有匹配 prompt 都注入）。
@@ -14671,6 +14686,17 @@ def ai_usage_stats():
         AIUsageLog.created_at >= since).scalar() or 0
     total_ms = db.session.query(db.func.coalesce(db.func.sum(AIUsageLog.duration_ms), 0)).filter(
         AIUsageLog.created_at >= since).scalar() or 0
+    # ===== 2026-09-03 新增 Token 汇总（老库缺列时用 getattr+异常兜底）=====
+    def _safe_sum(col_name: str) -> int:
+        try:
+            col = getattr(AIUsageLog, col_name)
+            return int(db.session.query(db.func.coalesce(db.func.sum(col), 0)).filter(
+                AIUsageLog.created_at >= since).scalar() or 0)
+        except Exception:
+            return 0
+    total_input_tokens = _safe_sum('input_tokens')
+    total_output_tokens = _safe_sum('output_tokens')
+    total_total_tokens = _safe_sum('total_tokens')
 
     scene_rows = db.session.query(AIUsageLog.scene, db.func.count(AIUsageLog.id),
                                   db.func.sum(AIUsageLog.output_chars)).filter(
@@ -14689,6 +14715,11 @@ def ai_usage_stats():
         'total_prompt_chars': total_prompt,
         'total_duration_ms': total_ms,
         'avg_output_chars': round(total_output / total, 0) if total else 0,
+        # Tokens（新版）
+        'total_input_tokens': total_input_tokens,
+        'total_output_tokens': total_output_tokens,
+        'total_total_tokens': total_total_tokens,
+        'avg_total_tokens': round(total_total_tokens / total, 0) if total else 0,
         'by_scene': [{'scene': s or 'unknown', 'count': c, 'output_chars': o or 0} for s, c, o in scene_rows],
         'by_model': [{'model': m or '(未配置)', 'count': c} for m, c in model_rows],
     })
@@ -14969,7 +15000,7 @@ def rankings_analyse():
 
 # 【冷启动提速·2026-08-20】schema+seed 版本号：改动数据库结构（新表/新列/迁移）
 # 或种子数据（SEED_SKILL_PACKS / 内置模板）时必须递增此版本，老库才会重新走全量初始化。
-SCHEMA_SEED_VERSION = '2026-09-02.1'  # 新增 users.is_vip 永久会员列 + 会员创作上限规则、保留账号规则
+SCHEMA_SEED_VERSION = '2026-09-03.1'  # AI账本tokens+原文列升级 + ai_usage_recorder独立写入器上线
 
 class AppMeta(db.Model):
     """应用元数据 KV 表：记录 schema/seed 版本，支持启动快速路径。"""
@@ -15070,6 +15101,12 @@ def init_db():
         _add_column('book_bible', 'ignored_failure_buckets_json TEXT')
         # Migration 2026-09-02.1: users.is_vip 永久会员标志（老用户默认 FALSE）
         _add_column('users', "is_vip BOOLEAN DEFAULT FALSE NOT NULL")
+        # Migration 2026-09-03.1: AI账本 Tokens 计数字段 + 完整请求/响应文本
+        _add_column('ai_usage_logs', "input_tokens INTEGER DEFAULT 0")
+        _add_column('ai_usage_logs', "output_tokens INTEGER DEFAULT 0")
+        _add_column('ai_usage_logs', "total_tokens INTEGER DEFAULT 0")
+        _add_column('ai_usage_logs', "prompt_text TEXT DEFAULT ''")
+        _add_column('ai_usage_logs', "response_text TEXT DEFAULT ''")
         seed_prompt_templates()
         seed_skill_packs()
         # 版本落库：下次启动命中快速路径，跳过全部迁移与种子同步

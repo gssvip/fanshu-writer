@@ -247,6 +247,12 @@ export interface AIUsageLogItem {
   id: string; book_id?: string | null; chapter_id?: string | null;
   scene: string; task_type: string; model: string;
   prompt_chars: number; output_chars: number;
+  // ===== 2026-09-03 v2: Tokens 计数 & 完整请求/响应原文 =====
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  prompt_text?: string;
+  response_text?: string;
   success: boolean; error_message: string; duration_ms: number;
   created_at: string;
 }
@@ -257,6 +263,11 @@ export interface AIUsageStats {
   days: number; total_calls: number; success_rate: number;
   success: number; failed: number;
   total_output_chars: number; total_prompt_chars: number; total_duration_ms: number; avg_output_chars: number;
+  // ===== 2026-09-03 v2: Tokens 汇总 =====
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_total_tokens: number;
+  avg_total_tokens: number;
   by_scene: AIUsageSceneStat[]; by_model: AIUsageModelStat[];
 }
 
