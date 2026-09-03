@@ -72,10 +72,12 @@ function buildAlignPlugin() {
       const dstAssets = join(BACKEND_STATIC, 'assets')
       try {
         if (existsSync(dstAssets)) {
-          // 用 find 删：只删带短横杠hash典型命名的资产（index-*.js, index-*.css, chunk-*.js, 字体KaTeX_*-hash.* 等）
-          // 若未来用户放自定义 assets，文件不要用 "xxx-xxxxxx.ext"（横杠后跟一串hash）命名即可安全。
+          // ===== 根治：只删"确定来自vite产物"的前缀，不要碰通配符 =====
+          // 只允许删：index-*.js/css 、 chunk-*.js/css 、 KaTeX_*-hash.woff/ttf
+          // 绝对禁止 `*-?????.ext` 这种通配，会把字体文件/图片/icon/自定义资源都误删！
+          // （上次就因为 `*-????????.*` 把 YYjJ1zSn.ttf / 一些带短横杠的非index字体 误删 → 导致后端白屏）
           execSync(
-            `cd ${JSON.stringify(dstAssets)} && find . -maxdepth 1 -type f \\( -name 'index-*' -o -name 'chunk-*' -o -name 'KaTeX_*' -o -name '*-????????.*' \\) -delete 2>/dev/null || true`
+            `cd ${JSON.stringify(dstAssets)} && find . -maxdepth 1 -type f \\( -name 'index-*.js' -o -name 'index-*.css' -o -name 'chunk-*.js' -o -name 'chunk-*.css' -o -name 'KaTeX_*.woff' -o -name 'KaTeX_*.woff2' -o -name 'KaTeX_*.ttf' \\) -delete 2>/dev/null || true`
           )
         }
       } catch { /* noop */ }
