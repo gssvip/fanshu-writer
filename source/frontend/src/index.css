@@ -45,44 +45,36 @@
    ★ 背景4阶取自真实宣纸显微色卡：不涂黄、不画脏，自然氧化微暖象牙白 */
 [data-theme="light"] {
   /* ================================================================
-     vQ 终极 PULL：直接照您给的第一张图（工作台首页）逐像素拉色
-     铁律：绝不自创 cream/米白。一个像素都不差，和您截图完全一个色。
-     纸 bg       = 截图空白处米黄羊皮纸  #f4e9d0  (R244 G233 B208)
-     主标题绿     = 蚂蚁写作/最近编辑 黛绿 #3f7550  (R63 G117 B80)
-     accent赭石红  = 数字0/10/箭头/活跃    #903824  (R144 G56 B36)
-     TAG淡朱粉     = 长篇/历史/0字标签     #f5ddd3  (精确像素)
-     tab-active淡朱粉 = 首页选中背景      #f6ece6  (精确像素)
-     纸卡快捷盒bg  = 导入/导出/新建卡     #f7f0dd
-     三按钮软底托   = 📥#eef3f7 淡蓝白 / 📤#f9eceb 淡粉白 / ✨#faf8f1 淡米白
-     封面渐变      = 上奶油米白#f5ebe1 → 下淡粉#f6ddda（历史小说：大明封面）
+     纯白科技风 Light Theme（严格限定 [data-theme="light"] 作用域，绝对不污染其他主题）
+     设计参考：GitHub / Vercel / Stripe 干净白底 + 蓝强调 + 灰次背景分层
+     背景：纯白 #ffffff / 卡/浮层 #f6f8fa（GitHub次背景灰）/ 卡内层 #eef2f6
+     文字：#1f2328（近黑浓墨）/ #57606a（副）/ #8c959f（辅助）/ #b1bac4（飞白）
+     强调 accent = GitHub蓝 #0969da（干净、科技、不艳）
+     title-green 节标题 = 与accent同蓝，纯白风不需要绿
   ================================================================ */
-  /* 背景 4 阶 */
-  --bg-primary:    #f4e9d0;   /* 整张米黄羊皮纸（和截图空白处完全同色）*/
-  --bg-secondary:  #f7f0dd;   /* 快捷按钮盒/卡片米黄 */
-  --bg-tertiary:   #f2e7cc;   /* 卡内层 */
-  --border-color:  #e7d9b8;   /* 边=纸纤维压痕 */
-  /* 字 4 级（暖棕黑）*/
-  --text-primary:    #312619; /* 浓棕黑（书名 历史小说：大明）*/
-  --text-secondary:  #6b5b40; /* 标签 今日字数 */
-  --text-muted:      #8a7a5f; /* 次说明 上次编辑 */
-  --text-subtle:     #a89b83; /* 飞白淡 */
-  /* 双主色 */
-  --accent:        #903824;   /* 赭石土红（和截图数字0/10完全同色）*/
-  --title-green:   #3f7550;   /* 黛绿（和截图标题字完全同色）*/
-  /* 衍生 */
-  --accent-hover:   color-mix(in srgb, var(--accent) 80%, #3a0e06);
-  --accent-soft:    color-mix(in srgb, var(--accent) 50%, white);
-  --accent-light:   #f5ddd3;   /* 精确像素 TAG淡朱粉 */
-  --green-hover:    color-mix(in srgb, var(--title-green) 80%, #0c2418);
-  --green-soft:     color-mix(in srgb, var(--title-green) 48%, white);
-  --green-light:    color-mix(in srgb, var(--title-green) 10%, transparent);
-  --bg-card:        #fbf4e1;
-  --bg-elevated:    #faf0d8;
-  --bg-hover:       color-mix(in srgb, var(--bg-secondary) 92%, #3a2b18);
-  --bg-active:      color-mix(in srgb, var(--bg-secondary) 84%, #3a2b18);
-  --shadow-sm: 0 1px 3px  color-mix(in srgb, #312619 5%, transparent);
-  --shadow-md: 0 4px 14px color-mix(in srgb, #312619 6%, transparent);
-  --shadow-lg: 0 8px 28px color-mix(in srgb, #312619 8%, transparent);
+  --bg-primary:    #ffffff;   /* 纯白 主背景 */
+  --bg-secondary:  #f6f8fa;   /* 次背景灰（卡片/侧边栏，和GitHub一致）*/
+  --bg-tertiary:   #eef2f6;   /* 卡内层再灰一格 */
+  --border-color:  #d0d7de;   /* 1px 边框灰（GitHub 精确色） */
+  --text-primary:    #1f2328; /* 正文 近黑 16:1 AAA */
+  --text-secondary:  #57606a; /* 副字 5.4:1 AA */
+  --text-muted:      #8c959f; /* 辅助 3.1:1 */
+  --text-subtle:     #b1bac4; /* 飞白淡灰 */
+  --accent:        #0969da;   /* 强调=GitHub纯净蓝 5.8:1 AA（科技干净不艳）*/
+  --title-green:   #0969da;   /* 节标题=同蓝（纯白主题不需要"绿"）*/
+  --accent-hover:   #0860c7;
+  --accent-soft:    #6fb0ff;
+  --accent-light:   #ddf4ff;   /* TAG淡蓝底 / tab-active淡蓝底 */
+  --green-hover:    #0860c7;
+  --green-soft:     #6fb0ff;
+  --green-light:    #ddf4ff;
+  --bg-card:        #ffffff;   /* 卡片=纯白（带极淡阴影+边即分层）*/
+  --bg-elevated:    #ffffff;
+  --bg-hover:       #f3f4f6;
+  --bg-active:      #e6e8eb;
+  --shadow-sm: 0 1px 2px  rgba(31,35,40,0.06), 0 0 0 1px rgba(208,215,222,0.45);
+  --shadow-md: 0 4px 16px rgba(31,35,40,0.08), 0 0 0 1px rgba(208,215,222,0.55);
+  --shadow-lg: 0 10px 32px rgba(31,35,40,0.10), 0 0 0 1px rgba(208,215,222,0.60);
   --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
   --tr-fast: 0.10s ease-in-out; --tr-base: 0.18s ease-out; --tr-slow: 0.25s ease;
 }
@@ -140,55 +132,17 @@
    ★ 保守增量：只改用户能直接看出色彩不协调的视觉组件；不改layout(h1/sidebar-item padding/page padding)避免再出现「蚂叠logo」类错位事故
    覆盖 7 类关键组件：①body背景 ②统计banner ③按钮 ④输入框 ⑤底部Tab ⑥标签/封面 ⑦卡片hover边框淡主色 */
 
-/* ① body 背景：宣纸主题 = 米白暖调 cream（#f5efe0）【100% 由纯 CSS 主色控制色值，JPG绝对不允许决定黄/白！】
-     真宣纸JPG（xuanzhi-*.jpg）因为 AI 永远画成"旧泛黄玉版宣"（实测 R-G 偏黄 10 级 / B 少 10 级 → #faf0e2），
-     → 所以将其挪到 body::before 伪元素，用 opacity=18% 只"取其纤维/毛边纹理（TEXTURE）"，绝对不允许 JPG 的黄像素决定画面颜色！
-     用户肉眼 90% 看到的背景色 = #f5efe0（我们控制的 cream 米白）*/
+/* ① body 背景：纯白主题 = #ffffff（纯干净零纹理零噪点）
+   严格 [data-theme="light"]，其他主题走各自 body 规则 */
 [data-theme="light"] body{
-  background-color: var(--bg-primary);  /* 90% 的色 = 这里。真实 cream 米白。*/
-  /* 只保留 5 层极淡纤维散点（α≈0.10，像纸上偶尔一颗麦芒/炭点 / 无横线无条纹）*/
-  background-image:
-    radial-gradient(1px 1px at 17% 22%, rgba(130,80,35,0.11) 50%, transparent 52%),
-    radial-gradient(1px 1px at 63% 48%, rgba(95,60,22,0.09)  50%, transparent 52%),
-    radial-gradient(1px 1px at 82% 73%, rgba(55,32,12,0.14)  50%, transparent 52%),
-    radial-gradient(1px 1px at 31% 87%, rgba(155,95,32,0.08) 50%, transparent 52%),
-    radial-gradient(2px 2px at 46% 33%, rgba(60,40,15,0.08)  50%, transparent 55%);
-  background-size: 240px 240px, 330px 330px, 200px 200px, 280px 280px, 440px 440px;
-  background-repeat: repeat, repeat, repeat, repeat, repeat;
+  background-color: #ffffff;
+  background-image: none !important;
   color: var(--text-primary);
   position: relative;
 }
-/* JPG 宣纸"仅取纹理不取色"：opacity 5% 只留毛边纤维残影 + mix-blend-multiply
-   铁律：JPG绝对不允许决定画面黄/白，95%颜色=--bg-primary=#f4e9d0 */
-[data-theme="light"] body::before{
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background-image: url("/assets/xuanzhi-desktop.jpg");
-  background-size: auto 100%;
-  background-repeat: repeat;
-  opacity: 0.05;               /* 只取纤维/毛边纹理，绝不黄化画面 */
-  mix-blend-mode: multiply;
-}
-@media (max-width: 899px){
-  [data-theme="light"] body::before{
-    background-image: url("/assets/xuanzhi-mobile.jpg");
-    background-size: 100% auto;
-    opacity: 0.05;
-  }
-  [data-theme="light"] body{
-    background-size: 180px 180px, 240px 240px, 210px 210px, 200px 200px, 360px 360px;
-  }
-}
-[data-theme="green"] body,
-[data-theme="custom"] body{
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-}
-
-/* 宣纸主题专用：组件微叠小散点（只有散点，零横线）*/
+/* 纯白主题：JPG 宣纸纹理彻底关掉（干净无噪点）*/
+[data-theme="light"] body::before{ display: none !important; }
+/* 纯白主题：组件层宣纸散点也全关掉→干净纯白GitHub风 */
 [data-theme="light"] .home-stats-banner,
 [data-theme="light"] .card,
 [data-theme="light"] .home-action-btn,
@@ -199,27 +153,20 @@
 [data-theme="light"] .btn-ghost,
 [data-theme="light"] .sidebar,
 [data-theme="light"] .modal-content{
-  background-image:
-    radial-gradient(1px 1px at 25% 35%, rgba(130,80,35,0.08) 50%, transparent 52%),
-    radial-gradient(1px 1px at 75% 65%, rgba(85,52,16,0.08)  50%, transparent 52%);
-  background-size: 170px 170px, 200px 200px;
-  background-repeat: repeat, repeat;
+  background-image: none !important;
+}
+[data-theme="green"] body,
+[data-theme="custom"] body{
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
 }
 
-/* ② 顶部 stats-banner：米白笺条（零轴头、零朱砂竖细线、零任何线）
-     主题只做一件事：米白底 + 赭石16%淡边框 + 极淡墨阴影 */
+/* ② 顶部 stats-banner：纯白主题 = #f6f8fa 卡灰背景 + 1px #d0d7de 边 + 淡阴影（GitHub repo卡片风）*/
 [data-theme="light"] .home-stats-banner{
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--bg-secondary) 99%, white) 0%,
-      color-mix(in srgb, var(--bg-secondary) 95%, white) 50%,
-      color-mix(in srgb, var(--bg-secondary) 98%, white) 100%);
-  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border-color));
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--accent) 5%, transparent) inset,
-    0 -1px 0 color-mix(in srgb, var(--text-primary) 3%, transparent) inset,
-    0 6px 16px color-mix(in srgb, var(--text-primary) 6%, transparent);
-  border-radius: var(--radius-md);
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  box-shadow: 0 1px 0 rgba(27,31,36,0.04);
+  border-radius: 12px;
   padding: 14px 20px;
   position: relative;
   overflow: hidden;
@@ -538,15 +485,18 @@
     0 1px 0 rgba(255,255,255,0.55) inset;
   margin-bottom: 4px;
 }
-/* 三枚图标底托 = 截图像素精确：📥淡蓝白/📤淡粉白/✨淡米白 */
+/* 三枚图标底托：纯白科技风=淡蓝/淡青/淡黄 微彩色，统一1px边+1px内高光（像App Store卡片）*/
 [data-theme="light"] .home-action-import .home-action-icon{
-  background: #eef3f7;  /* 截图导入按钮背景精确色 */
+  background: #f0f6ff;  /* 淡蓝 导入 */
+  border: 1px solid #dbeafd;
 }
 [data-theme="light"] .home-action-export .home-action-icon{
-  background: #f9eceb;  /* 截图导出按钮背景精确色 */
+  background: #f0fbf6;  /* 淡青 导出 */
+  border: 1px solid #d7f1e3;
 }
 [data-theme="light"] .home-action-new .home-action-icon{
-  background: #faf8f1;  /* 截图新建按钮背景精确色 */
+  background: #fffaf0;  /* 淡黄 新建 */
+  border: 1px solid #fbeed0;
 }
 
 /* B. 节标题 "📝 最近编辑"/"📚 全部作品"：h2/h节标题文字统一用黛绿title-green，保持参考图观感
@@ -568,12 +518,13 @@
   vertical-align: -2px;
 }
 
-/* C. 封面渐变 = 截图像素精确：上奶油米白#f5ebe1 → 下淡粉#f6ddda */
+/* C. 封面渐变：淡蓝→淡紫（iOS Books风 纯白主题上高级）*/
 [data-theme="light"] .cover-placeholder,
 [data-theme="light"] .book-card-cover,
 [data-theme="light"] .home-book-cover,
 [data-theme="light"] .recent-book-cover{
-  background: linear-gradient(180deg, #f5ebe1 0%, #f6ddda 100%) !important;
+  background: linear-gradient(180deg, #eaf4ff 0%, #f3edff 100%) !important;
+  border: 1px solid #e3ecf8;
 }
 
 /* D. 小图标按钮（✏️编辑 / 🗑️删除）：34×34 圆形软底托 */
@@ -608,9 +559,10 @@
   filter: none !important;  /* 绝对禁止灰度滤镜（让emoji变脏）*/
 }
 [data-theme="light"] .tab-item.active{
-  background: #f6ece6 !important;  /* 截图"首页"选中背景淡朱粉 像素精确 */
+  background: #ddf4ff !important;  /* 淡蓝底 */
   color: var(--accent) !important;
   font-weight: 700 !important;
+  border: 1px solid #bae3ff !important;
 }
 [data-theme="light"] .tab-item:not(.active){
   color: var(--text-secondary) !important;     /* 未选中文字=暖taupe棕灰，不是冷灰 */
@@ -654,17 +606,18 @@
     0 2px 6px color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
-/* H. AI智驾入口·圆=截图像素精确 #fbf7ee（最白米白） */
+/* H. AI智驾入口·圆=纯白 + 1px淡蓝边 + 淡蓝光晕 */
 [data-theme="light"] .master-create-entry-icon{
   width: 64px !important;
   height: 64px !important;
   display: flex; align-items: center; justify-content: center;
   border-radius: 50% !important;
-  background: #fbf7ee !important;
+  background: #ffffff !important;
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent),
-    inset 0 1px 0 rgba(255,255,255,0.7),
-    0 4px 14px color-mix(in srgb, var(--text-primary) 6%, transparent);
+    0 0 0 1px #d0e7ff,
+    0 0 0 6px rgba(9,105,218,0.06),
+    inset 0 1px 0 rgba(255,255,255,0.9),
+    0 4px 14px rgba(9,105,218,0.10);
 }
 [data-theme="light"] .master-create-entry-label{
   color: var(--text-primary) !important;
@@ -1781,17 +1734,17 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 /* Theme Preview Cards：重做真实主题色 mini 缩略预览（用户之前说"浅色预览框纯白"=错）
    每张卡片 = 对应主题的：主色 bg + 顶部 6px 标题条(title-green/accent) + 右下 1px accent 色角标 = 用户一眼看出区别，不显示白白矩形骗人 */
 .theme-preview{height:60px;border-radius:4px;margin-bottom:8px;border:1px solid var(--border-color);position:relative;overflow:hidden}
-/* light 真实预览：米黄羊皮纸#f4e9d0（截图像素）+ 顶条黛绿#3f7550 + 右下赭石#903824角标 */
+/* light 真实预览：纯白 #ffffff + 顶部 6px GitHub蓝 #0969da 条 + 右下淡蓝角标 */
 .theme-preview.light{
   background:
-    linear-gradient(135deg, transparent 85%, rgba(144,56,36,0.22) 85%),
-    linear-gradient(135deg, transparent 88%, rgba(144,56,36,0.40) 88%),
-    #f4e9d0;
+    linear-gradient(135deg, transparent 85%, rgba(9,105,218,0.22) 85%),
+    linear-gradient(135deg, transparent 88%, rgba(9,105,218,0.40) 88%),
+    #ffffff;
 }
 .theme-preview.light::before{
   content:""; position:absolute; top:0; left:0; right:0; height:6px;
-  background: #3f7550;
-  border-bottom: 1px solid rgba(63,117,80,0.22);
+  background: #0969da;
+  border-bottom: 1px solid rgba(9,105,218,0.22);
 }
 /* green 真实预览：护眼绿截图 bg=#f2f4ef（灰豆绿，第二张截图） */
 .theme-preview.green{
