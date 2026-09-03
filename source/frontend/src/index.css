@@ -105,8 +105,13 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .desktop-sidebar{width:210px;min-width:210px;background:var(--bg-secondary);display:none;flex-direction:column;overflow-y:auto}
 .main-content{flex:1;overflow-y:auto;min-height:0}
 
-.sidebar-brand{display:flex;align-items:center;justify-content:center;padding:18px 16px 18px;border-bottom:1px solid var(--border-color)}
-.sidebar-logo{display:flex;align-items:center;justify-content:center}
+/* 侧边栏品牌/Logo：底色完全自适应主题；
+   默认(浅色) / 护眼绿(背景浅) → mix-blend-mode:multiply 消除 PNG/WebP 自带白底（白色像素被背景色"乘"掉）
+   深色主题 → invert(1)+hue-rotate(180) 双重滤镜：白底变黑(融入背景)，同时尽量保住彩色 logo 原色相 */
+.sidebar-brand{display:flex;align-items:center;justify-content:center;padding:14px 12px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary)}
+.sidebar-logo{display:flex;align-items:center;justify-content:center;background:transparent;padding:4px 6px;border-radius:10px}
+.sidebar-logo img{display:block;mix-blend-mode:multiply;isolation:isolate;image-rendering:-webkit-optimize-quality}
+[data-theme="dark"] .sidebar-logo img{mix-blend-mode:normal;filter:invert(1) hue-rotate(180deg) saturate(1.2) brightness(0.95)}
 .sidebar-nav{flex:1;padding:8px}
 .sidebar-item{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;font-size:14px;border-radius:8px;margin:2px 0;transition:all .15s}
 .sidebar-item:hover{background:var(--bg-hover)}
