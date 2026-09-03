@@ -356,6 +356,94 @@
     transform: none !important;
   }
 }
+
+/* ===== v6 B3.5：细节收口（核心！解决您截图中的彩色冲突）=====
+   针对：(1) emoji 彩色图标 🏠✍️🔧👤📥📤✨📝📚 无法 color: 覆盖
+        (2) workbench 默认翠绿 #4a7a5a/#5a8a6a/#7cb89e 全局残留
+        (3) book-cover / 标签 / 箭头 / hover 渐变仍带翠绿/紫色
+   → 全部 !important + 石青系统一，保证 inline style / 高优先级都能打赢 */
+
+/* ① 彩色 emoji 图标 → 去色转石青灰度质感（对Unicode emoji生效的唯一手段）*/
+[data-theme="dark"] .tab-icon,
+[data-theme="dark"] .home-action-icon,
+[data-theme="dark"] .section-title-icon,
+[data-theme="dark"] .home-icon-svg,
+[data-theme="dark"] .master-create-entry-icon,
+[data-theme="dark"] .import-zone-icon,
+[data-theme="dark"] .import-file-icon,
+[data-theme="dark"] .cover-placeholder,
+[data-theme="dark"] .home-book-arrow,
+[data-theme="dark"] .recent-book-arrow,
+[data-theme="dark"] .master-create-entry-arrow{
+  filter: grayscale(1) brightness(0.52) contrast(1.18) sepia(0.25) saturate(3.2) hue-rotate(165deg);
+  color: var(--accent);
+}
+
+/* ② 全局翠绿残留（home-page/workbench）→ 石青 !important 强覆盖 */
+[data-theme="dark"] .home-page{ background: transparent !important; }
+[data-theme="dark"] .home-page .page-header h1{ color: var(--accent) !important; }
+[data-theme="dark"] .home-topbar-title{ color: var(--accent) !important; letter-spacing: 7px !important; }
+[data-theme="dark"] .home-topbar-sub{ color: var(--text-muted) !important; }
+[data-theme="dark"] .home-section-header h2{ color: var(--accent) !important; letter-spacing: 0.6px; }
+[data-theme="dark"] .home-stats-banner{
+  background: linear-gradient(180deg, var(--accent-hover) 0%, var(--accent) 55%, #0f2d41 100%) !important;
+  box-shadow: 0 4px 14px rgba(29,66,93,0.22), inset 0 1px 0 rgba(255,255,255,0.18) !important;
+}
+/* 删掉 stats-banner 默认翠绿的 2 个装饰圆球（::before/::after 那俩装饰圆），只留卷轴轴头（由 L110/L115 提供）*/
+[data-theme="dark"] .home-stats-banner::before,
+[data-theme="dark"] .home-stats-banner::after{
+  display: none !important;
+}
+
+/* ③ 书封面渐变（原翠绿 #d4ecda→#7cb89e）→ 石青淡蓝灰渐变 */
+[data-theme="dark"] .book-card-cover,
+[data-theme="dark"] .home-book-cover,
+[data-theme="dark"] .recent-book-cover{
+  background: linear-gradient(135deg, #e6ecf2 0%, #a9bcd0 100%) !important;
+}
+
+/* ④ 卡片/快捷按钮 hover 的翠绿(#7cb89e)/紫色(#b29ad8)渐变 → 石青统一 */
+[data-theme="dark"] .home-action-btn,
+[data-theme="dark"] .home-book-item,
+[data-theme="dark"] .recent-book-card,
+[data-theme="dark"] .master-create-entry{
+  background: var(--bg-secondary) !important;
+  border-color: var(--border-color) !important;
+}
+[data-theme="dark"] .recent-book-card{
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(29,66,93,0.04) 100%) !important;
+  box-shadow: 0 1px 6px rgba(29,66,93,0.06) !important;
+}
+[data-theme="dark"] .home-action-import:hover,
+[data-theme="dark"] .home-action-export:hover,
+[data-theme="dark"] .home-action-new:hover,
+[data-theme="dark"] .home-book-item:hover,
+[data-theme="dark"] .recent-book-card:hover,
+[data-theme="dark"] .master-create-entry:hover{
+  border-color: rgba(29,66,93,0.30) !important;
+  background: linear-gradient(135deg, rgba(29,66,93,0.06) 0%, rgba(29,66,93,0.03) 100%) !important;
+  box-shadow: 0 3px 12px rgba(29,66,93,0.10) !important;
+}
+
+/* ⑤ tag-sm / status-tag / 箭头 的翠绿 → 石青（您截图中 长篇/历史/0字 那三个 tag 还是绿边框）*/
+[data-theme="dark"] .tag-sm{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border: 1px solid rgba(29,66,93,0.20) !important;
+}
+[data-theme="dark"] .status-tag.writing{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+[data-theme="dark"] .status-tag.draft{
+  background: var(--bg-tertiary) !important;
+  color: var(--text-muted) !important;
+}
+[data-theme="dark"] .master-create-entry-arrow,
+[data-theme="dark"] .home-book-arrow,
+[data-theme="dark"] .recent-book-arrow{
+  color: var(--accent) !important;
+}
 [data-theme="green"] {
   --bg-primary: #e8f3e8; --bg-secondary: #f0f7f0; --bg-tertiary: #d6e8d6;
   --bg-card: #f6fbf6; --bg-elevated: #e0f0e0;
