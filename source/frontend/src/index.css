@@ -32,60 +32,84 @@
   --shadow-md: 0 4px 16px rgba(74,84,96,0.10);
 }
 
-/* v3 背景：SVG 真实山脊贝塞尔曲线（画卷式，非径向污渍斑） */
-[data-theme="dark"] body{
+/* ===== 玉版宣 · 真水墨画作主题 v4（参考用户提供的烟雨江南卷轴）=====
+   分层严格：-3 背景真迹图 / -2 宣纸蒙层+闲章（叠在图上，文字清晰保证） / +1 内容层
+   桌面端/手机端分别创作不同构图：16:9 横幅山水 vs 9:16 竖幅立轴 */
+
+/* 背景真迹图层 (-3)：调用 trae AI 生成的中国水墨画，fixed fullscreen cover */
+[data-theme="dark"] body::before{
+  content:"";
+  position:fixed; inset:0; z-index:-3; pointer-events:none;
+  background-repeat:no-repeat; background-position:center center; background-size:cover;
   background-color: var(--bg-primary);
-  background-image:
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 320' preserveAspectRatio='xMidYMin slice' width='100%25' height='320'><defs><linearGradient id='far' x1='0' x2='0' y1='0' y2='1'><stop offset='0%25' stop-color='%237b8a98' stop-opacity='0.34'/><stop offset='100%25' stop-color='%238f9ca8' stop-opacity='0'/></linearGradient><linearGradient id='mid' x1='0' x2='0' y1='0' y2='1'><stop offset='0%25' stop-color='%23627487' stop-opacity='0.50'/><stop offset='100%25' stop-color='%23627487' stop-opacity='0'/></linearGradient></defs><path fill='url(%23far)' d='M0,190 C120,150 220,170 340,145 C460,120 560,175 700,155 C820,138 920,180 1060,150 C1180,125 1280,170 1420,145 C1500,130 1560,160 1600,150 L1600,320 L0,320 Z'/><path fill='url(%23mid)' d='M0,238 C80,220 180,200 300,208 C420,216 520,250 660,232 C780,217 880,248 1020,228 C1140,212 1240,242 1360,226 C1460,213 1540,236 1600,228 L1600,320 L0,320 Z'/><path fill='%23a4afc0' fill-opacity='0.30' d='M0,258 C260,242 500,260 760,252 C1020,244 1280,266 1600,248 L1600,320 L0,320 Z'/></svg>"),
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 260' preserveAspectRatio='xMaxYMax slice' width='600' height='260'><defs><linearGradient id='nr' x1='0' x2='0' y1='0' y2='1'><stop offset='0%25' stop-color='%234f6476' stop-opacity='0.36'/><stop offset='100%25' stop-color='%234f6476' stop-opacity='0'/></linearGradient></defs><path fill='url(%23nr)' d='M0,190 C100,150 180,170 300,140 C400,115 500,170 600,145 L600,260 L0,260 Z'/></svg>"),
-    repeating-linear-gradient( 90deg, rgba(90,100,110,0.018) 0 1px, transparent 1px 5px),
-    linear-gradient(180deg, #fcfaf4 0%, var(--bg-primary) 26%, #f5f2e8 100%);
-  background-repeat: no-repeat, no-repeat, repeat, no-repeat;
-  background-position: 50% 0, 0 100%, 0 0, 0 0;
-  background-size: 100% 320px, 42vw 260px, auto, 100% 100%;
-  background-attachment: fixed;
 }
-/* 右下角 黛青闲章「静心」方印（20% opacity，清雅；已移除大红朱砂） */
+/* 宣纸蒙层 + 闲章合并层 (-2)：半透明白色蒙住背景图，防画面抢字；右下角黛青方印「静心」 */
 [data-theme="dark"] body::after{
   content:"";
-  position:fixed; right:28px; bottom:30px; width:58px; height:58px; z-index:0;
-  pointer-events:none; opacity:0.20;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 46'><rect x='1.2' y='1.2' width='43.6' height='43.6' rx='3' ry='3' fill='%234a6478' stroke='%233c5162' stroke-width='1.6'/><path d='M13 10h6c0 5-2 8-6 8zM23 10h10v4H27v8h-4zM10 24h26v4h-10v14h-6V28H10z' fill='%23fff' fill-opacity='0.95'/></svg>");
-  background-repeat:no-repeat; background-size:contain;
+  position:fixed; inset:0; z-index:-2; pointer-events:none;
+  background-color: rgba(250,248,242,0.42);  /* 42% 玉版宣白叠加，文字绝对清晰 */
+  background-image:
+    /* 右下角 58×58 黛青方印「静心」 */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 46'><rect x='1.2' y='1.2' width='43.6' height='43.6' rx='3' ry='3' fill='%234a6478' stroke='%233c5162' stroke-width='1.6'/><path d='M13 10h6c0 5-2 8-6 8zM23 10h10v4H27v8h-4zM10 24h26v4h-10v14h-6V28H10z' fill='%23fff' fill-opacity='0.95'/></svg>"),
+    /* 宣纸细纹叠加 */
+    repeating-linear-gradient( 90deg, rgba(90,100,110,0.015) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(  0deg, rgba(90,100,110,0.010) 0 1px, transparent 1px 5px);
+  background-repeat: no-repeat, repeat, repeat;
+  background-position: right 28px bottom 30px, 0 0, 0 0;
+  background-size: 58px 58px, auto, auto;
+}
+
+/* ========== 桌面端 ≥ 900px：横幅 16:9 烟雨江南山水 ==========
+   构图：远山云雾+中景阁楼+近景湖泊+左右梅花桃花（完全匹配用户参考图） */
+@media (min-width: 900px){
+  [data-theme="dark"] body::before{
+    background-image: url("https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=Chinese%20traditional%20ink%20wash%20painting%2C%20landscape%20scroll%20background%2C%20misty%20Jiangnan%20water%20town%2C%20distant%20layered%20mountains%20shrouded%20in%20clouds%2C%20ancient%20Chinese%20pavilion%20with%20blue%20roof%2C%20calm%20lake%20water%20reflection%2C%20old%20plum%20blossom%20white%20tree%20on%20left%2C%20pink%20cherry%20blossom%20tree%20on%20right%2C%20flying%20crane%20birds%2C%20rice%20xuan%20paper%20texture%2C%20pale%20blue%20grey%20palette%2C%20extremely%20light%20airy%20fade%20for%20website%20background%20use%2C%20low%20contrast%20text%20readable%2C%20no%20saturated%20color&image_size=landscape_16_9");
+  }
+  [data-theme="dark"] body{ background-color: transparent; /* 真迹图 + 42%蒙层 联合决定底色 */ }
+}
+
+/* ========== 手机端 ≤ 899px：竖幅 9:16 高远山立轴（与桌面不同构图）==========
+   构图：高叠山+瀑布+前景孤松+山间寺庙剪影（竖幅，留出顶/底给UI顶栏和底栏） */
+@media (max-width: 899px){
+  [data-theme="dark"] body::before{
+    background-image: url("https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=Chinese%20traditional%20ink%20wash%20painting%20vertical%20hanging%20scroll%2C%20tall%20layered%20mountains%20with%20waterfall%2C%20ancient%20pine%20tree%20on%20a%20cliff%20in%20foreground%2C%20drifting%20misty%20clouds%20between%20peaks%2C%20distant%20silhouette%20of%20a%20Buddhist%20temple%20on%20mountain%20top%2C%20rice%20xuan%20paper%20texture%2C%20pale%20blue%20grey%20palette%2C%20extremely%20light%20airy%20fade%20for%20mobile%20portrait%20wallpaper%2C%20low%20contrast%20readable%20text%2C%20leave%20top%20and%20bottom%20extra%20white%20space%20for%20app%20UI%20bars%2C%20no%20saturated%20color&image_size=portrait_16_9");
+  }
+  [data-theme="dark"] body{ background-color: transparent; }
+  /* 手机端缩小闲章，避免挡底部 tab bar */
+  [data-theme="dark"] body::after{
+    background-size: 40px 40px, auto, auto;
+    background-position: right 16px bottom 80px, 0 0, 0 0;
+  }
 }
 
 /* ===== 玉版宣 · 清雅黛青组件体系 v3（彻底抛弃大红朱砂印章感） ===== */
 
-/* 顶部 stats-banner 撞色修复：原硬编码冷青绿渐变 → 黛青渐变（与主题统一）*/
+/* 顶部数据条：画卷轴样式 — 黛青渐变本体 + 左右 SVG 木质/玉质轴头（完整卷轴感）*/
 [data-theme="dark"] .home-stats-banner{
-  background: linear-gradient(135deg, #6a8298 0%, #50677c 100%);
-  box-shadow: 0 4px 14px rgba(80,103,124,0.22);
+  background: linear-gradient(180deg, #728aa0 0%, #556a7e 45%, #4a5e70 100%);
+  box-shadow: 0 6px 18px rgba(80,103,124,0.28), inset 0 1px 0 rgba(255,255,255,0.18);
   color: #fff;
+  position: relative;
 }
-[data-theme="dark"] .home-stats-banner::before{ background: rgba(255,255,255,0.12); }
-[data-theme="dark"] .home-stats-banner::after{  background: rgba(255,255,255,0.06); }
+/* 左端 木轴/玉轴头（14px 伸出来） */
+[data-theme="dark"] .home-stats-banner::before{
+  content:""; position:absolute; left:-12px; top:-4px; bottom:-4px; width:16px; pointer-events:none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 68' preserveAspectRatio='none'><defs><linearGradient id='jL' x1='0' x2='1' y1='0' y2='0'><stop offset='0%25' stop-color='%23b88a4a'/><stop offset='35%25' stop-color='%23d9b373'/><stop offset='70%25' stop-color='%23a97a3a'/><stop offset='100%25' stop-color='%237a5624'/></linearGradient></defs><rect x='1' y='3' width='14' height='62' rx='3.5' fill='url(%23jL)' stroke='%235a3f18' stroke-width='0.8'/><circle cx='8' cy='10' r='2' fill='%235a3f18' fill-opacity='0.55'/><circle cx='8' cy='58' r='2' fill='%235a3f18' fill-opacity='0.55'/></svg>");
+  background-repeat:no-repeat; background-size:100% 100%;
+}
+/* 右端 木轴/玉轴头（14px 伸出来） */
+[data-theme="dark"] .home-stats-banner::after{
+  content:""; position:absolute; right:-12px; top:-4px; bottom:-4px; width:16px; pointer-events:none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 68' preserveAspectRatio='none'><defs><linearGradient id='jR' x1='0' x2='1' y1='0' y2='0'><stop offset='0%25' stop-color='%237a5624'/><stop offset='35%25' stop-color='%23a97a3a'/><stop offset='70%25' stop-color='%23d9b373'/><stop offset='100%25' stop-color='%23b88a4a'/></linearGradient></defs><rect x='1' y='3' width='14' height='62' rx='3.5' fill='url(%23jR)' stroke='%235a3f18' stroke-width='0.8'/><circle cx='8' cy='10' r='2' fill='%235a3f18' fill-opacity='0.55'/><circle cx='8' cy='58' r='2' fill='%235a3f18' fill-opacity='0.55'/></svg>");
+  background-repeat:no-repeat; background-size:100% 100%;
+}
+/* 手机端画卷轴：轴头缩小，padding 收紧一点 */
+@media (max-width: 899px){
+  [data-theme="dark"] .home-stats-banner::before{ left:-9px; width:12px; }
+  [data-theme="dark"] .home-stats-banner::after{  right:-9px; width:12px; }
+}
 
-/* 面板/卡片：玉版宣清雅双边 + 冷灰微影（不再暖脏黄） */
-[data-theme="dark"] .tool-panel,
-[data-theme="dark"] .chat-panel-root,
-[data-theme="dark"] .analyze-card,
-[data-theme="dark"] .book-card,
-[data-theme="dark"] .ledger-card,
-[data-theme="dark"] .ai-assistant-card{
-  background-color: var(--bg-card);
-  box-shadow:
-    0 1px 0 rgba(255,255,255,0.7) inset,
-    0 0 0 1px rgba(74,84,96,0.06) inset,
-    var(--shadow-md);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-}
-/* 侧边栏：朱砂红线 → 淡黛青压边（蓝绫装裱）*/
-[data-theme="dark"] .desktop-sidebar{
-  border-right: 1px solid var(--border-color);
-  box-shadow: 3px 0 0 -2px rgba(74,100,120,0.45) inset;
-}
-/* Active 导航：朱砂粗红线 → 细黛青 2px + 淡底（如书签压痕） */
+/* Active 导航：细黛青 2px + 淡底（如书签压痕） */
 [data-theme="dark"] .sidebar-item.active{
   box-shadow: -1px 0 0 2px var(--accent), 0 0 0 1px rgba(74,100,120,0.12) inset;
   border-radius: 6px;
@@ -102,6 +126,76 @@
 [data-theme="dark"] .mine-section-title{
   border-bottom: 1px solid rgba(74,84,96,0.12);
   padding-bottom: 8px; margin-bottom: 14px;
+}
+
+/* ===== 图标水墨滤镜：全图标 毛笔描边感（像真墨画出来的线条）=====
+   原理：SVG 线条加 1.2px 墨色 drop-shadow（模拟毛笔晕染） + 1px 纵向下压（书法笔触）*/
+[data-theme="dark"] .sidebar-item svg,
+[data-theme="dark"] .sidebar-icon svg,
+[data-theme="dark"] .book-card svg,
+[data-theme="dark"] .analyze-card svg,
+[data-theme="dark"] .ledger-card svg,
+[data-theme="dark"] .tool-panel svg,
+[data-theme="dark"] .ai-assistant-card svg,
+[data-theme="dark"] .mine-section-title svg,
+[data-theme="dark"] .home-icon-svg,
+[data-theme="dark"] .section-title-icon{
+  filter:
+    drop-shadow(0 0 1.2px rgba(74,100,120,0.65))
+    drop-shadow(0 1px 0 rgba(74,100,120,0.18));
+  color: var(--accent) !important;
+  transition: filter 0.25s ease;
+}
+[data-theme="dark"] .sidebar-item:hover svg,
+[data-theme="dark"] .book-card:hover svg{
+  filter:
+    drop-shadow(0 0 1.8px rgba(74,100,120,0.85))
+    drop-shadow(0 1px 0 rgba(74,100,120,0.28));
+}
+
+/* 面板/卡片：毛笔描边双层墨线（内 0.7px 淡墨 / 外 1.4px 更淡边），且带 82% 不透明玉版宣底，背景真迹图透一点点出来=手机主题效果 */
+[data-theme="dark"] .tool-panel,
+[data-theme="dark"] .chat-panel-root,
+[data-theme="dark"] .analyze-card,
+[data-theme="dark"] .book-card,
+[data-theme="dark"] .ledger-card,
+[data-theme="dark"] .ai-assistant-card{
+  background-color: rgba(246,243,234,0.82);
+  backdrop-filter: blur(3px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.65) inset,
+    0 0 0 1px rgba(74,84,96,0.18) inset,          /* 内毛笔淡墨线 */
+    0 0 0 2px rgba(74,84,96,0.06),                 /* 外毛笔更淡晕染 */
+    0 6px 16px rgba(74,84,96,0.10);                /* 投影 */
+  border: none; /* 删除原 border 改用双层 box-shadow 毛笔感 */
+  border-radius: 12px;
+}
+/* 手机端卡片：透明度稍高，避免背景透太多挡字；毛玻璃改弱 */
+@media (max-width: 899px){
+  [data-theme="dark"] .tool-panel,
+  [data-theme="dark"] .chat-panel-root,
+  [data-theme="dark"] .analyze-card,
+  [data-theme="dark"] .book-card,
+  [data-theme="dark"] .ledger-card,
+  [data-theme="dark"] .ai-assistant-card{
+    background-color: rgba(246,243,234,0.90);
+    backdrop-filter: blur(1.5px);
+  }
+}
+/* 桌面侧边栏：玉版宣 86% 透明，背后的真迹山水能隐约透过来 */
+[data-theme="dark"] .desktop-sidebar{
+  background-color: rgba(243,240,230,0.86) !important;
+  backdrop-filter: blur(3px);
+  border-right: 1px solid rgba(74,84,96,0.14);
+  box-shadow: 3px 0 0 -2px rgba(74,100,120,0.35) inset;
+}
+/* 手机端底部 tab-bar 侧栏：90% 不透明 */
+@media (max-width: 899px){
+  [data-theme="dark"] .mobile-tab-bar,
+  [data-theme="dark"] .chat-mobile-tab-bar{
+    background-color: rgba(243,240,230,0.90) !important;
+    backdrop-filter: blur(2px);
+  }
 }
 
 /* 输入框/文本框 focus：朱砂光环 → 黛青淡光环 */
