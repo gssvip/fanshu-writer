@@ -95,31 +95,51 @@
    单主色体系：全局只有石青 1 个饱和色，不再出现绿色/红/黄等冲突色
    3 圆角分级：radius-sm 6 / radius-md 10 / radius-lg 14 */
 
-/* ===== B2 顶部卷轴条：石青3阶渐变 + 超纤细木质轴头（绝对不抢眼）=====
-   轴头尺寸：PC 伸出5px / 宽8px；手机 伸出3px / 宽6px */
+/* ===== B2 顶部卷轴条：改为石青淡色系（用户说太深和主题不符）=====
+   原：深色蓝黑3段渐变（霸屏）→ 新：纯白实底+石青1px淡边+左极细2px石青压痕
+   字色：数值=浓黛；label=副字冷灰；轴头保留（卷轴识别感）*/
 [data-theme="dark"] .home-stats-banner{
-  background: linear-gradient(180deg, #2f5066 0%, #1d425d 55%, #0f2d41 100%);
-  box-shadow: 0 4px 14px rgba(29,66,93,0.22), inset 0 1px 0 rgba(255,255,255,0.18);
-  color: #fff;
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow-md), -2px 0 0 var(--accent) inset !important;
+  color: var(--text-primary) !important;
   position: relative;
   border-radius: var(--radius-md);
   padding: 14px 18px;
-  overflow: hidden;
+  overflow: visible;  /* 轴头伸出到外面不被裁 */
 }
-/* 删除多余装饰（原渐变圆球装饰）→ 只留卷轴轴头 */
+/* 字色细化：数字（浓黛 600）/ label（冷灰 muted） */
+[data-theme="dark"] .home-stats-hero-value,
+[data-theme="dark"] .home-stats-item-value{
+  color: var(--accent);
+  font-weight: 700;
+}
+[data-theme="dark"] .home-stats-hero-label,
+[data-theme="dark"] .home-stats-item-label{
+  color: var(--text-muted) !important;
+  opacity: 1 !important;
+}
+/* 分隔线 1px：改淡冷灰（不再半透白色）*/
+[data-theme="dark"] .home-stats-divider{
+  background: var(--border-color) !important;
+  opacity: 0.85;
+}
+/* 轴头保留：尺寸 PC -5×8 / 手机-3×6（但因为是淡色卷轴，轴头更细不抢戏→再缩1px）*/
 [data-theme="dark"] .home-stats-banner::before{
-  content:""; position:absolute; left:-5px; top:-2px; bottom:-2px; width:8px; pointer-events:none;
+  content:""; position:absolute; left:-4px; top:-1px; bottom:-1px; width:7px; pointer-events:none;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 60' preserveAspectRatio='none'><defs><linearGradient id='jL' x1='0' x2='1' y1='0' y2='0'><stop offset='0%25' stop-color='%23a87a40'/><stop offset='40%25' stop-color='%23cfa76e'/><stop offset='70%25' stop-color='%239a6e32'/><stop offset='100%25' stop-color='%236e4c1e'/></linearGradient></defs><rect x='0.8' y='2.5' width='6.4' height='55' rx='2.2' fill='url(%23jL)' stroke='%234e3614' stroke-width='0.5'/></svg>");
   background-repeat:no-repeat; background-size:100% 100%;
+  opacity: 0.88;
 }
 [data-theme="dark"] .home-stats-banner::after{
-  content:""; position:absolute; right:-5px; top:-2px; bottom:-2px; width:8px; pointer-events:none;
+  content:""; position:absolute; right:-4px; top:-1px; bottom:-1px; width:7px; pointer-events:none;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 60' preserveAspectRatio='none'><defs><linearGradient id='jR' x1='0' x2='1' y1='0' y2='0'><stop offset='0%25' stop-color='%236e4c1e'/><stop offset='40%25' stop-color='%239a6e32'/><stop offset='70%25' stop-color='%23cfa76e'/><stop offset='100%25' stop-color='%23a87a40'/></linearGradient></defs><rect x='0.8' y='2.5' width='6.4' height='55' rx='2.2' fill='url(%23jR)' stroke='%234e3614' stroke-width='0.5'/></svg>");
   background-repeat:no-repeat; background-size:100% 100%;
+  opacity: 0.88;
 }
 @media (max-width: 899px){
-  [data-theme="dark"] .home-stats-banner::before{ left:-3px; width:6px; top:-2px; bottom:-2px;}
-  [data-theme="dark"] .home-stats-banner::after{  right:-3px; width:6px; top:-2px; bottom:-2px;}
+  [data-theme="dark"] .home-stats-banner::before{ left:-3px; width:6px; top:-1px; bottom:-1px;}
+  [data-theme="dark"] .home-stats-banner::after{  right:-3px; width:6px; top:-1px; bottom:-1px;}
   [data-theme="dark"] .home-stats-banner{ padding: 12px 14px; }
 }
 
@@ -372,16 +392,37 @@
    - 功能图标（导入/导出/新建 📥📤✨、最近编辑📝、全部作品📚、AI智驾蚂蚁、箭头）：完全移除 filter，保留原生彩色
    - 经验 435501 教训：绝不把 filter 加在 active/brand 图标的父选择器上 */
 
-/* ① 底部 Tab：未选中态 → 单级干净灰度降亮（不做 sepia+saturate 调色链）*/
+/* ===== v6 E2：底部Tab 未选中态美化（用户说"创作/工具/我的 白白的 看不清"）=====
+   原：grayscale(1) + brightness(0.55) → 图标被强制转深灰 + 降亮 → 结果是淡灰色（白蒙蒙的，被您骂"白色的"）
+   新策略：**不做灰度 filter**（因为 filter 对 emoji 总是变脏雾），改成：
+   - 未选中图标：保留原彩色（清晰识别），仅降亮 + 轻微饱和度下降（看起来柔不抢戏）
+   - 未选中 label：同步淡黛青（冷灰5级 text-subtle → 但用户反馈"太淡"，故用 text-muted 7d8793）
+   - 选中态：🏠首页 100% 全彩保留 + 淡石青底 + 浓黛字（石青 #1d425d） */
+
+/* ① 未选中 Tab 图标：亮+饱和微降（不做 grayscale！再也不白蒙蒙） */
 [data-theme="dark"] .tab-item:not(.active) .tab-icon{
-  filter: grayscale(1) contrast(1.2) brightness(0.55);
-  opacity: 0.88;
+  filter: brightness(0.9) saturate(0.85) contrast(1.1);
+  opacity: 1;
 }
-/* 选中态：恢复原色彩色（绝对不加 filter）+ 石青系统一高亮 */
+/* 未选中 Tab 文字：同步淡黛青 text-muted（7d8793），绝不用更淡的 text-subtle（9aa3ad）——保证能看清 */
+[data-theme="dark"] .tab-item:not(.active) .tab-label{
+  color: var(--text-muted) !important;
+  font-weight: 500;
+}
+/* ② 选中 Tab：图标100%原色 + label浓黛字 #1d425d + 石青10%淡底 */
+[data-theme="dark"] .tab-item.active{
+  background: var(--accent-light) !important;
+  border-radius: var(--radius-sm) !important;
+  color: var(--accent) !important;
+}
 [data-theme="dark"] .tab-item.active .tab-icon{
-  filter: none !important;
+  filter: none !important;  /* 不做任何灰度/降亮 */
   color: var(--accent) !important;
   opacity: 1;
+}
+[data-theme="dark"] .tab-item.active .tab-label{
+  color: var(--accent) !important;  /* label=浓黛字 */
+  font-weight: 700;  /* 选中加粗，层次明确 */
 }
 
 /* ② 功能图标全部恢复原生彩色！删除L366-380 的通用 filter：
