@@ -95,52 +95,78 @@
    单主色体系：全局只有石青 1 个饱和色，不再出现绿色/红/黄等冲突色
    3 圆角分级：radius-sm 6 / radius-md 10 / radius-lg 14 */
 
-/* ===== B2 顶部卷轴条：改为石青淡色系（用户说太深和主题不符）=====
-   原：深色蓝黑3段渐变（霸屏）→ 新：纯白实底+石青1px淡边+左极细2px石青压痕
-   字色：数值=浓黛；label=副字冷灰；轴头保留（卷轴识别感）*/
+/* ===== v6 F2 顶部卷轴统计条：极淡石青山水 3 层叠加（quieter × colorize）=====
+   ★ 根因修复：删除 L459-467 收口块里的深色渐变 + 轴头 display:none（之前"后来居上"把 E1 白卡完全覆盖）
+   方向 UICraft：quieter（低视觉强度，适合码字界面）× colorize（石青单色系 4 阶）
+   3 层背景叠加：
+     L1 主层：淡石青 3 段渐变（冷白→淡石青白→更淡石青）—— 极淡 95% 冷白为底
+     L2 左上：极简 SVG 远山（4 层山脊 silhouette）石青 4% opacity —— 和整页水墨大图呼应
+     L3 右下：1 个椭圆墨晕散点（石青 3% opacity，半径大 = 极淡墨渍）
+   边框：1px 淡黛青（rgba(29,66,93,0.18)）—— 比全局 border-color 浓一点点更搭
+   左压痕：3px 石青 30% inset —— 卷轴"被夹"识别感
+   投影：单层淡石青投影 （shadow-md × 0.9）—— 不脏
+   字：数值=浓黛 700 / label=冷灰 muted 500 / 分隔=淡黛青 15%
+   轴头：木质保留 PC 伸4×7宽 / 手机伸3×6宽 —— 明确不被隐藏 */
 [data-theme="dark"] .home-stats-banner{
-  background: var(--bg-card) !important;
-  border: 1px solid var(--border-color) !important;
-  box-shadow: var(--shadow-md), -2px 0 0 var(--accent) inset !important;
+  background:
+    /* L3 右下：淡墨晕散点（径向椭圆淡黛青 3%）*/
+    radial-gradient(ellipse 80% 40% at 92% 88%, rgba(29,66,93,0.03) 0%, rgba(29,66,93,0) 70%),
+    /* L2 左上：4 层远山剪影（极小！不抢字）*/
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 70' preserveAspectRatio='none'><path d='M0 60 L22 48 L34 52 L48 40 L62 46 L76 34 L90 42 L104 30 L118 38 L132 26 L146 34 L160 22 L160 70 L0 70Z' fill='%231d425d' fill-opacity='0.04'/><path d='M0 66 L18 58 L32 62 L48 52 L64 56 L80 48 L96 54 L112 46 L128 50 L144 44 L160 50 L160 70 L0 70Z' fill='%232f5066' fill-opacity='0.045'/><path d='M0 68 L26 62 L52 64 L78 58 L104 62 L130 58 L160 62 L160 70 L0 70Z' fill='%234a6983' fill-opacity='0.04'/></svg>"),
+    /* L1 主层：极淡石青 3 段渐变（底色绝对不深）*/
+    linear-gradient(135deg, #f4f7fa 0%, #eef3f8 52%, #e6ecf2 100%)
+    !important;
+  background-repeat: no-repeat, no-repeat, no-repeat !important;
+  background-position: center center, left 8px top 6px, center center !important;
+  background-size: auto, 38% auto, auto !important;
+  border: 1px solid rgba(29,66,93,0.18) !important;
+  box-shadow: 0 4px 14px rgba(29,66,93,0.08), -3px 0 0 rgba(29,66,93,0.30) inset !important;
   color: var(--text-primary) !important;
   position: relative;
   border-radius: var(--radius-md);
-  padding: 14px 18px;
-  overflow: visible;  /* 轴头伸出到外面不被裁 */
+  padding: 14px 20px;
+  overflow: visible;  /* 轴头伸出到外面不被裁（必须，否则木轴被裁）*/
 }
-/* 字色细化：数字（浓黛 600）/ label（冷灰 muted） */
+/* 数值：浓黛 #1d425d 字重 700，微负字距更有品质感 */
 [data-theme="dark"] .home-stats-hero-value,
 [data-theme="dark"] .home-stats-item-value{
-  color: var(--accent);
+  color: var(--accent) !important;
   font-weight: 700;
+  letter-spacing: -0.5px;
+  opacity: 1 !important;
 }
+/* 标签：冷灰 muted 字重 500，字距 1px 不挤 */
 [data-theme="dark"] .home-stats-hero-label,
 [data-theme="dark"] .home-stats-item-label{
   color: var(--text-muted) !important;
+  font-weight: 500;
+  letter-spacing: 1px;
   opacity: 1 !important;
 }
-/* 分隔线 1px：改淡冷灰（不再半透白色）*/
+/* 分隔线：淡黛青 15% —— 比全局淡冷灰稍浓，更搭水墨色系 */
 [data-theme="dark"] .home-stats-divider{
-  background: var(--border-color) !important;
-  opacity: 0.85;
+  background: rgba(29,66,93,0.15) !important;
+  opacity: 1 !important;
 }
-/* 轴头保留：尺寸 PC -5×8 / 手机-3×6（但因为是淡色卷轴，轴头更细不抢戏→再缩1px）*/
+/* 轴头（木质）保留：PC 伸4×7宽 / 手机 伸3×6宽；opacity 0.9 不抢戏 */
 [data-theme="dark"] .home-stats-banner::before{
-  content:""; position:absolute; left:-4px; top:-1px; bottom:-1px; width:7px; pointer-events:none;
+  display: block !important;  /* 强制防被收口块旧规则 display:none 覆盖 */
+  content:""; position:absolute; left:-4px; top:-1px; bottom:-1px; width:7px; pointer-events:none; z-index: 2;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 60' preserveAspectRatio='none'><defs><linearGradient id='jL' x1='0' x2='1' y1='0' y2='0'><stop offset='0%25' stop-color='%23a87a40'/><stop offset='40%25' stop-color='%23cfa76e'/><stop offset='70%25' stop-color='%239a6e32'/><stop offset='100%25' stop-color='%236e4c1e'/></linearGradient></defs><rect x='0.8' y='2.5' width='6.4' height='55' rx='2.2' fill='url(%23jL)' stroke='%234e3614' stroke-width='0.5'/></svg>");
   background-repeat:no-repeat; background-size:100% 100%;
-  opacity: 0.88;
+  opacity: 0.90;
 }
 [data-theme="dark"] .home-stats-banner::after{
-  content:""; position:absolute; right:-4px; top:-1px; bottom:-1px; width:7px; pointer-events:none;
+  display: block !important;  /* 强制防被收口块旧规则 display:none 覆盖 */
+  content:""; position:absolute; right:-4px; top:-1px; bottom:-1px; width:7px; pointer-events:none; z-index: 2;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 60' preserveAspectRatio='none'><defs><linearGradient id='jR' x1='0' x2='1' y1='0' y2='0'><stop offset='0%25' stop-color='%236e4c1e'/><stop offset='40%25' stop-color='%239a6e32'/><stop offset='70%25' stop-color='%23cfa76e'/><stop offset='100%25' stop-color='%23a87a40'/></linearGradient></defs><rect x='0.8' y='2.5' width='6.4' height='55' rx='2.2' fill='url(%23jR)' stroke='%234e3614' stroke-width='0.5'/></svg>");
   background-repeat:no-repeat; background-size:100% 100%;
-  opacity: 0.88;
+  opacity: 0.90;
 }
 @media (max-width: 899px){
+  [data-theme="dark"] .home-stats-banner{ padding: 12px 14px; background-position: center center, left 4px top 4px, center center !important; background-size: auto, 46% auto, auto !important;}
   [data-theme="dark"] .home-stats-banner::before{ left:-3px; width:6px; top:-1px; bottom:-1px;}
   [data-theme="dark"] .home-stats-banner::after{  right:-3px; width:6px; top:-1px; bottom:-1px;}
-  [data-theme="dark"] .home-stats-banner{ padding: 12px 14px; }
 }
 
 /* Active 导航：细浓黛 2px 压痕 + 极淡石青底（如书签） */
@@ -456,15 +482,7 @@
 [data-theme="dark"] .home-topbar-title{ color: var(--accent) !important; letter-spacing: 7px !important; }
 [data-theme="dark"] .home-topbar-sub{ color: var(--text-muted) !important; }
 [data-theme="dark"] .home-section-header h2{ color: var(--accent) !important; letter-spacing: 0.6px; }
-[data-theme="dark"] .home-stats-banner{
-  background: linear-gradient(180deg, var(--accent-hover) 0%, var(--accent) 55%, #0f2d41 100%) !important;
-  box-shadow: 0 4px 14px rgba(29,66,93,0.22), inset 0 1px 0 rgba(255,255,255,0.18) !important;
-}
-/* 删掉 stats-banner 默认翠绿的 2 个装饰圆球（::before/::after 那俩装饰圆），只留卷轴轴头（由 L110/L115 提供）*/
-[data-theme="dark"] .home-stats-banner::before,
-[data-theme="dark"] .home-stats-banner::after{
-  display: none !important;
-}
+/* stats-banner 的 ::before/::after 在淡石青卷轴新版 L152-164 强制 display:block（木质轴头），默认翠绿的圆球装饰用 .home-stats-banner::before + position 50%圆形区分，此处无需额外处理 */
 
 /* ③ 书封面渐变（原翠绿 #d4ecda→#7cb89e）→ 石青淡蓝灰渐变 */
 [data-theme="dark"] .book-card-cover,
