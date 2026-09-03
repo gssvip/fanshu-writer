@@ -1,15 +1,24 @@
 :root {
-  --bg-primary: #faf9f5; --bg-secondary: #ffffff; --bg-tertiary: #f3f0e8;
-  --bg-card: #ffffff; --bg-elevated: #f7f5ef;
-  --bg-hover: #ede8db; --bg-active: #e5dfcc;
-  --text-primary: #2c2416; --text-secondary: #6b5e3d; --text-muted: #9e8f6e;
-  --border-color: #e0d8c0;
-  --accent: #d4a017; --accent-hover: #c4910f; --accent-light: #fdf3d0;
+  /* ===== 全局 fallback（用于 React 挂载前 / data-theme 尚未写入 html 节点的 200-500ms FOUC 窗口）====
+     旧版此处写的是玉版宣米黄脏 #faf9f5 + 姜黄金 #d4a017 → 用户每次打开网页先闪 0.3s 黄！
+     现在改为 浅色主题 cream + 砖红，让 FOUC 也直接是"正确色"的米白暖调，绝不闪黄！  */
+  --bg-primary:    #f5efe0;   --bg-secondary: #fbf6e8;   --bg-tertiary: #f1e9d4;
+  --bg-card:       #fbf7ea;   --bg-elevated:  #fbf6e8;
+  --bg-hover: color-mix(in srgb, #f1e9d4 94%, #3a2b18);
+  --bg-active:color-mix(in srgb, #f1e9d4 86%, #3a2b18);
+  --text-primary:    #3a2f22; --text-secondary:  #6f614d; --text-muted: #8a7c65;
+  --border-color:    #e4d9c1;
+  --accent:        #a0482e; /* 砖红赭石（交互/数字）*/
+  --accent-hover:  #7c351f; --accent-light: rgba(160,72,46,0.09);
   --danger: #c0392b; --danger-hover: #a93226; --success: #27ae60;
-  --shadow-sm: 0 1px 3px rgba(44,36,22,0.06); --shadow-md: 0 4px 12px rgba(44,36,22,0.08);
-  --radius-sm: 6px; --radius-md: 10px;
+  --shadow-sm: 0 1px 3px rgba(58,47,34,0.06);
+  --shadow-md: 0 4px 12px rgba(58,47,34,0.08);
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
   --font-serif: 'Georgia','Noto Serif SC','STSong',serif;
   --font-sans: -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif;
+  /* 双主色体系：fallback也有title-green，避免 FOUC 时 h2 取不到值 */
+  --title-green:   #4d7e55;
+  --green-light:   rgba(77,126,85,0.10);
 }
 /* ===== v6 J1 浅色主题【限定作用域】Design Tokens：暖白干净（玉版宣脏黄→不脏版）=====
    ★ 严格作用域 [data-theme="light"]：只在用户切"浅色主题"时生效，绝不污染 :root / 其他主题
@@ -118,36 +127,46 @@
    ★ 保守增量：只改用户能直接看出色彩不协调的视觉组件；不改layout(h1/sidebar-item padding/page padding)避免再出现「蚂叠logo」类错位事故
    覆盖 7 类关键组件：①body背景 ②统计banner ③按钮 ④输入框 ⑤底部Tab ⑥标签/封面 ⑦卡片hover边框淡主色 */
 
-/* ① body 背景：宣纸主题 = 米白暖调宣纸JPG平铺 + 随机散点（只有草屑/炭点，绝对零横线零帘纹零条纹）
-     护眼绿/自定义：沿用纯色 bg-primary */
+/* ① body 背景：宣纸主题 = 米白暖调 cream（#f5efe0）【100% 由纯 CSS 主色控制色值，JPG绝对不允许决定黄/白！】
+     真宣纸JPG（xuanzhi-*.jpg）因为 AI 永远画成"旧泛黄玉版宣"（实测 R-G 偏黄 10 级 / B 少 10 级 → #faf0e2），
+     → 所以将其挪到 body::before 伪元素，用 opacity=18% 只"取其纤维/毛边纹理（TEXTURE）"，绝对不允许 JPG 的黄像素决定画面颜色！
+     用户肉眼 90% 看到的背景色 = #f5efe0（我们控制的 cream 米白）*/
 [data-theme="light"] body{
-  background-color: var(--bg-primary);
+  background-color: var(--bg-primary);  /* 90% 的色 = 这里。真实 cream 米白。*/
+  /* 只保留 5 层极淡纤维散点（α≈0.10，像纸上偶尔一颗麦芒/炭点 / 无横线无条纹）*/
   background-image:
-    /* 只保留5层极淡纤维散点（α≈0.10 非常淡，像纸上偶尔一颗麦芒，不是图案）—— 绝对零横线 */
     radial-gradient(1px 1px at 17% 22%, rgba(130,80,35,0.11) 50%, transparent 52%),
     radial-gradient(1px 1px at 63% 48%, rgba(95,60,22,0.09)  50%, transparent 52%),
     radial-gradient(1px 1px at 82% 73%, rgba(55,32,12,0.14)  50%, transparent 52%),
     radial-gradient(1px 1px at 31% 87%, rgba(155,95,32,0.08) 50%, transparent 52%),
-    radial-gradient(2px 2px at 46% 33%, rgba(60,40,15,0.08)  50%, transparent 55%),
-    /* 底层：米白暖调宣纸JPG（新重画的更白更暖版） */
-    url("/assets/xuanzhi-desktop.jpg");
-  background-size:
-    240px 240px, 330px 330px, 200px 200px, 280px 280px, 440px 440px,
-    auto 100%;
-  background-repeat: repeat, repeat, repeat, repeat, repeat, repeat;
+    radial-gradient(2px 2px at 46% 33%, rgba(60,40,15,0.08)  50%, transparent 55%);
+  background-size: 240px 240px, 330px 330px, 200px 200px, 280px 280px, 440px 440px;
+  background-repeat: repeat, repeat, repeat, repeat, repeat;
   color: var(--text-primary);
+  position: relative;
 }
-/* 手机端：换竖幅米白宣纸 + 散点更小更密 */
+/* JPG 宣纸"仅取纹理不取色"：opacity 18% 弱铺 + mix-blend-multiply让毛边纤维边缘微微加深 ≈ 真实宣纸触感 */
+[data-theme="light"] body::before{
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: url("/assets/xuanzhi-desktop.jpg");
+  background-size: auto 100%;
+  background-repeat: repeat;
+  opacity: 0.18;              /* JPG 泛黄成分只占 18%，对色值影响极小 */
+  mix-blend-mode: multiply;   /* 乘色模式：只加深纤维/毛边/斑点的"质感"，绝不把 cream 染黄 */
+}
+/* 手机端：换 9:16 竖幅 JPG 纹理 */
 @media (max-width: 899px){
+  [data-theme="light"] body::before{
+    background-image: url("/assets/xuanzhi-mobile.jpg");
+    background-size: 100% auto;
+    opacity: 0.20;
+  }
   [data-theme="light"] body{
-    background-image:
-      radial-gradient(1px 1px at 22% 18%, rgba(130,80,35,0.11) 50%, transparent 52%),
-      radial-gradient(1px 1px at 71% 42%, rgba(95,60,22,0.09)  50%, transparent 52%),
-      radial-gradient(1px 1px at 48% 79%, rgba(55,32,12,0.14)  50%, transparent 52%),
-      radial-gradient(1px 1px at 86% 66%, rgba(155,95,32,0.08) 50%, transparent 52%),
-      radial-gradient(2px 2px at 33% 56%, rgba(60,40,15,0.08)  50%, transparent 55%),
-      url("/assets/xuanzhi-mobile.jpg");
-    background-size: 180px 180px, 240px 240px, 210px 210px, 200px 200px, 360px 360px, 100% auto;
+    background-size: 180px 180px, 240px 240px, 210px 210px, 200px 200px, 360px 360px;
   }
 }
 [data-theme="green"] body,
@@ -1211,15 +1230,7 @@
 [data-theme="dark"] .recent-book-arrow{
   color: var(--accent) !important;
 }
-[data-theme="green"] {
-  --bg-primary: #e8f3e8; --bg-secondary: #f0f7f0; --bg-tertiary: #d6e8d6;
-  --bg-card: #f6fbf6; --bg-elevated: #e0f0e0;
-  --bg-hover: #c8dec8; --bg-active: #bcd4bc;
-  --text-primary: #2d3e2d; --text-secondary: #4a6b4a; --text-muted: #7a9a7a;
-  --border-color: #c0d8c0;
-  --accent: #4a8b4a; --accent-hover: #3a7a3a; --accent-light: #d0e8d0;
-  --shadow-sm: 0 1px 3px rgba(45,62,45,0.08); --shadow-md: 0 4px 12px rgba(45,62,45,0.1);
-}
+/* === 删除 L1233-L1241 旧重复 GREEN tokens（bg-primary=#e8f3e8）：已在 L79-L98 写了全新 AppleBooks风护眼绿 #f2f7f0；同优先级后声明覆盖前声明→会废掉新绿。彻底删除！*/
 :root {
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -1777,9 +1788,36 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .theme-options{display:flex;gap:12px;margin-top:8px}
 .theme-card{flex:1;text-align:center;padding:16px;background:var(--bg-tertiary);border:2px solid var(--border-color);border-radius:var(--radius-sm)}
 .theme-card.active{border-color:var(--accent)}
-.theme-preview{height:60px;border-radius:4px;margin-bottom:8px;border:1px solid var(--border-color)}
-.theme-preview.light{background:#faf9f5}
-.theme-preview.green{background:#e8f3e8}
+/* Theme Preview Cards：重做真实主题色 mini 缩略预览（用户之前说"浅色预览框纯白"=错）
+   每张卡片 = 对应主题的：主色 bg + 顶部 6px 标题条(title-green/accent) + 右下 1px accent 色角标 = 用户一眼看出区别，不显示白白矩形骗人 */
+.theme-preview{height:60px;border-radius:4px;margin-bottom:8px;border:1px solid var(--border-color);position:relative;overflow:hidden}
+/* light 真实预览：cream米白主底 + 顶部6px黛绿条(与h1"最近编辑"同色)+右下12×8砖红小角标(accent数字色)  ← 真实反映 v6N 双主色体系 */
+.theme-preview.light{
+  background:
+    /* 右下砖红角标 */
+    linear-gradient(135deg, transparent 85%, rgba(160,72,46,0.22) 85%),
+    linear-gradient(135deg, transparent 88%, rgba(160,72,46,0.40) 88%),
+    /* 主背景 cream */
+    #f5efe0;
+}
+.theme-preview.light::before{
+  content:""; position:absolute; top:0; left:0; right:0; height:6px;
+  background: #4d7e55;  /* 黛绿 = 标题色 */
+  border-bottom: 1px solid rgba(77,126,85,0.22);
+}
+/* green 真实预览：新 AppleBooks 淡豆绿 #f2f7f0 + 顶部深翠绿条（不再是旧玉版宣 #e8f3e8）*/
+.theme-preview.green{
+  background:
+    linear-gradient(135deg, transparent 85%, rgba(78,122,82,0.22) 85%),
+    linear-gradient(135deg, transparent 88%, rgba(78,122,82,0.40) 88%),
+    #f2f7f0;
+}
+.theme-preview.green::before{
+  content:""; position:absolute; top:0; left:0; right:0; height:6px;
+  background: #4e7a52;
+  border-bottom: 1px solid rgba(78,122,82,0.22);
+}
+/* 水墨国风 / dark 预览：保留原精致 SVG 山峦图（原本就做得好）*/
 .theme-preview.dark{background:#1a1a1a}
 /* 玉版宣预览卡（Mini 缩略）：SVG 三层黛青山脊 + 黛青方印「静心」+ 玉版宣纯白 */
 .theme-preview.ink-wash{
