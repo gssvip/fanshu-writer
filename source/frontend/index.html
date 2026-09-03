@@ -6,8 +6,7 @@
     <link rel="apple-touch-icon" href="./wangbiao.png" />
     <link rel="manifest" href="./manifest.json" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4e9d0" />
     <meta name="description" content="蚂蚁写作 - AI原生的中文网文创作工作台，移动端沉浸写作" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -16,6 +15,24 @@
 
     <title>蚂蚁写作</title>
     <script>
+      // ===========================================================
+      //  🔥 FOUC 防闪：React 挂载**之前**就写好 <html data-theme>
+      //  默认 = light（米黄羊皮纸 #f4e9d0 与用户截图一致）
+      //  这是防止"打开白/蓝一秒后才变黄"的唯一关键代码
+      // ===========================================================
+      (function () {
+        try {
+          var legacyKey = function (k) { return 'mayi-writing:' + k; };
+          var t = localStorage.getItem('app-theme') || localStorage.getItem(legacyKey('theme'));
+          if (t === 'sepia') t = 'green';
+          // 铁律：默认绝不 dark，默认 = light 米黄羊皮纸
+          if (!t) t = 'light';
+          document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+
       // 强制注销所有已注册的 Service Worker（避免缓存冲突）
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then(function (registrations) {
