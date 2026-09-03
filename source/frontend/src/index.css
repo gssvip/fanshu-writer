@@ -5412,13 +5412,163 @@ textarea.input.paper-textarea{
   font-weight: 700 !important;
   background: var(--bg-tertiary) !important;
 }
-/* Level L 排名序号(1/2/3) → 主色强调，其它序号 text-muted */
+/* ==================================================================
+   C1+C2 降低鲜艳度 + Emoji图标主题和谐化
+   (用户反馈：浅色/国风里所有工具图标底部Tab都太艳丽扎眼)
+================================================================== */
+
+/* ---------- C1. Light 主题主按钮/选中胶囊 降鲜艳（从皇家蓝→Notion/Microsoft级淡饱和蓝）---------- */
+/* 抓取/搜索/添加卷大纲 等大CTA按钮 chat-send.primary .btn-primary.active */
+[data-theme="light"] .chat-send.primary,
+[data-theme="light"] .nr-crawl-btn.is-crawl,
+[data-theme="light"] .btn-primary:not([class*="ai-master"]):not([class*="ai-entry"]):not([class*="ai-recog"]):not(.ai-master-banner):not(.btn-ai-entry-home):not(.btn-ai-recog),
+[data-theme="light"] .btn-primary[style],
+[data-theme="light"] .nr-filter-chip-selected,
+[data-theme="light"] .nr-platform-tab.active,
+[data-theme="light"] .concept-tab-5col button.active{
+  background: linear-gradient(180deg,#2563eb 0%,#1d4ed8 100%) !important; /* Tailwind Blue-600→700 柔和不扎眼 */
+  border-color: #1e40af !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset,
+              0 1px 2px rgba(30,64,175,0.12) !important; /* 去发光光晕 */
+}
+/* 反生成五幕式总纲：紫色 accent-secondary 同样降鲜艳 */
+[data-theme="light"] .chat-send.ghost-accent2,
+[data-theme="light"] .btn-accent-secondary,
+[data-theme="light"] button[style*="linear-gradient(135deg,#8b5cf6"],
+[data-theme="light"] button[style*="purple"]{
+  background: linear-gradient(180deg,#7c3aed 0%,#6d28d9 100%) !important;
+  border-color: #5b21b6 !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset,
+              0 1px 2px rgba(91,33,182,0.10) !important;
+}
+
+/* ---------- C1b. Dark(国风) 主按钮：石青加深一级，去纯皇家蓝（用户截图#224868 ok但不要royal发蓝光晕）---------- */
+[data-theme="dark"] .chat-send.primary,
+[data-theme="dark"] .nr-crawl-btn.is-crawl,
+[data-theme="dark"] .btn-primary,
+[data-theme="dark"] .nr-filter-chip-selected,
+[data-theme="dark"] .nr-platform-tab.active{
+  background: linear-gradient(180deg,#355d7e 0%,#2b4e6b 100%) !important;
+  border-color: #1d425d !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.10) inset,
+              0 1px 2px rgba(29,66,93,0.15) !important;
+}
+
+/* ---------- C2. Emoji 图标全局主题化（压鲜艳 + 叠主题Tint，和主题色对应不扎眼）---------- */
+/* 目标：所有 Tab 图标 + 创作10维度图标 + 平台Tab Emoji + 我的页面图标
+   原则：light→压饱和度 45% + 淡蓝tint；
+         dark→压饱和度 35% + 石青灰混合；
+         green→压饱和度 35% + 翠绿tint； */
+
+/* 底部 Tab 栏 4 个 Emoji 🏠✍️🔧👤 */
+[data-theme="light"] .tab-icon{
+  filter: saturate(0.55) brightness(0.98) contrast(0.95);
+  display: inline-block;
+}
+[data-theme="light"] .tab-item.active .tab-icon{
+  /* 激活时微微回升鲜艳，不重回高饱和 */
+  filter: saturate(0.70) brightness(1.00) contrast(1.00) drop-shadow(0 0 0 rgba(9,105,218,0));
+}
+
+/* 创作页 10 维度图标 write-tab-icon 💡⚙️📋📖👤📚🎒🗂️🔮🗺️ */
+[data-theme="light"] .write-tab-icon,
+[data-theme="light"] button.write-tab .write-tab-icon{
+  filter: saturate(0.50) brightness(0.98) contrast(0.95);
+  display: inline-block;
+  transform: scale(0.98);
+}
+[data-theme="light"] .write-tab.active .write-tab-icon{
+  filter: saturate(0.72) brightness(1.02) contrast(1.02);
+}
+
+/* 平台Tab Emoji（🍅番茄小说、🏯起点中文网） + 技能包图标 + 我的页面图标（图标容器）*/
+[data-theme="light"] .nr-platform-tab .tab-emoji,
+[data-theme="light"] .nr-crawl-btn .crawl-cloud-icon,
+[data-theme="light"] .smart-skill-icon,
+[data-theme="light"] .skill-pack-info-icon,
+[data-theme="light"] .concept-preview-icon,
+[data-theme="light"] .emoji-chip,
+[data-theme="light"] .mine-icon-wrap,
+[data-theme="light"] .icon-circle,
+[data-theme="light"] .config-row .row-icon,
+[data-theme="light"] .stat-card-head-icon,
+[data-theme="light"] .book-card-icon,
+[data-theme="light"] .home-action-icon,
+[data-theme="light"] .master-create-entry-icon{
+  filter: saturate(0.50) brightness(0.98) contrast(0.95);
+  display: inline-block;
+}
+
+/* 补回（前面大块Edit覆盖的）排名序号 / 搜索阴影规则 */
 .rank-no:nth-of-type,
 .rank-card-head .rank-no{
   color: color-mix(in srgb, var(--accent) 45%, var(--text-muted)) !important;
 }
-/* nr-search-btn 搜索 → 跟 accent 一致 (已经用var(--accent)但统一加box-shadow好看) */
 .nr-search-btn{
   box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* ===== 国风（Dark水墨） 压饱和 + 石青灰Tint，让彩色Emoji不再红黄蓝绿直上 ===== */
+[data-theme="dark"] .tab-icon{
+  filter: saturate(0.65) brightness(0.95) contrast(0.92) hue-rotate(-3deg);
+  display: inline-block;
+}
+[data-theme="dark"] .tab-item.active .tab-icon{
+  filter: saturate(0.78) brightness(0.98) contrast(1.0);
+}
+[data-theme="dark"] .write-tab-icon,
+[data-theme="dark"] button.write-tab .write-tab-icon{
+  filter: saturate(0.60) brightness(0.93) contrast(0.90) hue-rotate(-3deg);
+  display: inline-block;
+}
+[data-theme="dark"] .write-tab.active .write-tab-icon{
+  filter: saturate(0.78) brightness(1.0) contrast(1.0);
+}
+[data-theme="dark"] .nr-platform-tab .tab-emoji,
+[data-theme="dark"] .smart-skill-icon,
+[data-theme="dark"] .skill-pack-info-icon,
+[data-theme="dark"] .emoji-chip,
+[data-theme="dark"] .mine-icon-wrap,
+[data-theme="dark"] .icon-circle,
+[data-theme="dark"] .config-row .row-icon,
+[data-theme="dark"] .stat-card-head-icon,
+[data-theme="dark"] .book-card-icon,
+[data-theme="dark"] .home-action-icon,
+[data-theme="dark"] .master-create-entry-icon{
+  filter: saturate(0.58) brightness(0.93) contrast(0.90) hue-rotate(-2deg);
+  display: inline-block;
+}
+
+/* ===== 护眼绿 Green 压饱和 + 翠绿Tint ===== */
+[data-theme="green"] .tab-icon{
+  filter: saturate(0.65) brightness(0.98);
+  display: inline-block;
+}
+[data-theme="green"] .tab-item.active .tab-icon{
+  filter: saturate(0.8) brightness(1.0);
+}
+[data-theme="green"] .write-tab-icon,
+[data-theme="green"] button.write-tab .write-tab-icon{
+  filter: saturate(0.60) brightness(0.98);
+  display: inline-block;
+}
+[data-theme="green"] .write-tab.active .write-tab-icon{
+  filter: saturate(0.82) brightness(1.01);
+}
+[data-theme="green"] .nr-platform-tab .tab-emoji,
+[data-theme="green"] .smart-skill-icon,
+[data-theme="green"] .skill-pack-info-icon,
+[data-theme="green"] .emoji-chip,
+[data-theme="green"] .mine-icon-wrap,
+[data-theme="green"] .icon-circle,
+[data-theme="green"] .config-row .row-icon,
+[data-theme="green"] .stat-card-head-icon,
+[data-theme="green"] .book-card-icon,
+[data-theme="green"] .home-action-icon,
+[data-theme="green"] .master-create-entry-icon{
+  filter: saturate(0.58) brightness(0.97);
+  display: inline-block;
 }
 
