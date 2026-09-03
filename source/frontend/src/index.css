@@ -13,7 +13,8 @@
 }
 /* ===== 山水水墨画 · 国风主题（原 dark 位复用，淡色大气低对比） =====
    颜色逻辑：宣纸米白做底 + 墨色浓淡分层（不使用纯黑）+ 朱砂印章红点缀
-   背景叠加：宣纸绢纹 + 远山淡墨晕染（纯CSS，无外部资源）*/
+   背景叠加：宣纸绢纹 + 三层远山淡墨晕染 + 角落朱砂闲章（纯CSS/SVG，无外部资源）
+   对比度保障：所有正文文本 ≥ WCAG AA 4.5:1 */
 [data-theme="dark"] {
   /* 宣纸色阶（背景越靠后越白，越靠前越暖黄） */
   --bg-primary:    #f5f1e6;   /* 主背景：宣纸本白 */
@@ -23,10 +24,10 @@
   --bg-elevated:   #e8e0cb;   /* 浮层 Modal */
   --bg-hover:      #d9d0b9;   /* hover 交互 */
   --bg-active:     #cac0a7;   /* pressed 按下 */
-  /* 墨色字阶：焦墨→浓墨→中墨→淡墨，不使用 #000 追求国画质感 */
-  --text-primary:  #3b3429;   /* 浓墨主字色 */
-  --text-secondary:#655a49;   /* 中墨：副文字 */
-  --text-muted:    #928672;   /* 淡墨：辅助/占位 */
+  /* 墨色字阶（WCAG AA 通过版）：焦→浓→中→淡，不使用纯黑 #000 */
+  --text-primary:  #3b3429;   /* 浓墨主字色（≥10:1 · AAA） */
+  --text-secondary:#5a4f40;   /* 中墨：副文字（≥4.7:1 · AA 通过） */
+  --text-muted:    #82765e;   /* 淡墨：辅助/占位（≥3.1:1 · 非正文达标） */
   --border-color:  #d3c7ad;   /* 淡墨描边 */
   /* 朱砂印章红：国风强调色 */
   --accent:        #9a3324;
@@ -34,37 +35,101 @@
   --accent-light:  rgba(154,51,36,0.14);
   /* 国风阴影：暖灰淡影（非冷蓝灰） */
   --shadow-sm: 0 1px 3px rgba(60,48,30,0.07);
-  --shadow-md: 0 4px 14px rgba(60,48,30,0.10);
+  --shadow-md: 0 4px 16px rgba(60,48,30,0.10);
 }
 
-/* 水墨国风专属：宣纸绢纹 + 远山淡晕染 全局背景层
-   —— 全部用纯 CSS/SVG dataURI，零额外请求 */
+/* ===== 水墨国风：全局背景层（三远法山水构图 + 宣纸帘纹） ===== */
 [data-theme="dark"] body{
   background-color: var(--bg-primary);
   background-image:
-    /* 顶部远山剪影：两重淡墨山（灰褐墨色，opacity 很低避免干扰）*/
-    radial-gradient(ellipse 90% 40% at 50% -10%, rgba(70,60,45,0.08) 0%, rgba(70,60,45,0.04) 38%, transparent 70%),
-    /* 右下角落的墨点晕染（仿落款位置的淡墨团） */
-    radial-gradient(ellipse 35% 22% at 92% 105%, rgba(100,80,55,0.08) 0%, transparent 70%),
-    /* 宣纸肌理：超细条纹（仿帘纹/绢布纹） */
+    /* ① 远层远山：天头最高处（极淡 4% → 3%），只露山顶尖，仿远景平远 */
+    radial-gradient(ellipse 110% 28% at 50% -5%, rgba(68,58,42,0.05) 0%, rgba(68,58,42,0.03) 42%, transparent 78%),
+    /* ② 中层远山：略低略深，仿中景（平远与深远过渡） */
+    radial-gradient(ellipse 95% 34% at 42% 2%, rgba(78,66,48,0.07) 0%, rgba(78,66,48,0.04) 48%, transparent 82%),
+    /* ③ 近层山丘：左下角/右下角偏重（但仍淡，仿近景山麓） */
+    radial-gradient(ellipse 55% 20% at 6% 102%, rgba(85,70,50,0.09) 0%, transparent 75%),
+    radial-gradient(ellipse 45% 18% at 97% 104%, rgba(90,72,50,0.07) 0%, transparent 75%),
+    /* 宣纸肌理：竖帘纹（手工宣纸竹帘痕迹）+ 横布纹（绢布感） */
     repeating-linear-gradient( 90deg, rgba(120,95,60,0.022) 0 1px, transparent 1px 4px),
-    repeating-linear-gradient(  0deg, rgba(120,95,60,0.015) 0 1px, transparent 1px 5px),
-    /* 整体底色（保证覆盖全屏） */
-    linear-gradient(180deg, var(--bg-primary) 0%, #f1ece0 100%);
+    repeating-linear-gradient(  0deg, rgba(120,95,60,0.014) 0 1px, transparent 1px 5px),
+    /* 整体底色渐变：天头略白 → 地脚略暖（仿老宣纸受氧化） */
+    linear-gradient(180deg, #f7f3e8 0%, var(--bg-primary) 22%, #f1ebdd 100%);
   background-attachment: fixed;
+  position: relative; /* 为 ::after 闲章定位提供父层 */
 }
-/* 纸张类纸（paper-notebook）在水墨风下：背景和横线调整为更贴合宣纸质感 */
+/* 右下角 朱砂闲章（"静心"方印）— opacity 6%，仿画卷压脚，不抢内容 */
+[data-theme="dark"] body::after{
+  content:"";
+  position:fixed; right:26px; bottom:30px; width:46px; height:46px; z-index:0;
+  pointer-events:none; opacity:0.055;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 46'><rect x='1' y='1' width='44' height='44' rx='3' ry='3' fill='%239a3324' stroke='%237e2a1d' stroke-width='2'/><path d='M13 10h6c0 5-2 8-6 8zM23 10h10v4H27v8h-4zM10 24h26v4h-10v14h-6V28H10z' fill='%23fff' fill-opacity='0.95'/></svg>");
+  background-repeat:no-repeat; background-size:contain;
+}
+
+/* ===== 水墨国风：组件质感强化（宣纸毛边 · 印章红线压边 · 楷书标题） ===== */
+
+/* 面板/卡片：双边 + 内 1px 暖影，仿宣纸卡片装裱 */
+[data-theme="dark"] .tool-panel,
+[data-theme="dark"] .chat-panel-root,
+[data-theme="dark"] .analyze-card,
+[data-theme="dark"] .book-card,
+[data-theme="dark"] .ledger-card,
+[data-theme="dark"] .ai-assistant-card{
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.6) inset,              /* 上侧微亮（纸高光） */
+    0 0 0 1px rgba(60,48,30,0.05) inset,              /* 内描淡墨 1px */
+    var(--shadow-md);
+  border: 1px solid var(--border-color);
+}
+/* 侧边栏：左侧加一道细朱砂竖线，仿线装书装订的红线压边 */
+[data-theme="dark"] .desktop-sidebar{
+  border-right: 1px solid var(--border-color);
+  box-shadow: 3px 0 0 -2px rgba(154,51,36,0.55) inset;
+}
+/* Active 导航项：朱红淡底 + 左朱砂竖短线（印章选中感） */
+[data-theme="dark"] .sidebar-item.active{
+  box-shadow: -1px 0 0 3px var(--accent), 0 0 0 1px rgba(154,51,36,0.25) inset;
+  border-radius: 6px;
+}
+/* 卡片标题/面板标题：楷书气质 —— 拉开字距 + 600 字重 + 底部淡墨短分隔 */
+[data-theme="dark"] h1,
+[data-theme="dark"] h2,
+[data-theme="dark"] .tool-panel > h3,
+[data-theme="dark"] .ledger-title,
+[data-theme="dark"] .mine-section-title{
+  letter-spacing: 1.25px; font-weight: 600;
+}
+[data-theme="dark"] .tool-panel > h3,
+[data-theme="dark"] .mine-section-title{
+  border-bottom: 1px solid rgba(60,48,30,0.12);
+  padding-bottom: 8px; margin-bottom: 14px;
+}
+
+/* 输入框/文本框聚焦：朱砂红线淡光环（符合国风强调色体系） */
+[data-theme="dark"] input:focus,
+[data-theme="dark"] textarea:focus,
+[data-theme="dark"] select:focus{
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(154,51,36,0.14);
+}
+
+/* 纸张类纸（paper-notebook）在水墨风下：宣纸 #f6f1e4 + 横线使用淡墨色 */
 [data-theme="dark"] .paper-notebook,
 [data-theme="dark"] .paper-inner,
 [data-theme="dark"] .paper-textarea{
   background-color: #f6f1e4 !important;
 }
-/* 水墨主题下，主按钮（朱砂）加一点印章立体感 */
+
+/* 主按钮（朱砂印章）：渐变立体感 + 字距拉开 + 轻微上翘内阴影刻章感 */
 [data-theme="dark"] .btn-primary,
 [data-theme="dark"] .btn-primary-sm{
-  background: linear-gradient(180deg, #a33828 0%, #8d2e20 100%);
-  box-shadow: inset 0 -2px 0 rgba(0,0,0,0.15), 0 2px 6px rgba(154,51,36,0.22);
-  letter-spacing: 1px;
+  background: linear-gradient(180deg, #a63929 0%, #882b1e 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.18),
+    inset 0 -2px 0 rgba(0,0,0,0.20),
+    0 2px 6px rgba(154,51,36,0.25);
+  letter-spacing: 1.2px;
+  border-radius: 6px;
 }
 [data-theme="green"] {
   --bg-primary: #e8f3e8; --bg-secondary: #f0f7f0; --bg-tertiary: #d6e8d6;
@@ -636,14 +701,23 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .theme-preview.light{background:#faf9f5}
 .theme-preview.green{background:#e8f3e8}
 .theme-preview.dark{background:#1a1a1a}
-/* 水墨国风预览卡：宣纸白 + 顶部远山淡墨晕染 + 朱砂红章角落款 */
+/* 水墨国风预览卡（Miniature 预览）：三远法山水 + 朱砂方印「静心」 + 帘纹 */
 .theme-preview.ink-wash{
   background-color:#f5f1e6;
   background-image:
-    radial-gradient(ellipse 100% 50% at 50% -5%, rgba(70,60,45,0.16) 0%, rgba(70,60,45,0.08) 40%, transparent 75%),
-    radial-gradient(circle 10px at 88% 82%, #9a3324 0%, #7e2a1d 100%);
+    /* 远景山顶尖 */
+    radial-gradient(ellipse 120% 28% at 50% -10%, rgba(68,58,42,0.14) 0%, rgba(68,58,42,0.06) 42%, transparent 78%),
+    /* 中景山 */
+    radial-gradient(ellipse 90% 32% at 38% 12%, rgba(78,66,48,0.20) 0%, rgba(78,66,48,0.08) 48%, transparent 82%),
+    /* 近景山麓 */
+    radial-gradient(ellipse 55% 24% at 8% 106%, rgba(85,70,50,0.25) 0%, transparent 72%),
+    radial-gradient(ellipse 50% 22% at 96% 108%, rgba(90,72,50,0.22) 0%, transparent 75%),
+    /* 预览卡右下角朱砂方印（和全局闲章呼应） */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' x='78%25' y='65%25' width='14' height='14' preserveAspectRatio='xMidYMid meet'><rect x='0.5' y='0.5' width='9' height='9' rx='0.8' ry='0.8' fill='%239a3324' stroke='%237e2a1d' stroke-width='0.6'/><path d='M2.5 2.3h1.4c0 1-0.4 1.8-1.4 1.8zM5.1 2.3h2.3v0.9H6v1.8H5.1zM2 5.2h6v0.9H4.5v3.1H3.2V6.1H2z' fill='%23fff' fill-opacity='0.95'/></svg>"),
+    /* 宣纸帘纹 */
+    repeating-linear-gradient( 90deg, rgba(120,95,60,0.06) 0 1px, transparent 1px 4px);
   border:1px solid #d3c7ad;
-  box-shadow: inset 0 0 0 1px rgba(154,51,36,0.08);
+  box-shadow: inset 0 0 0 1px rgba(154,51,36,0.10);
 }
 .theme-card span{font-size:13px}
 
