@@ -5417,8 +5417,8 @@ textarea.input.paper-textarea{
    (用户反馈：浅色/国风里所有工具图标底部Tab都太艳丽扎眼)
 ================================================================== */
 
-/* ---------- C1. Light 主题主按钮/选中胶囊 降鲜艳（从皇家蓝→Notion/Microsoft级淡饱和蓝）---------- */
-/* 抓取/搜索/添加卷大纲 等大CTA按钮 chat-send.primary .btn-primary.active */
+/* ---------- C1. Light 主题主按钮/选中胶囊 降鲜艳（Notion/飞书级 柔和蓝，不再皇家饱和蓝）---------- */
+/* 用户截图：Light纯白主题上的 搜索/番茄/抓取本榜/阅读榜/男频/添加卷大纲 → 必须像 Notion 按钮的柔和蓝 */
 [data-theme="light"] .chat-send.primary,
 [data-theme="light"] .nr-crawl-btn.is-crawl,
 [data-theme="light"] .btn-primary:not([class*="ai-master"]):not([class*="ai-entry"]):not([class*="ai-recog"]):not(.ai-master-banner):not(.btn-ai-entry-home):not(.btn-ai-recog),
@@ -5426,34 +5426,36 @@ textarea.input.paper-textarea{
 [data-theme="light"] .nr-filter-chip-selected,
 [data-theme="light"] .nr-platform-tab.active,
 [data-theme="light"] .concept-tab-5col button.active{
-  background: linear-gradient(180deg,#2563eb 0%,#1d4ed8 100%) !important; /* Tailwind Blue-600→700 柔和不扎眼 */
-  border-color: #1e40af !important;
+  background: linear-gradient(180deg,#3a86ff 0%,#2a6fe8 100%) !important; /* Notion/飞书柔和蓝 Blue400→500 */
+  border-color: #2266d8 !important;
   color: #ffffff !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset,
-              0 1px 2px rgba(30,64,175,0.12) !important; /* 去发光光晕 */
+  box-shadow: 0 1px 0 rgba(255,255,255,0.32) inset,
+              0 1px 3px rgba(34,102,216,0.14) !important; /* 绝对零光晕 */
 }
-/* 反生成五幕式总纲：紫色 accent-secondary 同样降鲜艳 */
+/* 反生成五幕式总纲 紫色 降一级柔和 */
 [data-theme="light"] .chat-send.ghost-accent2,
 [data-theme="light"] .btn-accent-secondary,
 [data-theme="light"] button[style*="linear-gradient(135deg,#8b5cf6"],
 [data-theme="light"] button[style*="purple"]{
-  background: linear-gradient(180deg,#7c3aed 0%,#6d28d9 100%) !important;
-  border-color: #5b21b6 !important;
+  background: linear-gradient(180deg,#8b5cf6 0%,#7c3aed 100%) !important; /* P500→P600 柔和紫 */
+  border-color: #6d28d9 !important;
   color: #ffffff !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset,
-              0 1px 2px rgba(91,33,182,0.10) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.26) inset,
+              0 1px 3px rgba(109,40,217,0.12) !important;
 }
 
-/* ---------- C1b. Dark(国风) 主按钮：石青加深一级，去纯皇家蓝（用户截图#224868 ok但不要royal发蓝光晕）---------- */
+/* ---------- C1b. 国风(DARK·玉版宣白底·水墨) 主按钮 —— 淡石青（绝对不能像截图里的海军黑砖头！）---------- */
+/* 用户截图圈圈圈的三个都是：死黑海军蓝 → 改成 淡石青 墨水蓝，和玉版宣和谐 */
 [data-theme="dark"] .chat-send.primary,
 [data-theme="dark"] .nr-crawl-btn.is-crawl,
 [data-theme="dark"] .btn-primary,
 [data-theme="dark"] .nr-filter-chip-selected,
 [data-theme="dark"] .nr-platform-tab.active{
-  background: linear-gradient(180deg,#355d7e 0%,#2b4e6b 100%) !important;
-  border-color: #1d425d !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.10) inset,
-              0 1px 2px rgba(29,66,93,0.15) !important;
+  background: linear-gradient(180deg,#6b9bbf 0%,#5186ae 100%) !important; /* 淡石青墨水蓝 */
+  border-color: #4479a0 !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.28) inset,
+              0 2px 5px rgba(68,121,160,0.18) !important; /* 软不炸 */
 }
 
 /* ---------- C2. Emoji 图标全局主题化（压鲜艳 + 叠主题Tint，和主题色对应不扎眼）---------- */
