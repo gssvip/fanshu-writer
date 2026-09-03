@@ -1215,26 +1215,53 @@ _RESERVED_WHITELIST = frozenset({'666', '888'})
 
 
 def _is_reserved_username(username: str) -> bool:
-    """判断用户名是否属于"保留给未来会员"的短号。
+    """判断用户名是否属于"保留给未来会员"的短号（新版 · 仅保留豹子号/顺子号）。
 
-    规则：
-      - 1~5 位纯数字 → 保留
-      - 1~5 位纯字母（大小写都算）→ 保留
-      - 白名单 {'666','888'} → 即使命中也"不"保留
+    规则（命中任意一条 → 保留；白名单优先放行）：
+      1) 白名单 {'666','888'} → 即使命中也"不"保留（放行）
+      2) 1~5 位纯数字：
+         · 豹子号（所有数字相同，如 1、22、333、99999）→ 保留
+         · 顺子号（长度≥2，相邻数字逐位 +1 或逐位 -1，如 12、321、56789、98765、43210）→ 保留
+         · 其他 1~5 位纯数字（如 12、13、100、121、1024…）→ 放行
+      3) 1~5 位纯字母（大小写敏感）：
+         · 豹子号（所有字母完全相同，如 a、AA、bbb、CCCCC、zzzzz）→ 保留
+         · 其他 1~5 位纯字母（如 ab、Abc、hello、WORLD…）→ 放行
+      4) 长度不在 1~5、或含非纯数字/纯字母组合 → 不进入保留逻辑，放行
     """
     if not isinstance(username, str):
         return False
     u = username.strip()
     if not u:
         return False
+    # 白名单：即使命中保留规则也放行
     if u in _RESERVED_WHITELIST:
         return False
     if len(u) < 1 or len(u) > 5:
         return False
+
+    # --- 纯数字：豹子号 / 顺子号 ---
     if u.isdigit():
-        return True
+        # 豹子号：所有数字相同
+        all_same = all(c == u[0] for c in u)
+        if all_same:
+            return True
+        # 顺子号：长度≥2，相邻数字差值恒为 +1 或 恒为 -1
+        if len(u) >= 2:
+            nums = [int(c) for c in u]
+            inc = all(nums[i + 1] - nums[i] == 1 for i in range(len(nums) - 1))
+            dec = all(nums[i + 1] - nums[i] == -1 for i in range(len(nums) - 1))
+            if inc or dec:
+                return True
+        return False
+
+    # --- 纯字母：仅豹子号 ---
     if u.isalpha():
-        return True
+        # 豹子号：所有字母完全相同（大小写敏感，a≠A）
+        all_same = all(c == u[0] for c in u)
+        if all_same:
+            return True
+        return False
+
     return False
 
 
