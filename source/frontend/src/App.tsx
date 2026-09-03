@@ -92,9 +92,11 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    // 自定义主题：注入 CSS 变量
+    // 自定义主题：先写 8 个用户输入的基础变量，再自动衍生 18 个派生变量（color-mix 浏览器原生计算）
+    // ★ 神奇自适应：无论用户把 accent 改成蓝/紫/粉/墨/任何色，衍生的 hover/淡底/光环/阴影/圆角/过渡 全部自动完美匹配！
     if (theme === 'custom' && customColors) {
       const root = document.documentElement;
+      // A. 8 个基础变量（用户从 MinePage 自定义配色里输入）
       root.style.setProperty('--bg-primary', customColors.bgPrimary);
       root.style.setProperty('--bg-secondary', customColors.bgSecondary);
       root.style.setProperty('--bg-tertiary', customColors.bgTertiary);
@@ -103,17 +105,47 @@ export default function App() {
       root.style.setProperty('--text-muted', customColors.textMuted);
       root.style.setProperty('--accent', customColors.accent);
       root.style.setProperty('--border-color', customColors.borderColor);
+      // B. 14 个派生变量（color-mix srgb：mix of accent/bg/text → 自动得到 hover/淡底/淡边/阴影/字/卡浮层 等）
+      //    主色衍生：hover(更浓22%) / soft(+白38%) / light(10%淡底)
+      root.style.setProperty('--accent-hover',  'color-mix(in srgb, var(--accent) 78%, black)');
+      root.style.setProperty('--accent-soft',   'color-mix(in srgb, var(--accent) 62%, white)');
+      root.style.setProperty('--accent-light',  'color-mix(in srgb, var(--accent) 10%, transparent)');
+      //    背景衍生：卡片(98%白+bg-secondary) / 浮层纯白 / hover(93%+7%黑) / active(87%+13%黑)
+      root.style.setProperty('--bg-card',       'color-mix(in srgb, var(--bg-secondary) 98%, white)');
+      root.style.setProperty('--bg-elevated',   '#ffffff');
+      root.style.setProperty('--bg-hover',      'color-mix(in srgb, var(--bg-secondary) 93%, black)');
+      root.style.setProperty('--bg-active',     'color-mix(in srgb, var(--bg-secondary) 87%, black)');
+      //    字衍生：text-subtle（30%+白，更淡）
+      root.style.setProperty('--text-subtle',   'color-mix(in srgb, var(--text-muted) 70%, white)');
+      //    阴影衍生：用 text-primary 的 alpha（因为阴影用主色调会违和；浓墨色最稳）
+      root.style.setProperty('--shadow-sm', '0 1px 3px  color-mix(in srgb, var(--text-primary) 5%, transparent)');
+      root.style.setProperty('--shadow-md', '0 4px 14px color-mix(in srgb, var(--text-primary) 6%, transparent)');
+      root.style.setProperty('--shadow-lg', '0 8px 28px color-mix(in srgb, var(--text-primary) 8%, transparent)');
+      // C. 通用 3 圆角 + 3 过渡（所有主题同一规范，不拼凑）
+      root.style.setProperty('--radius-sm', '6px');
+      root.style.setProperty('--radius-md', '10px');
+      root.style.setProperty('--radius-lg', '14px');
+      root.style.setProperty('--tr-fast', '0.10s ease-in-out');
+      root.style.setProperty('--tr-base', '0.18s ease-out');
+      root.style.setProperty('--tr-slow', '0.25s ease');
     } else {
-      // 切换到预设主题时清除自定义变量
+      // 切换到预设主题（水墨国风/浅色/护眼绿）→ 清除全部 setProperty 的自定义变量，
+      // 让 CSS 文件里的 [data-theme=xxx] tokens 重新生效。
       const root = document.documentElement;
-      root.style.removeProperty('--bg-primary');
-      root.style.removeProperty('--bg-secondary');
-      root.style.removeProperty('--bg-tertiary');
-      root.style.removeProperty('--text-primary');
-      root.style.removeProperty('--text-secondary');
-      root.style.removeProperty('--text-muted');
-      root.style.removeProperty('--accent');
-      root.style.removeProperty('--border-color');
+      const ALL_VARS = [
+        // A. 基础 8
+        '--bg-primary','--bg-secondary','--bg-tertiary',
+        '--text-primary','--text-secondary','--text-muted',
+        '--accent','--border-color',
+        // B. 派生 14
+        '--accent-hover','--accent-soft','--accent-light',
+        '--bg-card','--bg-elevated','--bg-hover','--bg-active',
+        '--text-subtle','--shadow-sm','--shadow-md','--shadow-lg',
+        // C. 圆角 + 过渡 9
+        '--radius-sm','--radius-md','--radius-lg',
+        '--tr-fast','--tr-base','--tr-slow',
+      ];
+      ALL_VARS.forEach(v => root.style.removeProperty(v));
     }
   }, [theme, customColors]);
 
