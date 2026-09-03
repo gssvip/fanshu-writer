@@ -5572,3 +5572,140 @@ textarea.input.paper-textarea{
   display: inline-block;
 }
 
+/* =====================================================================
+   D 层（最高优先级）：进一步降鲜艳度
+   用户明确骂：墨水蓝太扎眼、创作工具我的内部图标还艳丽
+   策略：按钮柔化 + 图标saturate再压一档 + 国风加sepia把红黄彻底抽走成水墨灰
+===================================================================== */
+
+/* ---------- D1. Light ：墨水蓝CTA → 柔和轻蓝（Notion级，不深不浓不墨）---------- */
+[data-theme="light"] .chat-send.primary,
+[data-theme="light"] .nr-crawl-btn.is-crawl,
+[data-theme="light"] .btn-primary:not([class*="ai-master"]):not([class*="ai-entry"]):not([class*="ai-recog"]):not(.ai-master-banner):not(.btn-ai-entry-home):not(.btn-ai-recog),
+[data-theme="light"] .btn-primary[style],
+[data-theme="light"] .nr-filter-chip-selected,
+[data-theme="light"] .nr-platform-tab.active,
+[data-theme="light"] .concept-tab-5col button.active{
+  background: linear-gradient(180deg, #4c8fe8 0%, #3f7ed8 100%) !important; /* 柔轻蓝 B350→B500，不再浓墨 */
+  border-color: #3e77c9 !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset !important; /* 影子再砍半（去厚重感） */
+}
+/* 紫按钮：柔紫 P400→P500，不再浓紫 */
+[data-theme="light"] .chat-send.ghost-accent2,
+[data-theme="light"] .btn-accent-secondary,
+[data-theme="light"] button[style*="linear-gradient(135deg,#8b5cf6"],
+[data-theme="light"] button[style*="purple"]{
+  background: linear-gradient(180deg,#9b74f0 0%,#8a60e5 100%) !important;
+  border-color: #7f55df !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.20) inset !important;
+}
+/* 精选按钮(金橙)同样降一档鲜艳 */
+[data-theme="light"] .nr-crawl-btn.is-curated{
+  background: linear-gradient(180deg, #f2a74a 0%, #e89533 100%) !important;
+  border-color: #dd8928 !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.20) inset !important;
+}
+
+/* ---------- D1b. Dark国风：石青CTA再减饱和→清淡灰石青，不再浓墨重彩 ---------- */
+[data-theme="dark"] .chat-send.primary,
+[data-theme="dark"] .nr-crawl-btn.is-crawl,
+[data-theme="dark"] .btn-primary,
+[data-theme="dark"] .nr-filter-chip-selected,
+[data-theme="dark"] .nr-platform-tab.active{
+  background: linear-gradient(180deg, #5d87a4 0%, #507b98 100%) !important; /* 清淡石青，压浓墨 */
+  border-color: #487290 !important;
+  color: #ffffff !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset !important;
+}
+/* 国风精选按钮同样降鲜艳 */
+[data-theme="dark"] .nr-crawl-btn.is-curated{
+  background: linear-gradient(180deg, #b8874a 0%, #a9763a 100%) !important;
+  border-color: #9b6a30 !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset !important;
+}
+
+/* ---------- D2 Light图标：saturate再压到0.4→0.45，创作/工具/我的内部图标全不扎眼 ---------- */
+[data-theme="light"] .tab-icon{ filter: saturate(0.42) brightness(0.97) contrast(0.92) !important; display:inline-block; }
+[data-theme="light"] .tab-item.active .tab-icon{ filter: saturate(0.60) brightness(1.0) !important; }
+[data-theme="light"] .write-tab-icon,
+[data-theme="light"] button.write-tab .write-tab-icon{ filter: saturate(0.40) brightness(0.97) contrast(0.92) !important; display:inline-block; transform: scale(0.97); }
+[data-theme="light"] .write-tab.active .write-tab-icon{ filter: saturate(0.60) brightness(1.0) !important; }
+/* 覆盖：MinePage/工具/创作/ChatPanel 所有emoji/图标/小画片/图标容器 */
+[data-theme="light"] .nr-platform-tab .tab-emoji,
+[data-theme="light"] .nr-crawl-btn .crawl-cloud-icon,
+[data-theme="light"] .smart-skill-icon,
+[data-theme="light"] .skill-pack-info-icon,
+[data-theme="light"] .skill-pack-toggle-icon,
+[data-theme="light"] .skill-pack-checkbox-icon,
+[data-theme="light"] .concept-preview-icon,
+[data-theme="light"] .emoji-chip,
+[data-theme="light"] .mine-icon-wrap,
+[data-theme="light"] .icon-circle,
+[data-theme="light"] .config-row .row-icon,
+[data-theme="light"] .stat-card-head-icon,
+[data-theme="light"] .book-card-icon,
+[data-theme="light"] .home-action-icon,
+[data-theme="light"] .master-create-entry-icon,
+[data-theme="light"] .chat-card-icon,
+[data-theme="light"] .chat-send::before,
+[data-theme="light"] .btn-ghost-sm > span:first-child,
+[data-theme="light"] .btn-ghost-sm > svg:first-child,
+[data-theme="light"] .config-category-icon,
+[data-theme="light"] .theme-preview-meta,
+[data-theme="light"] .settings-page-icon,
+[data-theme="light"] .mine-page .icon-wrap,
+[data-theme="light"] .mine-stats-icon,
+[data-theme="light"] .profile-emoji,
+[data-theme="light"] .mine-tab-icon{ filter: saturate(0.40) brightness(0.97) contrast(0.92) !important; display:inline-block; }
+/* 创作页顶部按钮（返回/实体/识别/展开）图标及小emoji */
+[data-theme="light"] .concept-panel button[class*="ghost"] > *,
+[data-theme="light"] .write-page-topbar button > *{ filter: saturate(0.55) !important; }
+
+/* ---------- D2b 国风 Dark：加 sepia(20%) 把红黄直接抽灰，彻底水墨灰石青调 ---------- */
+[data-theme="dark"] .tab-icon{ filter: saturate(0.45) brightness(0.92) contrast(0.88) sepia(0.22) hue-rotate(-4deg) !important; display:inline-block; }
+[data-theme="dark"] .tab-item.active .tab-icon{ filter: saturate(0.60) brightness(0.96) contrast(0.94) sepia(0.18) hue-rotate(-4deg) !important; }
+[data-theme="dark"] .write-tab-icon,
+[data-theme="dark"] button.write-tab .write-tab-icon{ filter: saturate(0.42) brightness(0.90) contrast(0.86) sepia(0.25) hue-rotate(-4deg) !important; display:inline-block; }
+[data-theme="dark"] .write-tab.active .write-tab-icon{ filter: saturate(0.60) brightness(0.94) contrast(0.92) sepia(0.20) hue-rotate(-4deg) !important; }
+/* 全部工具/创作/我的 图标 sepia 水墨化 */
+[data-theme="dark"] .nr-platform-tab .tab-emoji,
+[data-theme="dark"] .nr-crawl-btn .crawl-cloud-icon,
+[data-theme="dark"] .smart-skill-icon,
+[data-theme="dark"] .skill-pack-info-icon,
+[data-theme="dark"] .skill-pack-toggle-icon,
+[data-theme="dark"] .skill-pack-checkbox-icon,
+[data-theme="dark"] .concept-preview-icon,
+[data-theme="dark"] .emoji-chip,
+[data-theme="dark"] .mine-icon-wrap,
+[data-theme="dark"] .icon-circle,
+[data-theme="dark"] .config-row .row-icon,
+[data-theme="dark"] .stat-card-head-icon,
+[data-theme="dark"] .book-card-icon,
+[data-theme="dark"] .home-action-icon,
+[data-theme="dark"] .master-create-entry-icon,
+[data-theme="dark"] .chat-card-icon,
+[data-theme="dark"] .config-category-icon,
+[data-theme="dark"] .mine-stats-icon,
+[data-theme="dark"] .profile-emoji,
+[data-theme="dark"] .mine-tab-icon{ filter: saturate(0.40) brightness(0.90) contrast(0.86) sepia(0.25) hue-rotate(-4deg) !important; display:inline-block; }
+
+/* ---------- D2c Green护眼绿：saturate再压 ---------- */
+[data-theme="green"] .tab-icon{ filter: saturate(0.55) brightness(0.97) !important; display:inline-block; }
+[data-theme="green"] .write-tab-icon,
+[data-theme="green"] button.write-tab .write-tab-icon{ filter: saturate(0.52) brightness(0.97) !important; display:inline-block; }
+[data-theme="green"] .nr-platform-tab .tab-emoji,
+[data-theme="green"] .smart-skill-icon,
+[data-theme="green"] .skill-pack-info-icon,
+[data-theme="green"] .emoji-chip,
+[data-theme="green"] .mine-icon-wrap,
+[data-theme="green"] .icon-circle,
+[data-theme="green"] .config-row .row-icon,
+[data-theme="green"] .stat-card-head-icon,
+[data-theme="green"] .book-card-icon,
+[data-theme="green"] .home-action-icon,
+[data-theme="green"] .master-create-entry-icon,
+[data-theme="green"] .chat-card-icon,
+[data-theme="green"] .mine-tab-icon{ filter: saturate(0.50) brightness(0.96) !important; display:inline-block; }
+
