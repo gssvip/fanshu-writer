@@ -53,14 +53,8 @@
   background-attachment: fixed, fixed;
   color: var(--text-primary);
 }
-/* 右下角 朱砂小闲章「静心」38px（画里有粉红桃花，淡朱砂呼应；不显眼） */
-[data-theme="dark"] body::after{
-  content:"";
-  position:fixed; right:20px; bottom:24px; width:38px; height:38px; z-index:0;
-  pointer-events:none; opacity:0.16;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 46'><rect x='1.2' y='1.2' width='43.6' height='43.6' rx='3' ry='3' fill='%239a3324' stroke='%237e2a1d' stroke-width='1.6'/><path d='M13 10h6c0 5-2 8-6 8zM23 10h10v4H27v8h-4zM10 24h26v4h-10v14h-6V28H10z' fill='%23fff' fill-opacity='0.95'/></svg>");
-  background-repeat:no-repeat; background-size:contain;
-}
+/* 右下角印签：用户要求移除（手机/桌面端一律隐藏） */
+[data-theme="dark"] body::after{ display: none !important; }
 /* 桌面端 ≥900px：保持默认 landscape 不变，明确声明一下 */
 @media (min-width: 900px){
   [data-theme="dark"] body{
@@ -76,8 +70,8 @@
       linear-gradient(180deg, rgba(255,255,255,0.88) 0%, rgba(255,255,255,0.72) 50%, rgba(255,255,255,0.92) 100%),
       url("/assets/ink-portrait.jpg");
   }
-  /* 闲章再上移/缩小，绝对不挡底部 tab */
-  [data-theme="dark"] body::after{ width:30px; height:30px; right:14px; bottom:86px; opacity:0.14; }
+  /* 手机端：移除闲章上移/缩小声明（已被隐藏） */
+  [data-theme="dark"] body::after{ display: none !important; }
 }
 
 /* ===== 国风水墨画 组件：冷白 石青 清雅系 ===== */
