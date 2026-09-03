@@ -1302,19 +1302,9 @@ category：master
                 flex:'1 1 auto', minWidth:0, justifyContent:'flex-end',
               }}>
                 <button
-                  className="chat-send primary nr-crawl-btn"
+                  className={`chat-send primary nr-crawl-btn ${nrList?.sourceKind==='curated' ? 'is-curated' : 'is-crawl'}`}
                   onClick={handleNrCrawlNow}
                   disabled={nrCrawling || nrListLoading}
-                  style={{
-                    padding:'8px 18px',minHeight:36,minWidth: 140,flex:'0 0 auto',
-                    borderRadius: 10, fontWeight: 800, fontSize:14,
-                    background: nrList?.sourceKind==='curated'
-                      ? 'linear-gradient(135deg,#f39c12,#c0392b)'
-                      : 'linear-gradient(135deg,#16a085,#22a06b)',
-                    border: '1px solid transparent',
-                    color: '#fff',
-                    boxShadow:'0 2px 10px color-mix(in srgb, var(--accent) 25%, transparent)',
-                  }}
                   title="按当前筛选条件重新抓取/刷新本榜单（#6：点击才抓，不自动触发）"
                 >
                   {nrCrawling ? '⏳ 抓取中…' : nrList?.sourceKind==='curated' ? '🔄 刷新精选' : '☁️ 抓取本榜'}

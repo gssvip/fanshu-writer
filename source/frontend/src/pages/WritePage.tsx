@@ -2381,11 +2381,10 @@ function ConceptPanel(props: {
       {/* 构思维度：AI 智驾入口（四Tab：设定/正文/去AI/校审） */}
       <div className="concept-input-section" style={{ alignItems: 'center', justifyContent: 'center', flex: 0, gap: 10, flexDirection: 'column' }}>
         <button
-          className="btn-primary concept-ai-create-cta"
+          className="btn-primary concept-ai-create-cta ai-master-banner"
           onClick={() => { if (bookId) openChatPanel(bookId, undefined, { tab: 'setting' }); }}
           disabled={!bookId}
           title="打开 AI 智驾：设定/正文/去AI/校审 四 Tab 协作创作。对话框里直接说「扫一下番茄新书榜」或「先看起点市场风向再创作」即可触发扫榜联动。"
-          style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)' }}
         >
           <div className="cta-main-row">
             <CarLogo size={90} />
@@ -3487,11 +3486,10 @@ function ChapterPanel(props: {
         </div>
         <div className="chapter-header-row2">
           <button
-            className="btn-ghost-sm"
+            className="btn-ghost-sm btn-ai-recog"
             onClick={handleAiImportRecognize}
             disabled={aiImportRecognizing || !bookId || chapters.filter(c => !c.is_volume).length === 0}
             title="根据导入作品的文件名/章节标题+内容样本，AI自动识别填入空的创作维度（不覆盖已有内容）"
-            style={{background:'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)',color:'#fff',fontWeight:600}}
           >
             {aiImportRecognizing ? '⏳ 识别中...' : '🤖 AI识别填维度'}
           </button>

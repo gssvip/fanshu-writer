@@ -5252,3 +5252,173 @@ textarea.input.paper-textarea{
   .rank-books-table th:nth-child(6) { width: 160px; }
 }
 
+/* ==================================================================
+   UI 美化（按主题分层，绝不硬编码死色）：
+   ① AI 智驾 三个入口（替换硬编码绿渐变 #7cb89e→#5ba3a8）
+   ② 榜单风向（ToolsPage）按钮/字体色层次 三主题美化
+================================================================== */
+
+/* ============ ① AI 智驾 · 创作页大横幅 AiMasterBanner ============ */
+/* 通用结构（不分主题）*/
+.ai-master-banner{
+  border: none !important;
+  padding: 22px 28px !important;
+  border-radius: 20px !important;
+  font-weight: 700 !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.55) inset,
+    0 10px 28px rgba(31,35,40,0.10);
+}
+/* light（纯白主题）= 淡蓝→淡青，文字 #0969da 蓝字（用户截图背景=纯白，banner不能再发绿！） */
+[data-theme="light"] .ai-master-banner{
+  background: linear-gradient(135deg, #eaf4ff 0%, #dff1ff 55%, #e9f8ff 100%) !important;
+  border: 1px solid #cce1fb !important;
+  color: #0969da !important;
+}
+[data-theme="light"] .ai-master-banner .cta-title{ color: #0969da !important; }
+[data-theme="light"] .ai-master-banner .cta-ai{ color: #0b77f0 !important; text-shadow: 0 1px 0 rgba(255,255,255,0.7); }
+[data-theme="light"] .ai-master-banner .cta-sub-text{ color: #2f81f7 !important; opacity: 0.82; }
+/* dark / 国风（水墨国风·石青）= 石青浓渐变 + 纯白文字 */
+[data-theme="dark"] .ai-master-banner{
+  background: linear-gradient(135deg, #285373 0%, #1d425d 50%, #244e6d 100%) !important;
+  border: 1px solid #38678a !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.12) inset,
+    0 14px 36px rgba(29,66,93,0.38);
+}
+[data-theme="dark"] .ai-master-banner .cta-title,
+[data-theme="dark"] .ai-master-banner .cta-ai,
+[data-theme="dark"] .ai-master-banner .cta-sub-text{ color: #ffffff !important; }
+/* green / 护眼绿 = 翡翠绿淡→浓 渐变 + 深绿文字（好看不艳）*/
+[data-theme="green"] .ai-master-banner{
+  background: linear-gradient(135deg, #9fc9a4 0%, #5fa367 55%, #6fa978 100%) !important;
+  border: 1px solid #7bb685 !important;
+  color: #ffffff !important;
+}
+[data-theme="green"] .ai-master-banner .cta-title,
+[data-theme="green"] .ai-master-banner .cta-ai,
+[data-theme="green"] .ai-master-banner .cta-sub-text{ color: #ffffff !important; }
+/* custom（自定义主题）= accent 渐变 + 白字 */
+[data-theme="custom"] .ai-master-banner{
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%) !important;
+  border: 1px solid transparent !important;
+  color: #ffffff !important;
+}
+
+/* ============ AI 智驾 · 首页小圆按钮 btn-ai-entry-home ============ */
+[data-theme="light"] .btn-ai-entry-home{
+  background: linear-gradient(135deg, #0b77f0 0%, #0969da 100%) !important;
+  color: #ffffff !important;
+  border: 1px solid #0b6dd8 !important;
+  box-shadow: 0 2px 8px rgba(9,105,218,0.28);
+}
+[data-theme="dark"] .btn-ai-entry-home{
+  background: linear-gradient(135deg, #285373, #1d425d) !important;
+  color: #ffffff !important;
+  border: 1px solid #38678a !important;
+}
+[data-theme="green"] .btn-ai-entry-home{
+  background: linear-gradient(135deg, #5fa367, #4e7a52) !important;
+  color: #ffffff !important;
+  border: 1px solid #7bb685 !important;
+}
+[data-theme="custom"] .btn-ai-entry-home{
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover)) !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+}
+
+/* ============ AI识别填维度 btn-ai-recog ============ */
+.btn-ai-recog{ font-weight: 600 !important; border: 1px solid transparent !important; }
+[data-theme="light"] .btn-ai-recog{
+  background: linear-gradient(135deg, #0b77f0 0%, #0969da 100%) !important;
+  color: #fff !important;
+  border-color: #0b6dd8 !important;
+  box-shadow: 0 1px 4px rgba(9,105,218,0.20);
+}
+[data-theme="dark"] .btn-ai-recog{
+  background: linear-gradient(135deg, #285373, #1d425d) !important;
+  color: #ffffff !important;
+  border-color: #38678a !important;
+}
+[data-theme="green"] .btn-ai-recog{
+  background: linear-gradient(135deg, #5fa367, #4e7a52) !important;
+  color: #ffffff !important;
+  border-color: #7bb685 !important;
+}
+[data-theme="custom"] .btn-ai-recog{
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover)) !important;
+  color: #ffffff !important;
+}
+
+/* ============ ② 榜单风向 ToolsPage 三主题 字体色 / 按钮美化 ============ */
+/* 抓取本榜按钮 nr-crawl-btn：通用结构 */
+.nr-crawl-btn{
+  padding: 8px 18px !important;
+  min-height: 36px; min-width: 140px;
+  border-radius: 10px !important;
+  font-weight: 800 !important;
+  font-size: 14px !important;
+  border: 1px solid transparent !important;
+  color: #ffffff !important;
+}
+/* is-crawl（正常抓取）= 用主题 accent 渐变（替代死绿#16a085）*/
+.nr-crawl-btn.is-crawl{ background: linear-gradient(135deg, var(--accent), var(--accent-hover)) !important; box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 28%, transparent); }
+/* is-curated（精选刷新）= 金橙渐变（跨主题通用，暖色醒目）*/
+.nr-crawl-btn.is-curated{ background: linear-gradient(135deg, #f39c12, #e67e22) !important; box-shadow: 0 2px 10px rgba(230,126,34,0.30); border-color: #f5b041 !important; }
+
+/* 榜单风向·字体色层次美化（三主题统一层次，只改color不改排版）：
+   level A 标题h3    = text-primary fw-800 / level B section label(榜单类型/频道/主题分类) = text-secondary fw-700
+   level C 抓取时间   = text-muted / level D 未选中平台/标签 = text-secondary fw-500 / level E 平台tab选中=白字 fw-700
+   level F 胶囊筛选(未选中) = text-secondary / level G 筛选胶囊(选中)=白字 / level H rank-title = text-primary fw-700
+   level I rank-card-desc = text-muted / level J rank-card-sub(作者/分类) = text-secondary */
+/* Level A 榜单风向标题文字（ToolsPage） */
+.nr-root h3, .nr-title-row h3{ color: var(--text-primary) !important; font-weight: 800; }
+/* Level B section label：榜单类型 / 频道 / 主题分类 → 用 accent(主色)+38% 加重 + fw-700，不再灰不溜秋没层次
+   注意：原 inline 有 color:'var(--text-muted)'，所以 CSS 必须 精确命中 .nr-filter-label 且用更高 specificity；
+   用 !important 压过 inline style（用户明确要"字体颜色相应的美化"）*/
+.nr-root .nr-row-label,
+.nr-filter-card > * > span.nr-filter-label,
+.nr-filter-card span.nr-filter-label,
+.nr-filter-card .nr-category-label-row.nr-filter-label{
+  color: color-mix(in srgb, var(--accent) 38%, var(--text-secondary)) !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.3px;
+}
+/* Level C 抓取时间（🕒胶囊）= 淡一级 */
+.nr-crawl-time{ color: var(--text-muted) !important; }
+/* Level D 未选中平台tab / Level E 选中平台tab（inline已控制，但加强层次）*/
+.nr-platform-tab.ghost{ color: var(--text-secondary) !important; font-weight: 500 !important; }
+.nr-platform-tab.active{ color: #ffffff !important; font-weight: 700 !important; }
+/* Level F/G 榜单类型/频道/主题分类 胶囊标签（选中/未选中）+ nr-subcategory-chip */
+.nr-filter-card .nr-filter-chip-unselected{ color: var(--text-secondary) !important; }
+.nr-filter-card .nr-filter-chip-selected{ color: #ffffff !important; font-weight: 700 !important; }
+/* Level H 书名 rank-card-title / table 第一列书名 → 加重 */
+.rank-card-title, .rank-books-table .rank-book-title-cell{
+  color: var(--text-primary) !important;
+  font-weight: 700 !important;
+}
+/* Level I 简介淡 */
+.rank-card-desc{ color: var(--text-muted) !important; line-height: 1.55; }
+/* Level J 作者/分类 中灰 */
+.rank-card-sub, .rank-books-table td.rank-book-sub-cell{
+  color: var(--text-secondary) !important;
+}
+/* Level K 表头 th → 跟 Section Label 同色（accent+text-secondary 混合）加重层次 */
+.rank-books-table thead th,
+.rank-books-table th{
+  color: color-mix(in srgb, var(--accent) 30%, var(--text-secondary)) !important;
+  font-weight: 700 !important;
+  background: var(--bg-tertiary) !important;
+}
+/* Level L 排名序号(1/2/3) → 主色强调，其它序号 text-muted */
+.rank-no:nth-of-type,
+.rank-card-head .rank-no{
+  color: color-mix(in srgb, var(--accent) 45%, var(--text-muted)) !important;
+}
+/* nr-search-btn 搜索 → 跟 accent 一致 (已经用var(--accent)但统一加box-shadow好看) */
+.nr-search-btn{
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+

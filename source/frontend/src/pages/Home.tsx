@@ -196,11 +196,10 @@ export default function Home() {
         </div>
         <div className="home-actions">
           <button
-            className="btn-primary"
+            className="btn-primary btn-ai-entry-home"
             onClick={() => setShowAiPicker(true)}
             disabled={books.length === 0}
             title={books.length === 0 ? '请先创建作品' : 'AI 智驾：选择作品进入设定/正文/去AI/校审四Tab协作'}
-            style={{ background: 'linear-gradient(135deg,#7cb89e 0%,#5ba3a8 100%)' }}
           >
             <CarLogo size={22} />
           </button>
