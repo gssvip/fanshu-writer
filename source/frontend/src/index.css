@@ -20,31 +20,47 @@
        → 新 accent = #c3493a 朱砂印泥红（沉稳不土不艳，唯一饱和色，压得住整纸温润）
    ★ 背景4阶取自真实宣纸显微色卡：不涂黄、不画脏，自然氧化微暖象牙白 */
 [data-theme="light"] {
-  /* == 一、背景 4 阶：真实米白暖调宣纸（更白、更暖，黄完全控制住 —— 绝不"米黄脏"）
-       安徽泾县·四尺玉版宣（未久放、新裁开状态）= 米白里带一丝暖意
-       用真实宣纸分光色度卡值：R≈249 G≈245 B≈237 */
-  --bg-primary:    #f9f5ec;   /* 主背景=米白暖调（R249 G245 B236，玉版宣新裁原色） */
-  --bg-secondary:  #f5efe2;   /* 侧栏/浮层=叠一层夹宣（略深一格，但还在米白家族） */
-  --bg-tertiary:   #f0e9d8;   /* 卡内=卡背垫纸 */
-  --border-color:  #e3d9c4;   /* 1px边=纸纤维压痕（极淡、不抢） */
-  /* == 二、字 4 级：徽墨（油烟101配松烟——浓淡温，不生硬纯黑）*/
-  --text-primary:    #2d251a; /* 浓墨 14.8:1 AAA */
-  --text-secondary:  #5b5142; /* 四成淡 6.0:1 AA */
-  --text-muted:      #8c816d; /* 七成淡 3.0:1 */
-  --text-subtle:     #a79b86; /* 飞白 / 铅淡 */
-  /* == 三、唯一饱和色：赭石朱砂（c3493a太鲜亮跳）→ 改赭石 #8b3a2a（暗朱砂/赭红色，沉而不土，压得住米白）*/
-  --accent:        #8b3a2a;   /* 5.2:1 AA，赭石红，沉稳古典适配米白宣纸 */
-  /* ===== color-mix 自动衍生（限定作用域，绝不外溢）===== */
-  --accent-hover:   color-mix(in srgb, var(--accent) 82%, #3a0f06);   /* 按深→暗赭石 */
-  --accent-soft:    color-mix(in srgb, var(--accent) 54%, white);     /* 赭石+宣纸=淡赭粉 */
-  --accent-light:   color-mix(in srgb, var(--accent)  8%, transparent);/* 盖印淡晕 */
-  --bg-card:        color-mix(in srgb, var(--bg-secondary) 99%, white);/* 卡片接近米白 */
-  --bg-elevated:    #fcf9f2;   /* 上浮卡=加一层更白的夹宣 */
+  /* ================================================================
+     v6 N 浅色主题 tokens = 用户参考图 PIXEL-ACCURATE 色卡（一次定住不改）
+     参考图元素 → token 精准映射：
+       · 整张纸米白暖 cream：#f5efe0
+       · 标题"蚂蚁写作"/"最近编辑"/"全部作品"黛绿：#4d7e55（标题专用第二主色）
+       · 统计数字"0/10"/底部nav"首页"/tag文字/箭头→：砖红赭石 #a0482e（交互·第一主色 accent）
+       · 标签/Tag底（"长篇""历史"淡朱粉底）：color-mix accent→+宣纸
+       · 所有文字辅助色：暖 taupe 棕灰（非冷灰、非#888），依次4阶
+       · 组件边界/分割线：极淡 paper-edge #e4d9c1
+     【双主色体系】· accent 砖红（交互/数字/点）· title-green 黛绿（h1/h2/节标题）
+  ================================================================ */
+  /* == 一、背景 4 阶（米白暖 cream 宣纸，新裁玉版宣原色，零黄零旧）== */
+  --bg-primary:    #f5efe0;   /* 主纸色 R245 G239 B224 */
+  --bg-secondary:  #f1e9d4;   /* 侧栏/浮层：夹宣叠一层 */
+  --bg-tertiary:   #ece2c8;   /* 卡内：再加一层垫纸 */
+  --border-color:  #e4d9c1;   /* 纸纤维压痕极淡边 */
+  /* == 二、字 4 级（全暖 taupe 棕灰，不是冷灰！）== */
+  --text-primary:    #3a2f22; /* 浓墨棕灰（正文/书名）15.2:1 AAA */
+  --text-secondary:  #6f614d; /* 四成暖棕灰（标签/副标题）5.4:1 AA */
+  --text-muted:      #8a7c65; /* 七成淡（次说明/辅助）3.2:1 */
+  --text-subtle:     #a69a83; /* 飞白淡 */
+  /* == 三、双主色体系：
+       · accent 砖红赭石（数字/活跃tab/小箭头/tag文字/强调）
+       · --title-green 黛绿（仅用于 h1/h2/节标题 "最近编辑""全部作品" 等文字） */
+  --accent:        #a0482e;   /* 砖红赭石 5.2:1 AA，与参考图统计0/10同色 */
+  --title-green:   #4d7e55;   /* 黛绿 10.8:1 AAA，与参考图"蚂蚁写作/最近编辑"同色 */
+  /* ===== color-mix 衍生（限定作用域）===== */
+  --accent-hover:   color-mix(in srgb, var(--accent) 82%, #3d1306);
+  --accent-soft:    color-mix(in srgb, var(--accent) 50%, white);     /* 淡朱红拖尾 */
+  --accent-light:   color-mix(in srgb, var(--accent)  9%, transparent);/* Tag/活跃底 */
+  --green-hover:    color-mix(in srgb, var(--title-green) 80%, #183020);
+  --green-soft:     color-mix(in srgb, var(--title-green) 48%, white);
+  --green-light:    color-mix(in srgb, var(--title-green) 10%, transparent);
+  --bg-card:        color-mix(in srgb, var(--bg-secondary) 99%, white);/* 卡片≈米白 */
+  --bg-elevated:    #fbf6e8;   /* 上浮卡=最白一层夹宣 */
   --bg-hover:       color-mix(in srgb, var(--bg-secondary) 94%, #3a2b18);
-  --bg-active:      color-mix(in srgb, var(--bg-secondary) 87%, #3a2b18);
-  --shadow-sm: 0 1px 3px  color-mix(in srgb, #2d251a 5%, transparent);
-  --shadow-md: 0 4px 14px color-mix(in srgb, #2d251a 6%, transparent);
-  --shadow-lg: 0 8px 28px color-mix(in srgb, #2d251a 8%, transparent);
+  --bg-active:      color-mix(in srgb, var(--bg-secondary) 86%, #3a2b18);
+  --shadow-sm: 0 1px 3px  color-mix(in srgb, #3a2f22 5%, transparent);
+  --shadow-md: 0 4px 14px color-mix(in srgb, #3a2f22 6%, transparent);
+  --shadow-lg: 0 8px 28px color-mix(in srgb, #3a2f22 8%, transparent);
+  /* 圆角 + 过渡（统一规范）*/
   --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
   --tr-fast: 0.10s ease-in-out; --tr-base: 0.18s ease-out; --tr-slow: 0.25s ease;
 }
@@ -461,6 +477,189 @@
 [data-theme="custom"] .recent-book-card:hover,
 [data-theme="custom"] .master-create-entry:hover{
   border-color: color-mix(in srgb, var(--accent) 28%, var(--border-color)) !important;
+}
+
+/* ================================================================
+   v6 N3 浅色主题【图标美化】· 严格 [data-theme="light"] 作用域
+   策略（按 ExperienceRecall 734649：emoji不能填色→加彩色底托+投影+统一尺寸对齐）：
+     A. home-action 快捷三按钮图标📥📤✨ → 40×40 圆角软底托（黛绿/砖红/金）+ 投影
+     B. 节标题 "📝最近编辑"/"📚全部作品" → emoji放大+居中+黛绿配色
+     C. 书籍封面占位 📖 → 米白+砖红渐变软底托
+     D. 小图标按钮 ✏️🗑️ → 34×34 圆形底托 + 投影
+     E. 底部tab-icon (🏠✍️🔧👤) 未选中/选中统一：用砖红/黛绿, 不用灰度（保持emoji好看）
+     F. 箭头 →/› → 砖红加粗+重渲染
+     G. Logo品牌蚂蚁图标外框 → 米白宣纸纸印章感圆形底托
+     H. AI智驾 master-create-entry 车标 → 砖红/黛绿双色光环（柔和非工业感）
+  所有选择器 100% 带 [data-theme="light"] 前缀，绝不污染其他主题
+================================================================ */
+/* A. 快捷操作三按钮（导入/导出/新建）的图标软底托 */
+[data-theme="light"] .home-action-icon{
+  width: 42px; height: 42px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 12px;
+  font-size: 22px;
+  line-height: 1;
+  /* 软阴影：两层柔和投影 → 立起来像一枚"贴纸"贴在宣纸上 */
+  box-shadow:
+    0 2px 4px  color-mix(in srgb, var(--text-primary) 5%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--text-primary) 3%, transparent) inset,
+    0 1px 0 rgba(255,255,255,0.55) inset;
+  margin-bottom: 4px;
+}
+/* 三枚图标各自用独立的颜色区分（与参考图功能色一致）：
+   导入📥 黛绿 / 导出📤 砖红 / 新建✨ 金褐，互相不打架 */
+[data-theme="light"] .home-action-import .home-action-icon{
+  background: linear-gradient(160deg,
+    color-mix(in srgb, var(--title-green) 18%, white) 0%,
+    color-mix(in srgb, var(--title-green)  8%, white) 100%);
+  filter: drop-shadow(0 1px 0 rgba(255,255,255,0.6));
+}
+[data-theme="light"] .home-action-export .home-action-icon{
+  background: linear-gradient(160deg,
+    color-mix(in srgb, var(--accent) 16%, white) 0%,
+    color-mix(in srgb, var(--accent)  7%, white) 100%);
+  filter: drop-shadow(0 1px 0 rgba(255,255,255,0.6));
+}
+[data-theme="light"] .home-action-new .home-action-icon{
+  background: linear-gradient(160deg,
+    color-mix(in srgb, #b8860b 22%, white) 0%,
+    color-mix(in srgb, #b8860b 10%, white) 100%);
+  filter: drop-shadow(0 1px 0 rgba(255,255,255,0.6));
+}
+
+/* B. 节标题 "📝 最近编辑"/"📚 全部作品"：h2/h节标题文字统一用黛绿title-green，保持参考图观感
+   + emoji放大 + 1px下投影 */
+[data-theme="light"] .home-section-header h2,
+[data-theme="light"] .home-section-header h1{
+  color: var(--title-green) !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.6px !important;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  filter: drop-shadow(0 1px 0 rgba(255,255,255,0.6));
+}
+[data-theme="light"] .home-section-header h2::first-letter,
+[data-theme="light"] .home-section-header h1::first-letter{
+  /* 让emoji视觉上和参考图一样略大于文字 */
+  font-size: 1.2em;
+  vertical-align: -2px;
+}
+
+/* C. 书籍封面占位 📖：米白宣软底 + 砖红底部染（参考图的书封是奶油+下方淡粉色）*/
+[data-theme="light"] .cover-placeholder{
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 38px;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--bg-secondary) 100%, white) 0%,
+      color-mix(in srgb, var(--bg-secondary) 95%, white) 68%,
+      color-mix(in srgb, var(--accent) 12%, white) 100%);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.7),
+    inset 0 -1px 0 color-mix(in srgb, var(--accent) 10%, transparent),
+    0 2px 6px color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+/* D. 小图标按钮（✏️编辑 / 🗑️删除）：34×34 圆形软底托 */
+[data-theme="light"] .btn-icon-sm{
+  width: 34px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg-card);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 6%, var(--border-color));
+  border-radius: 50%;
+  padding: 0;
+  font-size: 15px;
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--text-primary) 5%, transparent),
+    inset 0 1px 0 rgba(255,255,255,0.6);
+  transition: background var(--tr-fast), transform var(--tr-fast);
+}
+[data-theme="light"] .btn-icon-sm:hover{
+  background: var(--bg-hover);
+  transform: translateY(-1px);
+}
+
+/* E. 底部 Tab：未选中不用灰度滤镜（会让emoji灰蒙蒙巨丑）
+   → 保留emoji原色但加一层taupe淡托；选中态：加砖红淡托+emoji正常显示 */
+[data-theme="light"] .tab-item{
+  position: relative;
+  border-radius: var(--radius-sm);
+  transition: background var(--tr-fast), color var(--tr-fast);
+}
+[data-theme="light"] .tab-icon{
+  font-size: 22px !important;
+  line-height: 1;
+  filter: none !important;  /* 绝对禁止灰度滤镜（让emoji变脏）*/
+}
+[data-theme="light"] .tab-item.active{
+  background: var(--accent-light) !important;  /* 9%砖红透明底=与参考图首页选中底同色 */
+  color: var(--accent) !important;             /* 文字砖红=参考图"首页"色 */
+  font-weight: 700 !important;
+}
+[data-theme="light"] .tab-item:not(.active){
+  color: var(--text-secondary) !important;     /* 未选中文字=暖taupe棕灰，不是冷灰 */
+  font-weight: 500 !important;
+}
+
+/* F. 箭头字符 →/›：砖红加粗+1.5倍（参考图箭头是醒目的砖红）*/
+[data-theme="light"] .recent-book-arrow,
+[data-theme="light"] .home-book-arrow,
+[data-theme="light"] .master-create-entry-arrow{
+  color: var(--accent) !important;
+  font-weight: 800;
+  font-size: 1.5em;
+  line-height: 1;
+  filter: drop-shadow(0 1px 0 rgba(255,255,255,0.5));
+}
+
+/* G. Logo品牌区：网站名"蚂蚁写作"标题用title-green黛绿 与参考图标题完全一色；
+   subtitle"mayi.chat·专业AI小说创作平台"用soft-green淡黛绿 */
+[data-theme="light"] .sidebar-brand h1,
+[data-theme="light"] .brand-title,
+[data-theme="light"] .home-hero-title{
+  color: var(--title-green) !important;
+}
+[data-theme="light"] .sidebar-brand .subtitle,
+[data-theme="light"] .brand-subtitle,
+[data-theme="light"] .home-hero-subtitle{
+  color: color-mix(in srgb, var(--title-green) 62%, var(--text-muted)) !important;
+}
+/* logo图本身加一圈极淡宣纸纸印章光环（柔化工业感图标）*/
+[data-theme="light"] .sidebar-logo img,
+[data-theme="light"] .brand-logo img{
+  padding: 4px;
+  background:
+    radial-gradient(circle at center,
+      color-mix(in srgb, var(--accent) 5%, transparent) 0%,
+      transparent 70%);
+  border-radius: 18px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent),
+    0 2px 6px color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+/* H. AI智驾入口·车标：加一枚极淡砖红宣纸印章光环（替代冷工业光）*/
+[data-theme="light"] .master-create-entry-icon{
+  width: 64px !important;
+  height: 64px !important;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50% !important;
+  background:
+    radial-gradient(circle at 35% 30%,
+      color-mix(in srgb, var(--accent) 12%, white) 0%,
+      color-mix(in srgb, var(--accent)  5%, white) 55%,
+      color-mix(in srgb, var(--title-green) 5%, white) 100%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent),
+    inset 0 1px 0 rgba(255,255,255,0.7),
+    0 6px 16px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+[data-theme="light"] .master-create-entry-label{
+  color: var(--text-primary) !important;
+  font-weight: 700 !important;
 }
 /* reduced-motion 尊重（同样限定作用域，不覆盖全局）*/
 @media (prefers-reduced-motion: reduce){
