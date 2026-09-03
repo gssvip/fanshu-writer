@@ -363,8 +363,31 @@
         (3) book-cover / 标签 / 箭头 / hover 渐变仍带翠绿/紫色
    → 全部 !important + 石青系统一，保证 inline style / 高优先级都能打赢 */
 
-/* ① 彩色 emoji 图标 → 去色转石青灰度质感（对Unicode emoji生效的唯一手段）*/
-[data-theme="dark"] .tab-icon,
+/* ===== v6 D1+D2：图标美化（解决"灰雾脏+懵懵的"+AI智驾蚂蚁被染色）=====
+   用户明确要求：①AI智驾的蚂蚁蚂蚁头（黄触角+红笔尖）绝对保持原彩色 不要变
+                ②其他图标不做"灰雾调色链"，只有底部Tab未选中态轻灰化，其余保留原生彩色→清晰不懵
+   策略：
+   - tab-icon 未选中：grayscale + 轻微降亮 → 不抢视线
+   - tab-icon 选中态：彩色原样恢复 + 浓黛字 + 石青淡底
+   - 功能图标（导入/导出/新建 📥📤✨、最近编辑📝、全部作品📚、AI智驾蚂蚁、箭头）：完全移除 filter，保留原生彩色
+   - 经验 435501 教训：绝不把 filter 加在 active/brand 图标的父选择器上 */
+
+/* ① 底部 Tab：未选中态 → 单级干净灰度降亮（不做 sepia+saturate 调色链）*/
+[data-theme="dark"] .tab-item:not(.active) .tab-icon{
+  filter: grayscale(1) contrast(1.2) brightness(0.55);
+  opacity: 0.88;
+}
+/* 选中态：恢复原色彩色（绝对不加 filter）+ 石青系统一高亮 */
+[data-theme="dark"] .tab-item.active .tab-icon{
+  filter: none !important;
+  color: var(--accent) !important;
+  opacity: 1;
+}
+
+/* ② 功能图标全部恢复原生彩色！删除L366-380 的通用 filter：
+   导入📥橙黄盒子、导出📤棕黄盒子、新建✨黄星星、最近编辑📝黄铅笔蓝纸、
+   全部作品📚红蓝书脊、AI智驾蚂蚁 CarLogo（黄触角+红笔尖品牌色）
+   → 全部不做 filter，保持原色，清晰不懵 */
 [data-theme="dark"] .home-action-icon,
 [data-theme="dark"] .section-title-icon,
 [data-theme="dark"] .home-icon-svg,
@@ -375,8 +398,15 @@
 [data-theme="dark"] .home-book-arrow,
 [data-theme="dark"] .recent-book-arrow,
 [data-theme="dark"] .master-create-entry-arrow{
-  filter: grayscale(1) brightness(0.52) contrast(1.18) sepia(0.25) saturate(3.2) hue-rotate(165deg);
-  color: var(--accent);
+  filter: none !important;  /* 彻底废除之前的灰雾调色链 */
+  color: initial;
+}
+
+/* ③ 但：箭头要石青（功能性图标）；SVG 图标的线稿保持石青（之前 B3 的 drop-shadow 有效）*/
+[data-theme="dark"] .home-book-arrow,
+[data-theme="dark"] .recent-book-arrow,
+[data-theme="dark"] .master-create-entry-arrow{
+  color: var(--accent) !important;
 }
 
 /* ② 全局翠绿残留（home-page/workbench）→ 石青 !important 强覆盖 */
