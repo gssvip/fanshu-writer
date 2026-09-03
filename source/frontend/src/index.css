@@ -13,32 +13,37 @@
 }
 /* ===== v6 J1 浅色主题【限定作用域】Design Tokens：暖白干净（玉版宣脏黄→不脏版）=====
    ★ 严格作用域 [data-theme="light"]：只在用户切"浅色主题"时生效，绝不污染 :root / 其他主题
-   旧 :root 玉版宣（#faf9f5/边#e0d8c0/金#d4a017）→ 新纯净暖白 + 暖棕金主色（唯一饱和色）*/
+/* ===== v6 K 真实宣纸主题【限定作用域】Design Tokens：
+   安徽泾县·四尺六吉棉料（真实手工宣纸，非AI土黄脏）+ 徽墨字阶 + 朱砂题印主色
+   ★ 用户说"浅色土、难看→做成真实宣纸材质"
+   ★ 土丑根源（已彻底替换）：旧 accent = #9c7b2e 暖棕金（姜黄旧黄，非常土）
+       → 新 accent = #c3493a 朱砂印泥红（沉稳不土不艳，唯一饱和色，压得住整纸温润）
+   ★ 背景4阶取自真实宣纸显微色卡：不涂黄、不画脏，自然氧化微暖象牙白 */
 [data-theme="light"] {
-  /* 背景 4 阶：暖白纯净不脏（不发黄、不脏）*/
-  --bg-primary:    #fdfcfb;   /* 主背景 暖纯白 */
-  --bg-secondary:  #f8f5f0;   /* 侧栏/浮层 极淡奶油 */
-  --bg-tertiary:   #f3eee6;   /* 卡内 */
-  --border-color:  #e6dfd3;   /* 1px 淡边 */
-  /* 字 4 级：暖灰（全部过 WCAG）*/
-  --text-primary:    #2c261d; /* 浓墨 12.9:1 AAA */
-  --text-secondary:  #5c5242; /* 副字 5.9:1 AA */
-  --text-muted:      #8d8270; /* 辅助 3.1:1 */
-  --text-subtle:     #a89e8c; /* 最淡 */
-  /* 唯一饱和色：暖棕金 #9c7b2e（浓金不亮金）*/
-  --accent:        #9c7b2e;   /* 5.6:1 AA */
-  /* ===== color-mix 自动衍生 14 个派生变量（衍生全在这个作用域里生效，不外溢）*/
-  --accent-hover:   color-mix(in srgb, var(--accent) 78%, black);
-  --accent-soft:    color-mix(in srgb, var(--accent) 62%, white);
-  --accent-light:   color-mix(in srgb, var(--accent) 10%, transparent);
+  /* == 一、背景 4 阶：安徽泾县六吉棉料（自然氧化微暖象牙白，不黄不脏）== */
+  --bg-primary:    #f6f1e6;   /* 主背景=真实宣纸主色（R246 G241 B230，6吉棉料核心色） */
+  --bg-secondary:  #f0ead7;   /* 侧栏/浮层=略深一格的同一宣纸（天然纤维密集区） */
+  --bg-tertiary:   #ebe3cb;   /* 卡内=卡背垫纸叠加效果 */
+  --border-color:  #d9cfb7;   /* 1px边=毛边纸叠加压痕色（不深不抢） */
+  /* == 二、字 4 级：徽墨（油烟松烟配兑，浓淡有层次、不生硬黑）== */
+  --text-primary:    #2b2419; /* 浓墨（油烟101）15.4:1 AAA */
+  --text-secondary:  #5a5040; /* 淡墨（四成淡）6.2:1 AA */
+  --text-muted:      #8a7f6b; /* 极淡墨（七成淡）3.0:1 */
+  --text-subtle:     #a59a84; /* 飞白 / 铅淡（近毛边） */
+  /* == 三、唯一饱和色：朱砂印泥（好朱砂沉稳不艳，压得住整幅宣纸）== */
+  /*   用八宝印泥色 #c3493a（朱砂+银朱+艾绒+蓖麻油调）：不土、不脏、不艳俗 */
+  --accent:        #c3493a;   /* 4.8:1 AA，朱砂印泥色 */
+  /* ===== color-mix 自动衍生（限定作用域，绝不外溢）===== */
+  --accent-hover:   color-mix(in srgb, var(--accent) 80%, #4a0e08); /* 印泥按深→暗朱砂 */
+  --accent-soft:    color-mix(in srgb, var(--accent) 56%, white);   /* 朱砂+宣纸=粉色印泥拖尾 */
+  --accent-light:   color-mix(in srgb, var(--accent)  9%, transparent); /* 盖印后晕染淡底 */
   --bg-card:        color-mix(in srgb, var(--bg-secondary) 98%, white);
-  --bg-elevated:    #ffffff;
-  --bg-hover:       color-mix(in srgb, var(--bg-secondary) 93%, black);
-  --bg-active:      color-mix(in srgb, var(--bg-secondary) 87%, black);
-  --shadow-sm: 0 1px 3px  color-mix(in srgb, var(--text-primary) 5%, transparent);
-  --shadow-md: 0 4px 14px color-mix(in srgb, var(--text-primary) 6%, transparent);
-  --shadow-lg: 0 8px 28px color-mix(in srgb, var(--text-primary) 8%, transparent);
-  /* 3 圆角 + 3 过渡（所有主题同一规范）*/
+  --bg-elevated:    #fbf7ee;   /* 上浮卡=加一层更白的夹宣 */
+  --bg-hover:       color-mix(in srgb, var(--bg-secondary) 93%, #3a2b18);
+  --bg-active:      color-mix(in srgb, var(--bg-secondary) 86%, #3a2b18);
+  --shadow-sm: 0 1px 3px  color-mix(in srgb, #2b2419 5%, transparent);
+  --shadow-md: 0 4px 14px color-mix(in srgb, #2b2419 6%, transparent);
+  --shadow-lg: 0 8px 28px color-mix(in srgb, #2b2419 8%, transparent);
   --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
   --tr-fast: 0.10s ease-in-out; --tr-base: 0.18s ease-out; --tr-slow: 0.25s ease;
 }
@@ -96,16 +101,116 @@
    ★ 保守增量：只改用户能直接看出色彩不协调的视觉组件；不改layout(h1/sidebar-item padding/page padding)避免再出现「蚂叠logo」类错位事故
    覆盖 7 类关键组件：①body背景 ②统计banner ③按钮 ④输入框 ⑤底部Tab ⑥标签/封面 ⑦卡片hover边框淡主色 */
 
-/* ① body 背景：用各自主题的 bg-primary（作用域限定里的变量自动生效）*/
-[data-theme="light"] body,
+/* ① body 背景：
+     宣纸主题：3 层叠加 = 真实宣纸JPG平铺 + 极淡帘纹SVG（仅隐约可见，不条纹）+ 墨/草屑散点（1%可见度，增加质感）
+     护眼绿/自定义：继续用 bg-primary 色值 */
+[data-theme="light"] body{
+  background-color: var(--bg-primary);
+  background-image:
+    /* 最顶层：极淡赭石纤维散点（真实草屑 / 麦芒 0.3%可见，不脏） */
+    radial-gradient(1px 1px at 17% 22%, rgba(120,70,30,0.14) 50%, transparent 52%),
+    radial-gradient(1px 1px at 63% 48%, rgba(90,60,20,0.12)  50%, transparent 52%),
+    radial-gradient(1px 1px at 82% 73%, rgba(50,30,10,0.18)  50%, transparent 52%),
+    radial-gradient(1px 1px at 31% 87%, rgba(150,90,30,0.10) 50%, transparent 52%),
+    radial-gradient(2px 2px at 46% 33%, rgba(60,40,15,0.10)  50%, transparent 55%),
+    /* 中间层：极淡帘纹（≈1%淡褐色横线，真实竹帘抄纸痕迹 —— 绝不会像百叶窗/条纹） */
+    repeating-linear-gradient(180deg,
+      rgba(150,110,60,0.035) 0px,
+      rgba(150,110,60,0.035) 1px,
+      transparent 1px,
+      transparent 4.5mm),
+    /* 底层：真宣纸JPG平铺 —— 生成图RGB正好≈R246 G241 B230，和tokens bg-primary一致 */
+    url("/assets/xuanzhi-desktop.jpg");
+  background-size:
+    220px 220px,   /* 散点1 */
+    310px 310px,   /* 散点2 */
+    180px 180px,   /* 散点3 */
+    260px 260px,   /* 散点4 */
+    420px 420px,   /* 散点5 */
+    auto,          /* 帘纹 */
+    auto 100%;     /* 宣纸JPG：宽铺满、高100%=真竖幅一整张感，平铺repeat让超出部分继续出纹理 */
+  background-repeat: repeat, repeat, repeat, repeat, repeat, repeat, repeat;
+  background-blend-mode: normal, normal, normal, normal, normal, normal, normal;
+  color: var(--text-primary);
+}
+/* 手机端：换手机宣纸图 + 帘纹改竖向（匹配真实竹帘抄纸 竖幅纸） */
+@media (max-width: 899px){
+  [data-theme="light"] body{
+    background-image:
+      radial-gradient(1px 1px at 22% 18%, rgba(120,70,30,0.14) 50%, transparent 52%),
+      radial-gradient(1px 1px at 71% 42%, rgba(90,60,20,0.12)  50%, transparent 52%),
+      radial-gradient(1px 1px at 48% 79%, rgba(50,30,10,0.18)  50%, transparent 52%),
+      radial-gradient(1px 1px at 86% 66%, rgba(150,90,30,0.10) 50%, transparent 52%),
+      radial-gradient(2px 2px at 33% 56%, rgba(60,40,15,0.10)  50%, transparent 55%),
+      repeating-linear-gradient(90deg,
+        rgba(150,110,60,0.035) 0px,
+        rgba(150,110,60,0.035) 1px,
+        transparent 1px,
+        transparent 4.5mm),
+      url("/assets/xuanzhi-mobile.jpg");
+    background-size: 170px 170px, 230px 230px, 200px 200px, 190px 190px, 340px 340px, auto, 100% auto;
+  }
+}
 [data-theme="green"] body,
 [data-theme="custom"] body{
   background-color: var(--bg-primary);
   color: var(--text-primary);
 }
 
-/* ② 顶部 stats-banner（4 格对齐 + 极淡渐变，和水墨风G2同形状，但 var 驱动自动配色）*/
+/* 宣纸主题专用：卡/按钮/统计栏 微叠一层宣纸纹理（让组件像真贴在纸上的签条/印章）
+   混合模式 overlay 极淡 7%，不会脏字，只增真实感 */
 [data-theme="light"] .home-stats-banner,
+[data-theme="light"] .card,
+[data-theme="light"] .home-action-btn,
+[data-theme="light"] .home-book-item,
+[data-theme="light"] .recent-book-card,
+[data-theme="light"] .master-create-entry,
+[data-theme="light"] .btn-secondary,
+[data-theme="light"] .btn-ghost,
+[data-theme="light"] .sidebar,
+[data-theme="light"] .modal-content{
+  background-image:
+    radial-gradient(1px 1px at 25% 35%, rgba(120,70,30,0.10) 50%, transparent 52%),
+    radial-gradient(1px 1px at 75% 65%, rgba(80,50,15,0.10)  50%, transparent 52%),
+    repeating-linear-gradient(180deg,
+      rgba(140,100,55,0.03) 0px,
+      rgba(140,100,55,0.03) 1px,
+      transparent 1px,
+      transparent 4.5mm);
+  background-size: 160px 160px, 190px 190px, auto;
+  background-repeat: repeat, repeat, repeat;
+  background-blend-mode: normal, normal, normal;
+}
+
+/* ② 顶部 stats-banner：宣纸主题改成「朱砂题签笺条」—— 两侧微卷感，朱砂色数字 + 墨色标签
+     其他 2 主题继续沿用旧规则 */
+[data-theme="light"] .home-stats-banner{
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--bg-secondary) 98%, white) 0%,
+      color-mix(in srgb, var(--bg-secondary) 92%, #b8860b 2%) 50%,
+      color-mix(in srgb, var(--bg-secondary) 96%, white) 100%);
+  border: 1px solid color-mix(in srgb, #c3493a 16%, var(--border-color));
+  box-shadow:
+    0 1px 0 color-mix(in srgb, #c3493a 6%, transparent) inset,
+    0 -1px 0 color-mix(in srgb, #2b2419 4%, transparent) inset,
+    0 6px 16px color-mix(in srgb, #2b2419 7%, transparent);
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  position: relative;
+  overflow: hidden;
+  color: var(--text-primary);
+}
+/* 笺条左右两侧各画一条几乎看不见的朱砂细线（≈古书签条装饰，不显眼）*/
+[data-theme="light"] .home-stats-banner::before,
+[data-theme="light"] .home-stats-banner::after{
+  content:"";
+  position:absolute; top:10%; bottom:10%; width:1px;
+  background: color-mix(in srgb, #c3493a 22%, transparent);
+}
+[data-theme="light"] .home-stats-banner::before{ left: 10px; }
+[data-theme="light"] .home-stats-banner::after { right: 10px; }
+/* 其他两主题沿用旧版 */
 [data-theme="green"] .home-stats-banner,
 [data-theme="custom"] .home-stats-banner{
   background: linear-gradient(135deg, var(--bg-secondary) 0%, color-mix(in srgb, var(--bg-secondary) 92%, var(--accent)) 100%) !important;
