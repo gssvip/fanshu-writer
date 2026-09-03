@@ -1031,6 +1031,10 @@ export default function MinePage() {
           <div className="tool-panel">
             <h3>主题设置</h3>
             <div className="theme-options">
+              <button className={`theme-card ${theme === 'dark' ? 'active' : ''}`} onClick={() => setTheme('dark')}>
+                <div className="theme-preview ink-wash" />
+                <span>水墨国风</span>
+              </button>
               <button className={`theme-card ${theme === 'light' ? 'active' : ''}`} onClick={() => setTheme('light')}>
                 <div className="theme-preview light" />
                 <span>浅色</span>
@@ -1039,16 +1043,12 @@ export default function MinePage() {
                 <div className="theme-preview green" />
                 <span>护眼绿</span>
               </button>
-              <button className={`theme-card ${theme === 'dark' ? 'active' : ''}`} onClick={() => setTheme('dark')}>
-                <div className="theme-preview ink-wash" />
-                <span>水墨国风</span>
-              </button>
               <button className={`theme-card ${theme === 'custom' ? 'active' : ''}`} onClick={() => setTheme('custom')}>
                 <div className="theme-preview custom" style={{ background: customColors?.bgPrimary || '#f0f7f0' }} />
                 <span>自定义</span>
               </button>
             </div>
-            <p className="text-muted" style={{ marginTop: 10 }}>护眼绿适合长时间码字，水墨国风为淡色宣纸主题，大气雅致，夜间码字推荐切换护眼绿</p>
+            <p className="text-muted" style={{ marginTop: 10 }}>水墨国风为默认淡色品质主题（冷白+石青，高端雅致）；护眼绿适合长时间码字；自定义可自由调配配色</p>
 
             {theme === 'custom' && customColors && (
               <div className="custom-theme-editor">

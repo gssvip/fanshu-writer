@@ -111,9 +111,9 @@ export const useStore = create<AppStore>((set) => ({
       const t = localStorage.getItem('app-theme') ?? localStorage.getItem(legacyKey('theme'));
       // 兼容旧数据：sepia 映射为 green
       if (t === 'sepia') { try { localStorage.setItem('app-theme', 'green'); } catch {} return 'green' as Theme; }
-      return (t as Theme) || 'light';
+      return (t as Theme) || 'dark';
     } catch {
-      return 'light';
+      return 'dark';
     }
   })(),
   customColors: loadCustomColors(),
