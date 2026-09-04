@@ -1015,32 +1015,27 @@
   box-shadow: var(--shadow-md);
 }
 
-/* ===== B3 按钮：2 级统一（主=石青渐变+内外影，副=白底+淡边）===== */
+/* ===== B3 按钮：2 级统一（主=极淡水墨灰+深墨字，副=白底+淡边）===== */
 [data-theme="dark"] .btn-primary,
 [data-theme="dark"] .btn-primary-sm{
-  /* 强调按钮背景色变淡（水墨风淡墨灰），白字仍可读 */
-  background: linear-gradient(180deg, #8a97a6 0%, #7d8b9a 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.28),
-    inset 0 -2px 0 rgba(0,0,0,0.14),
-    0 3px 8px rgba(87,100,115,0.18);
-  color: #fff;
-  font-weight: 600;
+  /* 强调按钮背景色极淡（淡显淡显淡显），深墨字可读 */
+  background: linear-gradient(180deg, #cdd6de 0%, #bdc8d2 100%);
+  border: 1px solid #a9b5c1;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.55) inset;
+  color: var(--text-primary);
+  font-weight: 700;
   letter-spacing: 0.8px;
   border-radius: var(--radius-sm);
   transition: background var(--tr-fast), transform var(--tr-fast), box-shadow var(--tr-fast);
 }
 [data-theme="dark"] .btn-primary:hover,
 [data-theme="dark"] .btn-primary-sm:hover{
-  background: linear-gradient(180deg, #93a0af 0%, #8593a2 100%);
+  background: linear-gradient(180deg, #c2ccd6 0%, #b2bfc9 100%);
 }
 [data-theme="dark"] .btn-primary:active,
 [data-theme="dark"] .btn-primary-sm:active{
   transform: scale(0.98);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.20),
-    inset 0 -1px 0 rgba(0,0,0,0.20),
-    0 1px 3px rgba(87,100,115,0.22);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.40) inset;
 }
 [data-theme="dark"] .btn-secondary,
 [data-theme="dark"] .btn-secondary-sm{
@@ -5370,7 +5365,13 @@ textarea.input.paper-textarea{
   color: var(--text-primary) !important;
   box-shadow:
     0 1px 0 rgba(255,255,255,0.9) inset,
-    0 4px 14px rgba(30,36,43,0.06);
+    0 4px 14px rgba(30,36,43,0.06) !important;
+}
+[data-theme="dark"] .ai-master-banner:hover:not(:disabled){
+  background: linear-gradient(135deg, #f0f2f5 0%, #e6e9ed 100%) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.9) inset,
+    0 4px 14px rgba(30,36,43,0.06) !important;
 }
 [data-theme="dark"] .ai-master-banner .cta-title,
 [data-theme="dark"] .ai-master-banner .cta-ai,
@@ -5529,16 +5530,16 @@ textarea.input.paper-textarea{
               0 1px 2px rgba(91,33,182,0.10) !important;
 }
 
-/* ---------- C1b. Dark(国风) 主按钮：赭石土红加深（非蓝，适配水墨宣纸）---------- */
+/* ---------- C1b. Dark(国风) 主按钮：极淡水墨灰（淡显）+ 深墨字（与D1b一致）---------- */
 [data-theme="dark"] .chat-send.primary,
 [data-theme="dark"] .nr-crawl-btn.is-crawl,
-[data-theme="dark"] .btn-primary,
+[data-theme="dark"] .btn-primary:not(.ai-master-banner),
 [data-theme="dark"] .nr-filter-chip-selected,
 [data-theme="dark"] .nr-platform-tab.active{
-  background: linear-gradient(180deg,#576473 0%,#3c4855 100%) !important;
-  border-color: #303b47 !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.10) inset,
-              0 1px 2px rgba(144,56,36,0.15) !important;
+  background: linear-gradient(180deg,#cdd6de 0%,#bdc8d2 100%) !important;
+  border-color: #a9b5c1 !important;
+  color: var(--text-primary) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.55) inset !important;
 }
 
 /* ---------- C2. Emoji 图标全局主题化（压鲜艳 + 叠主题Tint，和主题色对应不扎眼）---------- */
@@ -5682,17 +5683,27 @@ textarea.input.paper-textarea{
   box-shadow: 0 1px 0 rgba(255,255,255,0.20) inset !important;
 }
 
-/* ---------- D1b. Dark水墨国风：CTA用赭石土红体系(非蓝)，减饱和→清淡赭石，不再重彩 ---------- */
+/* ---------- D1b. Dark水墨国风：强调按钮背景极淡水墨灰（淡显淡显淡显）+ 深墨字 ----------
+   ★ AI 智驾横幅(.ai-master-banner)必须排除：横幅走自己的极淡水墨底规则 */
 [data-theme="dark"] .chat-send.primary,
 [data-theme="dark"] .nr-crawl-btn.is-crawl,
-[data-theme="dark"] .btn-primary,
-[data-theme="dark"] .btn-primary-sm,
+[data-theme="dark"] .btn-primary:not(.ai-master-banner),
+[data-theme="dark"] .btn-primary-sm:not(.ai-master-banner),
 [data-theme="dark"] .nr-filter-chip-selected,
 [data-theme="dark"] .nr-platform-tab.active{
-  background: linear-gradient(180deg, #657384 0%, #576473 100%) !important; /* 水墨灰（非蓝非赭石），减饱和适配宣纸 */
-  border-color: #3c4855 !important;
-  color: #ffffff !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset !important;
+  background: linear-gradient(180deg, #cdd6de 0%, #bdc8d2 100%) !important; /* 极淡水墨灰 */
+  border-color: #a9b5c1 !important;
+  color: var(--text-primary) !important; /* 深墨字：淡底上清晰可读 */
+  box-shadow: 0 1px 0 rgba(255,255,255,0.55) inset !important;
+}
+/* hover：淡显基础上微深一档 */
+[data-theme="dark"] .chat-send.primary:hover,
+[data-theme="dark"] .nr-crawl-btn.is-crawl:hover,
+[data-theme="dark"] .btn-primary:not(.ai-master-banner):hover,
+[data-theme="dark"] .btn-primary-sm:not(.ai-master-banner):hover,
+[data-theme="dark"] .nr-platform-tab.active:hover,
+[data-theme="dark"] .nr-filter-chip-selected:hover{
+  background: linear-gradient(180deg, #c2ccd6 0%, #b2bfc9 100%) !important;
 }
 /* 国风精选按钮同样降鲜艳 */
 [data-theme="dark"] .nr-crawl-btn.is-curated{
