@@ -659,11 +659,11 @@
   --text-muted:      #7d8793; /* 辅助 on #fbfcfd = 3.2:1  达标 */
   --text-subtle:     #9aa3ad; /* 最淡（非正文） */
   --border-color:    #e2e8ef; /* 所有组件 1px 淡冷灰边 */
-  /* == 三、赭石土红 4 色阶（水墨宣纸唯一饱和色，非蓝）== */
-  --accent:        #8f4026;   /* 赭石土红（主色/按钮/字 AAA）on #fbfcfd */
-  --accent-hover:  #a0563a;   /* 中赭（hover） */
-  --accent-soft:   #b97a60;   /* 淡赭（边框淡彩） */
-  --accent-light:  rgba(143,64,38,0.10); /* 极淡（光环/淡底） */
+  /* == 三、水墨灰 4 色阶（文人画唯一饱和色，非蓝非赭石）== */
+  --accent:        #576473;   /* 中性石墨灰（主色/按钮/字 AAA）on #fbfcfd */
+  --accent-hover:  #4a5765;   /* 深灰（hover） */
+  --accent-soft:   #7d8b9a;   /* 淡灰（边框淡彩） */
+  --accent-light:  rgba(87,100,115,0.10); /* 极淡（光环/淡底） */
   /* == 四、单级阴影（单层不脏，不做4层嵌套）== */
   --shadow-sm: 0 1px 3px  rgba(30,36,43,0.05);
   --shadow-md: 0 4px 14px rgba(30,36,43,0.06);
@@ -736,9 +736,9 @@
 [data-theme="dark"] .home-stats-banner{
   /* 1 层纯背景：淡石青白 2 段渐变（绝不再加 SVG/径向/墨点 → 保证 4 格 100% 同色）*/
   background: linear-gradient(135deg, #f4f7fa 0%, #eef2f7 100%) !important;
-  border: 1px solid rgba(143,64,38,0.14) !important;
+  border: 1px solid rgba(87,100,115,0.14) !important;
   /* 极简单层极淡投影：不再有 inset 压痕 / 多层阴影 */
-  box-shadow: 0 2px 10px rgba(143,64,38,0.06) !important;
+  box-shadow: 0 2px 10px rgba(87,100,115,0.06) !important;
   color: var(--text-primary) !important;
   border-radius: var(--radius-md);
   padding: 14px 20px;
@@ -770,7 +770,7 @@
 }
 /* 竖分隔线 → 极淡（12%）+ 上下 30% 留白（不顶满上下边，不压迫）*/
 [data-theme="dark"] .home-stats-divider{
-  background: rgba(143,64,38,0.12) !important;
+  background: rgba(87,100,115,0.12) !important;
   opacity: 1 !important;
   height: 40% !important;
   align-self: center !important;
@@ -813,7 +813,7 @@
 /* Active 导航：细浓黛 2px 压痕 + 极淡石青底（如书签） */
 [data-theme="dark"] .sidebar-item.active{
   box-shadow: -2px 0 0 var(--accent) inset;
-  background: rgba(143,64,38,0.08);
+  background: rgba(87,100,115,0.08);
   color: var(--accent);
   border-radius: var(--radius-sm);
 }
@@ -828,7 +828,7 @@
 }
 [data-theme="dark"] .tool-panel > h3,
 [data-theme="dark"] .mine-section-title{
-  border-bottom: 1px solid rgba(143,64,38,0.14);
+  border-bottom: 1px solid rgba(87,100,115,0.14);
   padding-bottom: 8px; margin-bottom: 14px;
   color: var(--text-primary);
 }
@@ -848,8 +848,8 @@
 [data-theme="dark"] .tab-icon{
   color: var(--accent) !important;
   filter:
-    drop-shadow(0 0 0.8px rgba(143,64,38,0.55))
-    drop-shadow(0 1px 0 rgba(143,64,38,0.10));
+    drop-shadow(0 0 0.8px rgba(87,100,115,0.55))
+    drop-shadow(0 1px 0 rgba(87,100,115,0.10));
   stroke-width: 1.6;
   transition: filter var(--tr-base), color var(--tr-fast);
 }
@@ -857,8 +857,8 @@
 [data-theme="dark"] .sidebar-item:hover svg,
 [data-theme="dark"] .book-card:hover svg{
   filter:
-    drop-shadow(0 0 1.2px rgba(143,64,38,0.70))
-    drop-shadow(0 1px 0 rgba(143,64,38,0.18));
+    drop-shadow(0 0 1.2px rgba(87,100,115,0.70))
+    drop-shadow(0 1px 0 rgba(87,100,115,0.18));
 }
 /* 手机 Tab 图标 选中/未选中区分（不再 emoji 彩色）*/
 [data-theme="dark"] .tab-item{ color: var(--text-subtle); }
@@ -888,7 +888,7 @@
 [data-theme="dark"] .ai-assistant-card:hover{
   transform: translateY(-1px);
   box-shadow: 0 5px 18px rgba(30,36,43,0.08);
-  border-color: rgba(143,64,38,0.20);
+  border-color: rgba(87,100,115,0.20);
   transition: all var(--tr-base);
 }
 /* 手机端：卡片保持纯白（半透明会脏），间距更紧凑 */
@@ -909,7 +909,7 @@
   background-color: var(--bg-secondary) !important;
   backdrop-filter: none;
   border-right: 1px solid var(--border-color);
-  box-shadow: 2px 0 0 -1px rgba(143,64,38,0.22) inset;
+  box-shadow: 2px 0 0 -1px rgba(87,100,115,0.22) inset;
 }
 @media (max-width: 899px){
   [data-theme="dark"] .mobile-tab-bar,
@@ -960,7 +960,7 @@
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.25),
     inset 0 -2px 0 rgba(0,0,0,0.22),
-    0 3px 8px rgba(143,64,38,0.26);
+    0 3px 8px rgba(87,100,115,0.26);
   color: #fff;
   font-weight: 600;
   letter-spacing: 0.8px;
@@ -969,7 +969,7 @@
 }
 [data-theme="dark"] .btn-primary:hover,
 [data-theme="dark"] .btn-primary-sm:hover{
-  background: linear-gradient(180deg, #a0563a 0%, #8f4026 100%);
+  background: linear-gradient(180deg, #576473 0%, #4a5765 100%);
 }
 [data-theme="dark"] .btn-primary:active,
 [data-theme="dark"] .btn-primary-sm:active{
@@ -977,7 +977,7 @@
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.20),
     inset 0 -1px 0 rgba(0,0,0,0.20),
-    0 1px 3px rgba(143,64,38,0.22);
+    0 1px 3px rgba(87,100,115,0.22);
 }
 [data-theme="dark"] .btn-secondary,
 [data-theme="dark"] .btn-secondary-sm{
@@ -991,7 +991,7 @@
 [data-theme="dark"] .btn-secondary:hover,
 [data-theme="dark"] .btn-secondary-sm:hover{
   background: var(--bg-secondary);
-  border-color: rgba(143,64,38,0.30);
+  border-color: rgba(87,100,115,0.30);
 }
 
 /* ===== B3 配色冲突修复：首页全局默认绿色 → 石青系统一 =====
@@ -1005,7 +1005,7 @@
 [data-theme="dark"] .home-topbar-title{ color: var(--accent); letter-spacing: 7px; } /* 石青，字距收1点更精致 */
 [data-theme="dark"] .home-topbar-sub{ color: var(--text-muted); }
 [data-theme="dark"] .status-tag.completed{ background: var(--accent-light); color: var(--accent); }
-[data-theme="dark"] .status-tag.writing{ background: rgba(143,64,38,0.08); color: var(--accent); }
+[data-theme="dark"] .status-tag.writing{ background: rgba(87,100,115,0.08); color: var(--accent); }
 [data-theme="dark"] .tag.platform{ background: var(--accent-light); color: var(--accent); }
 [data-theme="dark"] .manual-section h3{ color: var(--accent); }
 /* 快捷按钮 hover 也改成石青，不再翠绿 7cb89e */
@@ -1016,8 +1016,8 @@
   border-width: 1px;
 }
 [data-theme="dark"] .home-action-btn:hover{
-  border-color: rgba(143,64,38,0.30);
-  background: linear-gradient(135deg, rgba(143,64,38,0.06) 0%, rgba(143,64,38,0.03) 100%);
+  border-color: rgba(87,100,115,0.30);
+  background: linear-gradient(135deg, rgba(87,100,115,0.06) 0%, rgba(87,100,115,0.03) 100%);
   color: var(--accent);
 }
 
@@ -1141,8 +1141,8 @@
   border-color: var(--border-color) !important;
 }
 [data-theme="dark"] .recent-book-card{
-  background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(143,64,38,0.04) 100%) !important;
-  box-shadow: 0 1px 6px rgba(143,64,38,0.06) !important;
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(87,100,115,0.04) 100%) !important;
+  box-shadow: 0 1px 6px rgba(87,100,115,0.06) !important;
 }
 [data-theme="dark"] .home-action-import:hover,
 [data-theme="dark"] .home-action-export:hover,
@@ -1150,16 +1150,16 @@
 [data-theme="dark"] .home-book-item:hover,
 [data-theme="dark"] .recent-book-card:hover,
 [data-theme="dark"] .master-create-entry:hover{
-  border-color: rgba(143,64,38,0.30) !important;
-  background: linear-gradient(135deg, rgba(143,64,38,0.06) 0%, rgba(143,64,38,0.03) 100%) !important;
-  box-shadow: 0 3px 12px rgba(143,64,38,0.10) !important;
+  border-color: rgba(87,100,115,0.30) !important;
+  background: linear-gradient(135deg, rgba(87,100,115,0.06) 0%, rgba(87,100,115,0.03) 100%) !important;
+  box-shadow: 0 3px 12px rgba(87,100,115,0.10) !important;
 }
 
 /* ⑤ tag-sm / status-tag / 箭头 的翠绿 → 石青（您截图中 长篇/历史/0字 那三个 tag 还是绿边框）*/
 [data-theme="dark"] .tag-sm{
   background: var(--accent-light) !important;
   color: var(--accent) !important;
-  border: 1px solid rgba(143,64,38,0.20) !important;
+  border: 1px solid rgba(87,100,115,0.20) !important;
 }
 [data-theme="dark"] .status-tag.writing{
   background: var(--accent-light) !important;
@@ -1326,6 +1326,12 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .home-topbar-sub{font-size:17px;color:#7a9a8a;letter-spacing:0.5px;line-height:1.2;white-space:nowrap;text-align:right}
 .home-topbar-logo{flex:0 0 auto;display:flex;align-items:center}
 .home-topbar-logo img{width:auto;height:77px;max-width:144px;object-fit:contain}
+
+/* 浅色主题·首页：去掉全局默认绿底/黛绿字，改为冷灰蓝+纯白带的科技风 */
+[data-theme="light"] .home-page{background:linear-gradient(180deg,rgba(95,126,163,0.08) 0%,rgba(233,237,243,0.9) 200px,var(--bg-primary) 400px)}
+[data-theme="light"] .home-page .page-header h1{color:#5f7ea3}
+[data-theme="light"] .home-topbar-title{color:#5f7ea3}
+[data-theme="light"] .home-topbar-sub{color:#57606a}
 
 /* Import File Zone */
 .import-file-zone{border:2px dashed var(--border-color);border-radius:var(--radius-md);padding:16px;margin-bottom:12px;background:var(--bg-tertiary)}
@@ -5272,17 +5278,17 @@ textarea.input.paper-textarea{
 }
 /* light（纯白主题）= 淡蓝→淡青，文字 #0969da 蓝字（用户截图背景=纯白，banner不能再发绿！） */
 [data-theme="light"] .ai-master-banner{
-  background: linear-gradient(135deg, #eaf0f5 0%, #e3ecf3 55%, #eaf1f6 100%) !important;
-  border: 1px solid #cdd9e4 !important;
-  color: #5f7ea3 !important;
+  background: linear-gradient(135deg, #eaf4ff 0%, #dff1ff 55%, #e9f8ff 100%) !important;
+  border: 1px solid #cce1fb !important;
+  color: #0969da !important;
 }
-[data-theme="light"] .ai-master-banner .cta-title{ color: #5f7ea3 !important; }
-[data-theme="light"] .ai-master-banner .cta-ai{ color: #51708f !important; text-shadow: 0 1px 0 rgba(255,255,255,0.7); }
-[data-theme="light"] .ai-master-banner .cta-sub-text{ color: #7d96b1 !important; opacity: 0.85; }
-/* dark / 国风（水墨国风）= 赭石土红浓渐变 + 纯白文字 */
+[data-theme="light"] .ai-master-banner .cta-title{ color: #0969da !important; }
+[data-theme="light"] .ai-master-banner .cta-ai{ color: #0b77f0 !important; text-shadow: 0 1px 0 rgba(255,255,255,0.7); }
+[data-theme="light"] .ai-master-banner .cta-sub-text{ color: #2f81f7 !important; opacity: 0.82; }
+/* dark / 国风（水墨国风）= 水墨灰浓渐变 + 纯白文字 */
 [data-theme="dark"] .ai-master-banner{
-  background: linear-gradient(135deg, #a0563a 0%, #903824 50%, #844730 100%) !important;
-  border: 1px solid #7f2e1c !important;
+  background: linear-gradient(135deg, #657384 0%, #576473 50%, #4a5765 100%) !important;
+  border: 1px solid #3c4855 !important;
   color: #ffffff !important;
   box-shadow:
     0 1px 0 rgba(255,255,255,0.12) inset,
@@ -5309,15 +5315,15 @@ textarea.input.paper-textarea{
 
 /* ============ AI 智驾 · 首页小圆按钮 btn-ai-entry-home ============ */
 [data-theme="light"] .btn-ai-entry-home{
-  background: linear-gradient(135deg, #7b93ac 0%, #5f7ea3 100%) !important;
+  background: linear-gradient(135deg, #0b77f0 0%, #0969da 100%) !important;
   color: #ffffff !important;
-  border: 1px solid #51708f !important;
-  box-shadow: 0 2px 8px rgba(95,126,163,0.28);
+  border: 1px solid #0b6dd8 !important;
+  box-shadow: 0 2px 8px rgba(9,105,218,0.28);
 }
 [data-theme="dark"] .btn-ai-entry-home{
-  background: linear-gradient(135deg, #a0563a, #903824) !important;
+  background: linear-gradient(135deg, #657384, #576473) !important;
   color: #ffffff !important;
-  border: 1px solid #7f2e1c !important;
+  border: 1px solid #3c4855 !important;
 }
 [data-theme="green"] .btn-ai-entry-home{
   background: linear-gradient(135deg, #5fa367, #4e7a52) !important;
@@ -5333,15 +5339,15 @@ textarea.input.paper-textarea{
 /* ============ AI识别填维度 btn-ai-recog ============ */
 .btn-ai-recog{ font-weight: 600 !important; border: 1px solid transparent !important; }
 [data-theme="light"] .btn-ai-recog{
-  background: linear-gradient(135deg, #7b93ac 0%, #5f7ea3 100%) !important;
+  background: linear-gradient(135deg, #0b77f0 0%, #0969da 100%) !important;
   color: #fff !important;
-  border-color: #51708f !important;
-  box-shadow: 0 1px 4px rgba(95,126,163,0.20);
+  border-color: #0b6dd8 !important;
+  box-shadow: 0 1px 4px rgba(9,105,218,0.20);
 }
 [data-theme="dark"] .btn-ai-recog{
-  background: linear-gradient(135deg, #a0563a, #903824) !important;
+  background: linear-gradient(135deg, #657384, #576473) !important;
   color: #ffffff !important;
-  border-color: #7f2e1c !important;
+  border-color: #3c4855 !important;
 }
 [data-theme="green"] .btn-ai-recog{
   background: linear-gradient(135deg, #5fa367, #4e7a52) !important;
@@ -5451,8 +5457,8 @@ textarea.input.paper-textarea{
 [data-theme="dark"] .btn-primary,
 [data-theme="dark"] .nr-filter-chip-selected,
 [data-theme="dark"] .nr-platform-tab.active{
-  background: linear-gradient(180deg,#a0563a 0%,#85311f 100%) !important;
-  border-color: #6e271a !important;
+  background: linear-gradient(180deg,#576473 0%,#3c4855 100%) !important;
+  border-color: #303b47 !important;
   box-shadow: 0 1px 0 rgba(255,255,255,0.10) inset,
               0 1px 2px rgba(144,56,36,0.15) !important;
 }
@@ -5618,8 +5624,8 @@ textarea.input.paper-textarea{
 [data-theme="dark"] .btn-primary-sm,
 [data-theme="dark"] .nr-filter-chip-selected,
 [data-theme="dark"] .nr-platform-tab.active{
-  background: linear-gradient(180deg, #a0563a 0%, #903824 100%) !important; /* 水墨赭石(非蓝)，减饱和适配宣纸 */
-  border-color: #7f2e1c !important;
+  background: linear-gradient(180deg, #657384 0%, #576473 100%) !important; /* 水墨灰（非蓝非赭石），减饱和适配宣纸 */
+  border-color: #3c4855 !important;
   color: #ffffff !important;
   box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset !important;
 }
