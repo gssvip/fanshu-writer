@@ -674,18 +674,13 @@
     0 1px 3px rgba(37,99,235,0.08);
 }
 
-/* H. AI智驾入口·圆=纯白 + 科技蓝1px边 + 淡科技蓝光晕（Clean-White统一蓝） */
+/* H. AI智驾入口图标：保持用户原有图标原貌，不画蛇添足加光环/阴影 */
 [data-theme="light"] .master-create-entry-icon{
-  width: 64px !important;
-  height: 64px !important;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 50% !important;
-  background: #ffffff !important;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 28%, white),
-    0 0 0 6px color-mix(in srgb, var(--accent) 8%, transparent),
-    inset 0 1px 0 rgba(255,255,255,0.9),
-    0 4px 14px color-mix(in srgb, var(--accent) 14%, transparent);
+  /* 仅恢复基础尺寸，不加任何 box-shadow 光环 / 圆角 / 底色装饰 */
+  width: auto !important;
+  height: auto !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 [data-theme="light"] .master-create-entry-label{
   color: var(--text-primary) !important;
@@ -1133,9 +1128,9 @@
    - 未选中 label：同步淡黛青（冷灰5级 text-subtle → 但用户反馈"太淡"，故用 text-muted 7d8793）
    - 选中态：🏠首页 100% 全彩保留 + 淡石青底 + 浓黛字（石青 #1d425d） */
 
-/* ① 未选中 Tab 图标：亮+饱和微降（不做 grayscale！再也不白蒙蒙） */
+/* ① 未选中 Tab 图标：原色原样（亮丽不灰蒙） */
 [data-theme="dark"] .tab-item:not(.active) .tab-icon{
-  filter: brightness(0.9) saturate(0.85) contrast(1.1);
+  filter: none !important;
   opacity: 1;
 }
 /* 未选中 Tab 文字：同步淡黛青 text-muted（7d8793），绝不用更淡的 text-subtle（9aa3ad）——保证能看清 */
@@ -5599,22 +5594,12 @@ textarea.input.paper-textarea{
   box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-/* ===== 国风（Dark水墨） 压饱和 + 石青灰Tint，让彩色Emoji不再红黄蓝绿直上 ===== */
-[data-theme="dark"] .tab-icon{
-  filter: saturate(0.65) brightness(0.95) contrast(0.92) hue-rotate(-3deg);
-  display: inline-block;
-}
-[data-theme="dark"] .tab-item.active .tab-icon{
-  filter: saturate(0.78) brightness(0.98) contrast(1.0);
-}
+/* ===== 国风（Dark水墨）—— 图标恢复原色亮丽，不再压饱和/抽灰 ===== */
+[data-theme="dark"] .tab-icon{ filter: none !important; display: inline-block; }
+[data-theme="dark"] .tab-item.active .tab-icon{ filter: none !important; }
 [data-theme="dark"] .write-tab-icon,
-[data-theme="dark"] button.write-tab .write-tab-icon{
-  filter: saturate(0.60) brightness(0.93) contrast(0.90) hue-rotate(-3deg);
-  display: inline-block;
-}
-[data-theme="dark"] .write-tab.active .write-tab-icon{
-  filter: saturate(0.78) brightness(1.0) contrast(1.0);
-}
+[data-theme="dark"] button.write-tab .write-tab-icon{ filter: none !important; display: inline-block; }
+[data-theme="dark"] .write-tab.active .write-tab-icon{ filter: none !important; }
 [data-theme="dark"] .nr-platform-tab .tab-emoji,
 [data-theme="dark"] .smart-skill-icon,
 [data-theme="dark"] .skill-pack-info-icon,
@@ -5625,10 +5610,7 @@ textarea.input.paper-textarea{
 [data-theme="dark"] .stat-card-head-icon,
 [data-theme="dark"] .book-card-icon,
 [data-theme="dark"] .home-action-icon,
-[data-theme="dark"] .master-create-entry-icon{
-  filter: saturate(0.58) brightness(0.93) contrast(0.90) hue-rotate(-2deg);
-  display: inline-block;
-}
+[data-theme="dark"] .master-create-entry-icon{ filter: none !important; display: inline-block; }
 
 /* ===== 护眼绿 Green 压饱和 + 翠绿Tint ===== */
 [data-theme="green"] .tab-icon{
@@ -5788,13 +5770,13 @@ textarea.input.paper-textarea{
 [data-theme="light"] .concept-panel button[class*="ghost"] > *,
 [data-theme="light"] .write-page-topbar button > *{ filter: none !important; }
 
-/* ---------- D2b 国风 Dark：加 sepia(20%) 把红黄直接抽灰，彻底水墨灰石青调 ---------- */
-[data-theme="dark"] .tab-icon{ filter: saturate(0.45) brightness(0.92) contrast(0.88) sepia(0.22) hue-rotate(-4deg) !important; display:inline-block; }
-[data-theme="dark"] .tab-item.active .tab-icon{ filter: saturate(0.60) brightness(0.96) contrast(0.94) sepia(0.18) hue-rotate(-4deg) !important; }
+/* ---------- D2b 国风 Dark：图标恢复原色（亮丽），不再 sepia 抽灰成水墨灰 ---------- */
+[data-theme="dark"] .tab-icon{ filter: none !important; display:inline-block; }
+[data-theme="dark"] .tab-item.active .tab-icon{ filter: none !important; }
 [data-theme="dark"] .write-tab-icon,
-[data-theme="dark"] button.write-tab .write-tab-icon{ filter: saturate(0.42) brightness(0.90) contrast(0.86) sepia(0.25) hue-rotate(-4deg) !important; display:inline-block; }
-[data-theme="dark"] .write-tab.active .write-tab-icon{ filter: saturate(0.60) brightness(0.94) contrast(0.92) sepia(0.20) hue-rotate(-4deg) !important; }
-/* 全部工具/创作/我的 图标 sepia 水墨化 */
+[data-theme="dark"] button.write-tab .write-tab-icon{ filter: none !important; display:inline-block; }
+[data-theme="dark"] .write-tab.active .write-tab-icon{ filter: none !important; }
+/* 全部工具/创作/我的 图标：自然原色，亮丽不灰蒙 */
 [data-theme="dark"] .nr-platform-tab .tab-emoji,
 [data-theme="dark"] .nr-crawl-btn .crawl-cloud-icon,
 [data-theme="dark"] .smart-skill-icon,
@@ -5814,7 +5796,7 @@ textarea.input.paper-textarea{
 [data-theme="dark"] .config-category-icon,
 [data-theme="dark"] .mine-stats-icon,
 [data-theme="dark"] .profile-emoji,
-[data-theme="dark"] .mine-tab-icon{ filter: saturate(0.40) brightness(0.90) contrast(0.86) sepia(0.25) hue-rotate(-4deg) !important; display:inline-block; }
+[data-theme="dark"] .mine-tab-icon{ filter: none !important; display:inline-block; }
 
 /* ---------- D2c Green护眼绿：saturate再压 ---------- */
 [data-theme="green"] .tab-icon{ filter: saturate(0.55) brightness(0.97) !important; display:inline-block; }
