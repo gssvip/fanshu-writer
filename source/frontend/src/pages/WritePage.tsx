@@ -5245,7 +5245,7 @@ ${existingVols || '（暂无）'}
       {/* 大纲工作流（从大纲维度迁移）：总纲→分卷规划→提取→导入→AI创作 全部在同一行，相互协作非强制。
           支持折叠，方便手机使用。 */}
       {!workflowCollapsed && (
-        <div className="volume-calc-section" style={{ borderLeft: '3px solid #6c5ce7', paddingLeft: 10, marginBottom: 8 }}>
+        <div className="volume-calc-section" style={{ borderLeft: '3px solid var(--accent)', paddingLeft: 10, marginBottom: 8 }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             {/* 反生成五幕式总纲：从已导入的各卷剧情反向提炼，写入大纲维度 */}
             <button
@@ -5253,7 +5253,7 @@ ${existingVols || '（暂无）'}
               onClick={handleReverseGenerateOutline}
               disabled={reverseLoading || outlineWorkflowLoading !== ''}
               title="从已导入/提取的各卷剧情，反向提炼五幕式总纲，填入大纲维度"
-              style={{ color: '#6c5ce7' }}
+              style={{ color: 'var(--accent)' }}
             >
               {reverseLoading ? '⏳ 反生成中...' : '🔄 反生成五幕式总纲'}
             </button>
@@ -5262,7 +5262,7 @@ ${existingVols || '（暂无）'}
               onClick={() => setShowVolumeCalc(s => !s)}
               disabled={outlineWorkflowLoading !== ''}
               title="输入卷数，按每卷50章×2400字自动生成分卷框架"
-              style={showVolumeCalc ? { background: '#6c5ce7', color: '#fff' } : {}}
+              style={showVolumeCalc ? { background: 'var(--accent-light)', color: 'var(--accent)', fontWeight: 700 } : {}}
             >
               📊 自动分卷规划
             </button>
@@ -5291,7 +5291,7 @@ ${existingVols || '（暂无）'}
             </button>
           </div>
           {/* 工作流提示：打通总纲→分卷→提取→导入→AI创作，相互反哺非强制 */}
-          <div style={{ fontSize: 11, color: '#636e72', marginTop: 4, lineHeight: 1.6 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.6 }}>
             💡 工作流可任选起点、相互反哺：
             {bible?.plot_design?.trim() ? ' ✓有总纲' : ' ✗无总纲'}
             {bible?.timeline?.trim() ? ' ✓有各卷' : ' ✗无各卷'}
@@ -5299,7 +5299,7 @@ ${existingVols || '（暂无）'}
             有总纲→提取各卷；有各卷→反生成总纲；无总纲→分卷规划/导入/AI创作任选；节点设计无需总纲即可用
           </div>
           {outlineWorkflowProgress && (
-            <div style={{ fontSize: 12, color: '#0984e3', marginTop: 6 }}>{outlineWorkflowProgress}</div>
+            <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 6 }}>{outlineWorkflowProgress}</div>
           )}
         </div>
       )}
@@ -6438,7 +6438,7 @@ function OutlineCombinedPanel(props: {
 
       {/* 五幕式总纲生成（仅大纲tab显示） */}
       {subTab === 'outline' && (
-        <div className="volume-calc-section" style={{ borderLeft: '3px solid #6c5ce7', paddingLeft: 10, marginBottom: 8 }}>
+        <div className="volume-calc-section" style={{ borderLeft: '3px solid var(--accent)', paddingLeft: 10, marginBottom: 8 }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <button
               className="btn-primary-sm"
@@ -6450,7 +6450,7 @@ function OutlineCombinedPanel(props: {
             </button>
           </div>
           {outlineWorkflowProgress && (
-            <div style={{ fontSize: 12, color: '#0984e3', marginTop: 6 }}>{outlineWorkflowProgress}</div>
+            <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 6 }}>{outlineWorkflowProgress}</div>
           )}
         </div>
       )}
@@ -8166,7 +8166,7 @@ function ForeshadowingPanel(props: {
                           ) : (
                             <>
                               <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? '📥 拉取' : '📂 折叠'}</button>
-                              <button className="btn-primary-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'setting' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·设定，协同修正设定维度" style={{color:'#fff',background:'#6c5ce7'}}>
+                              <button className="btn-primary-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'setting' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·设定，协同修正设定维度">
                                 🔧 AI修正
                               </button>
                               <button className="btn-ghost-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'chapter' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·正文，协同修正违规章节">📝 修正正文</button>

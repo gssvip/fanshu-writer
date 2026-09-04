@@ -126,8 +126,8 @@ export default function EntityRegistryModal({ bookId, onClose, onRenamed }: Enti
               style={{
                 padding: '6px 14px', fontSize: 13, fontWeight: 600,
                 borderRadius: '6px 6px 0 0',
-                background: activeTab === k ? 'var(--accent)' : 'var(--bg-secondary)',
-                color: activeTab === k ? '#fff' : 'var(--text-secondary)',
+                background: activeTab === k ? 'var(--accent-light)' : 'var(--bg-secondary)',
+                color: activeTab === k ? 'var(--accent)' : 'var(--text-secondary)',
                 border: '1px solid var(--border-color)',
                 borderBottom: 'none',
               }}

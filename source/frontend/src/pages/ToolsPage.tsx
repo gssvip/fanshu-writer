@@ -1172,7 +1172,7 @@ category：master
             {analyzeResult && (
               <>
                 <button className="btn-secondary" onClick={handleExportAnalysis}>📥 导出结果</button>
-                <button className="btn-secondary" onClick={() => setShowSyncModal(true)} style={{borderColor:'#6c5ce7',color:'#6c5ce7'}}>
+                <button className="btn-secondary" onClick={() => setShowSyncModal(true)} style={{borderColor:'var(--accent)',color:'var(--accent)'}}>
                   📋 同步到作品
                 </button>
               </>
