@@ -5362,18 +5362,18 @@ textarea.input.paper-textarea{
 [data-theme="light"] .ai-master-banner .cta-title{ color: var(--accent) !important; }
 [data-theme="light"] .ai-master-banner .cta-ai{ color: var(--accent-hover) !important; text-shadow: none; }
 [data-theme="light"] .ai-master-banner .cta-sub-text{ color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary)) !important; opacity: 1; }
-/* dark / 国风（水墨国风）= 水墨灰浓渐变 + 纯白文字 */
+/* dark / 国风（水墨国风）= 极淡水墨灰（宣纸感）+ 浓墨文字，不再用重色灰底 */
 [data-theme="dark"] .ai-master-banner{
-  background: linear-gradient(135deg, #657384 0%, #576473 50%, #4a5765 100%) !important;
-  border: 1px solid #3c4855 !important;
-  color: #ffffff !important;
+  background: linear-gradient(135deg, #f4f5f7 0%, #eceef2 100%) !important;
+  border: 1px solid #d6dade !important;
+  color: var(--text-primary) !important;
   box-shadow:
-    0 1px 0 rgba(255,255,255,0.12) inset,
-    0 14px 36px rgba(144,56,36,0.38);
+    0 1px 0 rgba(255,255,255,0.8) inset,
+    0 4px 14px rgba(30,36,43,0.08);
 }
-[data-theme="dark"] .ai-master-banner .cta-title,
-[data-theme="dark"] .ai-master-banner .cta-ai,
-[data-theme="dark"] .ai-master-banner .cta-sub-text{ color: #ffffff !important; }
+[data-theme="dark"] .ai-master-banner .cta-title{ color: var(--text-primary) !important; }
+[data-theme="dark"] .ai-master-banner .cta-ai{ color: var(--accent) !important; }
+[data-theme="dark"] .ai-master-banner .cta-sub-text{ color: var(--text-secondary) !important; }
 /* green / 护眼绿 = 翡翠绿淡→浓 渐变 + 深绿文字（好看不艳）*/
 [data-theme="green"] .ai-master-banner{
   background: linear-gradient(135deg, #9fc9a4 0%, #5fa367 55%, #6fa978 100%) !important;
