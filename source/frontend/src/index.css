@@ -61,14 +61,14 @@
   --text-secondary:  #57606a; /* 副字 5.4:1 AA */
   --text-muted:      #8c959f; /* 辅助 3.1:1 */
   --text-subtle:     #b1bac4; /* 飞白淡灰 */
-  --accent:        #4c8fe8;   /* 柔蓝（用户投诉旧#0969da浓墨扎眼，saturate↓30%）on #fff 4.3:1 AA */
-  --title-green:   #4c8fe8;   /* 节标题=同柔蓝（纯白主题不需要"绿"）*/
-  --accent-hover:   #3f7ed8;
-  --accent-soft:    #8ab7f0;
-  --accent-light:   #e7f0fc;   /* TAG淡蓝底 / tab-active淡蓝底 */
-  --green-hover:    #3f7ed8;
-  --green-soft:     #8ab7f0;
-  --green-light:    #e7f0fc;
+  --accent:        #5f7ea3;   /* 雾灰蓝（适配纯白科技风：降饱和降明度，不扎眼）on #fff 4.3:1 */
+  --title-green:   #5f7ea3;   /* 节标题=同雾灰蓝（纯白主题不需要"绿"）*/
+  --accent-hover:   #51708f;
+  --accent-soft:    #9db4cd;
+  --accent-light:   #e9edf3;   /* TAG淡蓝灰底 / tab-active淡灰蓝底 */
+  --green-hover:    #51708f;
+  --green-soft:     #9db4cd;
+  --green-light:    #e9edf3;
   --bg-card:        #ffffff;   /* 卡片=纯白（带极淡阴影+边即分层）*/
   --bg-elevated:    #ffffff;
   --bg-hover:       #f3f4f6;
@@ -659,11 +659,11 @@
   --text-muted:      #7d8793; /* 辅助 on #fbfcfd = 3.2:1  达标 */
   --text-subtle:     #9aa3ad; /* 最淡（非正文） */
   --border-color:    #e2e8ef; /* 所有组件 1px 淡冷灰边 */
-  /* == 三、石青 4 色阶（文人画唯一饱和色）== */
-  --accent:        #1d425d;   /* 浓黛（主色 / 按钮 / 字 AAA） on #fbfcfd=7.3:1 */
-  --accent-hover:  #2f5066;   /* 中黛（hover） */
-  --accent-soft:   #4a6983;   /* 淡黛（边框淡彩） */
-  --accent-light:  rgba(29,66,93,0.10); /* 极淡（光环/淡底） */
+  /* == 三、赭石土红 4 色阶（水墨宣纸唯一饱和色，非蓝）== */
+  --accent:        #8f4026;   /* 赭石土红（主色/按钮/字 AAA）on #fbfcfd */
+  --accent-hover:  #a0563a;   /* 中赭（hover） */
+  --accent-soft:   #b97a60;   /* 淡赭（边框淡彩） */
+  --accent-light:  rgba(143,64,38,0.10); /* 极淡（光环/淡底） */
   /* == 四、单级阴影（单层不脏，不做4层嵌套）== */
   --shadow-sm: 0 1px 3px  rgba(30,36,43,0.05);
   --shadow-md: 0 4px 14px rgba(30,36,43,0.06);
@@ -736,9 +736,9 @@
 [data-theme="dark"] .home-stats-banner{
   /* 1 层纯背景：淡石青白 2 段渐变（绝不再加 SVG/径向/墨点 → 保证 4 格 100% 同色）*/
   background: linear-gradient(135deg, #f4f7fa 0%, #eef2f7 100%) !important;
-  border: 1px solid rgba(29,66,93,0.14) !important;
+  border: 1px solid rgba(143,64,38,0.14) !important;
   /* 极简单层极淡投影：不再有 inset 压痕 / 多层阴影 */
-  box-shadow: 0 2px 10px rgba(29,66,93,0.06) !important;
+  box-shadow: 0 2px 10px rgba(143,64,38,0.06) !important;
   color: var(--text-primary) !important;
   border-radius: var(--radius-md);
   padding: 14px 20px;
@@ -770,7 +770,7 @@
 }
 /* 竖分隔线 → 极淡（12%）+ 上下 30% 留白（不顶满上下边，不压迫）*/
 [data-theme="dark"] .home-stats-divider{
-  background: rgba(29,66,93,0.12) !important;
+  background: rgba(143,64,38,0.12) !important;
   opacity: 1 !important;
   height: 40% !important;
   align-self: center !important;
@@ -813,7 +813,7 @@
 /* Active 导航：细浓黛 2px 压痕 + 极淡石青底（如书签） */
 [data-theme="dark"] .sidebar-item.active{
   box-shadow: -2px 0 0 var(--accent) inset;
-  background: rgba(29,66,93,0.08);
+  background: rgba(143,64,38,0.08);
   color: var(--accent);
   border-radius: var(--radius-sm);
 }
@@ -828,7 +828,7 @@
 }
 [data-theme="dark"] .tool-panel > h3,
 [data-theme="dark"] .mine-section-title{
-  border-bottom: 1px solid rgba(29,66,93,0.14);
+  border-bottom: 1px solid rgba(143,64,38,0.14);
   padding-bottom: 8px; margin-bottom: 14px;
   color: var(--text-primary);
 }
@@ -848,8 +848,8 @@
 [data-theme="dark"] .tab-icon{
   color: var(--accent) !important;
   filter:
-    drop-shadow(0 0 0.8px rgba(29,66,93,0.55))
-    drop-shadow(0 1px 0 rgba(29,66,93,0.10));
+    drop-shadow(0 0 0.8px rgba(143,64,38,0.55))
+    drop-shadow(0 1px 0 rgba(143,64,38,0.10));
   stroke-width: 1.6;
   transition: filter var(--tr-base), color var(--tr-fast);
 }
@@ -857,8 +857,8 @@
 [data-theme="dark"] .sidebar-item:hover svg,
 [data-theme="dark"] .book-card:hover svg{
   filter:
-    drop-shadow(0 0 1.2px rgba(29,66,93,0.70))
-    drop-shadow(0 1px 0 rgba(29,66,93,0.18));
+    drop-shadow(0 0 1.2px rgba(143,64,38,0.70))
+    drop-shadow(0 1px 0 rgba(143,64,38,0.18));
 }
 /* 手机 Tab 图标 选中/未选中区分（不再 emoji 彩色）*/
 [data-theme="dark"] .tab-item{ color: var(--text-subtle); }
@@ -888,7 +888,7 @@
 [data-theme="dark"] .ai-assistant-card:hover{
   transform: translateY(-1px);
   box-shadow: 0 5px 18px rgba(30,36,43,0.08);
-  border-color: rgba(29,66,93,0.20);
+  border-color: rgba(143,64,38,0.20);
   transition: all var(--tr-base);
 }
 /* 手机端：卡片保持纯白（半透明会脏），间距更紧凑 */
@@ -909,7 +909,7 @@
   background-color: var(--bg-secondary) !important;
   backdrop-filter: none;
   border-right: 1px solid var(--border-color);
-  box-shadow: 2px 0 0 -1px rgba(29,66,93,0.22) inset;
+  box-shadow: 2px 0 0 -1px rgba(143,64,38,0.22) inset;
 }
 @media (max-width: 899px){
   [data-theme="dark"] .mobile-tab-bar,
@@ -960,7 +960,7 @@
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.25),
     inset 0 -2px 0 rgba(0,0,0,0.22),
-    0 3px 8px rgba(29,66,93,0.26);
+    0 3px 8px rgba(143,64,38,0.26);
   color: #fff;
   font-weight: 600;
   letter-spacing: 0.8px;
@@ -969,7 +969,7 @@
 }
 [data-theme="dark"] .btn-primary:hover,
 [data-theme="dark"] .btn-primary-sm:hover{
-  background: linear-gradient(180deg, #3c6a88 0%, #2f5066 100%);
+  background: linear-gradient(180deg, #a0563a 0%, #8f4026 100%);
 }
 [data-theme="dark"] .btn-primary:active,
 [data-theme="dark"] .btn-primary-sm:active{
@@ -977,7 +977,7 @@
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.20),
     inset 0 -1px 0 rgba(0,0,0,0.20),
-    0 1px 3px rgba(29,66,93,0.22);
+    0 1px 3px rgba(143,64,38,0.22);
 }
 [data-theme="dark"] .btn-secondary,
 [data-theme="dark"] .btn-secondary-sm{
@@ -991,7 +991,7 @@
 [data-theme="dark"] .btn-secondary:hover,
 [data-theme="dark"] .btn-secondary-sm:hover{
   background: var(--bg-secondary);
-  border-color: rgba(29,66,93,0.30);
+  border-color: rgba(143,64,38,0.30);
 }
 
 /* ===== B3 配色冲突修复：首页全局默认绿色 → 石青系统一 =====
@@ -1005,7 +1005,7 @@
 [data-theme="dark"] .home-topbar-title{ color: var(--accent); letter-spacing: 7px; } /* 石青，字距收1点更精致 */
 [data-theme="dark"] .home-topbar-sub{ color: var(--text-muted); }
 [data-theme="dark"] .status-tag.completed{ background: var(--accent-light); color: var(--accent); }
-[data-theme="dark"] .status-tag.writing{ background: rgba(29,66,93,0.08); color: var(--accent); }
+[data-theme="dark"] .status-tag.writing{ background: rgba(143,64,38,0.08); color: var(--accent); }
 [data-theme="dark"] .tag.platform{ background: var(--accent-light); color: var(--accent); }
 [data-theme="dark"] .manual-section h3{ color: var(--accent); }
 /* 快捷按钮 hover 也改成石青，不再翠绿 7cb89e */
@@ -1016,8 +1016,8 @@
   border-width: 1px;
 }
 [data-theme="dark"] .home-action-btn:hover{
-  border-color: rgba(29,66,93,0.30);
-  background: linear-gradient(135deg, rgba(29,66,93,0.06) 0%, rgba(29,66,93,0.03) 100%);
+  border-color: rgba(143,64,38,0.30);
+  background: linear-gradient(135deg, rgba(143,64,38,0.06) 0%, rgba(143,64,38,0.03) 100%);
   color: var(--accent);
 }
 
@@ -1141,8 +1141,8 @@
   border-color: var(--border-color) !important;
 }
 [data-theme="dark"] .recent-book-card{
-  background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(29,66,93,0.04) 100%) !important;
-  box-shadow: 0 1px 6px rgba(29,66,93,0.06) !important;
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(143,64,38,0.04) 100%) !important;
+  box-shadow: 0 1px 6px rgba(143,64,38,0.06) !important;
 }
 [data-theme="dark"] .home-action-import:hover,
 [data-theme="dark"] .home-action-export:hover,
@@ -1150,16 +1150,16 @@
 [data-theme="dark"] .home-book-item:hover,
 [data-theme="dark"] .recent-book-card:hover,
 [data-theme="dark"] .master-create-entry:hover{
-  border-color: rgba(29,66,93,0.30) !important;
-  background: linear-gradient(135deg, rgba(29,66,93,0.06) 0%, rgba(29,66,93,0.03) 100%) !important;
-  box-shadow: 0 3px 12px rgba(29,66,93,0.10) !important;
+  border-color: rgba(143,64,38,0.30) !important;
+  background: linear-gradient(135deg, rgba(143,64,38,0.06) 0%, rgba(143,64,38,0.03) 100%) !important;
+  box-shadow: 0 3px 12px rgba(143,64,38,0.10) !important;
 }
 
 /* ⑤ tag-sm / status-tag / 箭头 的翠绿 → 石青（您截图中 长篇/历史/0字 那三个 tag 还是绿边框）*/
 [data-theme="dark"] .tag-sm{
   background: var(--accent-light) !important;
   color: var(--accent) !important;
-  border: 1px solid rgba(29,66,93,0.20) !important;
+  border: 1px solid rgba(143,64,38,0.20) !important;
 }
 [data-theme="dark"] .status-tag.writing{
   background: var(--accent-light) !important;
@@ -1658,7 +1658,7 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .skills-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;flex-wrap:wrap}
 .skills-header h3{margin-bottom:2px}
 .custom-badge{display:inline-block;margin-left:6px;padding:1px 6px;background:var(--accent);color:#fff;font-size:10px;border-radius:3px;font-weight:400;vertical-align:middle}
-.builtin-badge{display:inline-block;margin-left:6px;padding:1px 6px;background:#5b8def;color:#fff;font-size:10px;border-radius:3px;font-weight:400;vertical-align:middle}
+.builtin-badge{display:inline-block;margin-left:6px;padding:1px 6px;background:var(--accent);color:#fff;font-size:10px;border-radius:3px;font-weight:400;vertical-align:middle}
 .skill-card-actions{display:flex;gap:4px;margin-left:auto}
 .btn-icon{background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:var(--radius-sm);font-size:14px;line-height:1;transition:background .15s}
 .btn-icon:hover{background:var(--bg-secondary)}
@@ -1735,17 +1735,17 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 /* Theme Preview Cards：重做真实主题色 mini 缩略预览（用户之前说"浅色预览框纯白"=错）
    每张卡片 = 对应主题的：主色 bg + 顶部 6px 标题条(title-green/accent) + 右下 1px accent 色角标 = 用户一眼看出区别，不显示白白矩形骗人 */
 .theme-preview{height:60px;border-radius:4px;margin-bottom:8px;border:1px solid var(--border-color);position:relative;overflow:hidden}
-/* light 真实预览：纯白 #ffffff + 顶部 6px GitHub蓝 #0969da 条 + 右下淡蓝角标 */
+/* light 真实预览：纯白 #ffffff + 顶部 6px 雾灰蓝条 + 右下雾灰蓝角标 */
 .theme-preview.light{
   background:
-    linear-gradient(135deg, transparent 85%, rgba(9,105,218,0.22) 85%),
-    linear-gradient(135deg, transparent 88%, rgba(9,105,218,0.40) 88%),
+    linear-gradient(135deg, transparent 85%, rgba(95,126,163,0.22) 85%),
+    linear-gradient(135deg, transparent 88%, rgba(95,126,163,0.40) 88%),
     #ffffff;
 }
 .theme-preview.light::before{
   content:""; position:absolute; top:0; left:0; right:0; height:6px;
-  background: #0969da;
-  border-bottom: 1px solid rgba(9,105,218,0.22);
+  background: #5f7ea3;
+  border-bottom: 1px solid rgba(95,126,163,0.22);
 }
 /* green 真实预览：护眼绿截图 bg=#f2f4ef（灰豆绿，第二张截图） */
 .theme-preview.green{
@@ -5272,21 +5272,21 @@ textarea.input.paper-textarea{
 }
 /* light（纯白主题）= 淡蓝→淡青，文字 #0969da 蓝字（用户截图背景=纯白，banner不能再发绿！） */
 [data-theme="light"] .ai-master-banner{
-  background: linear-gradient(135deg, #eaf4ff 0%, #dff1ff 55%, #e9f8ff 100%) !important;
-  border: 1px solid #cce1fb !important;
-  color: #0969da !important;
+  background: linear-gradient(135deg, #eaf0f5 0%, #e3ecf3 55%, #eaf1f6 100%) !important;
+  border: 1px solid #cdd9e4 !important;
+  color: #5f7ea3 !important;
 }
-[data-theme="light"] .ai-master-banner .cta-title{ color: #0969da !important; }
-[data-theme="light"] .ai-master-banner .cta-ai{ color: #0b77f0 !important; text-shadow: 0 1px 0 rgba(255,255,255,0.7); }
-[data-theme="light"] .ai-master-banner .cta-sub-text{ color: #2f81f7 !important; opacity: 0.82; }
-/* dark / 国风（水墨国风·石青）= 石青浓渐变 + 纯白文字 */
+[data-theme="light"] .ai-master-banner .cta-title{ color: #5f7ea3 !important; }
+[data-theme="light"] .ai-master-banner .cta-ai{ color: #51708f !important; text-shadow: 0 1px 0 rgba(255,255,255,0.7); }
+[data-theme="light"] .ai-master-banner .cta-sub-text{ color: #7d96b1 !important; opacity: 0.85; }
+/* dark / 国风（水墨国风）= 赭石土红浓渐变 + 纯白文字 */
 [data-theme="dark"] .ai-master-banner{
-  background: linear-gradient(135deg, #285373 0%, #1d425d 50%, #244e6d 100%) !important;
-  border: 1px solid #38678a !important;
+  background: linear-gradient(135deg, #a0563a 0%, #903824 50%, #844730 100%) !important;
+  border: 1px solid #7f2e1c !important;
   color: #ffffff !important;
   box-shadow:
     0 1px 0 rgba(255,255,255,0.12) inset,
-    0 14px 36px rgba(29,66,93,0.38);
+    0 14px 36px rgba(144,56,36,0.38);
 }
 [data-theme="dark"] .ai-master-banner .cta-title,
 [data-theme="dark"] .ai-master-banner .cta-ai,
@@ -5309,15 +5309,15 @@ textarea.input.paper-textarea{
 
 /* ============ AI 智驾 · 首页小圆按钮 btn-ai-entry-home ============ */
 [data-theme="light"] .btn-ai-entry-home{
-  background: linear-gradient(135deg, #0b77f0 0%, #0969da 100%) !important;
+  background: linear-gradient(135deg, #7b93ac 0%, #5f7ea3 100%) !important;
   color: #ffffff !important;
-  border: 1px solid #0b6dd8 !important;
-  box-shadow: 0 2px 8px rgba(9,105,218,0.28);
+  border: 1px solid #51708f !important;
+  box-shadow: 0 2px 8px rgba(95,126,163,0.28);
 }
 [data-theme="dark"] .btn-ai-entry-home{
-  background: linear-gradient(135deg, #285373, #1d425d) !important;
+  background: linear-gradient(135deg, #a0563a, #903824) !important;
   color: #ffffff !important;
-  border: 1px solid #38678a !important;
+  border: 1px solid #7f2e1c !important;
 }
 [data-theme="green"] .btn-ai-entry-home{
   background: linear-gradient(135deg, #5fa367, #4e7a52) !important;
@@ -5333,15 +5333,15 @@ textarea.input.paper-textarea{
 /* ============ AI识别填维度 btn-ai-recog ============ */
 .btn-ai-recog{ font-weight: 600 !important; border: 1px solid transparent !important; }
 [data-theme="light"] .btn-ai-recog{
-  background: linear-gradient(135deg, #0b77f0 0%, #0969da 100%) !important;
+  background: linear-gradient(135deg, #7b93ac 0%, #5f7ea3 100%) !important;
   color: #fff !important;
-  border-color: #0b6dd8 !important;
-  box-shadow: 0 1px 4px rgba(9,105,218,0.20);
+  border-color: #51708f !important;
+  box-shadow: 0 1px 4px rgba(95,126,163,0.20);
 }
 [data-theme="dark"] .btn-ai-recog{
-  background: linear-gradient(135deg, #285373, #1d425d) !important;
+  background: linear-gradient(135deg, #a0563a, #903824) !important;
   color: #ffffff !important;
-  border-color: #38678a !important;
+  border-color: #7f2e1c !important;
 }
 [data-theme="green"] .btn-ai-recog{
   background: linear-gradient(135deg, #5fa367, #4e7a52) !important;
@@ -5445,16 +5445,16 @@ textarea.input.paper-textarea{
               0 1px 2px rgba(91,33,182,0.10) !important;
 }
 
-/* ---------- C1b. Dark(国风) 主按钮：石青加深一级，去纯皇家蓝（用户截图#224868 ok但不要royal发蓝光晕）---------- */
+/* ---------- C1b. Dark(国风) 主按钮：赭石土红加深（非蓝，适配水墨宣纸）---------- */
 [data-theme="dark"] .chat-send.primary,
 [data-theme="dark"] .nr-crawl-btn.is-crawl,
 [data-theme="dark"] .btn-primary,
 [data-theme="dark"] .nr-filter-chip-selected,
 [data-theme="dark"] .nr-platform-tab.active{
-  background: linear-gradient(180deg,#355d7e 0%,#2b4e6b 100%) !important;
-  border-color: #1d425d !important;
+  background: linear-gradient(180deg,#a0563a 0%,#85311f 100%) !important;
+  border-color: #6e271a !important;
   box-shadow: 0 1px 0 rgba(255,255,255,0.10) inset,
-              0 1px 2px rgba(29,66,93,0.15) !important;
+              0 1px 2px rgba(144,56,36,0.15) !important;
 }
 
 /* ---------- C2. Emoji 图标全局主题化（压鲜艳 + 叠主题Tint，和主题色对应不扎眼）---------- */
@@ -5589,8 +5589,8 @@ textarea.input.paper-textarea{
 [data-theme="light"] .nr-filter-chip-selected,
 [data-theme="light"] .nr-platform-tab.active,
 [data-theme="light"] .concept-tab-5col button.active{
-  background: linear-gradient(180deg, #4c8fe8 0%, #3f7ed8 100%) !important; /* 柔轻蓝 B350→B500，不再浓墨 */
-  border-color: #3e77c9 !important;
+  background: linear-gradient(180deg, #5f7ea3 0%, #51708f 100%) !important; /* 雾灰蓝 适配纯白科技风，不再扎眼 */
+  border-color: #4c6a8b !important;
   color: #ffffff !important;
   box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset !important; /* 影子再砍半（去厚重感） */
 }
@@ -5611,15 +5611,15 @@ textarea.input.paper-textarea{
   box-shadow: 0 1px 0 rgba(255,255,255,0.20) inset !important;
 }
 
-/* ---------- D1b. Dark国风：石青CTA再减饱和→清淡灰石青，不再浓墨重彩 ---------- */
+/* ---------- D1b. Dark水墨国风：CTA用赭石土红体系(非蓝)，减饱和→清淡赭石，不再重彩 ---------- */
 [data-theme="dark"] .chat-send.primary,
 [data-theme="dark"] .nr-crawl-btn.is-crawl,
 [data-theme="dark"] .btn-primary,
 [data-theme="dark"] .btn-primary-sm,
 [data-theme="dark"] .nr-filter-chip-selected,
 [data-theme="dark"] .nr-platform-tab.active{
-  background: linear-gradient(180deg, #5d87a4 0%, #507b98 100%) !important; /* 清淡石青，压浓墨 */
-  border-color: #487290 !important;
+  background: linear-gradient(180deg, #a0563a 0%, #903824 100%) !important; /* 水墨赭石(非蓝)，减饱和适配宣纸 */
+  border-color: #7f2e1c !important;
   color: #ffffff !important;
   box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset !important;
 }
