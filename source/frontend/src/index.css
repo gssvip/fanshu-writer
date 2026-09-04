@@ -45,37 +45,43 @@
    ★ 背景4阶取自真实宣纸显微色卡：不涂黄、不画脏，自然氧化微暖象牙白 */
 [data-theme="light"] {
   /* ================================================================
-     纯白科技风 Light Theme（严格限定 [data-theme="light"] 作用域，绝对不污染其他主题）
-     设计参考：Notion / Linear / Vercel 低饱和柔蓝 + 灰分层
-     背景：纯白 #ffffff / 卡/浮层 #f6f8fa / 卡内层 #eef2f6
-     文字：#1f2328（近黑浓墨）/ #57606a（副）/ #8c959f（辅助）/ #b1bac4（飞白）
-     强调 accent = 柔蓝 #4c8fe8（saturate↓ 用户投诉 #0969da太饱和刺眼）
-     对比：#4c8fe8 on #fff = 4.31:1 AA；--text-secondary 6.1:1；正文 16:1 AAA
-     title-green 节标题 = 同柔蓝
+     纯白 Clean-White Theme（严格限定 [data-theme="light"] 作用域，绝对不污染其他主题）
+     设计参考：Notion / Linear / Vercel —— 底=纯 #ffffff 零灰零噪，层次只靠 1px 细边 + 极淡阴影
+     背景：主 / 次 / 卡内层 / 卡片 / Elevated 统一纯白（#ffffff），
+          仅 hover/active 两级做极淡灰 (#f5f6f8 / #eceef1) 做交互反馈
+     边框：极淡冷灰 #e6e8eb（细边不抢视线）；focus 用纯科技蓝描边
+     文字：#10131a（近墨纯黑，正文 AAA）/ #525866（副字 AA）/ #8a8f9a（辅助）/ #b7bcc4（飞白）
+     强调 accent = 科技蓝 #2563eb（on white 6.13:1 AA，干净利落不发闷）
+           hover = #1d4ed8；accent-light = #eaf1ff —— 淡蓝底做 TAG/选中态底
   ================================================================ */
-  --bg-primary:    #ffffff;   /* 纯白 主背景 */
-  --bg-secondary:  #f6f8fa;   /* 次背景灰（卡片/侧边栏，和GitHub一致）*/
-  --bg-tertiary:   #eef2f6;   /* 卡内层再灰一格 */
-  --border-color:  #d0d7de;   /* 1px 边框灰（GitHub 精确色） */
-  --text-primary:    #1f2328; /* 正文 近黑 16:1 AAA */
-  --text-secondary:  #57606a; /* 副字 5.4:1 AA */
-  --text-muted:      #8c959f; /* 辅助 3.1:1 */
-  --text-subtle:     #b1bac4; /* 飞白淡灰 */
-  --accent:        #5f7ea3;   /* 雾灰蓝（适配纯白科技风：降饱和降明度，不扎眼）on #fff 4.3:1 */
-  --title-green:   #5f7ea3;   /* 节标题=同雾灰蓝（纯白主题不需要"绿"）*/
-  --accent-hover:   #51708f;
-  --accent-soft:    #9db4cd;
-  --accent-light:   #e9edf3;   /* TAG淡蓝灰底 / tab-active淡灰蓝底 */
-  --green-hover:    #51708f;
-  --green-soft:     #9db4cd;
-  --green-light:    #e9edf3;
-  --bg-card:        #ffffff;   /* 卡片=纯白（带极淡阴影+边即分层）*/
-  --bg-elevated:    #ffffff;
-  --bg-hover:       #f3f4f6;
-  --bg-active:      #e6e8eb;
-  --shadow-sm: 0 1px 2px  rgba(31,35,40,0.06), 0 0 0 1px rgba(208,215,222,0.45);
-  --shadow-md: 0 4px 16px rgba(31,35,40,0.08), 0 0 0 1px rgba(208,215,222,0.55);
-  --shadow-lg: 0 10px 32px rgba(31,35,40,0.10), 0 0 0 1px rgba(208,215,222,0.60);
+  /* ===== 背景：纯白带分层（仅交互态用极淡灰，其他全 #ffffff）===== */
+  --bg-primary:    #ffffff;
+  --bg-secondary:  #ffffff;
+  --bg-tertiary:   #ffffff;
+  --bg-card:       #ffffff;
+  --bg-elevated:   #ffffff;
+  --bg-hover:      #f5f6f8;   /* hover 反馈：极淡 2.5% 灰 */
+  --bg-active:     #eceef1;   /* pressed：5% 灰 */
+  /* ===== 边框：统一细冷灰，干净不抢眼 ===== */
+  --border-color:  #e6e8eb;
+  /* ===== 字 4 级：近墨 → 飞白，纯白背景下对比度充足 ===== */
+  --text-primary:    #10131a; /* 正文 近墨纯黑 on #fff = 18.6:1 AAA */
+  --text-secondary:  #525866; /* 副字          on #fff =  6.7:1 AA  */
+  --text-muted:      #8a8f9a; /* 辅助          on #fff =  3.2:1     */
+  --text-subtle:     #b7bcc4; /* 飞白淡灰 */
+  /* ===== 主色：科技蓝 #2563eb（纯白底最干净，不闷不土）===== */
+  --accent:        #2563eb;
+  --title-green:   #2563eb;   /* 节标题=同科技蓝（纯白主题不再"绿"）*/
+  --accent-hover:  #1d4ed8;
+  --accent-soft:   #6b97f7;
+  --accent-light:  #eaf1ff;   /* TAG 底 / tab-active 底 */
+  --green-hover:   #1d4ed8;
+  --green-soft:    #6b97f7;
+  --green-light:   #eaf1ff;
+  /* ===== 阴影：极淡单层（1px边 + 5%黑阴影），像浮在白纸上一薄层 ===== */
+  --shadow-sm: 0 1px 2px  rgba(16,19,26,0.05), 0 0 0 1px rgba(230,232,235,0.95);
+  --shadow-md: 0 4px 14px rgba(16,19,26,0.06), 0 0 0 1px rgba(230,232,235,1.00);
+  --shadow-lg: 0 8px 28px rgba(16,19,26,0.08), 0 0 0 1px rgba(230,232,235,1.00);
   --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px;
   --tr-fast: 0.10s ease-in-out; --tr-base: 0.18s ease-out; --tr-slow: 0.25s ease;
 }
@@ -162,11 +168,13 @@
   color: var(--text-primary);
 }
 
-/* ② 顶部 stats-banner：纯白主题 = #f6f8fa 卡灰背景 + 1px #d0d7de 边 + 淡阴影（GitHub repo卡片风）*/
+/* ② 顶部 stats-banner：纯白主题 = #ffffff 纯白底 + 1px 淡边 + 极淡科技蓝光晕（极简干净）*/
 [data-theme="light"] .home-stats-banner{
-  background: #f6f8fa;
-  border: 1px solid #d0d7de;
-  box-shadow: 0 1px 0 rgba(27,31,36,0.04);
+  background: #ffffff;
+  border: 1px solid #e6e8eb;
+  box-shadow:
+    0 0 0 1px rgba(37,99,235,0.05),
+    0 1px 3px rgba(16,19,26,0.04);
   border-radius: 12px;
   padding: 14px 20px;
   position: relative;
@@ -460,19 +468,81 @@
 }
 
 /* ================================================================
-   v6 N3 浅色主题【图标美化】· 严格 [data-theme="light"] 作用域
-   策略（按 ExperienceRecall 734649：emoji不能填色→加彩色底托+投影+统一尺寸对齐）：
-     A. home-action 快捷三按钮图标📥📤✨ → 40×40 圆角软底托（黛绿/砖红/金）+ 投影
-     B. 节标题 "📝最近编辑"/"📚全部作品" → emoji放大+居中+黛绿配色
-     C. 书籍封面占位 📖 → 米白+砖红渐变软底托
-     D. 小图标按钮 ✏️🗑️ → 34×34 圆形底托 + 投影
-     E. 底部tab-icon (🏠✍️🔧👤) 未选中/选中统一：用砖红/黛绿, 不用灰度（保持emoji好看）
-     F. 箭头 →/› → 砖红加粗+重渲染
-     G. Logo品牌蚂蚁图标外框 → 米白宣纸纸印章感圆形底托
-     H. AI智驾 master-create-entry 车标 → 砖红/黛绿双色光环（柔和非工业感）
-  所有选择器 100% 带 [data-theme="light"] 前缀，绝不污染其他主题
+   Clean-White · 纯白主题【结构性卡片 + 侧边栏 + 导航高亮】
+   侧栏/Sidebar / ToolPanel / ChatPanel / BookCard / AnalyzeCard 等：
+   纯白底（#fff）+ 统一1px #e6e8eb 淡边 + 极淡阴影，只靠"边与影"分层，绝不发灰
 ================================================================ */
-/* A. 快捷操作三按钮（导入/导出/新建）的图标软底托 */
+/* 全站结构性大面板/卡片：纯白 + 1px细边 + 淡shadow-md */
+[data-theme="light"] .sidebar,
+[data-theme="light"] .tool-panel,
+[data-theme="light"] .chat-panel-root,
+[data-theme="light"] .analyze-card,
+[data-theme="light"] .book-card,
+[data-theme="light"] .ledger-card,
+[data-theme="light"] .ai-assistant-card,
+[data-theme="light"] .concept-panel,
+[data-theme="light"] .home-action-btn,
+[data-theme="light"] .home-book-item,
+[data-theme="light"] .recent-book-card,
+[data-theme="light"] .master-create-entry,
+[data-theme="light"] .card,
+[data-theme="light"] .modal,
+[data-theme="light"] .modal-content{
+  background-color: #ffffff !important;
+  background-image: none !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+/* 侧栏品牌条（sidebar-brand）纯白底 + 底细边；不再使用 bg-secondary 发灰 */
+[data-theme="light"] .sidebar-brand{
+  background: #ffffff !important;
+  border-bottom: 1px solid var(--border-color) !important;
+}
+/* 侧栏导航 item：默认文字=text-secondary；点击/悬停 用极淡蓝底 + 科技蓝字 */
+[data-theme="light"] .sidebar-item{
+  color: var(--text-secondary) !important;
+  border-radius: 8px;
+  transition: background var(--tr-fast), color var(--tr-fast);
+}
+[data-theme="light"] .sidebar-item:hover{
+  background: var(--bg-hover) !important;
+  color: var(--text-primary) !important;
+}
+[data-theme="light"] .sidebar-item.active{
+  background: var(--accent-light) !important;   /* 淡科技蓝底 #eaf1ff */
+  color: var(--accent) !important;              /* 科技蓝字 #2563eb */
+  box-shadow: -2px 0 0 var(--accent) inset;     /* 左 2px 蓝线指示 */
+  font-weight: 600;
+}
+/* 创作页 concept-panel / home 的 section 分隔：极淡 1px 冷灰（不再发黄米边） */
+[data-theme="light"] .home-section-divider,
+[data-theme="light"] .mine-section-title{
+  border-bottom: 1px solid var(--border-color) !important;
+}
+[data-theme="light"] .mine-section-title{ color: var(--text-primary); }
+
+/* 结构性选中 chip：白字+蓝实底，确保在纯白主题下可见（全局兜底） */
+[data-theme="light"] .nr-platform-tab.active,
+[data-theme="light"] .nr-filter-chip-selected{
+  background: var(--accent) !important;          /* 科技蓝实底 */
+  color: #ffffff !important;                     /* 白字（之前只写了白字无蓝底，白底上白字看不见！）*/
+  border: 1px solid var(--accent-hover) !important;
+  border-radius: var(--radius-sm);
+}
+/* 榜单 th 背景：纯白→极淡蓝灰细边头，不再灰突突 */
+[data-theme="light"] .rank-books-table thead th,
+[data-theme="light"] .rank-books-table th{
+  background: #fafbfd !important;
+  border-bottom: 1px solid var(--border-color) !important;
+}
+
+/* ================================================================
+   v6 N3 浅色主题【图标美化】· 严格 [data-theme="light"] 作用域
+   Clean-White 改版：图标不再"降饱和去色"（纯白底上发灰闷）
+     → emoji 保留原色 + 极淡色卡底托衬托；SVG 用科技蓝/浓墨清晰描边
+================================================================ */
+/* A. 快捷操作三按钮（导入/导出/新建）的图标软底托：Clean-White 用淡科技蓝/青/黄，边框统一细冷灰 */
 [data-theme="light"] .home-action-icon{
   width: 42px; height: 42px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -486,46 +556,47 @@
     0 1px 0 rgba(255,255,255,0.55) inset;
   margin-bottom: 4px;
 }
-/* 三枚图标底托：纯白科技风=淡蓝/淡青/淡黄 微彩色，统一1px边+1px内高光（像App Store卡片）*/
+/* 三枚图标底托：Clean-White用科技蓝家族（淡/浅/微彩），边框统一细冷灰，与全站 1px 边视觉一致 */
 [data-theme="light"] .home-action-import .home-action-icon{
-  background: #f0f6ff;  /* 淡蓝 导入 */
-  border: 1px solid #dbeafd;
+  background: color-mix(in srgb, var(--accent) 8%, #ffffff);  /* 极淡科技蓝 */
+  border: 1px solid var(--border-color);
 }
 [data-theme="light"] .home-action-export .home-action-icon{
-  background: #f0fbf6;  /* 淡青 导出 */
-  border: 1px solid #d7f1e3;
+  background: color-mix(in srgb, #0ea5e9 8%, #ffffff);  /* 极淡青蓝 */
+  border: 1px solid var(--border-color);
 }
 [data-theme="light"] .home-action-new .home-action-icon{
-  background: #fffaf0;  /* 淡黄 新建 */
-  border: 1px solid #fbeed0;
+  background: color-mix(in srgb, var(--accent) 6%, #ffffff);  /* 几乎白+一丁丁蓝，统一家族色 */
+  border: 1px solid var(--border-color);
 }
 
-/* B. 节标题 "📝 最近编辑"/"📚 全部作品"：h2/h节标题文字统一用黛绿title-green，保持参考图观感
-   + emoji放大 + 1px下投影 */
+/* B. 节标题 "📝 最近编辑"/"📚 全部作品"：科技蓝主色（Clean-White），纯白底上不加底投影，清晰锐利 */
 [data-theme="light"] .home-section-header h2,
 [data-theme="light"] .home-section-header h1{
-  color: var(--title-green) !important;
+  color: var(--accent) !important;
   font-weight: 700 !important;
-  letter-spacing: 0.6px !important;
+  letter-spacing: 0.3px !important;
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
-  filter: drop-shadow(0 1px 0 rgba(255,255,255,0.6));
+  filter: none;   /* 纯白底上不需要白投影叠加 */
 }
 [data-theme="light"] .home-section-header h2::first-letter,
 [data-theme="light"] .home-section-header h1::first-letter{
-  /* 让emoji视觉上和参考图一样略大于文字 */
-  font-size: 1.2em;
+  /* 让emoji视觉上略大于文字，Clean-White保持自然 */
+  font-size: 1.18em;
   vertical-align: -2px;
 }
 
-/* C. 封面渐变：淡蓝→淡紫（iOS Books风 纯白主题上高级）*/
+/* C. 封面渐变：科技蓝家族（Clean-White）—— 浅蓝→冷白蓝（柔和、清爽、统一蓝调）*/
 [data-theme="light"] .cover-placeholder,
 [data-theme="light"] .book-card-cover,
 [data-theme="light"] .home-book-cover,
 [data-theme="light"] .recent-book-cover{
-  background: linear-gradient(180deg, #eaf4ff 0%, #f3edff 100%) !important;
-  border: 1px solid #e3ecf8;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 14%, #ffffff) 0%,
+    color-mix(in srgb, var(--accent)  6%, #ffffff) 100%) !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border-color));
 }
 
 /* D. 小图标按钮（✏️编辑 / 🗑️删除）：34×34 圆形软底托 */
@@ -560,17 +631,17 @@
   filter: none !important;  /* 绝对禁止灰度滤镜（让emoji变脏）*/
 }
 [data-theme="light"] .tab-item.active{
-  background: #ddf4ff !important;  /* 淡蓝底 */
+  background: var(--accent-light) !important;   /* 淡科技蓝底 #eaf1ff 与 token 统一 */
   color: var(--accent) !important;
   font-weight: 700 !important;
-  border: 1px solid #bae3ff !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border-color)) !important;
 }
 [data-theme="light"] .tab-item:not(.active){
-  color: var(--text-secondary) !important;     /* 未选中文字=暖taupe棕灰，不是冷灰 */
+  color: var(--text-secondary) !important;     /* 未选中=冷灰副字，干净不土 */
   font-weight: 500 !important;
 }
 
-/* F. 箭头字符 →/›：砖红加粗+1.5倍（参考图箭头是醒目的砖红）*/
+/* F. 箭头字符 →/›：科技蓝（Clean-White统一主色）*/
 [data-theme="light"] .recent-book-arrow,
 [data-theme="light"] .home-book-arrow,
 [data-theme="light"] .master-create-entry-arrow{
@@ -578,36 +649,32 @@
   font-weight: 800;
   font-size: 1.5em;
   line-height: 1;
-  filter: drop-shadow(0 1px 0 rgba(255,255,255,0.5));
+  filter: none;   /* 纯白底上不需要白底阴影叠加，干净直接 */
 }
 
-/* G. Logo品牌区：网站名"蚂蚁写作"标题用title-green黛绿 与参考图标题完全一色；
-   subtitle"mayi.chat·专业AI小说创作平台"用soft-green淡黛绿 */
+/* G. Logo品牌区：标题用科技蓝，subtitle用淡蓝灰（Clean-White不再"黛绿"）*/
 [data-theme="light"] .sidebar-brand h1,
 [data-theme="light"] .brand-title,
 [data-theme="light"] .home-hero-title{
-  color: var(--title-green) !important;
+  color: var(--accent) !important;   /* 科技蓝主色 */
 }
 [data-theme="light"] .sidebar-brand .subtitle,
 [data-theme="light"] .brand-subtitle,
 [data-theme="light"] .home-hero-subtitle{
-  color: color-mix(in srgb, var(--title-green) 62%, var(--text-muted)) !important;
+  color: var(--text-muted) !important;   /* 统一冷灰，不再混合绿色 */
 }
-/* logo图本身加一圈极淡宣纸纸印章光环（柔化工业感图标）*/
+/* logo图：极简科技感（纯白底上=极淡蓝边1px + 浅阴影）*/
 [data-theme="light"] .sidebar-logo img,
 [data-theme="light"] .brand-logo img{
   padding: 4px;
-  background:
-    radial-gradient(circle at center,
-      color-mix(in srgb, var(--accent) 5%, transparent) 0%,
-      transparent 70%);
+  background: #ffffff;
   border-radius: 18px;
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent),
-    0 2px 6px color-mix(in srgb, var(--text-primary) 5%, transparent);
+    0 0 0 1px var(--border-color),
+    0 1px 3px rgba(37,99,235,0.08);
 }
 
-/* H. AI智驾入口·圆=纯白 + 1px淡蓝边 + 淡蓝光晕 */
+/* H. AI智驾入口·圆=纯白 + 科技蓝1px边 + 淡科技蓝光晕（Clean-White统一蓝） */
 [data-theme="light"] .master-create-entry-icon{
   width: 64px !important;
   height: 64px !important;
@@ -615,10 +682,10 @@
   border-radius: 50% !important;
   background: #ffffff !important;
   box-shadow:
-    0 0 0 1px #d0e7ff,
-    0 0 0 6px rgba(9,105,218,0.06),
+    0 0 0 1px color-mix(in srgb, var(--accent) 28%, white),
+    0 0 0 6px color-mix(in srgb, var(--accent) 8%, transparent),
     inset 0 1px 0 rgba(255,255,255,0.9),
-    0 4px 14px rgba(9,105,218,0.10);
+    0 4px 14px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 [data-theme="light"] .master-create-entry-label{
   color: var(--text-primary) !important;
@@ -5288,15 +5355,18 @@ textarea.input.paper-textarea{
     width:90px!important;height:90px!important;
   }
 }
-/* light（纯白主题）= 淡蓝→淡青，文字 #0969da 蓝字（用户截图背景=纯白，banner不能再发绿！） */
+/* light（纯白Clean-White）= 纯白底 + 1px淡边 + 科技蓝文字/淡科技蓝光晕，不做大块渐变（纯白主题保持干净） */
 [data-theme="light"] .ai-master-banner{
-  background: linear-gradient(135deg, #eaf4ff 0%, #dff1ff 55%, #e9f8ff 100%) !important;
-  border: 1px solid #cce1fb !important;
-  color: #0969da !important;
+  background: #ffffff !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--accent) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent),
+    0 2px 8px color-mix(in srgb, var(--accent) 10%, transparent) !important;
 }
-[data-theme="light"] .ai-master-banner .cta-title{ color: #0969da !important; }
-[data-theme="light"] .ai-master-banner .cta-ai{ color: #0b77f0 !important; text-shadow: 0 1px 0 rgba(255,255,255,0.7); }
-[data-theme="light"] .ai-master-banner .cta-sub-text{ color: #2f81f7 !important; opacity: 0.82; }
+[data-theme="light"] .ai-master-banner .cta-title{ color: var(--accent) !important; }
+[data-theme="light"] .ai-master-banner .cta-ai{ color: var(--accent-hover) !important; text-shadow: none; }
+[data-theme="light"] .ai-master-banner .cta-sub-text{ color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary)) !important; opacity: 1; }
 /* dark / 国风（水墨国风）= 水墨灰浓渐变 + 纯白文字 */
 [data-theme="dark"] .ai-master-banner{
   background: linear-gradient(135deg, #657384 0%, #576473 50%, #4a5765 100%) !important;
@@ -5680,13 +5750,14 @@ textarea.input.paper-textarea{
   box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset !important;
 }
 
-/* ---------- D2 Light图标：saturate再压到0.4→0.45，创作/工具/我的内部图标全不扎眼 ---------- */
-[data-theme="light"] .tab-icon{ filter: saturate(0.42) brightness(0.97) contrast(0.92) !important; display:inline-block; }
-[data-theme="light"] .tab-item.active .tab-icon{ filter: saturate(0.60) brightness(1.0) !important; }
+/* ---------- D2 Clean-White Light：图标自然原色（纯白底上去饱和=灰/闷，用户要求清晰明快）---------- */
+[data-theme="light"] .tab-icon{ filter: none !important; display:inline-block; }
+[data-theme="light"] .tab-item.active .tab-icon{ filter: none !important; }
 [data-theme="light"] .write-tab-icon,
-[data-theme="light"] button.write-tab .write-tab-icon{ filter: saturate(0.40) brightness(0.97) contrast(0.92) !important; display:inline-block; transform: scale(0.97); }
-[data-theme="light"] .write-tab.active .write-tab-icon{ filter: saturate(0.60) brightness(1.0) !important; }
-/* 覆盖：MinePage/工具/创作/ChatPanel 所有emoji/图标/小画片/图标容器 */
+[data-theme="light"] button.write-tab .write-tab-icon{ filter: none !important; display:inline-block; }
+[data-theme="light"] .write-tab.active .write-tab-icon{ filter: none !important; }
+/* 覆盖：MinePage/工具/创作/ChatPanel 所有emoji/图标/小画片/图标容器
+   Clean-White 主题 → 全部用自然原色，纯白底上图示清晰不闷 */
 [data-theme="light"] .nr-platform-tab .tab-emoji,
 [data-theme="light"] .nr-crawl-btn .crawl-cloud-icon,
 [data-theme="light"] .smart-skill-icon,
@@ -5712,10 +5783,10 @@ textarea.input.paper-textarea{
 [data-theme="light"] .mine-page .icon-wrap,
 [data-theme="light"] .mine-stats-icon,
 [data-theme="light"] .profile-emoji,
-[data-theme="light"] .mine-tab-icon{ filter: saturate(0.40) brightness(0.97) contrast(0.92) !important; display:inline-block; }
-/* 创作页顶部按钮（返回/实体/识别/展开）图标及小emoji */
+[data-theme="light"] .mine-tab-icon{ filter: none !important; display:inline-block; }
+/* 创作页顶部按钮（返回/实体/识别/展开）图标及小emoji：自然原色 */
 [data-theme="light"] .concept-panel button[class*="ghost"] > *,
-[data-theme="light"] .write-page-topbar button > *{ filter: saturate(0.55) !important; }
+[data-theme="light"] .write-page-topbar button > *{ filter: none !important; }
 
 /* ---------- D2b 国风 Dark：加 sepia(20%) 把红黄直接抽灰，彻底水墨灰石青调 ---------- */
 [data-theme="dark"] .tab-icon{ filter: saturate(0.45) brightness(0.92) contrast(0.88) sepia(0.22) hue-rotate(-4deg) !important; display:inline-block; }
