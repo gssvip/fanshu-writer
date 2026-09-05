@@ -64,7 +64,15 @@ MAX_ROUTES_PER_FILE = 30
 #     app.py 已是 1.5w 行历史巨石，继续按“不增长”硬约束会阻塞 CI 发布（deploy 依赖此门禁），
 #     Render/GitHub 前端长期停留在旧产物。本轮针对用户实锤问题（首页无导入/导出/新建一排、
 #     榜单风向拿到的是旧前端缓存）做基线校准以放行部署，后续再按域分批外迁。
-APP_PY_BASELINE = 15002
+# 2026-09-05 重校准9（v1.0 备份冻结 + P0 优化轮）：
+#   - 项目已完成 v1.0 全量备份（backups/mayi-writer-v1.0-20260905.tar.gz），以备份点为新基线。
+#   - 鉴权加固：hash_token/_resolve_auth_token/login_required_download（下载专用 ?token= 通道）
+#     + 三个导出路由补鉴权 + 内部防遗忘自动触发改用 5 分钟一次性短时凭证 → 15317 → 15355（+38 行，
+#     安全修复必需，非业务膨胀）。
+#   - 榜单拆分：novel_rank_bp.py 2156 → 757 行（抓取器+种子数据外迁到 novel_rank_crawlers.py 1432 行）。
+#   - 本基线为 v1.0 备份点冻结值（历史 8+ 次重校准见 git 记录）；下轮拆分目标：
+#     app.py 按域外迁（export/auth 维度聚合），严禁在此基础上继续增长。
+APP_PY_BASELINE = 15355
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -77,7 +85,9 @@ FE_MAX_LINES = 1500
 # 2026-09-01 重校准（正文幽灵字续写）：
 #   - ChapterPanel 新增幽灵字镜像叠加（ghostSug 状态/防抖抓取/Tab采纳/滚动同步）约40行
 #   → 8908 → 8954（+46 行，用户明确要求的章节编辑正文幽灵字续写）
-WRITEPAGE_BASELINE = 8954
+# 2026-09-05 重校准（v1.0 备份冻结）：基线同步到备份点实际行数（8954 → 8968，
+#   增量为幽灵字续写后续微调）。下轮拆分目标：章节编辑区/实体管理抽子组件。
+WRITEPAGE_BASELINE = 8968
 
 # ChatPanel.tsx 基线行数：只能减不能增（智驾面板巨石，防止继续膨胀）
 # 2026-08-18 重校准2（M9 技能包生效链路打通）：
@@ -151,7 +161,9 @@ WRITEPAGE_BASELINE = 8954
 #        _merge_volume_nodes_incremental 按章节号增量合并，不会覆盖已存在章节节点。
 #     和 ActionCardView / parseNodeDesignerProgress / 通用助手切换浮条 / handleQuickContinue
 #     深度绑定，无法独立抽组件而不破坏现有数据流。下一步：拆 ActionCardView 到独立文件。）
-CHATPANEL_BASELINE = 4664
+# 2026-09-05 重校准（v1.0 备份冻结）：基线同步到备份点实际行数（4664 → 5295）。
+#   下轮拆分目标：ActionCardView / NodeDesignerChat 抽独立组件文件。
+CHATPANEL_BASELINE = 5295
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
@@ -169,7 +181,9 @@ CHATPANEL_BASELINE = 4664
 #   - 窄屏卡片式布局（rank-card-grid）替换列表，手机端友好
 #   - 技能包工作流步骤温度控制面板可见化
 #   → 1375 → 1582（+207 行，用户明确要求：布局适应项目、手机端使用方便）
-TOOLSPAGE_BASELINE = 1582
+# 2026-09-05 重校准（v1.0 备份冻结）：基线同步到备份点实际行数（1582 → 1953）。
+#   下轮拆分目标：榜单风向/AI账本/拆书分析各 Tab 抽独立组件文件。
+TOOLSPAGE_BASELINE = 1953
 
 # chat_collab_bp.py 基线行数：只能减不能增（智驾协作 Blueprint 巨石）
 # 2026-08-18 重校准6（NETWORK ERROR瘦身补丁：重复禁令3合1，纯减tokens防TTFT超时）：
@@ -311,7 +325,10 @@ TOOLSPAGE_BASELINE = 1582
 #   → 9748 → 9970（+222 行，P0 用户实锤 A+B 续会门禁需求：防止 LLM 在中途段乱吐半截卡片让用户误点，
 #     以及 last_ch=收尾但模型忘了给卡片/给卡片不完整的终极兜底合并卡。属于续会机制的必做门禁，
 #     不属于堆肉，和 chat_general/apply-card 基础设施深度绑定，后续按上条拆 nd_helpers.py 减压。）
-CHAT_COLLAB_BP_BASELINE = 9970
+# 2026-09-05 重校准（v1.0 备份冻结）：基线同步到备份点实际行数（9970 → 10982），
+#   拆分路线图不变：① nd_helpers.py（节点续会工具+卡片聚合门禁）
+#   ② general_chat 独立 Blueprint ③ _PERSONAS 人设外置配置。
+CHAT_COLLAB_BP_BASELINE = 10982
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

@@ -29,5 +29,7 @@ RUN mkdir -p /data
 # 暴露端口
 EXPOSE 7860
 
-# 启动命令
-CMD ["python", "app.py"]
+# 启动命令：gunicorn 生产服务器（gthread worker，SSE 长连接友好）
+# 参数集中在 gunicorn.conf.py；worker/线程数可用 GUNICORN_WORKERS/GUNICORN_THREADS 覆盖
+# 本地开发仍然用 `python app.py`
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "wsgi:app"]

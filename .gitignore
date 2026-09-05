@@ -65,3 +65,6 @@ npm-debug.log*
 *.tar.gz
 *.rar
 .ew-tmp/
+
+# 备份文件库（本地保存版本快照，不进仓库）
+backups/

@@ -34,14 +34,15 @@ def _clean_jobs(app):
 def _seed_auth(app, client):
     """创建测试用户+书籍+有效 token，返回 dict{token/own_book_id/other_book_id}。"""
     from datetime import datetime, timedelta, timezone
-    from app import db, User, AuthToken, Book, generate_token
+    from app import db, User, AuthToken, Book, generate_token, hash_token
     with app.app_context():
         u1 = User(username='nodejob_u1', password_hash='x')
         u2 = User(username='nodejob_u2', password_hash='y')
         db.session.add_all([u1, u2]); db.session.flush()
         ex = datetime.now(timezone.utc) + timedelta(days=30)
         t1 = generate_token()
-        db.session.add(AuthToken(user_id=u1.id, token=t1, expires_at=ex))
+        # 库里存哈希（与 login_required 校验口径一致），客户端拿到明文 t1
+        db.session.add(AuthToken(user_id=u1.id, token=hash_token(t1), expires_at=ex))
         b_own   = Book(user_id=u1.id, title='我的书', genre='xuanhuan')
         b_other = Book(user_id=u2.id, title='他人的书', genre='xuanhuan')
         db.session.add_all([b_own, b_other]); db.session.commit()

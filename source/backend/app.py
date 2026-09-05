@@ -276,23 +276,56 @@ class PasswordResetToken(db.Model):
 def generate_token():
     return hashlib.sha256(os.urandom(32)).hexdigest()
 
+def hash_token(raw: str) -> str:
+    """会话 token 哈希：数据库只存哈希不落明文（库泄露 ≠ 会话被劫持）。
+    raw 本身是 256 位随机数的 hex，二次 sha256 不降低熵。"""
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
+def _resolve_auth_token(token: str):
+    """按哈希查库校验 token → (AuthToken|None, 过期bool)。"""
+    if not token:
+        return None, False
+    at = AuthToken.query.filter_by(token=hash_token(token)).first()
+    if not at:
+        return None, False
+    exp = at.expires_at
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    return at, exp < datetime.now(timezone.utc)
+
+def _auth_error(msg):
+    return jsonify({'error': msg}), 401
+
 def login_required(f):
+    """标准鉴权：仅接受 Authorization: Bearer 头。
+    URL ?token= 通道已收窄到 login_required_download（a 标签下载无法带 header）。"""
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization', '').replace('Bearer ', '')
+        if not token:
+            return _auth_error('请先登录')
+        at, expired = _resolve_auth_token(token)
+        if not at:
+            return _auth_error('登录已过期，请重新登录')
+        if expired:
+            return _auth_error('登录已过期，请重新登录')
+        request.current_user_id = at.user_id
+        return f(*args, **kwargs)
+    return decorated
+
+def login_required_download(f):
+    """下载专用鉴权：Authorization 头 或 ?token=（浏览器 <a href>/window.open 无法带 header）。
+    仅限导出/下载路由使用，其余路由一律走 login_required。"""
     @functools.wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization', '').replace('Bearer ', '')
         if not token:
             token = request.args.get('token', '')
         if not token:
-            return jsonify({'error': '请先登录'}), 401
-        at = AuthToken.query.filter_by(token=token).first()
-        now = datetime.now(timezone.utc)
-        if not at:
-            return jsonify({'error': '登录已过期，请重新登录'}), 401
-        exp = at.expires_at
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
-        if exp < now:
-            return jsonify({'error': '登录已过期，请重新登录'}), 401
+            return _auth_error('请先登录')
+        at, expired = _resolve_auth_token(token)
+        if not at or expired:
+            return _auth_error('登录已过期，请重新登录')
         request.current_user_id = at.user_id
         return f(*args, **kwargs)
     return decorated
@@ -301,15 +334,8 @@ def optional_login(f):
     @functools.wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization', '').replace('Bearer ', '')
-        at = AuthToken.query.filter_by(token=token).first() if token else None
-        now = datetime.now(timezone.utc)
-        if at:
-            exp = at.expires_at
-            if exp.tzinfo is None:
-                exp = exp.replace(tzinfo=timezone.utc)
-            request.current_user_id = at.user_id if exp > now else None
-        else:
-            request.current_user_id = None
+        at, expired = _resolve_auth_token(token)
+        request.current_user_id = at.user_id if (at and not expired) else None
         return f(*args, **kwargs)
     return decorated
 
@@ -1336,7 +1362,7 @@ def register():
     db.session.commit()
     token = generate_token()
     expires = datetime.now(timezone.utc) + timedelta(days=30)
-    db.session.add(AuthToken(user_id=user.id, token=token, expires_at=expires))
+    db.session.add(AuthToken(user_id=user.id, token=hash_token(token), expires_at=expires))
     db.session.commit()
     return jsonify({'user': user.to_dict(), 'token': token}), 201
 
@@ -1353,7 +1379,7 @@ def login():
         return jsonify({'error': '用户名或密码错误'}), 401
     token = generate_token()
     expires = datetime.now(timezone.utc) + timedelta(days=30)
-    db.session.add(AuthToken(user_id=user.id, token=token, expires_at=expires))
+    db.session.add(AuthToken(user_id=user.id, token=hash_token(token), expires_at=expires))
     db.session.commit()
     return jsonify({'user': user.to_dict(), 'token': token})
 
@@ -1366,8 +1392,9 @@ def get_me():
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
     token = request.headers.get('Authorization', '').replace('Bearer ', '')
-    AuthToken.query.filter_by(token=token).delete()
-    db.session.commit()
+    if token:
+        AuthToken.query.filter_by(token=hash_token(token)).delete()
+        db.session.commit()
     return jsonify({'success': True})
 
 
@@ -2494,6 +2521,7 @@ def merge_entities_api(book_id):
 # ==== Export API ====
 
 @app.route('/api/books/<book_id>/export', methods=['GET'])
+@login_required_download
 def export_book(book_id):
     fmt = request.args.get('format', 'txt')
     book = Book.query.get(book_id)
@@ -2630,6 +2658,7 @@ def set_preferences():
 # ==== Import/Export ZIP ====
 
 @app.route('/api/books/<book_id>/export-zip', methods=['GET'])
+@login_required_download
 def export_book_zip(book_id):
     book = Book.query.get(book_id)
     if not book:
@@ -2658,7 +2687,7 @@ def export_book_zip(book_id):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 @app.route('/api/books/<book_id>/export-full', methods=['GET'])
-@login_required
+@login_required_download
 def export_book_full(book_id):
     """导出小说的全部维度内容（除图谱外）和所有章节为独立文件，打包成zip下载"""
     book = Book.query.get(book_id)
@@ -3290,21 +3319,23 @@ def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
 
         def _bg_run():
             with app.app_context():
+                # 内部调用凭证：为该书作者签发 5 分钟一次性短时 token（哈希入库），
+                # 用完即删。库里只存哈希后无法直接复用用户既有 token，且专用短时
+                # 凭证比复用会话 token 更符合最小权限原则。
+                internal_token = generate_token()
+                db.session.add(AuthToken(
+                    user_id=book.user_id,
+                    token=hash_token(internal_token),
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+                ))
+                db.session.commit()
                 try:
-                    # 取该书作者的有效 auth token（绕过 login_required 装饰器）
-                    now = datetime.now(timezone.utc)
-                    at = AuthToken.query.filter(
-                        AuthToken.user_id == book.user_id,
-                        AuthToken.expires_at > now
-                    ).first()
-                    if not at:
-                        return
                     # 用 test_request_context 模拟请求体调用 route
                     with app.test_request_context(
                         f'/api/books/{book_id}/ai-anti-forget-check',
                         method='POST',
                         json={'scope': 'reports', 'volume_ids': [], 'skill_pack_ids': []},
-                        headers={'Authorization': f'Bearer {at.token}'}
+                        headers={'Authorization': f'Bearer {internal_token}'}
                     ):
                         check_resp = ai_anti_forget_check(book_id)
                     try:
@@ -3326,7 +3357,7 @@ def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
                                     '/api/ai/smart/fix-from-report',
                                     method='POST',
                                     json={'book_id': book_id, 'report_id': report_id, 'skill_pack_ids': []},
-                                    headers={'Authorization': f'Bearer {at.token}'}
+                                    headers={'Authorization': f'Bearer {internal_token}'}
                                 ):
                                     fix_resp = smart_fix_from_report()
                                 if fix_resp and getattr(fix_resp, 'status_code', None) == 200:
@@ -3358,6 +3389,13 @@ def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
                 except Exception as e:
                     try:
                         app.logger.error(f'[auto] 防遗忘自动触发失败：{str(e)[:200]}')
+                    except Exception:
+                        pass
+                finally:
+                    # 一次性短时凭证用完即删（进程意外退出也会在 5 分钟后自然过期）
+                    try:
+                        AuthToken.query.filter_by(token=hash_token(internal_token)).delete()
+                        db.session.commit()
                     except Exception:
                         pass
 

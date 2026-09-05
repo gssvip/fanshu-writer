@@ -1314,14 +1314,12 @@ def _auth_user_id():
     之所以不直接用 @login_required：入节点设计模块在 app.py 的 register_blueprint 之后才定义
     login_required，模块导入期无法引用，故在路由内部自行解析 token。
     """
-    from app import AuthToken
+    from app import AuthToken, hash_token
     from datetime import datetime, timezone
     token = request.headers.get('Authorization', '').replace('Bearer ', '')
     if not token:
-        token = request.args.get('token', '')
-    if not token:
         return None, '请先登录'
-    at = AuthToken.query.filter_by(token=token).first()
+    at = AuthToken.query.filter_by(token=hash_token(token)).first()
     now = datetime.now(timezone.utc)
     if not at:
         return None, '登录已过期，请重新登录'
