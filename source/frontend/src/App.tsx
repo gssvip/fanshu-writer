@@ -1,15 +1,23 @@
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect, createContext, useContext, useCallback } from 'react';
+import { useState, useEffect, createContext, useContext, useCallback, lazy, Suspense } from 'react';
 import { useStore } from './store';
 import { api, warmUpBackend, legacyKey } from './api';
 import AuthModal from './components/AuthModal';
-import ChatPanel from './components/ChatPanel';
-import WorkbenchPage from './pages/WorkbenchPage';
-import WritePage from './pages/WritePage';
-import ToolsPage from './pages/ToolsPage';
-import MinePage from './pages/MinePage';
-import ResetPasswordPage from './pages/ResetPasswordPage';
 import './index.css';
+
+// ============================================================================
+// 路由级代码分割（P1 性能优化）：
+// 重页面按需加载——创作页 8968 行 / 悬浮智驾面板 5161 行 / 工具页 1953 行 /
+// 我的页 1326 行，全部拆出首屏 chunk；首屏只保留工作台 + 框架代码。
+// 悬浮 ChatPanel 用 fallback={null}：挂载后后台并行加载，不阻塞首屏绘制，
+// 图标出现仅晚 ~百毫秒级。
+// ============================================================================
+const ChatPanel = lazy(() => import('./components/ChatPanel'));
+const WorkbenchPage = lazy(() => import('./pages/WorkbenchPage'));
+const WritePage = lazy(() => import('./pages/WritePage'));
+const ToolsPage = lazy(() => import('./pages/ToolsPage'));
+const MinePage = lazy(() => import('./pages/MinePage'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 
 const TABS = [
   { key: 'workbench', label: '首页', icon: '🏠', path: '/workbench' },
@@ -185,17 +193,21 @@ export default function App() {
     <AuthContext.Provider value={{ requireAuth }}>
       <HashRouter>
         <Layout>
-          <Routes>
-            <Route path="/" element={<Navigate to="/workbench" />} />
-            <Route path="/workbench" element={<WorkbenchPage />} />
-            <Route path="/write" element={<WritePage />} />
-            <Route path="/tools" element={<ToolsPage />} />
-            <Route path="/mine" element={<MinePage />} />
-            <Route path="/reset-password" element={<ResetPasswordPage />} />
-          </Routes>
+          <Suspense fallback={<div className="loading-screen"><span>加载中...</span></div>}>
+            <Routes>
+              <Route path="/" element={<Navigate to="/workbench" />} />
+              <Route path="/workbench" element={<WorkbenchPage />} />
+              <Route path="/write" element={<WritePage />} />
+              <Route path="/tools" element={<ToolsPage />} />
+              <Route path="/mine" element={<MinePage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
+            </Routes>
+          </Suspense>
         </Layout>
         {showAuth && <AuthModal onDone={handleAuthDone} />}
-        <ChatPanel />
+        <Suspense fallback={null}>
+          <ChatPanel />
+        </Suspense>
       </HashRouter>
     </AuthContext.Provider>
   );

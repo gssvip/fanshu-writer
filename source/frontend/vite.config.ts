@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, cpSync, writeFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, cpSync, writeFileSync, statSync, readdirSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { resolve, join, relative } from 'node:path'
 
@@ -62,23 +62,27 @@ function buildAlignPlugin() {
       console.log('   commit =', shortCommitId(), '  indexMd5 =', indexMd5)
 
       // ---------- B. cp -rf dist/* → backend/static/ ----------
-      // 关键（v2·根治旧 JS 不消失）：
-      // 同步前先删掉 BACKEND_STATIC/assets 里 所有带 hash 的旧构建产物（index-*.js/css, chunk-*.js/css, *.woff/ttf 字体文件），
-      // 防止上一次构建的旧 JS/CSS 留在 static → GitHub/Rundle/Service Worker 还能命中旧版本，导致用户"刷新后还是旧界面"。
-      // static 根目录下 logo.png/dian.jpg/favicon.svg 等 dist 中没有的资源不动。
+      // 关键（v3·差集清理，根治旧产物堆积）：
+      // 懒加载拆分后 chunk 文件名是纯哈希（assets/[hash].js），旧的 index-*/chunk-*
+      // 前缀清理规则匹配不到，static/assets 会随每次构建堆积过期 chunk。
+      // 新规则（Node 差集，无 shell 通配符误删风险）：
+      //   只删 static/assets 里「当前 dist/assets 不存在」的 .js/.css 文件。
+      //   字体(ttf/woff/woff2)/图片不动——历史上有手工放置字体（YYjJ1zSn.ttf）被误删导致白屏。
       if (!existsSync(BACKEND_STATIC)) {
         mkdirSync(BACKEND_STATIC, { recursive: true })
       }
       const dstAssets = join(BACKEND_STATIC, 'assets')
+      const distAssetsDir = join(distDir, 'assets')
       try {
-        if (existsSync(dstAssets)) {
-          // ===== 根治：只删"确定来自vite产物"的前缀，不要碰通配符 =====
-          // 只允许删：index-*.js/css 、 chunk-*.js/css 、 KaTeX_*-hash.woff/ttf
-          // 绝对禁止 `*-?????.ext` 这种通配，会把字体文件/图片/icon/自定义资源都误删！
-          // （上次就因为 `*-????????.*` 把 YYjJ1zSn.ttf / 一些带短横杠的非index字体 误删 → 导致后端白屏）
-          execSync(
-            `cd ${JSON.stringify(dstAssets)} && find . -maxdepth 1 -type f \\( -name 'index-*.js' -o -name 'index-*.css' -o -name 'chunk-*.js' -o -name 'chunk-*.css' -o -name 'KaTeX_*.woff' -o -name 'KaTeX_*.woff2' -o -name 'KaTeX_*.ttf' \\) -delete 2>/dev/null || true`
+        if (existsSync(dstAssets) && existsSync(distAssetsDir)) {
+          const current = new Set(readdirSync(distAssetsDir))
+          const stale = readdirSync(dstAssets).filter(
+            f => /\.(js|css)$/.test(f) && !current.has(f)
           )
+          for (const f of stale) {
+            rmSync(join(dstAssets, f))
+          }
+          if (stale.length) console.log(`   [align] 清理过期构建产物 ${stale.length} 个（差集：static 有 / dist 无的 js/css）`)
         }
       } catch { /* noop */ }
       const entries = ['index.html', 'assets', 'version.json']

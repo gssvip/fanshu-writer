@@ -71,10 +71,39 @@ jobs:
       - name: 运行 pytest
         run: python -m pytest tests/ -v
 
+  # 前端验证：类型检查 + 单元测试（vitest）+ 生产构建
+  # deploy 的构建不重复此 job 的验证职责——PR 阶段就必须拦截类型/测试/构建回归
+  frontend-test:
+    name: 前端验证（tsc + vitest + build）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: source/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: source/frontend/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: TypeScript 类型检查（noUnusedLocals 严格模式）
+        run: npx tsc -b
+
+      - name: 单元测试（vitest）
+        run: npm test
+
+      - name: 生产构建验证（含路由级代码分割 + 产物同步插件）
+        run: npm run build
+
   # 统一发布：测试全绿后 → 构建前端一次 → 同步所有产物位置 → 触发 Render
   deploy:
     name: 统一构建发布（static/root/gh-pages/Render）
-    needs: [architecture-gate, backend-test]
+    needs: [architecture-gate, backend-test, frontend-test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:

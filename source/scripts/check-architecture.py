@@ -89,7 +89,12 @@ MAX_ROUTES_PER_FILE = 30
 #     ai-import-recognize / dynamic-reports 复用），蓝图延迟导入
 #   → app.py 14347 → 12349（净 -1998 行，含 2 行蓝图注册配套行）。基线随之下调，继续执行"只能减不能增"。
 #   下轮拆分目标：ai-continue 续写域、dynamic-reports 域（app.py 剩余两大块）。
-APP_PY_BASELINE = 12349
+# 2026-09-05 P0 优化轮（Clear-Site-Data 去 cache）：serve_frontend 缓存策略修正注释 +3 行
+#   （12349 → 12352，性能优化说明非业务膨胀；防遗忘自动触发 import 源改为 chat_smart_fix_bp，行数不变）。
+# 2026-09-05 P1b 配套（纯哈希 chunk 长缓存）：_HASHED_ASSET 正则扩展支持 React.lazy 拆分的
+#   纯哈希文件名 +4 行（12352 → 12356，懒加载 chunk 必须享受 immutable 长缓存，否则
+#   拆分反而导致 WritePage chunk 每次访问重下 745KB——与优化目标背道而驰）。
+APP_PY_BASELINE = 12356
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -104,7 +109,15 @@ FE_MAX_LINES = 1500
 #   → 8908 → 8954（+46 行，用户明确要求的章节编辑正文幽灵字续写）
 # 2026-09-05 重校准（v1.0 备份冻结）：基线同步到备份点实际行数（8954 → 8968，
 #   增量为幽灵字续写后续微调）。下轮拆分目标：章节编辑区/实体管理抽子组件。
-WRITEPAGE_BASELINE = 8968
+# 2026-09-05 拆分落地（P2b 巨石拆分）：8968 → 2016（净 -6952 行）：
+#   - src/pages/write/ 目录 12 个面板文件：write-shared.tsx(218)/ConceptPanel(395)/
+#     ChapterPanel(1034)/CharacterPanel(796)/PlotPanel(1195)/InventoryPanel(368)/
+#     BibleEditPanel(219)/OutlineCombinedPanel(322)/SettingsCombinedPanel(250)/
+#     DynamicMemoryPanel(884)/ForeshadowingPanel(764)/LocationsPanel(289)
+#   - 逻辑零改动搬运（TypeScript AST 精确切割 + 依赖分析生成 import），
+#     删除无引用死码 _MapPanel_unused（318 行）。
+#   - WritePage.tsx 只保留主组件骨架 + write/ 面板 import。
+WRITEPAGE_BASELINE = 2016
 
 # ChatPanel.tsx 基线行数：只能减不能增（智驾面板巨石，防止继续膨胀）
 # 2026-08-18 重校准2（M9 技能包生效链路打通）：
@@ -351,8 +364,17 @@ TOOLSPAGE_BASELINE = 1953
 #   - blueprints/general_chat.py（921行）：POST /api/ai/chat/general 独立蓝图（单向导入无循环）
 #   顺带修复 v1.0 遗留 bug：chat_general/chat_roundtable 函数内局部 datetime import 遮蔽
 #   → 新会话路径 UnboundLocalError 500（pyflakes 全库扫描已确认无其他同类）。
+# 2026-09-05 拆分第5批（P2a 三域外迁）：9705 → 7787（净 -1918 行）：
+#   - blueprints/chat_smart_fix_bp.py（~615 行，4 路由）：防遗忘报告→AI智驾修正闭环
+#   - blueprints/chat_roundtable_bp.py（~1050 行，3 路由）：圆桌会议 + 联网搜索配置
+#   - blueprints/chat_smart_opt_bp.py（~310 行，6 路由）：优化建议报告
+#   - 域模块不反向 import chat_collab_bp（避免循环导入）：共享符号由 chat_collab_bp 末尾
+#     _register_split_domains() 调用各域 init() 注入模块全局，路由经 register() 挂到
+#     同一 Blueprint（URL/endpoint/methods 与拆分前装饰器注册完全一致，前端零感知）。
+#   - app.py 防遗忘自动触发的延迟 import 同步改指向 chat_smart_fix_bp；
+#     general_chat.py 的 _sync_search_keys_from_preference 改从 chat_roundtable_bp import。
 #   下轮拆分目标：smart_generate/smart_suggest 系列路由继续外迁。
-CHAT_COLLAB_BP_BASELINE = 9705
+CHAT_COLLAB_BP_BASELINE = 7787
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

@@ -1908,7 +1908,7 @@ def _maybe_auto_trigger_anti_forget_check(book_id, chapter_num=None):
                             health_score = report_json.get('health_score')
                             report_id = report_rec.get('id')
                             if report_id and (health_score is None or health_score < 80):
-                                from blueprints.chat_collab_bp import smart_fix_from_report
+                                from blueprints.chat_smart_fix_bp import smart_fix_from_report
                                 with app.test_request_context(
                                     '/api/ai/smart/fix-from-report',
                                     method='POST',
@@ -12299,7 +12299,11 @@ def serve_frontend(path):
             else:
                 return jsonify({'error': '前端构建产物未找到，请先运行 npm run build'}), 404
 
-    _HASHED_ASSET = _re_frontend.compile(r'^assets/[^/]+-(?:[A-Za-z0-9_-]{6,16})\.(?:js|css|ttf|woff2?|otf|eot|png|jpg|jpeg|svg|webp|gif|ico)$')
+    # 两种带哈希文件名都长缓存（P1b 配套）：
+    #   1) name-HASH.ext —— 入口产物（index-ouaf8CIV.js）
+    #   2) HASH.ext —— React.lazy 拆分的纯哈希 chunk（Bc6glyNp.js）
+    # 纯哈希分支限 8~16 位：避开 favicon.svg / logo.png / dian.jpg 等无哈希短名静态文件
+    _HASHED_ASSET = _re_frontend.compile(r'^assets/(?:[^/]+-(?:[A-Za-z0-9_-]{6,16})|[A-Za-z0-9_-]{8,16})\.(?:js|css|ttf|woff2?|otf|eot|png|jpg|jpeg|svg|webp|gif|ico)$')
     # 如果请求的是具体文件且存在，直接返回
     if path:
         file_path = dist_dir / path
@@ -12328,8 +12332,11 @@ def serve_frontend(path):
         #       1) 用户已登录 cookies 被清（刚登录就被踢）
         #       2) store.ts / api.ts 同步访问 localStorage 被 Edge Tracking Prevention 拦截抛 SecurityException
         #       3) React 根挂载失败 = 白屏
-        #   只保留 "cache", "serviceworkers"：足够清旧 PWA/缓存，且不破坏用户态和存储。
-        resp.headers['Clear-Site-Data'] = '"cache", "serviceworkers"'
+        #   只保留 "serviceworkers"：清掉旧 PWA 时代的 SW 注册即可。
+        #   ⚠️ 2026-09-05 二次修正：去掉 "cache"——它每次访问清空整个 HTTP 缓存，
+        #   把 419KB 主 JS 的 immutable 长缓存（max-age=1年）抵消成每次全量重下；
+        #   静态资源文件名含内容哈希，新部署自动换 URL，旧缓存天然失效，无需清理。
+        resp.headers['Clear-Site-Data'] = '"serviceworkers"'
         # 精确版本号：让 index.html 哪怕被缓，也知道该换新的
         try:
             v = json.loads((dist_dir / 'version.json').read_text(encoding='utf-8'))

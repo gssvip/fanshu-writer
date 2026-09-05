@@ -40,11 +40,12 @@ from blueprints.chat_collab_bp import (
     _native_reasoning_kwargs,
     _rt_create_dimension_system,
     _rt_general_dim_request,
-    _sync_search_keys_from_preference,
     build_chat_system_prompt,
     parse_cards,
     strip_cards,
 )
+# _sync_search_keys_from_preference 已拆到圆桌/搜索配置域模块（架构门禁 P2a）
+from blueprints.chat_roundtable_bp import _sync_search_keys_from_preference
 from blueprints.nd_helpers import (
     _is_nd_continue,
     _is_nd_new_volume_request,
