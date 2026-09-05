@@ -1251,7 +1251,7 @@ category：master
                   padding:'8px 16px',minHeight:36,fontSize:13,fontWeight:700,
                   flex:'0 0 auto',borderRadius:10,
                   background:'var(--accent-light)',
-                  color:'var(--accent)',border:'1px solid var(--accent)',
+                  color:'var(--accent)',border:'1px solid #d0d5dd',
                 }}
               >🔍 搜索</button>
             </div>
@@ -1283,7 +1283,7 @@ category：master
                         : 'var(--bg-tertiary)',
                       color: nrPlatform===p.code ? 'var(--accent)' : 'var(--text-secondary)',
                       border: nrPlatform===p.code
-                        ? '1px solid var(--accent)'
+                        ? '1px solid #d0d5dd'
                         : '1px solid var(--border-color)',
                     }}
                   >
@@ -1360,7 +1360,7 @@ category：master
                           display:'inline-flex',alignItems:'center',justifyContent:'center', cursor:'pointer',
                           padding: '6px 14px', borderRadius: 999,
                           background: active ? 'var(--accent-light)' : 'var(--bg-tertiary)',
-                          border: active ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                          border: active ? '1px solid #d0d5dd' : '1px solid var(--border-color)',
                           color: active ? 'var(--accent)' : 'var(--text-secondary)',
                           fontWeight: active ? 700 : 500, fontSize: 13, lineHeight: 1.35,
                           whiteSpace: 'nowrap', transition:'all .15s ease-in-out', flexShrink:0,
@@ -1466,7 +1466,7 @@ category：master
                         display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
                         padding:'7px 10px',borderRadius:999, minHeight:30,
                         background: active ? 'var(--accent-light)' : 'var(--bg-tertiary)',
-                        border: active ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                        border: active ? '1px solid #d0d5dd' : '1px solid var(--border-color)',
                         color: active ? 'var(--accent)' : 'var(--text-secondary)',
                         fontWeight: active ? 700 : 500, fontSize: 12.5, transition:'all .15s ease-in-out',
                         whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',
@@ -1502,7 +1502,7 @@ category：master
                         display:'inline-flex',alignItems:'center',justifyContent:'center',cursor:'pointer',
                         padding:'7px 10px',borderRadius:999, minHeight:30,
                         background: !nrSubCategoryCode ? 'var(--accent-light)' : 'var(--bg-tertiary)',
-                        border: !nrSubCategoryCode ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                        border: !nrSubCategoryCode ? '1px solid #d0d5dd' : '1px solid var(--border-color)',
                         color: !nrSubCategoryCode ? 'var(--accent)' : 'var(--text-secondary)',
                         fontWeight: !nrSubCategoryCode ? 700 : 500, fontSize: 12.5,
                         transition:'all .15s ease-in-out', whiteSpace:'nowrap',
@@ -1697,7 +1697,7 @@ category：master
                               fontStyle:'normal',display:'inline-flex',alignItems:'center',gap:4,
                               fontSize:11.5,fontWeight:700,color:'var(--accent)',padding:'3px 10px',borderRadius:999,
                               background:'var(--accent-light)',
-                              border:'1px solid var(--accent)',
+                              border:'1px solid #d0d5dd',
                             }}>{b.metricName ? `${b.metricName} ` : ''}{metricText}</em>
                           </span>
                         )}
@@ -1842,7 +1842,7 @@ category：master
                     disabled={(nrList.page * (nrList.pageSize||50)) >= (nrList.total || 0) || nrListLoading || nrCrawling}
                     style={{padding:'6px 14px',minHeight:30,fontSize:12.5,borderRadius:8,fontWeight:700,
                             background: 'var(--accent-light)',
-                            color: 'var(--accent)',border:'1px solid var(--accent)',
+                            color: 'var(--accent)',border:'1px solid #d0d5dd',
                     }}
                   >下一页 →</button>
                 </div>

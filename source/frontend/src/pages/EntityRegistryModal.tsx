@@ -151,7 +151,7 @@ export default function EntityRegistryModal({ bookId, onClose, onRenamed }: Enti
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {/* 合并模式提示条 */}
               {mergeMode.size > 0 && (
-                <div style={{ padding: 10, background: 'var(--bg-secondary)', borderRadius: 6, fontSize: 12, border: '1px solid var(--accent)' }}>
+                <div style={{ padding: 10, background: 'var(--bg-secondary)', borderRadius: 6, fontSize: 12, border: '1px solid var(--border-color)' }}>
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>🔄 合并模式：已勾选 {mergeMode.size} 个</div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     <span>选主名：</span>

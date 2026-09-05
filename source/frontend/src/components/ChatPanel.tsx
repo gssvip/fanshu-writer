@@ -4412,7 +4412,7 @@ export default function ChatPanel() {
                                             style={{
                                               width:'100%', minHeight:96, padding:'8px',
                                               fontFamily:'var(--font-mono, ui-monospace, monospace)', fontSize:12,
-                                              border:'1px solid var(--accent)', borderRadius:6,
+                                              border:'1px solid var(--border-color)', borderRadius:6,
                                               background:'var(--bg-secondary)', color:'var(--text-primary)',
                                               resize:'vertical',
                                             }}

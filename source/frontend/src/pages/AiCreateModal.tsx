@@ -712,7 +712,7 @@ export default function AiCreateModal({
                   <button
                     className="btn-ghost-sm"
                     onClick={stopGenerate}
-                    style={{ padding: '4px 12px', fontSize: 12, color: 'var(--accent)', borderColor: 'var(--accent)' }}
+                    style={{ padding: '4px 12px', fontSize: 12, color: 'var(--accent)', borderColor: 'var(--border-color)' }}
                     title="立即停止生成（已生成内容会保留）"
                   >
                     ⏹ 停止

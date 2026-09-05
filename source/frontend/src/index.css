@@ -5525,7 +5525,7 @@ textarea.input.paper-textarea{
 [data-theme="light"] .smart-action-btn.primary{
   background: var(--accent-light) !important;
   color: var(--accent) !important;
-  border-color: var(--accent) !important;
+  border-color: #d0d5dd !important;
   box-shadow: none !important;
 }
 [data-theme="light"] .smart-action-btn.primary:hover:not(:disabled){
@@ -5537,14 +5537,36 @@ textarea.input.paper-textarea{
 [data-theme="light"] .smart-main-action{
   background: var(--accent-light) !important;
   color: var(--accent) !important;
-  border: 1px solid var(--accent) !important;
+  border: 1px solid #d0d5dd !important;
 }
 [data-theme="light"] .smart-main-action:hover:not(:disabled){ opacity: 1; }
 /* 校审·事件日志 的「全文重算」按钮统一淡色 */
 [data-theme="light"] .impact-preview-actions button{
   background: var(--accent-light) !important;
   color: var(--accent) !important;
-  border-color: var(--accent) !important;
+  border-color: #d0d5dd !important;
+}
+/* 浅色主题全局：所有按钮/标签/卡片 激活态 的 accent 深色边框统一改为淡灰边
+   （--accent 在浅色主题下近黑，作边框会发黑） */
+[data-theme="light"] .write-tab.active,
+[data-theme="light"] .tool-card.active,
+[data-theme="light"] .sync-mode-card.active,
+[data-theme="light"] .emoji-chip.active,
+[data-theme="light"] .mine-nav-item.active,
+[data-theme="light"] .storage-mode-btn.active,
+[data-theme="light"] .theme-card.active,
+[data-theme="light"] .provider-chip.active,
+[data-theme="light"] .custom-model-chip.active,
+[data-theme="light"] .dm-tab-chip.active,
+[data-theme="light"] .smart-dim-btn.active,
+[data-theme="light"] .smart-dim-btn.batch,
+[data-theme="light"] .smart-dim-btn.batch.active,
+[data-theme="light"] .chapter-ai-btn,
+[data-theme="light"] .chapter-ai-write-btn,
+[data-theme="light"] .chat-card-btn.primary,
+[data-theme="light"] .skill-pack-checkbox-item.checked,
+[data-theme="light"] .chat-history-item.active{
+  border-color: #d0d5dd !important;
 }
 /* 武装(armed)确认态在浅色下仍保留橙色脉冲提示 */
 [data-theme="light"] .smart-action-btn.armed,
