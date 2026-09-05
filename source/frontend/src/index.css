@@ -971,7 +971,7 @@
   background-color: var(--bg-secondary) !important;
   backdrop-filter: none;
   border-right: 1px solid var(--border-color);
-  box-shadow: 2px 0 0 -1px rgba(87,100,115,0.22) inset;
+  box-shadow: none !important; /* 去掉右端 inset 阴影，避免与选中态底叠加变重灰 */
 }
 @media (max-width: 899px){
   [data-theme="dark"] .mobile-tab-bar,
