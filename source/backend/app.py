@@ -2140,9 +2140,11 @@ def _do_test_connection(base_url, api_key, model):
     【智谱 GLM 404 修复】删除老代码"非 /v1 结尾就补 /v1"。
     用户点"测试连接"按钮看到的 "HTTP 404 path=/v4/v1/chat/completions" 就是这里产生的。
     """
-    from llm_gateway import _normalize_llm_base_url
+    from llm_gateway import _normalize_llm_base_url, _pin_temperature_for_thinking
     import requests as req
     base = _normalize_llm_base_url(base_url, model)
+    # 思考型模型（DeepSeek-R1 等）要求 temperature=1，测试连接同样钳制，避免 HTTP 400
+    temp = _pin_temperature_for_thinking(model, {}, 0.1)
     resp = req.post(
         f"{base}/chat/completions",
         headers=build_auth_headers(api_key),
@@ -2150,7 +2152,7 @@ def _do_test_connection(base_url, api_key, model):
             'model': model,
             'messages': [{'role': 'user', 'content': '你好，请回复"连接成功"四个字。'}],
             'max_tokens': 20,
-            'temperature': 0.1,
+            'temperature': temp,
             'stream': False
         },
         timeout=30

@@ -136,6 +136,30 @@ class ModelResult:
         return self.failure_class == FailureClass.EMPTY_RESPONSE
 
 
+def _pin_temperature_for_thinking(model: str, extra: dict, temperature: float) -> float:
+    """思考开启时把 temperature 钳到 1，消除上游限制报错。
+
+    背景：部分提供商（如 DeepSeek）开启思考（thinking/reasoning）时强制
+    temperature 必须为 1，否则返回 HTTP 400：
+      "temperature may only be set to 1 when thinking is enabled or in adaptive mode"
+    这里在 payload 组装处统一识别“固定思考模型 / thinking 参数开启 / reasoning_effort
+    注入”三类情况，把非 1 的温度强制改为 1，避免把这种框架限制抛给上层。
+    """
+    if temperature == 1.0:
+        return temperature
+    m = (model or '').lower()
+    # 固定思考型模型：DeepSeek-R1/Reasoner、OpenAI o1/o3/o4-mini、命名含 r1/thinking
+    if ('reasoner' in m or 'r1' in m or 'thinking' in m
+            or m.startswith('o1') or m.startswith('o3') or 'o4' in m):
+        return 1.0
+    th = extra.get('thinking')
+    if isinstance(th, dict) and str(th.get('type', '')).lower() == 'enabled':
+        return 1.0
+    if extra.get('reasoning_effort'):
+        return 1.0
+    return temperature
+
+
 def _classify_error(exc: Exception, status_code: int = 0, body: dict | None = None) -> FailureClass:
     """根据异常/状态码/响应体分类失败类型。"""
     if isinstance(exc, requests.exceptions.Timeout):
@@ -490,13 +514,15 @@ class LLMGateway:
         result = ModelResult()
         url = f"{self.base_url}/chat/completions"
         headers = build_auth_headers(self.api_key)
-        payload: dict[str, Any] = {
+        payload = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": self._effective_max_tokens(max_tokens),
         }
         payload.update(extra)
+        # 思考开启时上游要求 temperature=1，统一钳制避免 HTTP 400
+        payload["temperature"] = _pin_temperature_for_thinking(self.model, extra, temperature)
 
         last_error = ""
         for attempt in range(1, self.max_retries + 2):  # 1 正常 + max_retries 重试
@@ -613,7 +639,7 @@ class LLMGateway:
         """
         url = f"{self.base_url}/chat/completions"
         headers = build_auth_headers(self.api_key)
-        payload: dict[str, Any] = {
+        payload = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
@@ -621,6 +647,8 @@ class LLMGateway:
             "stream": True,
         }
         payload.update(extra)
+        # 思考开启时上游要求 temperature=1，统一钳制避免 HTTP 400
+        payload["temperature"] = _pin_temperature_for_thinking(self.model, extra, temperature)
 
         got_content = False
         got_reasoning = False  # 思考型模型（GLM-4.7/R1 等）先输出 reasoning_content 再输出 content
