@@ -81,12 +81,17 @@ def create_ai_config():
     data = request.json or {}
     model = data.get('model', '')
     raw_base = data.get('base_url', '') or ''
+    # 同提供商加模型：前端拿到的是掩码 '***'，api_key 为空/掩码时自动继承当前激活配置的密钥
+    api_key = data.get('api_key', '') or ''
+    if not api_key or api_key == '***':
+        act = AIConfig.query.filter_by(is_active=True).first()
+        api_key = act.api_key if act else ''
     cfg = AIConfig(
         name=data.get('name') or f'配置 {AIConfig.query.count() + 1}',
         provider=data.get('provider', 'custom'),
         model=model,
         recognition_model=data.get('recognition_model', ''),
-        api_key=data.get('api_key', ''),
+        api_key=api_key,
         base_url=_normalize_llm_base_url(raw_base, model),
         temperature=data.get('temperature', 0.7),
         max_tokens=data.get('max_tokens', 4096),

@@ -178,16 +178,26 @@ export default function MinePage() {
     }
   }
 
-  // 新建配置：新建后自动激活并切换到编辑该配置
+  // 新建配置：同提供商下新增一个模型（继承当前配置的提供商/API地址，Key由后端自动继承当前激活配置）
   async function handleNewConfig() {
     if (configList.length >= maxConfigs) {
       alert(`最多 ${maxConfigs} 个配置，请先删除一个`);
       return;
     }
-    const name = prompt('新配置名称', `配置 ${configList.length + 1}`);
-    if (!name) return;
+    const curProviderLabel = AI_PROVIDERS.find(p => p.value === aiConfig.provider)?.label || aiConfig.provider || '自定义';
+    const model = prompt(
+      `在「${curProviderLabel}」下新增一个模型\n请输入模型名称（提供商与 API Key 自动继承当前配置）：`,
+      ''
+    );
+    if (!model || !model.trim()) return;
     try {
-      const cfg = await api.createAIConfig({ name });
+      const cfg = await api.createAIConfig({
+        name: `${curProviderLabel} · ${model.trim()}`,
+        provider: aiConfig.provider,
+        base_url: aiConfig.base_url,
+        model: model.trim(),
+        api_key: '',  // 空 → 后端继承当前激活配置的密钥
+      });
       setAIConfig(cfg);
       await refreshConfigs();
     } catch (e: any) {
@@ -1232,7 +1242,7 @@ export default function MinePage() {
 }
 
 /** 国产 AI 提供商预设（均兼容 OpenAI 接口格式） */
-const AI_PROVIDERS = [
+export const AI_PROVIDERS = [
   { value: 'deepseek', label: 'DeepSeek 深度求索', icon: '🔵', base_url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   { value: 'qwen', label: '通义千问 阿里', icon: '🟠', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
   { value: 'glm', label: '智谱GLM', icon: '🟢', base_url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
