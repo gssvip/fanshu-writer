@@ -522,12 +522,12 @@
 }
 [data-theme="light"] .mine-section-title{ color: var(--text-primary); }
 
-/* 结构性选中 chip：白字+蓝实底，确保在纯白主题下可见（全局兜底） */
+/* 结构性选中 chip：淡色底+主色字（与其他强调按钮一致，不再纯黑/纯蓝实底） */
 [data-theme="light"] .nr-platform-tab.active,
 [data-theme="light"] .nr-filter-chip-selected{
-  background: var(--accent) !important;          /* 科技蓝实底 */
-  color: #ffffff !important;                     /* 白字（之前只写了白字无蓝底，白底上白字看不见！）*/
-  border: 1px solid var(--accent-hover) !important;
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border: 1px solid var(--accent) !important;
   border-radius: var(--radius-sm);
 }
 /* 榜单 th 背景：纯白→极淡蓝灰细边头，不再灰突突 */
@@ -3852,10 +3852,10 @@ textarea.input.paper-textarea{
 }
 .smart-dim-btn:hover:not(:disabled) { border-color: var(--accent); }
 .smart-dim-btn.active {
-  background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
+  background: var(--accent-light); color: var(--accent); border-color: var(--accent); font-weight: 600;
 }
 .smart-dim-btn.batch { background: var(--accent-light); color: var(--accent); border-color: var(--accent); font-weight: 600; }
-.smart-dim-btn.batch.active { background: var(--accent); color: #fff; }
+.smart-dim-btn.batch.active { background: var(--accent-light); color: var(--accent); }
 .smart-dim-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* 手机端折叠：维度按钮三排 + 助手选择器 */
