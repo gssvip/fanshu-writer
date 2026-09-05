@@ -1015,27 +1015,25 @@
   box-shadow: var(--shadow-md);
 }
 
-/* ===== B3 按钮：2 级统一（主=极淡水墨灰+深墨字，副=白底+淡边）===== */
+/* ===== B3 按钮：强调=朴素无底色（细边+深墨字）；选中态=极淡水墨底 ===== */
 [data-theme="dark"] .btn-primary,
 [data-theme="dark"] .btn-primary-sm{
-  /* 强调按钮背景色极淡（淡显淡显淡显），深墨字可读 */
-  background: linear-gradient(180deg, #cdd6de 0%, #bdc8d2 100%);
+  /* 强调按钮取消背景色：细边 + 深墨字 */
+  background: transparent;
   border: 1px solid #a9b5c1;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.55) inset;
   color: var(--text-primary);
   font-weight: 700;
   letter-spacing: 0.8px;
   border-radius: var(--radius-sm);
-  transition: background var(--tr-fast), transform var(--tr-fast), box-shadow var(--tr-fast);
+  transition: background var(--tr-fast), transform var(--tr-fast), border-color var(--tr-fast);
 }
 [data-theme="dark"] .btn-primary:hover,
 [data-theme="dark"] .btn-primary-sm:hover{
-  background: linear-gradient(180deg, #c2ccd6 0%, #b2bfc9 100%);
+  background: rgba(87,100,115,0.08); /* hover 仅极淡示意 */
 }
 [data-theme="dark"] .btn-primary:active,
 [data-theme="dark"] .btn-primary-sm:active{
   transform: scale(0.98);
-  box-shadow: 0 1px 0 rgba(255,255,255,0.40) inset;
 }
 [data-theme="dark"] .btn-secondary,
 [data-theme="dark"] .btn-secondary-sm{
@@ -5530,16 +5528,22 @@ textarea.input.paper-textarea{
               0 1px 2px rgba(91,33,182,0.10) !important;
 }
 
-/* ---------- C1b. Dark(国风) 主按钮：极淡水墨灰（淡显）+ 深墨字（与D1b一致）---------- */
+/* ---------- C1b. Dark(国风) 强调按钮=无底色；选中态=极淡水墨底 ---------- */
 [data-theme="dark"] .chat-send.primary,
-[data-theme="dark"] .nr-crawl-btn.is-crawl,
-[data-theme="dark"] .btn-primary:not(.ai-master-banner),
-[data-theme="dark"] .nr-filter-chip-selected,
-[data-theme="dark"] .nr-platform-tab.active{
-  background: linear-gradient(180deg,#cdd6de 0%,#bdc8d2 100%) !important;
+[data-theme="dark"] .btn-primary:not(.ai-master-banner){
+  background: transparent !important;
   border-color: #a9b5c1 !important;
   color: var(--text-primary) !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.55) inset !important;
+  box-shadow: none !important;
+}
+/* 选中态（平台Tab激活/筛选chip选中/榜单爬取Tab选中）→ 极淡水墨底 */
+[data-theme="dark"] .nr-crawl-btn.is-crawl,
+[data-theme="dark"] .nr-filter-chip-selected,
+[data-theme="dark"] .nr-platform-tab.active{
+  background: rgba(87,100,115,0.12) !important;
+  border-color: #a9b5c1 !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
 }
 
 /* ---------- C2. Emoji 图标全局主题化（压鲜艳 + 叠主题Tint，和主题色对应不扎眼）---------- */
@@ -5683,35 +5687,62 @@ textarea.input.paper-textarea{
   box-shadow: 0 1px 0 rgba(255,255,255,0.20) inset !important;
 }
 
-/* ---------- D1b. Dark水墨国风：强调按钮背景极淡水墨灰（淡显淡显淡显）+ 深墨字 ----------
+/* ---------- D1b. Dark水墨国风：强调按钮=无底色（细边+深墨字）；仅选中态=极淡水墨底 ----------
    ★ AI 智驾横幅(.ai-master-banner)必须排除：横幅走自己的极淡水墨底规则 */
 [data-theme="dark"] .chat-send.primary,
 [data-theme="dark"] .chat-send:not(.stop),
-[data-theme="dark"] .nr-crawl-btn.is-crawl,
 [data-theme="dark"] .btn-primary:not(.ai-master-banner),
-[data-theme="dark"] .btn-primary-sm:not(.ai-master-banner),
-[data-theme="dark"] .nr-filter-chip-selected,
-[data-theme="dark"] .nr-platform-tab.active{
-  background: linear-gradient(180deg, #cdd6de 0%, #bdc8d2 100%) !important; /* 极淡水墨灰 */
+[data-theme="dark"] .btn-primary-sm:not(.ai-master-banner){
+  background: transparent !important; /* 强调按钮取消背景色 */
   border-color: #a9b5c1 !important;
-  color: var(--text-primary) !important; /* 深墨字：淡底上清晰可读 */
-  box-shadow: 0 1px 0 rgba(255,255,255,0.55) inset !important;
+  color: var(--text-primary) !important; /* 深墨字 */
+  box-shadow: none !important;
 }
-/* hover：淡显基础上微深一档 */
+/* hover：仅极淡示意 */
 [data-theme="dark"] .chat-send.primary:hover,
 [data-theme="dark"] .chat-send:not(.stop):hover,
-[data-theme="dark"] .nr-crawl-btn.is-crawl:hover,
 [data-theme="dark"] .btn-primary:not(.ai-master-banner):hover,
-[data-theme="dark"] .btn-primary-sm:not(.ai-master-banner):hover,
-[data-theme="dark"] .nr-platform-tab.active:hover,
-[data-theme="dark"] .nr-filter-chip-selected:hover{
-  background: linear-gradient(180deg, #c2ccd6 0%, #b2bfc9 100%) !important;
+[data-theme="dark"] .btn-primary-sm:not(.ai-master-banner):hover{
+  background: rgba(87,100,115,0.08) !important;
 }
-/* 国风精选按钮同样降鲜艳 */
+/* 选中态（平台Tab激活/筛选chip选中/榜单爬取Tab选中）→ 极淡水墨底 */
+[data-theme="dark"] .nr-crawl-btn.is-crawl,
+[data-theme="dark"] .nr-filter-chip-selected,
+[data-theme="dark"] .nr-platform-tab.active{
+  background: rgba(87,100,115,0.12) !important; /* 极淡水墨色 */
+  border-color: #a9b5c1 !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
+/* 选中态 hover：比通用 hover 优先，微深一档仍在极淡范围 */
+[data-theme="dark"] .nr-crawl-btn.is-crawl:hover,
+[data-theme="dark"] .nr-filter-chip-selected:hover,
+[data-theme="dark"] .nr-platform-tab.active:hover{
+  background: rgba(87,100,115,0.16) !important;
+}
+/* 国风精选按钮（选中态另一种）→ 同样极淡水墨底，与 is-crawl 统一 */
 [data-theme="dark"] .nr-crawl-btn.is-curated{
-  background: linear-gradient(180deg, #b8874a 0%, #a9763a 100%) !important;
-  border-color: #9b6a30 !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset !important;
+  background: rgba(87,100,115,0.12) !important;
+  border-color: #a9b5c1 !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
+/* 我的-账本时间范围Tab选中态 → 极淡水墨底（覆盖内联accent渐变） */
+[data-theme="dark"] .ledger-range-tab.active{
+  background: rgba(87,100,115,0.12) !important;
+  border-color: #a9b5c1 !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
+/* ChatPanel 卡片强调按钮（继续/采纳等，含内联彩色渐变）→ 朴素无底色 */
+[data-theme="dark"] .chat-card-btn.primary{
+  background: transparent !important;
+  border-color: #a9b5c1 !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
+[data-theme="dark"] .chat-card-btn.primary:hover:not(:disabled){
+  background: rgba(87,100,115,0.08) !important;
 }
 
 /* ---------- D1c. Green护眼绿：按钮用翠绿，saturate降一档 ---------- */

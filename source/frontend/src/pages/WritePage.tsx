@@ -3258,8 +3258,8 @@ function ChapterPanel(props: {
                         style={{ padding: '3px 9px', fontSize: 12, borderRadius: 12,
                           cursor: (aiCreating || disabled) ? 'not-allowed' : 'pointer',
                           border: `1px solid ${sel ? 'var(--accent)' : 'var(--border-color)'}`,
-                          background: sel ? 'var(--accent)' : 'transparent',
-                          color: sel ? '#fff' : 'var(--text-primary)',
+                          background: sel ? 'var(--accent-light)' : 'transparent',
+                          color: sel ? 'var(--accent)' : 'var(--text-primary)',
                           opacity: (aiCreating || disabled) ? 0.4 : 1 }}>
                         {s.label}
                       </button>
@@ -8092,13 +8092,13 @@ function ForeshadowingPanel(props: {
                 onClick={() => setAfScope('reports')}
                 disabled={afChecking}
                 title="检查所有动态报告"
-                style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='reports'?'var(--accent)':'var(--border)'}`,background:afScope==='reports'?'var(--accent)':'transparent',color:afScope==='reports'?'#fff':'var(--text)',fontWeight:afScope==='reports'?600:400}}
+                style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='reports'?'var(--accent)':'var(--border)'}`,background:afScope==='reports'?'var(--accent-light)':'transparent',color:afScope==='reports'?'var(--accent)':'var(--text)',fontWeight:afScope==='reports'?600:400}}
               >📄 动态文件</button>
               <button
                 onClick={() => setAfScope('dimensions')}
                 disabled={afChecking}
                 title="查阅除构思、章节外所有维度"
-                style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='dimensions'?'var(--accent)':'var(--border)'}`,background:afScope==='dimensions'?'var(--accent)':'transparent',color:afScope==='dimensions'?'#fff':'var(--text)',fontWeight:afScope==='dimensions'?600:400}}
+                style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='dimensions'?'var(--accent)':'var(--border)'}`,background:afScope==='dimensions'?'var(--accent-light)':'transparent',color:afScope==='dimensions'?'var(--accent)':'var(--text)',fontWeight:afScope==='dimensions'?600:400}}
               >📐 仅维度</button>
             </div>
             <p className="text-muted" style={{fontSize:12,marginBottom:10}}>
