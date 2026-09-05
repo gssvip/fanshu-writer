@@ -1387,7 +1387,7 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 /* 浅色主题·首页：去掉全局默认绿底/黛绿字，改为冷灰蓝+纯白带的科技风 */
 [data-theme="light"] .home-page{background:linear-gradient(180deg,rgba(95,126,163,0.08) 0%,rgba(233,237,243,0.9) 200px,var(--bg-primary) 400px)}
 [data-theme="light"] .home-page .page-header h1{color:#5f7ea3}
-[data-theme="light"] .home-topbar-title{color:#5f7ea3;letter-spacing:7px} /* 字距与国风(dark)对齐 */
+[data-theme="light"] .home-topbar-title{color:var(--accent);letter-spacing:7px} /* 深墨近黑，去蓝统一主题字色 */
 [data-theme="light"] .home-topbar-sub{color:#57606a}
 /* 护眼绿：标题字距与国风(dark)对齐（base为9px偏大，参照国风收至7px更协调） */
 [data-theme="green"] .home-topbar-title{color:#4a7a5a;letter-spacing:7px}
