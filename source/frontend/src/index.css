@@ -5502,31 +5502,34 @@ textarea.input.paper-textarea{
    (用户反馈：浅色/国风里所有工具图标底部Tab都太艳丽扎眼)
 ================================================================== */
 
-/* ---------- C1. Light 主题主按钮/选中胶囊 降鲜艳（从皇家蓝→Notion/Microsoft级淡饱和蓝）---------- */
-/* 抓取/搜索/添加卷大纲 等大CTA按钮 chat-send.primary .btn-primary.active */
+/* ---------- C1. Light 主题：强调按钮=无底色（细边+近墨字）；选中态=极淡灰底（白底黑字经典）---------- */
 [data-theme="light"] .chat-send.primary,
-[data-theme="light"] .nr-crawl-btn.is-crawl,
 [data-theme="light"] .btn-primary:not([class*="ai-master"]):not([class*="ai-entry"]):not([class*="ai-recog"]):not(.ai-master-banner):not(.btn-ai-entry-home):not(.btn-ai-recog),
-[data-theme="light"] .btn-primary[style],
+[data-theme="light"] .btn-primary[style]{
+  background: transparent !important;
+  border-color: #d0d5dd !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
+/* 选中态 → 极淡灰底 */
+[data-theme="light"] .nr-crawl-btn.is-crawl,
 [data-theme="light"] .nr-filter-chip-selected,
 [data-theme="light"] .nr-platform-tab.active,
 [data-theme="light"] .concept-tab-5col button.active{
-  background: linear-gradient(180deg,#2563eb 0%,#1d4ed8 100%) !important; /* Tailwind Blue-600→700 柔和不扎眼 */
-  border-color: #1e40af !important;
-  color: #ffffff !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset,
-              0 1px 2px rgba(30,64,175,0.12) !important; /* 去发光光晕 */
+  background: rgba(16,19,26,0.06) !important;
+  border-color: #d0d5dd !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
 }
-/* 反生成五幕式总纲：紫色 accent-secondary 同样降鲜艳 */
+/* 浅色主题：紫色 accent-secondary 按钮也统一朴素无底色（白底黑字经典） */
 [data-theme="light"] .chat-send.ghost-accent2,
 [data-theme="light"] .btn-accent-secondary,
 [data-theme="light"] button[style*="linear-gradient(135deg,#8b5cf6"],
 [data-theme="light"] button[style*="purple"]{
-  background: linear-gradient(180deg,#7c3aed 0%,#6d28d9 100%) !important;
-  border-color: #5b21b6 !important;
-  color: #ffffff !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset,
-              0 1px 2px rgba(91,33,182,0.10) !important;
+  background: transparent !important;
+  border-color: #d0d5dd !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
 }
 
 /* ---------- C1b. Dark(国风) 强调按钮=无底色；选中态=极淡水墨底 ---------- */
