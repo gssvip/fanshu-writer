@@ -1893,7 +1893,8 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .model-item-owner{font-size:11px;color:var(--text-muted)}
 
 /* AI 测试连接 */
-.ai-action-row{display:flex;gap:8px;align-items:center}
+.ai-action-row{display:flex;gap:8px;align-items:stretch}
+.ai-action-row .btn-primary,.ai-action-row .ai-test-btn{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 18px;line-height:1.2}
 .ai-test-btn{border-color:#00b894;color:#00b894;white-space:nowrap}
 .ai-test-btn:hover{background:#e8f8f5}
 .test-result{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:var(--radius-sm);margin-top:8px;font-size:13px;line-height:1.5}

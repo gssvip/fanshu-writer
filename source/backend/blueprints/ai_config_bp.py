@@ -32,7 +32,6 @@ def get_ai_config():
     return jsonify(AIConfig.get_active().to_dict())
 
 
-@ai_config_bp.route('/api/ai/config', methods=['PUT'])
 def _merge_models(base: list, add: list) -> list:
     """合并选定模型列表，保序去重。"""
     out: list = []
@@ -43,6 +42,7 @@ def _merge_models(base: list, add: list) -> list:
     return out
 
 
+@ai_config_bp.route('/api/ai/config', methods=['PUT'])
 def update_ai_config():
     """更新当前激活配置（一个提供商一条）。
 

@@ -219,6 +219,16 @@ try:
 except ImportError:
     pass
 
+def _merge_unique(base: list, add: list) -> list:
+    """合并两个列表并保序去重（AI配置迁移：合并同提供商的 models 用）。"""
+    out: list = []
+    for x in list(base or []) + list(add or []):
+        x = str(x).strip()
+        if x and x not in out:
+            out.append(x)
+    return out
+
+
 # gunicorn prefork 使 _app_engines(WeakKeyDictionary) weakref 失效，请求前检查重注册
 @app.before_request
 def _ensure_db():
@@ -15051,7 +15061,7 @@ def rankings_analyse():
 
 # 【冷启动提速·2026-08-20】schema+seed 版本号：改动数据库结构（新表/新列/迁移）
 # 或种子数据（SEED_SKILL_PACKS / 内置模板）时必须递增此版本，老库才会重新走全量初始化。
-SCHEMA_SEED_VERSION = '2026-09-03.1'  # AI账本tokens+原文列升级 + ai_usage_recorder独立写入器上线
+SCHEMA_SEED_VERSION = '2026-09-05.1'  # ai_config 补 models 列 + 同 provider 重复行合并（修复保存500）
 
 class AppMeta(db.Model):
     """应用元数据 KV 表：记录 schema/seed 版本，支持启动快速路径。"""
@@ -15083,10 +15093,21 @@ def init_db():
         db.create_all()
         # Migration: 逐条独立提交，避免 PostgreSQL 事务污染
         # （PG 中一条 ALTER 失败会使整个事务 aborted，后续语句全失败）
-        # 使用 ADD COLUMN IF NOT EXISTS（PostgreSQL 9.6+ / SQLite 3.35+ 均支持，老版本 SQLite 走 except 兜底）
+        # PostgreSQL 用 ADD COLUMN IF NOT EXISTS；SQLite 不支持该语法（3.45 实测报
+        # near "EXISTS": syntax error，且被 except 吞掉后列永远加不上）→ 先查
+        # PRAGMA table_info 再决定是否 ALTER，保证本地 SQLite 老库同样完成迁移。
         def _add_column(table, col_def):
-            sql = f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col_def}'
+            col_name = col_def.split()[0].strip('"`[]')
             try:
+                bind = db.session.get_bind()
+                if bind.dialect.name == 'sqlite':
+                    existing = [r[0] for r in db.session.execute(
+                        db.text(f'PRAGMA table_info({table})')).fetchall()]
+                    if col_name in existing:
+                        return
+                    sql = f'ALTER TABLE {table} ADD COLUMN {col_def}'
+                else:
+                    sql = f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col_def}'
                 db.session.execute(db.text(sql))
                 db.session.commit()
             except Exception:
@@ -15111,6 +15132,36 @@ def init_db():
         # Migration: AI配置改为提供商级——一行一提供商，models 存用户勾选的多模型
         # （修复老库缺列导致保存/选择模型 HTTP 500：no such column ai_config.models）
         _add_column('ai_config', "models TEXT DEFAULT '[]'")
+        # Migration: 合并旧版"每模型一条"产生的同 provider 重复行 → 一行一提供商
+        # （合并规则：保留一行（优先激活行），models 取并集，model 取保留行的当前模型；
+        #   其余重复行删除。幂等：无重复时不做任何事。）
+        try:
+            import json as _json
+            _rows = AIConfig.query.order_by(AIConfig.is_active.desc(), AIConfig.id.asc()).all()
+            _by_provider: dict = {}
+            for _r in _rows:
+                _by_provider.setdefault(_r.provider or 'custom', []).append(_r)
+            _merged_any = False
+            for _prov, _rs in _by_provider.items():
+                if len(_rs) < 2:
+                    continue
+                _keep = _rs[0]
+                _models: list = _keep.get_models()
+                for _other in _rs[1:]:
+                    _models = _merge_unique(_models, _other.get_models())
+                    if not _keep.model and _other.model:
+                        _keep.model = _other.model
+                    if _other.api_key and not _keep.api_key:
+                        _keep.api_key = _other.api_key
+                    if _other.base_url and not _keep.base_url:
+                        _keep.base_url = _other.base_url
+                    db.session.delete(_other)
+                _keep.models = _json.dumps(_models)
+                _merged_any = True
+            if _merged_any:
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
         # Migration: skill_packs 添加 github_source 和 github_synced_at 字段
         _add_column('skill_packs', "github_source VARCHAR(500) DEFAULT ''")
         _add_column('skill_packs', 'github_synced_at TIMESTAMP')
