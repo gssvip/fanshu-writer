@@ -6044,6 +6044,115 @@ textarea.input.paper-textarea{
   box-shadow: 0 1px 0 rgba(255,255,255,0.10) inset !important;
 }
 
+/* ---------- D1c-2. 护眼绿·智驾及全站强调元素淡化：翠绿实底 → 淡翠底 + 翠绿字 ----------
+   ★ 与浅色/国风同族对齐：accent-light(10%淡翠) 底 + accent(翠绿) 字 + border-color 淡草绿边 */
+/* 主强调按钮（发送/采纳/主操作/去AI/修改/保存采纳/全屏停止）→ 淡翠底 */
+[data-theme="green"] .chat-send:not(.stop),
+[data-theme="green"] .chat-send.primary,
+[data-theme="green"] .chat-card-btn.primary,
+[data-theme="green"] .btn-primary,
+[data-theme="green"] .btn-primary-sm,
+[data-theme="green"] .btn-sm.primary,
+[data-theme="green"] .fix-task-action,
+[data-theme="green"] .smart-action-btn.primary,
+[data-theme="green"] .smart-main-action,
+[data-theme="green"] .impact-preview-actions button,
+[data-theme="green"] .ai-fullscreen-stop-btn{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: var(--border-color) !important;
+  box-shadow: none !important;
+}
+[data-theme="green"] .chat-send.primary:hover:not(:disabled),
+[data-theme="green"] .smart-action-btn.primary:hover:not(:disabled),
+[data-theme="green"] .smart-main-action:hover:not(:disabled),
+[data-theme="green"] .impact-preview-actions button:hover:not(:disabled){
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 15%, transparent) !important;
+  color: var(--accent) !important;
+}
+/* 选中态 chip（榜单爬取/平台Tab筛选/校审卷chip/动态文件Tab/榜单风向）→ 淡翠底 */
+[data-theme="green"] .nr-crawl-btn.is-crawl,
+[data-theme="green"] .nr-filter-chip-selected,
+[data-theme="green"] .nr-platform-tab.active,
+[data-theme="green"] .smart-volume-chip.active,
+[data-theme="green"] .dm-tab-chip.active,
+[data-theme="green"] .filter-tag-active{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: var(--border-color) !important;
+  box-shadow: none !important;
+}
+/* 选中 chip 内"自"角标（淡翠底下不可见白底）→ 换淡翠深一档 */
+[data-theme="green"] .dm-tab-chip.active .dm-tab-chip-badge{
+  background: color-mix(in srgb, var(--accent) 16%, transparent) !important;
+  color: var(--accent) !important;
+}
+/* 徽章/计数（技能包/系统·自定义/校审标签）→ 淡翠底 */
+[data-theme="green"] .smart-skill-badge,
+[data-theme="green"] .builtin-badge,
+[data-theme="green"] .custom-badge,
+[data-theme="green"] .skill-pack-toggle-badge,
+[data-theme="green"] .ai-config-trigger-badge{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+/* 用户消息气泡/头像：翠绿实底 → 淡翠底 + 深绿字 */
+[data-theme="green"] .chat-msg-user .chat-msg-avatar{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+[data-theme="green"] .chat-msg-user .chat-msg-text{
+  background: var(--accent-light) !important;
+  color: var(--text-primary) !important;
+}
+/* 进度条/得分条：翠绿实底 → 柔和翠绿 */
+[data-theme="green"] .chat-progress-fill,
+[data-theme="green"] .ai-batch-toast-progress-bar,
+[data-theme="green"] .review-score-fill{
+  background: color-mix(in srgb, var(--accent) 38%, var(--bg-primary)) !important;
+}
+/* 头像/连续天数徽章/工作流步骤圆点/情节节点序号：翠绿圆块 → 淡翠底 */
+[data-theme="green"] .avatar-circle,
+[data-theme="green"] .stats-streak-badge,
+[data-theme="green"] .workflow-step-num,
+[data-theme="green"] .node-index{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+/* 侧栏"登录/注册"按钮：翠绿实底 → 淡翠底 */
+[data-theme="green"] .sidebar-login-btn{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: none !important;
+}
+/* 节点设计师弹窗内联深绿按钮 → 淡翠底 */
+[data-theme="green"] .ndv-primary-btn{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border: 1px solid var(--border-color) !important;
+}
+/* 紫色 accent-secondary 按钮：绿主题下同样去彩 → 淡翠底 */
+[data-theme="green"] .btn-accent-secondary,
+[data-theme="green"] button[style*="linear-gradient(135deg,#8b5cf6"],
+[data-theme="green"] button[style*="purple"]{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: var(--border-color) !important;
+  box-shadow: none !important;
+}
+/* 武装(armed)二次确认态：保留橙色脉冲提示（压过上面的 primary 淡色规则） */
+[data-theme="green"] .smart-action-btn.armed,
+[data-theme="green"] .smart-action-btn.armed.primary,
+[data-theme="green"] .smart-action-btn.armed:hover:not(:disabled),
+[data-theme="green"] .smart-action-btn.armed.primary:hover:not(:disabled){
+  background: #fff7e6 !important;
+  color: #b45309 !important;
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 2px rgba(245,158,11,0.18) !important;
+}
+
 /* ---------- D1d. Custom自定义：走accent变量，保证用户改任何accent都自动正确且降低饱和感 ---------- */
 [data-theme="custom"] .chat-send.primary,
 [data-theme="custom"] .nr-crawl-btn.is-crawl,
