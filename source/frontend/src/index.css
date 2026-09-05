@@ -3426,6 +3426,20 @@ textarea.input.paper-textarea{
 
 @media (max-width: 600px) { .chat-panel { max-width: 100%; } }
 
+/* ===== 水墨国风：智驾面板（ChatPanel）背景 = 宣纸白渐变叠竖幅水墨立轴 =====
+   与 body 水墨背景同语言：面板打开后内部也有水墨氛围，不再是孤立纯白 */
+[data-theme="dark"] .chat-panel{
+  background:
+    linear-gradient(180deg, rgba(251,252,253,0.92) 0%, rgba(244,247,250,0.88) 100%),
+    url("/assets/ink-portrait.jpg") center/cover no-repeat;
+}
+[data-theme="dark"] .chat-panel-header{
+  background: rgba(244,247,250,0.82);
+}
+[data-theme="dark"] .chat-input-area{
+  background: rgba(244,247,250,0.82);
+}
+
 .chat-panel-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 16px; border-bottom: 1px solid var(--border-color);
@@ -3972,31 +3986,31 @@ textarea.input.paper-textarea{
 }
 .smart-action-btn.primary:hover:not(:disabled) { opacity: 0.9; color: #fff; }
 .smart-action-btn.armed {
-  /* 待确认态：橙色脉冲，提醒用户"再点一次才执行" */
-  border-color: #f59e0b; background: #fff7e6; color: #b45309;
-  box-shadow: 0 0 0 2px rgba(245,158,11,0.18);
+  /* 待确认态：主题色脉冲（随 light/水墨/护眼绿 主题），提醒用户"再点一次才执行" */
+  border-color: var(--accent); background: var(--accent-light); color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
   animation: armed-pulse 1.6s ease-in-out infinite;
 }
 .smart-action-btn.armed.primary {
-  background: #ffedd5; color: #9a3412; border-color: #f59e0b;
+  background: var(--accent-light); color: var(--accent); border-color: var(--accent);
 }
 @keyframes armed-pulse {
-  0%,100% { box-shadow: 0 0 0 2px rgba(245,158,11,0.18); }
-  50%     { box-shadow: 0 0 0 4px rgba(245,158,11,0.28); }
+  0%,100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); }
+  50%     { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent); }
 }
 .smart-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .smart-review-armed-hint {
   margin: 8px 0 0; padding: 8px 10px; border-radius: 6px;
-  border: 1px dashed #f59e0b; background: #fffbeb; color: #92400e;
+  border: 1px dashed var(--accent); background: var(--accent-light); color: var(--accent);
   font-size: 12px; line-height: 1.6;
   display: flex; align-items: center; flex-wrap: wrap;
 }
-.smart-review-armed-hint strong { color: #b45309; }
+.smart-review-armed-hint strong { color: var(--accent); }
 
 .smart-review-scope.armed {
-  padding: 10px; border-radius: 8px; border: 1px solid #f59e0b;
-  background: linear-gradient(180deg, #fffbeb 0%, transparent 100%);
+  padding: 10px; border-radius: 8px; border: 1px solid var(--accent);
+  background: linear-gradient(180deg, var(--accent-light) 0%, transparent 100%);
 }
 
 /* 章节选择下拉 */
@@ -5595,13 +5609,13 @@ textarea.input.paper-textarea{
 [data-theme="light"] .chat-history-item.active{
   border-color: #d0d5dd !important;
 }
-/* 武装(armed)确认态在浅色下仍保留橙色脉冲提示 */
+/* 武装(armed)确认态在浅色下统一主题色（淡主色底 + 主色字/边，压过上面的 primary 淡色规则） */
 [data-theme="light"] .smart-action-btn.armed,
 [data-theme="light"] .smart-action-btn.armed.primary{
-  background: #ffedd5 !important;
-  color: #9a3412 !important;
-  border-color: #f59e0b !important;
-  box-shadow: 0 0 0 2px rgba(245,158,11,0.18) !important;
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent) !important;
 }
 /* 浅色主题：智驾面板内剩余深底强调按钮/徽章统一淡色（accent-light 淡底 + accent 字） */
 [data-theme="light"] .chat-send{
@@ -5969,15 +5983,15 @@ textarea.input.paper-textarea{
   background: rgba(87,100,115,0.16) !important;
   color: var(--accent) !important;
 }
-/* 武装(armed)二次确认态在国风下仍保留橙色脉冲提示（须压过上面的 primary 淡色规则） */
+/* 武装(armed)二次确认态在国风下统一水墨主题色（压过上面的 primary 淡色规则） */
 [data-theme="dark"] .smart-action-btn.armed,
 [data-theme="dark"] .smart-action-btn.armed.primary,
 [data-theme="dark"] .smart-action-btn.armed:hover:not(:disabled),
 [data-theme="dark"] .smart-action-btn.armed.primary:hover:not(:disabled){
-  background: #fff7e6 !important;
-  color: #b45309 !important;
-  border-color: #f59e0b !important;
-  box-shadow: 0 0 0 2px rgba(245,158,11,0.18) !important;
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent) !important;
 }
 /* 徽章/计数（技能包计数/系统·自定义徽章/AI配置触发徽章）→ 极淡水墨底 */
 [data-theme="dark"] .smart-skill-badge,
@@ -6169,15 +6183,15 @@ textarea.input.paper-textarea{
   border-color: var(--border-color) !important;
   box-shadow: none !important;
 }
-/* 武装(armed)二次确认态：保留橙色脉冲提示（压过上面的 primary 淡色规则） */
+/* 武装(armed)二次确认态：统一翠绿主题色（压过上面的 primary 淡色规则） */
 [data-theme="green"] .smart-action-btn.armed,
 [data-theme="green"] .smart-action-btn.armed.primary,
 [data-theme="green"] .smart-action-btn.armed:hover:not(:disabled),
 [data-theme="green"] .smart-action-btn.armed.primary:hover:not(:disabled){
-  background: #fff7e6 !important;
-  color: #b45309 !important;
-  border-color: #f59e0b !important;
-  box-shadow: 0 0 0 2px rgba(245,158,11,0.18) !important;
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent) !important;
 }
 
 /* ---------- D1d. Custom自定义：走accent变量，保证用户改任何accent都自动正确且降低饱和感 ---------- */
