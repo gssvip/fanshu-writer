@@ -15,70 +15,91 @@
     <meta name="apple-mobile-web-app-title" content="蚂蚁写作" />
 
     <title>蚂蚁写作</title>
-    <!-- 预连接后端，加速移动端首屏 API 请求 -->
-    <link rel="preconnect" href="https://fanshu-writer-backend.onrender.com" crossorigin>
-    <link rel="dns-prefetch" href="https://fanshu-writer-backend.onrender.com">
     <script>
-      // 强制注销所有已注册的 Service Worker（它们会缓存旧JS导致React DOM冲突）
+      // ===========================================================
+      //  🔥 FOUC 防闪：React 挂载**之前**就写好 <html data-theme>
+      //  默认 = light（米黄羊皮纸 #f4e9d0 与用户截图一致）
+      //  这是防止"打开白/蓝一秒后才变黄"的唯一关键代码
+      // ===========================================================
+      (function () {
+        try {
+          var legacyKey = function (k) { return 'mayi-writing:' + k; };
+          var t = localStorage.getItem('app-theme') || localStorage.getItem(legacyKey('theme'));
+          if (t === 'sepia') t = 'green';
+          // 恢复原默认 dark：用户指令"只做浅色主题其他不动"，不改其他用户的默认主题
+          if (!t) t = 'dark';
+          document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+
+      // 强制注销所有已注册的 Service Worker（避免缓存冲突）
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(registrations) {
-          for (var i = 0; i < registrations.length; i++) {
-            registrations[i].unregister();
-          }
+        navigator.serviceWorker.getRegistrations().then(function (registrations) {
+          for (var i = 0; i < registrations.length; i++) registrations[i].unregister();
         });
       }
-      // 版本自检：绕过 GitHub Pages / 浏览器 / PWA 缓存，部署后自动刷新
-      // version.json 由 deploy.sh 每次部署生成，fetch 时带时间戳破缓存
+
+      // 动态预连接：从当前 API Base 解析 origin，不再把后端域名写死在模板里
       (function () {
-        var KEY = 'fanshu-version';
-        // ⚠️ 用户开了 Edge Tracking Prevention / 隐身模式 / Clear-Site-Data 清 storage 时，
-        // localStorage 读写会抛 SecurityError → 直接打断 <script> 执行 → main.tsx 不加载 → 白屏。
-        // 所以所有 localStorage 访问全部 try/catch，版本自检降级为「仅 fetch 拉取到新版就强制带参刷新」，
-        // 不依赖本地状态也能保证不会永远拿旧缓存。
+        try {
+          var saved = localStorage.getItem('app-api-base-url');
+          var envBase = (window.__APP_ENV__ && window.__APP_ENV__.VITE_API_URL) || '';
+          var base = (saved && saved.trim()) || envBase || '';
+          var origin = '';
+          if (base) {
+            try { origin = new URL(base, window.location.href).origin; } catch (e) {}
+          }
+          if (!origin) origin = window.location.origin;
+          if (origin && origin !== window.location.origin) {
+            var l1 = document.createElement('link'); l1.rel = 'preconnect'; l1.href = origin; l1.crossOrigin = 'anonymous';
+            var l2 = document.createElement('link'); l2.rel = 'dns-prefetch'; l2.href = origin;
+            document.head.appendChild(l1); document.head.appendChild(l2);
+          }
+        } catch (e) {}
+      })();
+
+      // 版本自检 + 自动刷新（绕缓存）
+      (function () {
+        var KEY = 'app-version';
         function safeGetKey() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
         function safeSetKey(v) { try { localStorage.setItem(KEY, v); } catch (e) {} }
-        function bustCache(url) { return url.replace(/([?&])_v=[^&]*(&|$)/, '$1').replace(/\?$/, '') + (url.indexOf('?') >= 0 ? '&' : '?') + '_v=' + Date.now(); }
-        function reloadToNewVersion(v) {
-          safeSetKey(v);
-          // 用带版本参数的 URL 强制重新请求 index.html，绕过所有缓存层
-          var next = bustCache(location.href.split('#')[0]);
-          if (location.href !== next) {
-            location.replace(next);
-          } else {
-            location.reload(true);
-          }
+        function withCacheBust(url) {
+          return url.replace(/([?&])_v=[^&]*(&|$)/, '$1').replace(/\?$/, '') + (url.indexOf('?') >= 0 ? '&' : '?') + '_v=' + Date.now();
         }
-        var alreadyReloading = false;
+        function reloadTo(v) {
+          safeSetKey(v);
+          var next = withCacheBust(location.href.split('#')[0]);
+          if (location.href !== next) location.replace(next); else location.reload(true);
+        }
+        var inFlight = false;
         function check() {
-          if (alreadyReloading) return;
+          if (inFlight) return;
+          inFlight = true;
           fetch('./version.json?_t=' + Date.now(), { cache: 'no-store' })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (data) {
-              if (!data || !data.v) return;
+              if (!data || !data.v) { inFlight = false; return; }
               var saved = safeGetKey();
               if (!saved) {
-                // localStorage 不可用或首次访问：只要 URL 还没带版本参数，就强制刷新一次
-                var hasVersionParam = /[?&]_v=/.test(location.search || '');
+                var has = /[?&]_v=/.test(location.search || '');
                 safeSetKey(data.v);
-                if (!hasVersionParam) {
-                  alreadyReloading = true;
-                  reloadToNewVersion(data.v);
-                }
+                if (!has) reloadTo(data.v); else inFlight = false;
               } else if (saved !== data.v) {
-                // 版本不一致，部署了新版，强制刷新拉取新 index.html
-                alreadyReloading = true;
-                reloadToNewVersion(data.v);
+                reloadTo(data.v);
+              } else {
+                inFlight = false;
               }
             })
-            .catch(function () { /* 静默失败，不影响使用 */ });
+            .catch(function () { inFlight = false; });
         }
-        // 首次加载立即检查（PWA 场景不能等），之后每 60 秒轮询
         check();
         setInterval(check, 60000);
       })();
     </script>
-    <script type="module" crossorigin src="./assets/index-ClIrpG3k.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DAQuFymx.css">
+    <script type="module" crossorigin src="./assets/index-C3p-lo8G.js?v=1788584296"></script>
+    <link rel="stylesheet" crossorigin href="./assets/9xOF09Bx.css?v=1788584307">
   </head>
   <body>
     <div id="root"></div>
