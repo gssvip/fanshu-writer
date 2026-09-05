@@ -1279,11 +1279,11 @@ category：master
                       flex:'1 1 0', minWidth: 120, fontSize: 14,
                       borderRadius: 10,
                       background: nrPlatform===p.code
-                        ? 'linear-gradient(135deg, var(--accent), var(--accent-hover))'
+                        ? 'var(--accent-light)'
                         : 'var(--bg-tertiary)',
-                      color: nrPlatform===p.code ? '#fff' : 'var(--text-secondary)',
+                      color: nrPlatform===p.code ? 'var(--accent)' : 'var(--text-secondary)',
                       border: nrPlatform===p.code
-                        ? '1px solid transparent'
+                        ? '1px solid var(--accent)'
                         : '1px solid var(--border-color)',
                     }}
                   >
@@ -1695,8 +1695,9 @@ category：master
                           <span className="rank-metric" style={{marginLeft:'auto',flexShrink:0,minWidth:'auto',maxWidth:'100%',overflow:'hidden'}}>
                             <em style={{
                               fontStyle:'normal',display:'inline-flex',alignItems:'center',gap:4,
-                              fontSize:11.5,fontWeight:700,color:'#fff',padding:'3px 10px',borderRadius:999,
-                              background:'linear-gradient(135deg, var(--accent), var(--accent-hover))',
+                              fontSize:11.5,fontWeight:700,color:'var(--accent)',padding:'3px 10px',borderRadius:999,
+                              background:'var(--accent-light)',
+                              border:'1px solid var(--accent)',
                             }}>{b.metricName ? `${b.metricName} ` : ''}{metricText}</em>
                           </span>
                         )}

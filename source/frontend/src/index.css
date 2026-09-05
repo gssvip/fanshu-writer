@@ -5521,6 +5521,33 @@ textarea.input.paper-textarea{
   color: var(--text-primary) !important;
   box-shadow: none !important;
 }
+/* 智驾 正文/去AI/校审 等 smart-action-btn.primary：与其他强调按钮一致的淡色（浅底+主色字），不再近黑实底 */
+[data-theme="light"] .smart-action-btn.primary{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+  box-shadow: none !important;
+}
+[data-theme="light"] .smart-action-btn.primary:hover:not(:disabled){
+  opacity: 1;
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+/* 正文/去AI/校审 各 Tab 的主操作按钮（开始去AI味 等）也统一淡色 */
+[data-theme="light"] .smart-main-action{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border: 1px solid var(--accent) !important;
+}
+[data-theme="light"] .smart-main-action:hover:not(:disabled){ opacity: 1; }
+/* 武装(armed)确认态在浅色下仍保留橙色脉冲提示 */
+[data-theme="light"] .smart-action-btn.armed,
+[data-theme="light"] .smart-action-btn.armed.primary{
+  background: #ffedd5 !important;
+  color: #9a3412 !important;
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 2px rgba(245,158,11,0.18) !important;
+}
 /* 浅色主题：紫色 accent-secondary 按钮也统一朴素无底色（白底黑字经典） */
 [data-theme="light"] .chat-send.ghost-accent2,
 [data-theme="light"] .btn-accent-secondary,
