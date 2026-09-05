@@ -5576,6 +5576,103 @@ textarea.input.paper-textarea{
   border-color: #f59e0b !important;
   box-shadow: 0 0 0 2px rgba(245,158,11,0.18) !important;
 }
+/* 浅色主题：智驾面板内剩余深底强调按钮/徽章统一淡色（accent-light 淡底 + accent 字） */
+[data-theme="light"] .chat-send{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+[data-theme="light"] .chat-card-btn.primary{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+[data-theme="light"] .btn-sm.primary{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: #d0d5dd !important;
+}
+[data-theme="light"] .fix-task-action{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: #d0d5dd !important;
+}
+[data-theme="light"] .smart-volume-chip.active{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: #d0d5dd !important;
+}
+[data-theme="light"] .smart-skill-badge,
+[data-theme="light"] .builtin-badge,
+[data-theme="light"] .custom-badge{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+/* 用户消息气泡/头像：近黑块 → 淡底近墨字（白底黑字经典） */
+[data-theme="light"] .chat-msg-user .chat-msg-avatar{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+[data-theme="light"] .chat-msg-user .chat-msg-text{
+  background: var(--accent-light) !important;
+  color: var(--text-primary) !important;
+}
+/* 榜单风向筛选chip激活类 .filter-tag-active 自带 !important 深色渐变，
+   会压过内联淡色样式 —— 此处用同级 !important 覆盖为淡色 */
+[data-theme="light"] .filter-tag-active{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: #d0d5dd !important;
+}
+/* 创作页 AI 相关：全屏流式"停止"按钮 + AI配置触发徽章 也统一淡色 */
+[data-theme="light"] .ai-fullscreen-stop-btn{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border: 1px solid #d0d5dd !important;
+}
+[data-theme="light"] .ai-config-trigger-badge{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+/* —— 补充扫尾：智驾及同族仍近黑的强调元素 —— */
+/* 智驾·创作进度总进度条 / AI批量生成进度条 / 校审得分条：近黑实底 → 柔和灰阶 */
+[data-theme="light"] .chat-progress-fill,
+[data-theme="light"] .ai-batch-toast-progress-bar,
+[data-theme="light"] .review-score-fill{
+  background: color-mix(in srgb, var(--accent) 38%, var(--bg-primary)) !important;
+}
+/* 智驾·圆桌"继续"按钮：内联绿色渐变已被 .chat-card-btn.primary 覆盖为淡底，此处清掉残留绿色光环 */
+[data-theme="light"] .chat-card-btn.primary{
+  box-shadow: none !important;
+}
+/* 技能包计数徽章（创作页/AI总创作折叠条）：与智驾 .smart-skill-badge 同族 → 淡底 */
+[data-theme="light"] .skill-pack-toggle-badge{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+/* 动态文件 Tab 选中 chip：近黑实底 → 淡底（边框已在上方统一 #d0d5dd） */
+[data-theme="light"] .dm-tab-chip.active{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+/* 选中 chip 内"自"角标原为 25% 白底（深底专用），淡底下不可见 → 换淡灰底 */
+[data-theme="light"] .dm-tab-chip.active .dm-tab-chip-badge{
+  background: rgba(16,19,26,0.08) !important;
+  color: var(--accent) !important;
+}
+/* 顶栏头像/连续天数徽章/工作流步骤圆点/情节节点序号：同族近黑圆块 → 淡底（与智驾步骤圆点一致） */
+[data-theme="light"] .avatar-circle,
+[data-theme="light"] .stats-streak-badge,
+[data-theme="light"] .workflow-step-num,
+[data-theme="light"] .node-index{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+/* 侧栏"登录/注册"按钮：近黑实底 → 透明底+淡灰边（与 C1 强调按钮同款） */
+[data-theme="light"] .sidebar-login-btn{
+  background: transparent !important;
+  border: 1px solid #d0d5dd !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
 /* 浅色主题：紫色 accent-secondary 按钮也统一朴素无底色（白底黑字经典） */
 [data-theme="light"] .chat-send.ghost-accent2,
 [data-theme="light"] .btn-accent-secondary,

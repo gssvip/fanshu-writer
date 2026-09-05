@@ -5070,7 +5070,7 @@ export default function ChatPanel() {
                   }}>
                     <span style={{
                       flexShrink: 0, width: 20, height: 20, borderRadius: '50%',
-                      background: 'var(--accent)', color: '#fff', fontSize: 10,
+                      background: 'var(--accent-light)', color: 'var(--accent)', fontSize: 10,
                       display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600
                     }}>{step.step || i + 1}</span>
                     <div style={{ flex: 1, minWidth: 0, fontSize: 12 }}>
