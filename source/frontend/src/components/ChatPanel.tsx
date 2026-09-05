@@ -464,11 +464,11 @@ const TimelineCardBody = memo(function TimelineCardBody({
                         {Array.from(groups.entries()).sort((a, b) => a[0] - b[0]).map(([mei, list]) => (
                           <div key={mei} style={{
                             padding: 6,
-                            background: mei ? '#eff6ff' : '#f9fafb',
-                            border: '1px solid ' + (mei ? '#bfdbfe' : '#f3f4f6'),
+                            background: mei ? 'var(--accent-light)' : 'var(--bg-tertiary)',
+                            border: '1px solid var(--border-color)',
                             borderRadius: 6,
                           }}>
-                            {mei ? <div style={{ fontSize: 12, color: '#1d4ed8', fontWeight: 600, marginBottom: 4 }}>归属：主要剧情事件 E{mei}</div> : null}
+                            {mei ? <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600, marginBottom: 4 }}>归属：主要剧情事件 E{mei}</div> : null}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                               {list.map((n: any, ni: number) => (
                                 <div key={ni} style={{

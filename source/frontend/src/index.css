@@ -69,15 +69,15 @@
   --text-secondary:  #525866; /* 副字          on #fff =  6.7:1 AA  */
   --text-muted:      #8a8f9a; /* 辅助          on #fff =  3.2:1     */
   --text-subtle:     #b7bcc4; /* 飞白淡灰 */
-  /* ===== 主色：科技蓝 #2563eb（纯白底最干净，不闷不土）===== */
-  --accent:        #2563eb;
-  --title-green:   #2563eb;   /* 节标题=同科技蓝（纯白主题不再"绿"）*/
-  --accent-hover:  #1d4ed8;
-  --accent-soft:   #6b97f7;
-  --accent-light:  #eaf1ff;   /* TAG 底 / tab-active 底 */
-  --green-hover:   #1d4ed8;
-  --green-soft:    #6b97f7;
-  --green-light:   #eaf1ff;
+  /* ===== 主色：近墨黑（黑白经典，所有强调文字/标题/链接统一深色）===== */
+  --accent:        #1e242b;   /* 近墨（与text-primary同系，强调字=深色）*/
+  --title-green:   #1e242b;   /* 节标题=近墨 */
+  --accent-hover:  #10131a;   /* 深墨 hover */
+  --accent-soft:   #525866;   /* 副字灰 */
+  --accent-light:  rgba(16,19,26,0.06); /* TAG 底 / tab-active 底：极淡灰 */
+  --green-hover:   #10131a;
+  --green-soft:    #525866;
+  --green-light:   rgba(16,19,26,0.06);
   /* ===== 阴影：极淡单层（1px边 + 5%黑阴影），像浮在白纸上一薄层 ===== */
   --shadow-sm: 0 1px 2px  rgba(16,19,26,0.05), 0 0 0 1px rgba(230,232,235,0.95);
   --shadow-md: 0 4px 14px rgba(16,19,26,0.06), 0 0 0 1px rgba(230,232,235,1.00);
@@ -173,7 +173,7 @@
   background: #ffffff;
   border: 1px solid #e6e8eb;
   box-shadow:
-    0 0 0 1px rgba(37,99,235,0.05),
+    0 0 0 1px rgba(16,19,26,0.05),
     0 1px 3px rgba(16,19,26,0.04);
   border-radius: 12px;
   padding: 14px 20px;
@@ -671,7 +671,7 @@
   border-radius: 18px;
   box-shadow:
     0 0 0 1px var(--border-color),
-    0 1px 3px rgba(37,99,235,0.08);
+    0 1px 3px rgba(16,19,26,0.08);
 }
 
 /* H. AI智驾入口图标：保持用户原有图标原貌，不画蛇添足加光环/阴影 */
