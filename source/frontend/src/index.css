@@ -5375,15 +5375,34 @@ textarea.input.paper-textarea{
 [data-theme="dark"] .ai-master-banner .cta-title,
 [data-theme="dark"] .ai-master-banner .cta-ai,
 [data-theme="dark"] .ai-master-banner .cta-sub-text{ color: var(--text-primary) !important; }
-/* green / 护眼绿 = 翡翠绿淡→浓 渐变 + 深绿文字（好看不艳）*/
+/* green / 护眼绿 = 淡翠绿底 + 深绿文字（与绿主题其他强调按钮 D1c-2 同款淡色，不再翡翠实底渐变）*/
 [data-theme="green"] .ai-master-banner{
-  background: linear-gradient(135deg, #9fc9a4 0%, #5fa367 55%, #6fa978 100%) !important;
-  border: 1px solid #7bb685 !important;
-  color: #ffffff !important;
+  background: var(--accent-light) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--accent) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.7) inset,
+    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent),
+    0 2px 8px color-mix(in srgb, var(--accent) 10%, transparent) !important;
 }
-[data-theme="green"] .ai-master-banner .cta-title,
-[data-theme="green"] .ai-master-banner .cta-ai,
-[data-theme="green"] .ai-master-banner .cta-sub-text{ color: #ffffff !important; }
+[data-theme="green"] .ai-master-banner:hover:not(:disabled){
+  background: color-mix(in srgb, var(--accent) 15%, transparent) !important;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.7) inset,
+    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent),
+    0 4px 12px color-mix(in srgb, var(--accent) 14%, transparent) !important;
+}
+[data-theme="green"] .ai-master-banner .cta-title{
+  color: var(--accent) !important;
+}
+[data-theme="green"] .ai-master-banner .cta-ai{
+  color: var(--accent-hover) !important;
+  text-shadow: none;
+}
+[data-theme="green"] .ai-master-banner .cta-sub-text{
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary)) !important;
+  opacity: 1;
+}
 /* custom（自定义主题）= accent 渐变 + 白字 */
 [data-theme="custom"] .ai-master-banner{
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%) !important;
