@@ -80,7 +80,16 @@ MAX_ROUTES_PER_FILE = 30
 #     章节拆分器 split_into_chapters 等 5 个纯 helper）
 #   → app.py 15356 → 14347（净 -909 行）。基线随之下调，继续执行"只能减不能增"。
 #   下轮拆分目标：books/chapters CRUD 域、AI 分析域（ai-analyze-*）按域继续外迁。
-APP_PY_BASELINE = 14347
+# 2026-09-05 拆分第4批（books CRUD + ai-analyze 域外迁，v1.0 后终拆轮）：
+#   - blueprints/books_bp.py（24 个路由：books/chapters/characters/outlines/stats CRUD，
+#     ghost-suggest/rebin-volumes/versions 等）
+#   - blueprints/ai_analyze_bp.py（11 个路由：ai-analyze-content/dimension/character +
+#     7 个按卷分析 + clear-timeline + ai-analyze-from-reports）
+#   - 5 个按卷 helper（_get_volume_chapters_ordered 等）留守 app.py（被
+#     ai-import-recognize / dynamic-reports 复用），蓝图延迟导入
+#   → app.py 14347 → 12349（净 -1998 行，含 2 行蓝图注册配套行）。基线随之下调，继续执行"只能减不能增"。
+#   下轮拆分目标：ai-continue 续写域、dynamic-reports 域（app.py 剩余两大块）。
+APP_PY_BASELINE = 12349
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
