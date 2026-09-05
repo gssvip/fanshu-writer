@@ -872,12 +872,13 @@
   [data-theme="dark"] .home-stats-divider{ height: 45% !important; }
 }
 
-/* Active 导航：细浓黛 2px 压痕 + 极淡石青底（如书签） */
+/* Active 导航：极淡水墨底 + 石青文字（取消左侧压痕线，避免右端显重） */
 [data-theme="dark"] .sidebar-item.active{
-  box-shadow: -2px 0 0 var(--accent) inset;
-  background: rgba(87,100,115,0.08);
+  box-shadow: none;
+  background: rgba(87,100,115,0.04);
   color: var(--accent);
   border-radius: var(--radius-sm);
+  font-weight: 700;
 }
 
 /* 标题：楷书字距 + 字重 + 分隔线（极淡石青） */
