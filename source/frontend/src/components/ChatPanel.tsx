@@ -439,7 +439,7 @@ const TimelineCardBody = memo(function TimelineCardBody({
                           )}
                           <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                             {ev.bury && <span title="伏笔埋设（当前层按事件描述，精确章号在节点里）" style={{ color: '#c2410c' }}>🔸 埋：{ev.bury}</span>}
-                            {ev.payoff && <span title="伏笔回收（当前层按事件描述，精确章号在节点里）" style={{ color: '#0369a1' }}>🔹 收：{ev.payoff}</span>}
+                            {ev.payoff && <span title="伏笔回收（当前层按事件描述，精确章号在节点里）" style={{ color: 'var(--text-primary)' }}>🔹 收：{ev.payoff}</span>}
                           </div>
                         </li>
                       ))}
@@ -482,7 +482,7 @@ const TimelineCardBody = memo(function TimelineCardBody({
                                     <span style={{ fontWeight: 600, color: '#111827' }}>
                                       N{n.index || (ni + 1)} {n.title}
                                     </span>
-                                    {n.chapters && <span style={{ color: '#2563eb', fontWeight: 500 }}>📖 {n.chapters}</span>}
+                                    {n.chapters && <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>📖 {n.chapters}</span>}
                                     {n.type && <span style={{ color: '#059669' }}>类型 {n.type}</span>}
                                     {n.cool_type && <span style={{ color: '#c2410c' }}>爽点 {n.cool_type}</span>}
                                     {n.cool_level && <span style={{ color: '#7c3aed' }}>{n.cool_level}</span>}
@@ -496,7 +496,7 @@ const TimelineCardBody = memo(function TimelineCardBody({
                                       border: '1px solid #a5f3fc',
                                       borderRadius: 4,
                                       fontSize: 12,
-                                      color: '#155e75',
+                                      color: 'var(--text-primary)',
                                       display: 'grid',
                                       gridTemplateColumns: 'repeat(2, minmax(0,1fr))',
                                       gap: '4px 10px',
@@ -512,7 +512,7 @@ const TimelineCardBody = memo(function TimelineCardBody({
                                   {n.summary && <div style={{ color: '#374151', marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{n.summary}</div>}
                                   <div style={{ marginTop: 6, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                                     {n.bury && <span style={{ color: '#c2410c' }} title="伏笔埋设（精确到章）">🔸 埋：{n.bury}</span>}
-                                    {n.payoff && <span style={{ color: '#0369a1' }} title="伏笔回收（精确到章）">🔹 收：{n.payoff}</span>}
+                                    {n.payoff && <span style={{ color: 'var(--text-primary)' }} title="伏笔回收（精确到章）">🔹 收：{n.payoff}</span>}
                                     {n.hook && <span>🪝 钩子：{n.hook}</span>}
                                   </div>
                                 </div>
@@ -674,7 +674,7 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
         border: '1px solid #bfdbfe',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-          <strong style={{ color: '#1d4ed8' }}>🎯 中途节点进度快照</strong>
+          <strong style={{ color: 'var(--text-primary)' }}>🎯 中途节点进度快照</strong>
           <span style={{ fontSize: 13, color: '#374151' }}>
             {vi ? `第${vi}卷 · ` : ''}共 <strong>{cc}</strong> 个节点，卡片含 <strong>{done}</strong> 个节点（{pct}%）
           </span>
@@ -816,7 +816,7 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
 const ProgressMapView = memo(function ProgressMapView({ progress, onClose }: { progress: ProgressMap | null; onClose?: () => void }) {
   if (!progress) return null;
   const statusLabel: Record<string, string> = { empty: '未开始', sketch: '草稿', partial: '进行中', solid: '已完善' };
-  const statusColor: Record<string, string> = { empty: '#999', sketch: '#d97706', partial: '#2563eb', solid: '#16a34a' };
+  const statusColor: Record<string, string> = { empty: '#999', sketch: '#d97706', partial: 'var(--text-primary)', solid: '#16a34a' };
   return (
     <div className="chat-progress">
       <div className="chat-progress-head">
@@ -3860,7 +3860,7 @@ export default function ChatPanel() {
                             border: `1px solid ${isDone ? '#a7f3d0' : '#bfdbfe'}`,
                           }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                              <strong style={{ color: isDone ? '#047857' : '#1d4ed8', fontSize: 13 }}>
+                              <strong style={{ color: isDone ? '#047857' : 'var(--text-primary)', fontSize: 13 }}>
                                 {isDone ? '✅ 节点设计全卷完成' : `🎯 节点设计进度（${vi ? `第${vi}卷` : '当前卷'}）`}
                               </strong>
                               <span style={{ fontSize: 12, color: '#374151' }}>
