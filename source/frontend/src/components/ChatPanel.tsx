@@ -4977,37 +4977,25 @@ export default function ChatPanel() {
                         {/* ── 模型下拉浮层：按提供商分组两级选择（点提供商 → 展开该提供商下的多模型）
                               挂外层 overflow:visible，不被横滑裁剪 ── */}
                         {showModelPicker && (() => {
-                          // ① 按提供商分组：AI_PROVIDERS 预设顺序在前，未识别的归"其他"
-                          const _byProvider = new Map<string, AIConfig[]>();
-                          aiConfigList.forEach(c => {
-                            const k = c.provider || 'custom';
-                            if (!_byProvider.has(k)) _byProvider.set(k, []);
-                            _byProvider.get(k)!.push(c);
-                          });
-                          const _groups: Array<{ key: string; label: string; icon: string; configs: AIConfig[] }> = [];
-                          AI_PROVIDERS.forEach(p => {
-                            const list = _byProvider.get(p.value);
-                            if (list && list.length > 0) {
-                              _groups.push({ key: p.value, label: p.label, icon: p.icon, configs: list });
-                              _byProvider.delete(p.value);
-                            }
-                          });
-                          _byProvider.forEach((list, k) => {
-                            _groups.push({ key: k, label: k === 'custom' ? '自定义' : k, icon: '🔌', configs: list });
-                          });
-                          // ② 展开态：用户点过的组优先；否则默认展开当前选中模型所在组
-                          const _curGroupKey = _chosen ? (_groups.find(g => g.configs.some(c => c.id === _chosen!.id))?.key ?? '') : '';
-                          const _expandedKey = modelPickerProvider || _curGroupKey || (_groups[0]?.key ?? '');
-                          // ③ 点选模型：会话级记忆 + 全局激活（智驾其他Tab跟着变）
-                          const _chooseModel = (c: AIConfig) => {
-                            if (!c.has_key) return;
-                            setSessionModelMap(m => ({ ...m, [_sid]: c.id }));
+                          // ① 组 = 各提供商配置（一行 = 一个提供商），组内 models = 用户在"我的"勾选的模型
+                          const _groups = aiConfigList.map(cfg => ({
+                            key: cfg.id,
+                            label: cfg.name || cfg.provider,
+                            icon: AI_PROVIDERS.find(p => p.value === cfg.provider)?.icon || '🔌',
+                            models: (cfg.models && cfg.models.length ? cfg.models : (cfg.model ? [cfg.model] : [])),
+                            has_key: cfg.has_key,
+                            cfg,
+                          }));
+                          // 展开态：优先用户点过的组，否则默认展开当前选中提供商
+                          const _expandedKey = modelPickerProvider || _chosen?.id || (_groups[0]?.key ?? '');
+                          // 点选模型：会话级记忆 + 后端 select-model（该提供商成为激活、当前模型=所选 → 智驾各Tab全局跟随）
+                          const _chooseModel = (cfg: AIConfig, model: string) => {
+                            if (!cfg.has_key) return;
+                            setSessionModelMap(m => ({ ...m, [_sid]: cfg.id }));
                             setShowModelPicker(false);
-                            if (!c.is_active) {
-                              api.activateAIConfig(c.id).then(() => {
-                                setAiConfigList(prev => prev.map(x => ({ ...x, is_active: x.id === c.id })));
-                              }).catch(() => {});
-                            }
+                            api.selectAIConfigModel(cfg.id, model).then(updated => {
+                              setAiConfigList(prev => prev.map(x => x.id === cfg.id ? updated : { ...x, is_active: false }));
+                            }).catch(() => {});
                           };
                           return (
                             <div
@@ -5015,17 +5003,17 @@ export default function ChatPanel() {
                               onClick={e => e.stopPropagation()}
                               style={{
                                 position: 'absolute', left: 10, bottom: '100%', marginBottom: 4, zIndex: 100,
-                                minWidth: 280, maxHeight: 360, overflowY: 'auto', padding: 6,
+                                minWidth: 290, maxHeight: 380, overflowY: 'auto', padding: 6,
                                 background: '#fff', border: '1px solid #e0e0ea', borderRadius: 12,
                                 boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
                               }}
                             >
                               <div style={{ fontSize: 11, color: '#999', padding: '4px 8px 6px', borderBottom: '1px solid #f0f0f5', marginBottom: 4 }}>
-                                选择模型 · 点选后智驾全局生效（设定/正文/去AI/校审共用）
+                                已保存的提供商 · 点开选择模型，点选后智驾设定/正文/去AI/校审全部跟随
                               </div>
                               {_groups.map(g => {
                                 const _open = _expandedKey === g.key;
-                                const _curInGroup = g.configs.find(c => c.id === _chosen?.id);
+                                const _curGroup = g.cfg.id === _chosen?.id;
                                 return (
                                   <div key={g.key} style={{ marginBottom: 2 }}>
                                     {/* 组头：提供商行，点击展开/收起 */}
@@ -5034,8 +5022,8 @@ export default function ChatPanel() {
                                       style={{
                                         display: 'flex', alignItems: 'center', gap: 6,
                                         padding: '8px 8px', borderRadius: 8, cursor: 'pointer',
-                                        background: _curInGroup ? '#f4f7ff' : 'transparent',
-                                        border: _curInGroup ? '1px solid #c3d2ff' : '1px solid transparent',
+                                        background: _curGroup ? '#f4f7ff' : 'transparent',
+                                        border: _curGroup ? '1px solid #c3d2ff' : '1px solid transparent',
                                       }}
                                     >
                                       <span style={{ fontSize: 15 }}>{g.icon}</span>
@@ -5043,41 +5031,45 @@ export default function ChatPanel() {
                                         {g.label}
                                       </span>
                                       <span style={{ fontSize: 11, color: '#999', background: '#f2f2f7', borderRadius: 8, padding: '1px 7px' }}>
-                                        {g.configs.length} 模型
+                                        {g.models.length} 模型
                                       </span>
-                                      {_curInGroup && (
+                                      {_curGroup && _chosen && (
                                         <span style={{ fontSize: 11, color: '#36f', maxWidth: 92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                          {(_curInGroup.model || '').split('/').pop()}
+                                          {(_chosen.model || '').split('/').pop()}
                                         </span>
                                       )}
+                                      {!g.has_key && <span style={{ fontSize: 10, color: '#e24' }}>🚫</span>}
                                       <span style={{ color: '#999', fontSize: 11 }}>{_open ? '▾' : '▸'}</span>
                                     </div>
-                                    {/* 组内模型列表 */}
-                                    {_open && g.configs.map(c => {
-                                      const active = c.id === _chosen?.id;
+                                    {/* 组内：用户选定的模型（未选定的不放这里） */}
+                                    {_open && (g.models.length === 0 ? (
+                                      <div style={{ marginLeft: 18, padding: '6px 10px', fontSize: 12, color: '#999' }}>
+                                        该提供商暂未选定模型，去"我的 · AI配置"勾选
+                                      </div>
+                                    ) : g.models.map(mid => {
+                                      const active = _curGroup && _chosen?.model === mid;
                                       return (
                                         <div
-                                          key={c.id}
-                                          onClick={() => _chooseModel(c)}
+                                          key={mid}
+                                          onClick={() => _chooseModel(g.cfg, mid)}
                                           style={{
                                             marginLeft: 18, marginTop: 2, padding: '7px 10px', borderRadius: 8,
-                                            cursor: c.has_key ? 'pointer' : 'not-allowed',
+                                            cursor: g.has_key ? 'pointer' : 'not-allowed',
                                             display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6,
                                             background: active ? '#eef3ff' : '#fafafc',
                                             border: active ? '1px solid #829cff' : '1px solid #ececf2',
-                                            opacity: c.has_key ? 1 : 0.55,
+                                            opacity: g.has_key ? 1 : 0.55,
                                           }}
                                         >
                                           <span style={{ fontSize: 12, color: '#333', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                            {c.model || '（未设置模型）'}
+                                            {mid}
                                           </span>
                                           <span style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                                             {active && <span style={{ color: '#36f', fontSize: 11 }}>当前</span>}
-                                            {!c.has_key && <span style={{ color: '#e24', fontSize: 11 }}>未填Key</span>}
                                           </span>
                                         </div>
                                       );
-                                    })}
+                                    }))}
                                   </div>
                                 );
                               })}

@@ -58,6 +58,7 @@ export interface DailyStat {
 export interface AIConfig {
   id: string; name: string; is_active: boolean;
   provider: string; model: string;
+  models?: string[];  // 用户选定的该提供商模型列表
   recognition_model: string;
   api_key: string; base_url: string;
   temperature: number; max_tokens: number; has_key: boolean;

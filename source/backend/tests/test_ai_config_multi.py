@@ -54,13 +54,13 @@ def test_create_config_auto_activates(client):
 
 
 def test_max_ten_configs_limit(client):
-    """最多 10 个配置，第 11 个返回 400。"""
-    # 先创建 10 个独立配置（不走 /api/ai/config 默认创建逻辑，直接数到 10）
+    """最多 10 个提供商配置，第 11 个返回 400。"""
+    # provider 级：一行一个提供商；用 10 个不同 provider 建满
     for i in range(1, 11):
-        resp = client.post("/api/ai/configs", json={"name": f"c{i}"})
-        assert resp.status_code == 201, f"c{i} 应创建成功"
+        resp = client.post("/api/ai/configs", json={"name": f"provider{i}", "provider": f"p{i}"})
+        assert resp.status_code == 201, f"p{i} 应创建成功"
     # 第 11 个应拒绝
-    resp = client.post("/api/ai/configs", json={"name": "c11"})
+    resp = client.post("/api/ai/configs", json={"name": "provider11", "provider": "p11"})
     assert resp.status_code == 400
     assert "最多" in resp.get_json()["error"]
     # 确认 /api/ai/configs 返回的 max = 10
@@ -72,7 +72,7 @@ def test_max_ten_configs_limit(client):
 def test_activate_switches_active(client):
     """PUT /configs/<id>/activate 切换激活配置。"""
     client.get("/api/ai/config")
-    r2 = client.post("/api/ai/configs", json={"name": "第二配置"}).get_json()
+    r2 = client.post("/api/ai/configs", json={"name": "第二配置", "provider": "kimi"}).get_json()
     # 当前激活的是 r2（新增自动激活），切回第一条
     configs = client.get("/api/ai/configs").get_json()["configs"]
     first_id = [c for c in configs if c["id"] != r2["id"]][0]["id"]
@@ -88,7 +88,7 @@ def test_activate_switches_active(client):
 def test_delete_active_config_promotes_next(client):
     """删除激活配置时自动激活剩下首条。"""
     client.get("/api/ai/config")
-    r2 = client.post("/api/ai/configs", json={"name": "第二配置"}).get_json()
+    r2 = client.post("/api/ai/configs", json={"name": "第二配置", "provider": "kimi"}).get_json()
     # r2 是激活的，删除它
     resp = client.delete(f"/api/ai/configs/{r2['id']}")
     assert resp.status_code == 200

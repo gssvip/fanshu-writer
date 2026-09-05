@@ -30,6 +30,7 @@ export default function MinePage() {
   const [fetchingModels, setFetchingModels] = useState(false);
   const [modelList, setModelList] = useState<{ id: string; owned_by: string }[]>([]);
   const [showModelList, setShowModelList] = useState(false);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);  // 拉取面板里勾选的模型
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; msg: string } | null>(null);
 
@@ -178,31 +179,29 @@ export default function MinePage() {
     }
   }
 
-  // 新建配置：同提供商下新增一个模型（继承当前配置的提供商/API地址，Key由后端自动继承当前激活配置）
-  async function handleNewConfig() {
+  // 添加一个新提供商：把表单切到该提供商模板（保存时后端自动按 provider 复用或新建）
+  function handleNewConfig() {
     if (configList.length >= maxConfigs) {
-      alert(`最多 ${maxConfigs} 个配置，请先删除一个`);
+      alert(`最多 ${maxConfigs} 个提供商配置，请先删除一个`);
       return;
     }
-    const curProviderLabel = AI_PROVIDERS.find(p => p.value === aiConfig.provider)?.label || aiConfig.provider || '自定义';
-    const model = prompt(
-      `在「${curProviderLabel}」下新增一个模型\n请输入模型名称（提供商与 API Key 自动继承当前配置）：`,
-      ''
+    const menu = prompt(
+      '选择要添加的提供商（填 value，如：deepseek / kimi / zhipu / moonshot / local / custom，留空为自定义）：'
     );
-    if (!model || !model.trim()) return;
-    try {
-      const cfg = await api.createAIConfig({
-        name: `${curProviderLabel} · ${model.trim()}`,
-        provider: aiConfig.provider,
-        base_url: aiConfig.base_url,
-        model: model.trim(),
-        api_key: '',  // 空 → 后端继承当前激活配置的密钥
-      });
-      setAIConfig(cfg);
-      await refreshConfigs();
-    } catch (e: any) {
-      alert('新建失败: ' + e.message);
-    }
+    if (menu === null) return;
+    const provider = (menu || '').trim().toLowerCase() || 'custom';
+    const preset = AI_PROVIDERS.find(p => p.value === provider);
+    setAIConfig({
+      ...aiConfig,
+      provider,
+      name: preset?.label || (provider === 'custom' ? '自定义提供商' : provider),
+      base_url: preset?.base_url || (provider === 'custom' ? '' : aiConfig.base_url),
+      model: preset?.model || '',
+      models: preset?.model ? [preset.model] : [],
+      recognition_model: '',
+      api_key: '',
+    } as AIConfig);
+    alert(`已切换到「${preset?.label || provider}」→ 填好 API 地址与 Key 后拉取模型并保存`);
   }
 
   // 删除配置：删除激活配置时后端自动激活剩下首条，前端刷新
@@ -216,12 +215,27 @@ export default function MinePage() {
     }
   }
 
+  // 保存提供商：POST 后端按 provider 复用/新建（合并多选模型、继承已有 Key），并自动激活
   async function handleSaveAIConfig() {
     const ok = await requireAuth();
     if (!ok) return;
+    if (!aiConfig.provider) { alert('请选择提供商'); setSaving(false); return; }
+    if (!aiConfig.base_url.trim()) { alert('请先填写 API 地址'); setSaving(false); return; }
     setSaving(true);
+    setTestResult(null);
     try {
-      const cfg = await api.updateAIConfig(aiConfig);
+      const label = AI_PROVIDERS.find(p => p.value === aiConfig.provider)?.label || aiConfig.provider;
+      const cfg = await api.createAIConfig({
+        provider: aiConfig.provider,
+        name: aiConfig.name || label,
+        base_url: aiConfig.base_url,
+        api_key: aiConfig.api_key || '***',  // 掩码/空 → 后端保留或继承该提供商已有 Key
+        model: aiConfig.model,
+        models: aiConfig.models || [],
+        recognition_model: aiConfig.recognition_model || '',
+        temperature: aiConfig.temperature,
+        max_tokens: aiConfig.max_tokens,
+      } as any);
       setAIConfig(cfg);
       await refreshConfigs();
       alert('AI配置已保存');
@@ -233,12 +247,15 @@ export default function MinePage() {
 
   async function handleFetchModels() {
     if (!aiConfig.base_url.trim()) { alert('请先填写 API 地址'); return; }
-    if (!aiConfig.api_key.trim()) { alert('请先填写 API Key'); return; }
     setFetchingModels(true);
     setTestResult(null);
     try {
-      const result = await api.fetchAIModels(aiConfig.base_url, aiConfig.api_key);
+      // api_key 为空/掩码也不阻止：后端按 config_id（或激活配置）取真实 Key
+      const result = await api.fetchAIModels(aiConfig.base_url, aiConfig.api_key || '***', aiConfig.id || undefined);
       setModelList(result.models);
+      // 预勾选：当前已选定的模型出现在列表里 → 勾上
+      const existing = (aiConfig.models && aiConfig.models.length ? aiConfig.models : (aiConfig.model ? [aiConfig.model] : []));
+      setSelectedModels(result.models.map(m => m.id).filter(id => existing.includes(id)));
       setShowModelList(true);
       if (result.models.length === 0) {
         alert('该接口未返回任何模型，可能是提供商不支持 /v1/models 接口');
@@ -513,11 +530,14 @@ export default function MinePage() {
 
             {/* 多配置切换：最多 10 个，旧配置保留不丢 */}
             <div className="config-switcher" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 10px', background: 'var(--bg-soft, #f7f7f8)', borderRadius: 8, flexWrap: 'wrap' }}>
-              <label style={{ fontSize: 13, color: 'var(--text-muted, #888)', marginRight: 4 }}>当前配置：</label>
+              <label style={{ fontSize: 13, color: 'var(--text-muted, #888)', marginRight: 4 }}>当前提供商：</label>
               <select
                 className="input"
                 value={aiConfig.id}
-                onChange={e => handleSwitchConfig(e.target.value)}
+                onChange={e => {
+                  if (e.target.value === '__new__') { handleNewConfig(); return; }
+                  handleSwitchConfig(e.target.value);
+                }}
                 style={{ flex: 1, minWidth: 160, maxWidth: 280 }}
               >
                 {configList.map(c => (
@@ -525,15 +545,16 @@ export default function MinePage() {
                     {c.name}{c.is_active ? ' ✓' : ''} {c.has_key ? '🔑' : '🚫'}
                   </option>
                 ))}
+                <option value="__new__">＋ 添加一个新提供商…</option>
               </select>
               <button
                 className="btn-primary"
                 onClick={handleNewConfig}
                 disabled={configList.length >= maxConfigs}
                 style={{ padding: '6px 12px', fontSize: 13 }}
-                title={configList.length >= maxConfigs ? `最多 ${maxConfigs} 个配置` : '新建配置'}
+                title={configList.length >= maxConfigs ? `最多 ${maxConfigs} 个配置` : '添加提供商'}
               >
-                ＋ 新建
+                ＋ 添加
               </button>
               <button
                 className="btn-icon"
@@ -551,7 +572,7 @@ export default function MinePage() {
 
             {/* 配置名称编辑 */}
             <div className="form-row" style={{ marginBottom: 12 }}>
-              <label>配置名称</label>
+              <label>提供商展示名</label>
               <input
                 className="input"
                 value={aiConfig.name}
@@ -617,33 +638,81 @@ export default function MinePage() {
               <input className="input" value={aiConfig.base_url} onChange={e => setAIConfig((p: AIConfig) => ({ ...p, base_url: e.target.value }))} placeholder="https://api.example.com/v1" />
             </div>
             <div className="form-field">
-              <label>模型名称</label>
+              <label>模型（此提供商可用模型，勾选多个选定）</label>
               <div className="input-row">
-                <input className="input" value={aiConfig.model} onChange={e => setAIConfig((p: AIConfig) => ({ ...p, model: e.target.value }))} placeholder="model-name" />
-                <button className="btn-ghost-sm" onClick={handleFetchModels} disabled={fetchingModels} title="根据API地址和Key拉取可用模型列表">
-                  {fetchingModels ? '⏳' : '🔄 拉取'}
+                <button className="btn-ghost-sm" onClick={handleFetchModels} disabled={fetchingModels} style={{ flex: 1, justifyContent: 'center' }} title="拉取该提供商全部可用模型，勾选要使用的">
+                  {fetchingModels ? '⏳ 拉取中…' : `🔄 拉取并勾选模型${aiConfig.models && aiConfig.models.length ? `（已选 ${aiConfig.models.length}）` : ''}`}
                 </button>
               </div>
+              {/* 拉取结果：复选面板（勾选的作为该提供商选定的模型） */}
               {showModelList && modelList.length > 0 && (
                 <div className="model-list-panel">
                   <div className="model-list-header">
-                    <span>共 {modelList.length} 个可用模型</span>
+                    <span>共 {modelList.length} 个可用模型 · 勾选要使用的（可多选）</span>
                     <button className="btn-icon" onClick={() => setShowModelList(false)}>✕</button>
                   </div>
-                  <div className="model-list-items">
-                    {modelList.map(m => (
-                      <button
-                        key={m.id}
-                        className={`model-item ${aiConfig.model === m.id ? 'active' : ''}`}
-                        onClick={() => { setAIConfig((p: AIConfig) => ({ ...p, model: m.id })); setShowModelList(false); }}
-                      >
-                        <span className="model-item-id">{m.id}</span>
-                        {m.owned_by && <span className="model-item-owner">{m.owned_by}</span>}
-                      </button>
-                    ))}
+                  <div className="model-list-items" style={{ maxHeight: 260, overflowY: 'auto' }}>
+                    {modelList.map(m => {
+                      const checked = selectedModels.includes(m.id);
+                      return (
+                        <label
+                          key={m.id}
+                          className={`model-item ${checked ? 'active' : ''}`}
+                          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10 }}
+                        >
+                          <input type="checkbox" checked={checked} onChange={() => {
+                            setSelectedModels(prev => checked ? prev.filter(x => x !== m.id) : [...prev, m.id]);
+                          }} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }} />
+                          <span className="model-item-id">{m.id}</span>
+                          {m.owned_by && <span className="model-item-owner">{m.owned_by}</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="model-list-footer" style={{ padding: 8, display: 'flex', justifyContent: 'flex-end' }}>
+                    <button className="btn-primary-sm" onClick={() => {
+                      setAIConfig((p: AIConfig) => {
+                        const mlist = selectedModels;
+                        const cur = mlist.includes(p.model) ? p.model : (mlist[0] || '');
+                        return { ...p, models: mlist, model: cur };
+                      });
+                      setShowModelList(false);
+                    }}>✓ 选定 {selectedModels.length} 个模型</button>
                   </div>
                 </div>
               )}
+              {/* 已选定模型 chips：点击设当前（⭐），✕ 移除 */}
+              {aiConfig.models && aiConfig.models.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                  {aiConfig.models.map(mid => {
+                    const cur = aiConfig.model === mid;
+                    return (
+                      <span
+                        key={mid}
+                        onClick={() => setAIConfig((p: AIConfig) => ({ ...p, model: mid }))}
+                        title={cur ? '当前使用' : '点击设为当前'}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px',
+                          borderRadius: 999, fontSize: 12, cursor: 'pointer',
+                          border: cur ? '1px solid var(--accent)' : '1px solid var(--border-color)',
+                          background: cur ? 'var(--accent-light)' : 'var(--bg-soft)',
+                          color: cur ? 'var(--accent)' : 'inherit',
+                        }}
+                      >
+                        {mid}{cur ? ' ⭐' : ''}
+                        <span
+                          onClick={(e) => { e.stopPropagation(); setAIConfig((p: AIConfig) => ({ ...p, models: (p.models || []).filter(x => x !== mid) })); }}
+                          style={{ cursor: 'pointer', opacity: 0.6 }}
+                          title="移除该模型"
+                        >✕</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
+                点 ⭐ 为当前使用模型；✕ 移除即从此商家中去掉该模型（智驾通用不再显示）。
+              </div>
             </div>
             <div className="form-field">
               <label>API Key <span className={`key-status ${aiConfig.has_key ? 'set' : 'unset'}`}>{aiConfig.has_key ? '(已设置)' : '(未设置)'}</span></label>

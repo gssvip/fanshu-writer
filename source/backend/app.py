@@ -511,22 +511,44 @@ class AISession(db.Model):
         }
 
 class AIConfig(db.Model):
+    """AI 配置：一行 = 一个提供商（provider 唯一）。
+
+    - provider / base_url / api_key：一个提供商一份（同提供商多模型共用）
+    - models：JSON 数组，用户在「拉取模型」后勾选保留的该提供商模型列表
+    - model：当前使用的模型（智驾各Tab取这个；为空时回退 models[0]）
+    """
     __tablename__ = 'ai_config'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name = db.Column(db.String(50), default='默认配置')  # 多配置标识
+    name = db.Column(db.String(50), default='默认配置')  # 提供商展示名（如 DeepSeek）
     is_active = db.Column(db.Boolean, default=True, index=True)  # 是否激活（同时仅一个）
     provider = db.Column(db.String(50), default='deepseek')
-    model = db.Column(db.String(100), default='deepseek-chat')
+    model = db.Column(db.String(100), default='deepseek-chat')  # 当前使用模型
+    models = db.Column(db.Text, default='[]')  # JSON: 用户选定的该提供商模型ID列表
     recognition_model = db.Column(db.String(100), default='')  # AI识别专用模型，为空时使用model
     api_key = db.Column(db.String(200), default='')
     base_url = db.Column(db.String(300), default='https://api.deepseek.com')
     temperature = db.Column(db.Float, default=0.7)
     max_tokens = db.Column(db.Integer, default=4096)
 
+    def get_models(self):
+        """解析用户选定的模型列表；空时回退单个 model。"""
+        try:
+            raw = json.loads(self.models or '[]')
+            if isinstance(raw, list):
+                raw = [str(x) for x in raw if str(x).strip()]
+        except Exception:
+            raw = []
+        # 老数据兜底：models 为空但有 model → 视为已选一个模型
+        if not raw and self.model:
+            raw = [self.model]
+        return raw
+
     def to_dict(self):
+        models = self.get_models()
         return {
             'id': self.id, 'name': self.name or '默认配置', 'is_active': self.is_active,
-            'provider': self.provider, 'model': self.model,
+            'provider': self.provider, 'model': self.model or (models[0] if models else ''),
+            'models': models,
             'recognition_model': self.recognition_model or '',
             'api_key': '***' if self.api_key else '', 'base_url': self.base_url,
             'temperature': self.temperature, 'max_tokens': self.max_tokens,
@@ -534,10 +556,13 @@ class AIConfig(db.Model):
         }
 
     def get_model_for_task(self, task_type='creation'):
-        """根据任务类型返回对应模型：recognition或creation"""
+        """根据任务类型返回对应模型：recognition或creation。"""
         if task_type == 'recognition' and self.recognition_model:
             return self.recognition_model
-        return self.model
+        if self.model:
+            return self.model
+        models = self.get_models()
+        return models[0] if models else ''
 
     @classmethod
     def get_active(cls):
@@ -549,7 +574,7 @@ class AIConfig(db.Model):
             cfg.is_active = True
             db.session.commit()
             return cfg
-        cfg = cls(name='默认配置', is_active=True)
+        cfg = cls(name='默认配置', is_active=True, models='["deepseek-chat"]')
         db.session.add(cfg)
         db.session.commit()
         return cfg
@@ -2157,6 +2182,18 @@ def fetch_ai_models():
     base_url = (data.get('base_url') or '').strip()
     api_key = (data.get('api_key') or '').strip()
     model = (data.get('model') or '').strip()
+    cfg_id = (data.get('config_id') or '').strip()
+
+    # 显式指定 config_id → 用该提供商存库的真实 key/地址（编辑非激活提供商也能拉取）
+    if cfg_id:
+        c = AIConfig.query.get(cfg_id)
+        if c:
+            if not base_url:
+                base_url = c.base_url or ''
+            if api_key == '***' or not api_key:
+                api_key = c.api_key or ''
+            if not model:
+                model = c.model or ''
 
     # 如果 api_key 是掩码或为空，尝试使用已保存的配置
     if api_key == '***' or not api_key:

@@ -230,8 +230,11 @@ export const api = {
   createAIConfig: (data: Partial<AIConfig>) => request<AIConfig>('/ai/configs', { method: 'POST', body: JSON.stringify(data) }),
   activateAIConfig: (id: string) => request<AIConfig>(`/ai/configs/${id}/activate`, { method: 'PUT' }),
   deleteAIConfig: (id: string) => request<{ ok: boolean }>(`/ai/configs/${id}`, { method: 'DELETE' }),
-  fetchAIModels: (baseUrl: string, apiKey: string) =>
-    request<{ models: { id: string; owned_by: string }[] }>('/ai/models', { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }) }),
+  // 智驾通用切换某提供商的当前模型并全局激活
+  selectAIConfigModel: (id: string, model: string) =>
+    request<AIConfig>(`/ai/configs/${id}/select-model`, { method: 'POST', body: JSON.stringify({ model }) }),
+  fetchAIModels: (baseUrl: string, apiKey: string, configId?: string) =>
+    request<{ models: { id: string; owned_by: string }[] }>('/ai/models', { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, config_id: configId }) }),
   testAIConnection: (baseUrl: string, apiKey: string, model: string) =>
     request<{ success: boolean; reply: string; model: string; usage?: any }>('/ai/test', { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, model }) }),
   aiChat: (messages: { role: string; content: string }[]) => request<{ content: string; usage?: any }>('/ai/chat', { method: 'POST', body: JSON.stringify({ messages }) }),
