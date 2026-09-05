@@ -1209,14 +1209,14 @@ export const api = {
 
   // 基于防遗忘检查报告生成设定修正方案（不落地，返回给用户确认）
   smartFixFromReport: (bookId: string, reportId?: string, skillPackIds: string[] = [], volumeIds?: string[], signal?: AbortSignal) =>
-    request<{ plan: Array<{ dim: string; label: string; issues: string[]; action: string; new_content: string }>; report_title: string; report_id: string }>(
+    request<{ plan: Array<{ dim: string; label: string; issues: string[]; action: string; new_content: string; patches?: Array<{ original: string; rewritten: string }> }>; report_title: string; report_id: string }>(
       '/ai/smart/fix-from-report',
       { method: 'POST', body: JSON.stringify({ book_id: bookId, report_id: reportId, skill_pack_ids: skillPackIds, volume_ids: volumeIds || [] }) },
       signal
     ),
 
   // 应用用户确认的修正方案到对应设定维度（落地）
-  smartApplyFix: (bookId: string, fixes: Array<{ dim: string; new_content: string }>) =>
+  smartApplyFix: (bookId: string, fixes: Array<{ dim: string; new_content: string; patches?: Array<{ original: string; rewritten: string }> }>) =>
     request<{ ok: boolean; applied: Array<{ dim: string; label: string }> }>(
       '/ai/smart/apply-fix',
       { method: 'POST', body: JSON.stringify({ book_id: bookId, fixes }) }

@@ -4804,6 +4804,45 @@ def _is_refusal_or_fluff(text: str) -> bool:
     return False
 
 
+def _clean_patches(raw):
+    """清洗 LLM 输出的 patches —— 只保留含非空 original/rewritten 的对，防注入无效项。
+
+    patches: [{ original, rewritten }] —— 落地时对现有维度字段做精准局部替换，
+    未命中原文的项被忽略（不会退化成整字段覆盖），从而保住未改动部分，避免"采纳后内容不全"。
+    """
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        original = (p.get('original') or '').strip()
+        rewritten = (p.get('rewritten') or '').strip()
+        if not original or not rewritten or original == rewritten:
+            continue
+        out.append({'original': original, 'rewritten': rewritten})
+    return out
+
+
+def _apply_patches_to_text(text: str, patches: list) -> tuple:
+    """对一个维度的当前文本做精准局部替换。
+
+    返回 (new_text, applied_count)。逐条对当前有效文本 replace(original→rewritten, 1)；
+    任意 original 未命中 → 跳过该项，绝不整字段覆盖。保证未改动内容 100% 保留。
+    """
+    if not patches:
+        return text, 0
+    cur = text
+    applied = 0
+    for p in patches:
+        original = p.get('original')
+        rewritten = p.get('rewritten')
+        if original and original in cur:
+            cur = cur.replace(original, rewritten, 1)
+            applied += 1
+    return cur, applied
+
+
 def _clean_text_to_plain(text: str) -> str:
     """统一后处理：移除 Markdown (#、##、###, **xxx**, *xxx*, 行首 *, 行首 -, 代码块 ```，数字. 列表前缀)
     同时保留中文顿号数字+顿号排版（一、二、三、1）2））。输出排版好看的纯文字。
@@ -8569,11 +8608,17 @@ def smart_fix_from_report():
 {dim_now_text}
 {chr(10) + chr(10) + '【技能包指引】' + chr(10) + skill_note if skill_note else ''}
 
-【你的任务】
+【你的任务】—— 重点是【精准局部修正】，绝非整字段重写
 针对报告诊断出的问题，逐维度生成“修正方案”。每个维度一个修正项，包含：
 1. issues：该维度涉及的诊断问题（从上方诊断中归纳）
 2. action：一句话说明怎么改（如：补全主角境界突破条件、修正时间线倒流）
-3. new_content：修正后的完整设定内容（必须是可直接落地的完整内容，不是片段说明）
+3. patches：精准局部改动列表（核心）。每个元素 {original, rewritten}：
+   - original：要在该维度当前内容中“找到的那段原文”的精确抄录（一字不差，取自上方【当前内容】截断部分或可按该维度常见格式构造；多取一点上下文避免歧义）
+   - rewritten：这段原文修改后的新内容
+   - 只列真正需要改动的片段；没有问题的部分一律不要出现在 patches 里，落地时这些部分会原样保留
+4. new_content：（可省略）修正后该维度的完整内容；仅当你无法用 patches 精确表达时才给出，落地时若提供了能命中原文的 patches 会优先用 patches，new_content 只作兜底整字段覆盖
+
+【伏笔/人物/地点/时间线等“列表式”维度特别注意】务必逐条给出 original→rewritten，原样保留未改动条目，绝不能只输出概要导致其余条目丢失。
 
 【输出格式铁律】严格输出 JSON 数组（不要 markdown 代码块、不要任何解释文字），结构：
 [
@@ -8582,7 +8627,10 @@ def smart_fix_from_report():
     "label": "维度中文名",
     "issues": ["该维度涉及的诊断问题1", "问题2"],
     "action": "修正动作说明",
-    "new_content": "修正后的完整设定内容（300-800字，保持与其它维度一致）"
+    "patches": [
+      {{"original": "当前内容中的一段原文", "rewritten": "修改后的对应内容"}}
+    ],
+    "new_content": "（可选）修正后完整内容"
   }}
 ]
 只输出确实需要修正的维度，没有问题的维度不要输出。最多输出6个维度。"""
@@ -8629,8 +8677,9 @@ def smart_fix_from_report():
             'issues': p.get('issues') if isinstance(p.get('issues'), list) else ([str(p.get('issues'))] if p.get('issues') else []),
             'action': (p.get('action') or '').strip(),
             'new_content': (p.get('new_content') or '').strip(),
+            'patches': _clean_patches(p.get('patches')),
         }
-        if item['new_content']:
+        if item['new_content'] or item['patches']:
             cleaned.append(item)
 
     return jsonify({
@@ -8666,9 +8715,27 @@ def smart_apply_fix():
             continue
         dim = (f.get('dim') or '').strip()
         new_content = (f.get('new_content') or '').strip()
-        if dim not in _FIXABLE_DIM_FIELDS or not new_content:
+        if dim not in _FIXABLE_DIM_FIELDS:
             continue
-        setattr(bb, dim, new_content)
+        patches = _clean_patches(f.get('patches'))
+        cur = (getattr(bb, dim, '') or '').strip()
+        # 【精准局部落地】优先用 patches 逐项命中替换：只改被修改的部分，
+        # 其余未改动内容 100% 原样保留，绝不再一股脑整字段覆盖导致内容不全。
+        if patches and cur:
+            patched, applied_count = _apply_patches_to_text(cur, patches)
+            # 有局部命中 → 用局部替换结果；一条都没命中且无 new_content → 放弃（不破坏原内容）
+            if applied_count > 0:
+                final = patched
+            elif new_content:
+                final = new_content
+            else:
+                continue
+        else:
+            # 无补丁：沿用旧的整字段覆盖语义（向后兼容）
+            if not new_content:
+                continue
+            final = new_content
+        setattr(bb, dim, final)
         applied.append({'dim': dim, 'label': _FIXABLE_DIM_FIELDS[dim]})
 
     if applied:

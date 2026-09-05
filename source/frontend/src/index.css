@@ -4788,9 +4788,9 @@ textarea.input.paper-textarea{
   }
   .tool-card:hover::before { opacity: 1; }
   .tool-card.active {
-    border: 1.5px solid #d4a039 !important;
-    background: linear-gradient(135deg, #fff7e0 0%, #ffe8b3 55%, #ffd67b 100%) !important;
-    box-shadow: 0 6px 18px -10px #c28a1c, inset 0 0 0 1px rgba(255,255,255,0.6) !important;
+    border: 1.5px solid var(--accent) !important;
+    background: var(--accent-light) !important;
+    box-shadow: 0 4px 12px -10px color-mix(in srgb, var(--accent) 40%, transparent), inset 0 0 0 1px rgba(255,255,255,0.5) !important;
     transform: translateY(-1px);
   }
   .tool-card.active::after {
@@ -4800,7 +4800,7 @@ textarea.input.paper-textarea{
     right: 10px; top: 8px;
     width: 18px; height: 18px;
     border-radius: 50%;
-    background: #c28a1c;
+    background: var(--accent);
     color: #fff;
     font-size: 11px;
     font-weight: 800;
@@ -4821,12 +4821,12 @@ textarea.input.paper-textarea{
     border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
   }
   .tool-card.active .tool-card-icon {
-    background: linear-gradient(135deg, #fff2c5, #f9c758);
-    border-color: #d4a039;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
   }
   .tool-card-name { font-size: 15px !important; font-weight: 700 !important; color: var(--text-primary); letter-spacing: .3px; }
-  .tool-card.active .tool-card-name { color: #7a5306; }
+  .tool-card.active .tool-card-name { color: var(--accent); }
   .tool-card-desc { font-size: 11.5px !important; color: var(--text-muted) !important; margin-top: 2px !important; opacity: .9; }
 
   .filter-tag { padding: 5px 12px; font-size: 13px; }
@@ -5360,17 +5360,21 @@ textarea.input.paper-textarea{
 [data-theme="light"] .ai-master-banner .cta-title{ color: var(--accent) !important; }
 [data-theme="light"] .ai-master-banner .cta-ai{ color: var(--accent-hover) !important; text-shadow: none; }
 [data-theme="light"] .ai-master-banner .cta-sub-text{ color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary)) !important; opacity: 1; }
-/* dark / 国风（水墨国风）= 极淡水墨灰（宣纸感）背景，字体统一浓墨色 */
+/* dark / 国风（水墨国风）= 宣纸暖白叠一层极淡墨山水图（水墨风），字统一浓墨色 */
 [data-theme="dark"] .ai-master-banner{
-  background: linear-gradient(135deg, #f0f2f5 0%, #e6e9ed 100%) !important;
-  border: 1px solid #d0d6dd !important;
+  background:
+    linear-gradient(135deg, rgba(251,252,253,0.93) 0%, rgba(244,247,250,0.96) 100%),
+    url("/assets/ink-landscape.jpg") center/cover no-repeat !important;
+  border: 1px solid #d7dee6 !important;
   color: var(--text-primary) !important;
   box-shadow:
     0 1px 0 rgba(255,255,255,0.9) inset,
     0 4px 14px rgba(30,36,43,0.06) !important;
 }
 [data-theme="dark"] .ai-master-banner:hover:not(:disabled){
-  background: linear-gradient(135deg, #f0f2f5 0%, #e6e9ed 100%) !important;
+  background:
+    linear-gradient(135deg, rgba(251,252,253,0.90) 0%, rgba(244,247,250,0.94) 100%),
+    url("/assets/ink-landscape.jpg") center/cover no-repeat !important;
   box-shadow:
     0 1px 0 rgba(255,255,255,0.9) inset,
     0 4px 14px rgba(30,36,43,0.06) !important;
