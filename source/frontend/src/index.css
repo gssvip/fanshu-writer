@@ -5540,6 +5540,12 @@ textarea.input.paper-textarea{
   border: 1px solid var(--accent) !important;
 }
 [data-theme="light"] .smart-main-action:hover:not(:disabled){ opacity: 1; }
+/* 校审·事件日志 的「全文重算」按钮统一淡色 */
+[data-theme="light"] .impact-preview-actions button{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+}
 /* 武装(armed)确认态在浅色下仍保留橙色脉冲提示 */
 [data-theme="light"] .smart-action-btn.armed,
 [data-theme="light"] .smart-action-btn.armed.primary{
