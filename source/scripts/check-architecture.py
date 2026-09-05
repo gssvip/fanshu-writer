@@ -73,7 +73,14 @@ MAX_ROUTES_PER_FILE = 30
 # 2026-09-05 拆分第2批（general_chat 独立蓝图）：app.py +1 行（register general_chat_bp，
 #   拆分必要配套注册行，非业务逻辑膨胀）。本基线为 v1.0 备份点冻结值（历史 8+ 次重校准见 git 记录）；
 #   下轮拆分目标：app.py 按域外迁（export/auth 维度聚合），严禁在此基础上继续增长。
-APP_PY_BASELINE = 15356
+# 2026-09-05 拆分第3批（auth + export 域外迁）：
+#   - auth_utils.py（鉴权工具集：login_required 系列 + token 哈希，58 处路由共用，单向导入）
+#   - blueprints/auth_bp.py（10 个 /api/auth/* 路由 + SMTP 找回密码 + 保留号检测）
+#   - blueprints/export_bp.py（9 个导入导出路由：txt/docx/epub/zip 导出、zip/文件导入、封面、
+#     章节拆分器 split_into_chapters 等 5 个纯 helper）
+#   → app.py 15356 → 14347（净 -909 行）。基线随之下调，继续执行"只能减不能增"。
+#   下轮拆分目标：books/chapters CRUD 域、AI 分析域（ai-analyze-*）按域继续外迁。
+APP_PY_BASELINE = 14347
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
