@@ -510,10 +510,10 @@
   color: var(--text-primary) !important;
 }
 [data-theme="light"] .sidebar-item.active{
-  background: var(--accent-light) !important;   /* 淡科技蓝底 #eaf1ff */
-  color: var(--accent) !important;              /* 科技蓝字 #2563eb */
-  box-shadow: -2px 0 0 var(--accent) inset;     /* 左 2px 蓝线指示 */
-  font-weight: 600;
+  background: rgba(16,19,26,0.05) !important;   /* 极淡灰底（纯白经典，不用淡蓝）*/
+  color: var(--text-primary) !important;        /* 近墨字 */
+  box-shadow: none !important;                  /* 去掉左侧压痕线 */
+  font-weight: 700;
 }
 /* 创作页 concept-panel / home 的 section 分隔：极淡 1px 冷灰（不再发黄米边） */
 [data-theme="light"] .home-section-divider,
@@ -631,10 +631,10 @@
   filter: none !important;  /* 绝对禁止灰度滤镜（让emoji变脏）*/
 }
 [data-theme="light"] .tab-item.active{
-  background: var(--accent-light) !important;   /* 淡科技蓝底 #eaf1ff 与 token 统一 */
-  color: var(--accent) !important;
+  background: rgba(16,19,26,0.05) !important;   /* 极淡灰底（纯白经典，不用淡蓝）*/
+  color: var(--text-primary) !important;        /* 近墨字 */
   font-weight: 700 !important;
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border-color)) !important;
+  border: 1px solid var(--border-color) !important;
 }
 [data-theme="light"] .tab-item:not(.active){
   color: var(--text-secondary) !important;     /* 未选中=冷灰副字，干净不土 */
@@ -5656,36 +5656,56 @@ textarea.input.paper-textarea{
    策略：按钮柔化 + 图标saturate再压一档 + 国风加sepia把红黄彻底抽走成水墨灰
 ===================================================================== */
 
-/* ---------- D1. Light ：墨水蓝CTA → 柔和轻蓝（Notion级，不深不浓不墨）---------- */
+/* ---------- D1. Light 纯白经典：强调按钮=无底色（细边+近墨字）；仅选中态=极淡灰底 ---------- */
 [data-theme="light"] .chat-send.primary,
-[data-theme="light"] .nr-crawl-btn.is-crawl,
 [data-theme="light"] .btn-primary:not([class*="ai-master"]):not([class*="ai-entry"]):not([class*="ai-recog"]):not(.ai-master-banner):not(.btn-ai-entry-home):not(.btn-ai-recog),
 [data-theme="light"] .btn-primary-sm:not([class*="ai-master"]):not([class*="ai-entry"]):not([class*="ai-recog"]):not(.ai-master-banner):not(.btn-ai-entry-home):not(.btn-ai-recog),
 [data-theme="light"] .btn-primary[style],
-[data-theme="light"] .btn-primary-sm[style],
+[data-theme="light"] .btn-primary-sm[style]{
+  background: transparent !important; /* 取消背景色 */
+  border-color: #d0d5dd !important;     /* 细冷灰边 */
+  color: var(--text-primary) !important; /* 近墨字 */
+  box-shadow: none !important;
+}
+/* hover：极淡灰示意 */
+[data-theme="light"] .chat-send.primary:hover,
+[data-theme="light"] .btn-primary:not(.ai-master-banner):hover,
+[data-theme="light"] .btn-primary-sm:not(.ai-master-banner):hover{
+  background: rgba(16,19,26,0.05) !important;
+}
+/* 选中态（平台Tab/筛选chip/榜单爬取Tab/精选）→ 极淡灰底 */
+[data-theme="light"] .nr-crawl-btn.is-crawl,
+[data-theme="light"] .nr-crawl-btn.is-curated,
 [data-theme="light"] .nr-filter-chip-selected,
 [data-theme="light"] .nr-platform-tab.active,
 [data-theme="light"] .concept-tab-5col button.active{
-  background: linear-gradient(180deg, #5f7ea3 0%, #51708f 100%) !important; /* 雾灰蓝 适配纯白科技风，不再扎眼 */
-  border-color: #4c6a8b !important;
-  color: #ffffff !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.22) inset !important; /* 影子再砍半（去厚重感） */
+  background: rgba(16,19,26,0.06) !important;
+  border-color: #d0d5dd !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
 }
-/* 紫按钮：柔紫 P400→P500，不再浓紫 */
-[data-theme="light"] .chat-send.ghost-accent2,
-[data-theme="light"] .btn-accent-secondary,
-[data-theme="light"] button[style*="linear-gradient(135deg,#8b5cf6"],
-[data-theme="light"] button[style*="purple"]{
-  background: linear-gradient(180deg,#9b74f0 0%,#8a60e5 100%) !important;
-  border-color: #7f55df !important;
-  color: #ffffff !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.20) inset !important;
+/* ChatPanel 卡片强调按钮 → 朴素无底色 */
+[data-theme="light"] .chat-card-btn.primary{
+  background: transparent !important;
+  border-color: #d0d5dd !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
 }
-/* 精选按钮(金橙)同样降一档鲜艳 */
-[data-theme="light"] .nr-crawl-btn.is-curated{
-  background: linear-gradient(180deg, #f2a74a 0%, #e89533 100%) !important;
-  border-color: #dd8928 !important;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.20) inset !important;
+[data-theme="light"] .chat-card-btn.primary:hover:not(:disabled){
+  background: rgba(16,19,26,0.05) !important;
+}
+/* 我的-账本时间范围Tab选中态 → 极淡灰底（覆盖内联accent渐变） */
+[data-theme="light"] .ledger-range-tab.active{
+  background: rgba(16,19,26,0.06) !important;
+  border-color: #d0d5dd !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
+/* 创作维度Tab选中态 → 极淡灰底（覆盖 accent-light 淡蓝）*/
+[data-theme="light"] .write-tab.active{
+  background: rgba(16,19,26,0.06) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
 }
 
 /* ---------- D1b. Dark水墨国风：强调按钮=无底色（细边+深墨字）；仅选中态=极淡水墨底 ----------
