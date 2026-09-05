@@ -2143,20 +2143,32 @@ def _do_test_connection(base_url, api_key, model):
     from llm_gateway import _normalize_llm_base_url, _pin_temperature_for_thinking
     import requests as req
     base = _normalize_llm_base_url(base_url, model)
-    # 思考型模型（DeepSeek-R1 等）要求 temperature=1，测试连接同样钳制，避免 HTTP 400
+
+    def _post(temp):
+        return req.post(
+            f"{base}/chat/completions",
+            headers=build_auth_headers(api_key),
+            json={
+                'model': model,
+                'messages': [{'role': 'user', 'content': '你好，请回复"连接成功"四个字。'}],
+                'max_tokens': 20,
+                'temperature': temp,
+                'stream': False
+            },
+            timeout=30
+        )
+
+    # 思考型模型（DeepSeek-R1/GLM-5.3 等）要求 temperature=1：先按名单钳制，
+    # 名单外模型报 400 "temperature may only be set to 1..." 时再钳 1 重试一次
     temp = _pin_temperature_for_thinking(model, {}, 0.1)
-    resp = req.post(
-        f"{base}/chat/completions",
-        headers=build_auth_headers(api_key),
-        json={
-            'model': model,
-            'messages': [{'role': 'user', 'content': '你好，请回复"连接成功"四个字。'}],
-            'max_tokens': 20,
-            'temperature': temp,
-            'stream': False
-        },
-        timeout=30
-    )
+    resp = _post(temp)
+    if resp.status_code in (400, 422):
+        try:
+            _msg = resp.json().get('error', {}).get('message', '') or ''
+        except Exception:
+            _msg = ''
+        if 'temperature' in _msg and 'set to 1' in _msg and temp != 1:
+            resp = _post(1)
     if resp.status_code != 200:
         try:
             err_data = resp.json()
@@ -15096,6 +15108,9 @@ def init_db():
         # Migration: AI 多配置支持（DEFAULT TRUE 兼容 PG 严格 BOOLEAN 与 SQLite）
         _add_column('ai_config', "name VARCHAR(50) DEFAULT '默认配置'")
         _add_column('ai_config', 'is_active BOOLEAN DEFAULT TRUE')
+        # Migration: AI配置改为提供商级——一行一提供商，models 存用户勾选的多模型
+        # （修复老库缺列导致保存/选择模型 HTTP 500：no such column ai_config.models）
+        _add_column('ai_config', "models TEXT DEFAULT '[]'")
         # Migration: skill_packs 添加 github_source 和 github_synced_at 字段
         _add_column('skill_packs', "github_source VARCHAR(500) DEFAULT ''")
         _add_column('skill_packs', 'github_synced_at TIMESTAMP')

@@ -152,6 +152,10 @@ def _pin_temperature_for_thinking(model: str, extra: dict, temperature: float) -
     if ('reasoner' in m or 'r1' in m or 'thinking' in m
             or m.startswith('o1') or m.startswith('o3') or 'o4' in m):
         return 1.0
+    # 智谱 GLM 强制思考系（5.2/5.3 无法关闭思考，thinking.type disabled 会报错）
+    # → 温度必须为 1（报错原文含 "or in adaptive mode" 即此家）
+    if 'glm' in m and any(v in m for v in ('5.2', '5.3', '4.7', '4.6')):
+        return 1.0
     th = extra.get('thinking')
     if isinstance(th, dict) and str(th.get('type', '')).lower() == 'enabled':
         return 1.0
@@ -545,6 +549,12 @@ class LLMGateway:
                     # 【输出上限自适应】400/422 且报错指向 max_tokens 超限 → 解析真实
                     # 上限、钳制 payload 后立即重发（解析不出具体数字则退 8192 兜底）
                     if resp.status_code in (400, 422):
+                        # 【思考温度自愈】报错要求思考开启时 temperature=1（名单外的
+                        # 强制思考模型也会报）→ 钳到 1 立即重发，不把限制抛给上层
+                        if ('temperature' in body_text and 'set to 1' in body_text
+                                and payload.get("temperature") != 1):
+                            payload["temperature"] = 1
+                            continue
                         _limit = _learn_output_limit(self.base_url, self.model,
                                                      body_text, payload["max_tokens"])
                         if _limit and _limit < payload["max_tokens"]:
@@ -660,16 +670,24 @@ class LLMGateway:
                 # 【输出上限自适应】400/422 且报错指向 max_tokens 超限 → 解析真实上限、
                 # 钳制 payload 后重发一次；解析不出具体数字则退 8192 兜底（均只重发一次）。
                 if resp.status_code in (400, 422):
-                    _limit = _learn_output_limit(self.base_url, self.model,
-                                                 _error_text(resp), payload["max_tokens"])
-                    if _limit and _limit < payload["max_tokens"]:
-                        payload["max_tokens"] = _limit
+                    # 【思考温度自愈】报错要求思考开启时 temperature=1 → 钳到 1 重发
+                    _err_txt = _error_text(resp)
+                    if ('temperature' in _err_txt and 'set to 1' in _err_txt
+                            and payload.get("temperature") != 1):
+                        payload["temperature"] = 1
                         resp = requests.post(url, headers=headers, json=payload,
                                              timeout=self.timeout, stream=True)
-                    elif not _limit and payload["max_tokens"] > 8192:
-                        payload["max_tokens"] = 8192
-                        resp = requests.post(url, headers=headers, json=payload,
-                                             timeout=self.timeout, stream=True)
+                    else:
+                        _limit = _learn_output_limit(self.base_url, self.model,
+                                                     _err_txt, payload["max_tokens"])
+                        if _limit and _limit < payload["max_tokens"]:
+                            payload["max_tokens"] = _limit
+                            resp = requests.post(url, headers=headers, json=payload,
+                                                 timeout=self.timeout, stream=True)
+                        elif not _limit and payload["max_tokens"] > 8192:
+                            payload["max_tokens"] = 8192
+                            resp = requests.post(url, headers=headers, json=payload,
+                                                 timeout=self.timeout, stream=True)
                 # 【非 200 先分类，再决定重试 vs 直接抛】（旧实现非 200 一律一次不重试直接抛，
                 # 导致上游鉴权 SERVICE_BUSY 这种理应重试的 503 瞬间失败）
                 if resp.status_code != 200:
