@@ -5921,6 +5921,111 @@ textarea.input.paper-textarea{
   background: rgba(87,100,115,0.08) !important;
 }
 
+/* ---------- D1b-2. 智驾面板·水墨国风扫尾：剩余石墨实底强调元素 → 极淡水墨 ----------
+   ★ 与浅色主题同族对齐：accent-light(极淡水墨底) + accent(石墨字) + #a9b5c1 细冷灰边 */
+/* CTA 按钮族（优化建议"保存并采纳"/修正任务/正文·去AI·校审主操作/全文重算/全屏停止） */
+[data-theme="dark"] .btn-sm.primary,
+[data-theme="dark"] .fix-task-action,
+[data-theme="dark"] .smart-action-btn.primary,
+[data-theme="dark"] .smart-main-action,
+[data-theme="dark"] .impact-preview-actions button,
+[data-theme="dark"] .ai-fullscreen-stop-btn{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border-color: #a9b5c1 !important;
+  box-shadow: none !important;
+}
+[data-theme="dark"] .smart-action-btn.primary:hover:not(:disabled),
+[data-theme="dark"] .smart-main-action:hover:not(:disabled),
+[data-theme="dark"] .impact-preview-actions button:hover:not(:disabled){
+  opacity: 1;
+  background: rgba(87,100,115,0.16) !important;
+  color: var(--accent) !important;
+}
+/* 武装(armed)二次确认态在国风下仍保留橙色脉冲提示（须压过上面的 primary 淡色规则） */
+[data-theme="dark"] .smart-action-btn.armed,
+[data-theme="dark"] .smart-action-btn.armed.primary,
+[data-theme="dark"] .smart-action-btn.armed:hover:not(:disabled),
+[data-theme="dark"] .smart-action-btn.armed.primary:hover:not(:disabled){
+  background: #fff7e6 !important;
+  color: #b45309 !important;
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 2px rgba(245,158,11,0.18) !important;
+}
+/* 徽章/计数（技能包计数/系统·自定义徽章/AI配置触发徽章）→ 极淡水墨底 */
+[data-theme="dark"] .smart-skill-badge,
+[data-theme="dark"] .builtin-badge,
+[data-theme="dark"] .custom-badge,
+[data-theme="dark"] .skill-pack-toggle-badge,
+[data-theme="dark"] .ai-config-trigger-badge{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+/* 选中态 chip（校审卷chip/动态文件Tab/榜单风向筛选）→ 极淡水墨底（与既有选中态规则同语言） */
+[data-theme="dark"] .smart-volume-chip.active,
+[data-theme="dark"] .dm-tab-chip.active,
+[data-theme="dark"] .filter-tag-active{
+  background: rgba(87,100,115,0.12) !important;
+  color: var(--text-primary) !important;
+  border-color: #a9b5c1 !important;
+  box-shadow: none !important;
+}
+/* 选中 chip 内"自"角标原为 25% 白底（石墨底专用），淡底下不可见 → 换水墨淡底 */
+[data-theme="dark"] .dm-tab-chip.active .dm-tab-chip-badge{
+  background: rgba(87,100,115,0.16) !important;
+  color: var(--text-primary) !important;
+}
+/* 用户消息气泡/头像：石墨实底 → 极淡水墨底 + 浓墨字 */
+[data-theme="dark"] .chat-msg-user .chat-msg-avatar{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+[data-theme="dark"] .chat-msg-user .chat-msg-text{
+  background: var(--accent-light) !important;
+  color: var(--text-primary) !important;
+}
+/* 进度条/得分条：石墨实底 → 柔和石墨阶 */
+[data-theme="dark"] .chat-progress-fill,
+[data-theme="dark"] .ai-batch-toast-progress-bar,
+[data-theme="dark"] .review-score-fill{
+  background: color-mix(in srgb, var(--accent) 38%, var(--bg-primary)) !important;
+}
+/* 头像/连续天数徽章/工作流步骤圆点/情节节点序号：石墨圆块 → 极淡水墨底 */
+[data-theme="dark"] .avatar-circle,
+[data-theme="dark"] .stats-streak-badge,
+[data-theme="dark"] .workflow-step-num,
+[data-theme="dark"] .node-index{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+}
+/* 侧栏"登录/注册"按钮：石墨实底 → 无底色细边（与 D1b 同款） */
+[data-theme="dark"] .sidebar-login-btn{
+  background: transparent !important;
+  border: 1px solid #a9b5c1 !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
+/* 紫色 accent-secondary 按钮：国风里同样去彩 → 无底色 */
+[data-theme="dark"] .btn-accent-secondary,
+[data-theme="dark"] button[style*="linear-gradient(135deg,#8b5cf6"],
+[data-theme="dark"] button[style*="purple"]{
+  background: transparent !important;
+  border-color: #a9b5c1 !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
+/* 智驾·节点设计师弹窗：内联深绿(#0a7d4f)实底按钮 → 各主题淡色（ndv-primary-btn） */
+[data-theme="light"] .ndv-primary-btn{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border: 1px solid #d0d5dd !important;
+}
+[data-theme="dark"] .ndv-primary-btn{
+  background: var(--accent-light) !important;
+  color: var(--accent) !important;
+  border: 1px solid #a9b5c1 !important;
+}
+
 /* ---------- D1c. Green护眼绿：按钮用翠绿，saturate降一档 ---------- */
 [data-theme="green"] .chat-send.primary,
 [data-theme="green"] .nr-crawl-btn.is-crawl,

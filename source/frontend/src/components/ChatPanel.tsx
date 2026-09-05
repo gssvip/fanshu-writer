@@ -698,7 +698,7 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
           <div style={{
             height: '100%',
             width: `${pct}%`,
-            background: 'linear-gradient(90deg,#3b82f6 0%,#8b5cf6 100%)',
+            background: 'color-mix(in srgb, var(--accent) 38%, var(--bg-primary))',
             transition: 'width .4s ease',
           }} />
         </div>

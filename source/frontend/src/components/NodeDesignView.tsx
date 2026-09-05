@@ -179,7 +179,7 @@ export default function NodeDesignView({ bookId, volumeIndex, volumeTitle, onClo
         {/* 进度条 */}
         <div style={{ padding: '4px 16px 0' }}>
           <div style={{ height: 6, background: '#e4efe4', borderRadius: 3, overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${segPct}%`, background: ACCENT, borderRadius: 3, transition: 'width .3s ease' }} />
+            <div style={{ height: '100%', width: `${segPct}%`, background: 'color-mix(in srgb, var(--accent) 38%, var(--bg-primary))', borderRadius: 3, transition: 'width .3s ease' }} />
           </div>
           <div style={{ fontSize: 11, color: '#8aa88a', margin: '4px 0 0', display: 'flex', justifyContent: 'space-between' }}>
             <span>{busy && total > 0 ? `正在生成 ${segDone}/${total} 段…` : message}</span>
@@ -233,7 +233,7 @@ export default function NodeDesignView({ bookId, volumeIndex, volumeTitle, onClo
                       style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #cddccd', borderRadius: 8, fontSize: 13, padding: 8, outline: 'none' }}
                     />
                     <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                      <button onClick={confirmRevise} disabled={revising} style={{ border: 'none', background: ACCENT, color: '#fff', fontSize: 13, borderRadius: 6, padding: '5px 12px', cursor: 'pointer' }}>{revising ? '修改中…' : '提交修改'}</button>
+                      <button onClick={confirmRevise} disabled={revising} className="ndv-primary-btn" style={{ border: 'none', background: ACCENT, color: '#fff', fontSize: 13, borderRadius: 6, padding: '5px 12px', cursor: 'pointer' }}>{revising ? '修改中…' : '提交修改'}</button>
                       <button onClick={() => setReviseIndex(null)} style={{ border: '1px solid #cddccd', background: '#fff', color: '#4a6b4a', fontSize: 13, borderRadius: 6, padding: '5px 12px', cursor: 'pointer' }}>取消</button>
                     </div>
                   </div>
@@ -247,7 +247,7 @@ export default function NodeDesignView({ bookId, volumeIndex, volumeTitle, onClo
         {/* 底部操作 */}
         <div style={{ padding: '10px 16px', borderTop: '1px solid #e4efe4', background: '#fbfefb', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           {canAdopt && (
-            <button onClick={acceptAll} disabled={applying} style={{ border: 'none', background: ACCENT, color: '#fff', fontSize: 14, fontWeight: 600, borderRadius: 8, padding: '8px 18px', cursor: 'pointer' }}>
+            <button onClick={acceptAll} disabled={applying} className="ndv-primary-btn" style={{ border: 'none', background: ACCENT, color: '#fff', fontSize: 14, fontWeight: 600, borderRadius: 8, padding: '8px 18px', cursor: 'pointer' }}>
               {applying ? '落地中…' : `✅ 采纳全部（${nodes.length} 个节点）到剧情线`}
             </button>
           )}
