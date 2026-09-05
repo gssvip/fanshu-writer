@@ -70,9 +70,10 @@ MAX_ROUTES_PER_FILE = 30
 #     + 三个导出路由补鉴权 + 内部防遗忘自动触发改用 5 分钟一次性短时凭证 → 15317 → 15355（+38 行，
 #     安全修复必需，非业务膨胀）。
 #   - 榜单拆分：novel_rank_bp.py 2156 → 757 行（抓取器+种子数据外迁到 novel_rank_crawlers.py 1432 行）。
-#   - 本基线为 v1.0 备份点冻结值（历史 8+ 次重校准见 git 记录）；下轮拆分目标：
-#     app.py 按域外迁（export/auth 维度聚合），严禁在此基础上继续增长。
-APP_PY_BASELINE = 15355
+# 2026-09-05 拆分第2批（general_chat 独立蓝图）：app.py +1 行（register general_chat_bp，
+#   拆分必要配套注册行，非业务逻辑膨胀）。本基线为 v1.0 备份点冻结值（历史 8+ 次重校准见 git 记录）；
+#   下轮拆分目标：app.py 按域外迁（export/auth 维度聚合），严禁在此基础上继续增长。
+APP_PY_BASELINE = 15356
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -328,7 +329,14 @@ TOOLSPAGE_BASELINE = 1953
 # 2026-09-05 重校准（v1.0 备份冻结）：基线同步到备份点实际行数（9970 → 10982），
 #   拆分路线图不变：① nd_helpers.py（节点续会工具+卡片聚合门禁）
 #   ② general_chat 独立 Blueprint ③ _PERSONAS 人设外置配置。
-CHAT_COLLAB_BP_BASELINE = 10982
+# 2026-09-05 拆分落地（P0 优化轮第2批）：①②③ 全部完成 → 10982 → 9705（-1277 行）：
+#   - blueprints/nd_helpers.py（366行）：节点续会工具+卡片聚合门禁+进度解析
+#   - blueprints/persona_config.py（114行）：_PERSONAS/_ROUNDTABLE_ORDER/_MODERATOR_ROLE 纯数据
+#   - blueprints/general_chat.py（921行）：POST /api/ai/chat/general 独立蓝图（单向导入无循环）
+#   顺带修复 v1.0 遗留 bug：chat_general/chat_roundtable 函数内局部 datetime import 遮蔽
+#   → 新会话路径 UnboundLocalError 500（pyflakes 全库扫描已确认无其他同类）。
+#   下轮拆分目标：smart_generate/smart_suggest 系列路由继续外迁。
+CHAT_COLLAB_BP_BASELINE = 9705
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "build-and-sync": "tsc -b && vite build && (cd .. && echo '== 双保险同步: frontend/dist -> backend/static ==' && cp -f frontend/dist/index.html backend/static/index.html && cp -rf frontend/dist/assets/. backend/static/assets/ && [ -f frontend/dist/version.json ] && cp -f frontend/dist/version.json backend/static/version.json && echo ==OK==)",
     "lint": "oxlint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -36,6 +38,7 @@
     "oxlint": "^1.71.0",
     "terser": "^5.51.2",
     "typescript": "~6.0.2",
-    "vite": "^8.2.1"
+    "vite": "^8.2.1",
+    "vitest": "^5.0.0"
   }
 }
