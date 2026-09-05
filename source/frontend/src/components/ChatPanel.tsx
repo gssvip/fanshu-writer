@@ -1539,6 +1539,10 @@ export default function ChatPanel() {
   const [chapterEditArmed, setChapterEditArmed] = useState(false);
   const [reviewChapterId, setReviewChapterId] = useState<string | null>(null);   // 校审Tab：一致性检查章节
   const [reviewVolumeIds, setReviewVolumeIds] = useState<string[]>([]);          // 校审Tab：按卷检查
+  // 校审Tab「设定修正方案」：局部锚点(original→rewritten)精准落地，未改动内容 100% 保留
+  const [reviewFixPlan, setReviewFixPlan] = useState<Array<{ dim: string; label: string; issues: string[]; action: string; new_content: string; patches?: Array<{ original: string; rewritten: string }> }> | null>(null);
+  const [reviewFixLoading, setReviewFixLoading] = useState(false);
+  const [reviewFixApplying, setReviewFixApplying] = useState(false);
   // B：两步确认机制——防止用户点了按钮就直接跑全书，避免误操作浪费 token
   //   Step 1: 首次点击 = 选中"待跑模式"，按钮提示"再点确认 + 显示当前范围"
   //   Step 2: 二次点击 = 真正执行
@@ -2779,6 +2783,28 @@ export default function ChatPanel() {
       setApplyingCardId(null);
     }
   }, [bookId, sessionId, refreshProgress, markBibleDirty]);
+
+  // 校审「设定修正方案」采纳：把确认的修正项精准局部落地（patches original→rewritten），
+  // 后端优先只替换被改片段，未改动内容 100% 保留；落地后同步本地 Bible 供后续对话读取。
+  const adoptReviewFix = useCallback(async (fixes: Array<{ dim: string; new_content: string; patches?: Array<{ original: string; rewritten: string }> }>) => {
+    if (!bookId || fixes.length === 0) return;
+    setReviewFixApplying(true);
+    try {
+      const r: any = await api.smartApplyFix(bookId, fixes);
+      setStreamError('');
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `✅ 已精准落地 ${(r.applied || []).length} 个设定的局部修正（未改动内容已保留）。`,
+      }]);
+      markBibleDirty();
+      api.getBible(bookId).then(bb => setBible(bb)).catch(() => {});
+      setReviewFixPlan(null);
+    } catch (e: any) {
+      setStreamError(e.message || '采纳失败');
+    } finally {
+      setReviewFixApplying(false);
+    }
+  }, [bookId, markBibleDirty]);
 
   const handleEdit = useCallback(async (card: ActionCard, newContent: string) => {
     if (!bookId) return;
@@ -4241,6 +4267,87 @@ export default function ChatPanel() {
                         </select>
                       </div>
                     )}
+                  </div>
+
+                  {/* 🔧 设定修正方案：基于防遗忘/一致性诊断生成多维度「局部修正」方案并精准落地。
+                      落地只替换 original→rewritten 命中的片段，未改动内容 100% 保留，不再整字段覆盖导致内容不全。 */}
+                  <div className="impact-preview-panel review-grid-cell" style={{marginTop:8}}>
+                    <div className="impact-preview-head">
+                      <span>🔧 设定修正方案（精准局部落地）</span>
+                    </div>
+                    <div className="impact-preview-body">
+                      <div className="impact-preview-actions" style={{alignItems:'flex-start'}}>
+                        <button
+                          className="smart-action-btn primary"
+                          disabled={reviewFixLoading || reviewFixApplying || streaming}
+                          onClick={async () => {
+                            if (!bookId) return;
+                            setReviewFixLoading(true);
+                            try {
+                              const r = await api.smartFixFromReport(bookId, undefined, [], reviewVolumeIds);
+                              setReviewFixPlan(r.plan || []);
+                            } catch (e: any) {
+                              setStreamError(e.message || '生成修正方案失败');
+                            } finally {
+                              setReviewFixLoading(false);
+                            }
+                          }}
+                        >
+                          {reviewFixLoading ? '生成中…' : '🔧 生成设定修正方案'}
+                        </button>
+                        <span style={{fontSize:11,color:'var(--text-muted)'}}>基于当前各维度诊断生成<strong>局部修正</strong>方案并精准落地；未改动内容 100% 保留。</span>
+                      </div>
+                      {reviewFixPlan && (
+                        <>
+                          {reviewFixPlan.length === 0 ? (
+                            <div className="opt-report-empty" style={{padding:'10px 4px'}}>暂无需要修正的维度。</div>
+                          ) : (
+                            <>
+                              <div className="opt-report-list" style={{marginTop:8}}>
+                                {reviewFixPlan.map((item, idx) => {
+                                  const fix: any = { dim: item.dim, new_content: item.new_content, patches: item.patches || [] };
+                                  return (
+                                    <div key={idx} className="opt-report-item sev-medium">
+                                      <div className="opt-report-item-head">
+                                        <span className="opt-report-cat">{item.label || item.dim}</span>
+                                      </div>
+                                      <div className="opt-report-action">{item.action}</div>
+                                      {item.issues && item.issues.length > 0 && (
+                                        <ul style={{margin:'4px 0 0 0',paddingLeft:16,fontSize:12}}>
+                                          {item.issues.map((iss, i2) => <li key={i2}>{iss}</li>)}
+                                        </ul>
+                                      )}
+                                      {Array.isArray(item.patches) && item.patches.length > 0 && (
+                                        <details className="opt-report-snippet" style={{marginTop:6}}>
+                                          <summary>局部改动 {item.patches.length} 处（展开预览）</summary>
+                                          {item.patches.map((p, j) => (
+                                            <div key={j} style={{fontSize:12,marginTop:4}}>
+                                              <div style={{color:'var(--text-muted)'}}>原：{p.original}</div>
+                                              <div style={{color:'var(--accent)'}}>改：{p.rewritten}</div>
+                                            </div>
+                                          ))}
+                                        </details>
+                                      )}
+                                      <div className="opt-report-actions" style={{marginTop:8,display:'flex',gap:6,flexWrap:'wrap'}}>
+                                        <button className="btn-sm primary" disabled={reviewFixApplying || streaming} onClick={() => adoptReviewFix([fix])}>
+                                          采纳此项
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="opt-report-actions" style={{marginTop:8,display:'flex',gap:6}}>
+                                <button className="btn-sm primary" disabled={reviewFixApplying || streaming} onClick={() => adoptReviewFix(reviewFixPlan as any)}>
+                                  全部采纳
+                                </button>
+                                <button className="btn-ghost-sm" disabled={reviewFixApplying} onClick={() => setReviewFixPlan(null)}>收起</button>
+                              </div>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   {/* 🧩 事件日志 + 🧠 系统学习：同一行（桌面+手机端都并排）*/}
