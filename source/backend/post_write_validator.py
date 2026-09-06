@@ -146,8 +146,8 @@ def validate_chapter(content: str) -> ValidationResult:
     #     若有维度 <60 分则追加 warning，给具体改法，不扣现有总分（独立维度）。
     _check_style_alignment_score(text, cfg, result)
 
-    # 16. 硬卡4·整章量化双轨自检（每自然段≤2句号，一般以每自然段1个句号为主 / 段均字数比例 / 句均字数 / 段均句数）
-    #     对接 app.py 文风铁律硬卡4；任何一条严重违规则升级为 critical（作者必须修订）。
+    # 16. 整章量化双轨自检（每自然段≤2句号，一般以每自然段1个句号为主 / 段均字数比例 / 句均字数 / 段均句数）
+    #     对接 chat_collab_bp.WRITING_STYLE_RULES 第1条（篇幅与段落呼吸感）；任何一条严重违规则升级为 critical（作者必须修订）。
     _check_quantitative_hardcards(text, cfg, result)
 
     # 17. Humanizer·去AI痕迹铁律5.2/5.3/5.4 专项检测（虽然但是/不仅而且/列举腔/连续了/被字句/X地副词）
@@ -1283,14 +1283,14 @@ def validate_chapter_with_drift(content: str, baseline_fp: Optional[Dict[str, fl
 
 
 def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult):
-    """硬卡4：整章量化双轨自检 —— 对应 app.py 文风铁律硬卡 4.1~4.4。
+    """整章量化双轨自检 —— 对应 chat_collab_bp.WRITING_STYLE_RULES 第1条（篇幅与段落呼吸感）。
     统计口径：
       - 段落：空行分割（忽略 HTML <p> 包裹，先脱标签）
       - 句子段内句数：段内「。！？」合计作为句号数（句终标点总计数）
       - 句均字数：按 _SENTENCE_END_PATTERN 拆句，单句字数=句内字符数（含标点）
       - 段均句数 = 全章句终标点数 / 段落数；段均句数比值越大越碎（目标 ≤ 1.8）
     口径说明：与 chat_collab_bp.WRITING_STYLE_RULES 短段主导对齐——主力段落 10-50 字
-    （1-2 个逗号长句）、句均约 12-18 字。4.3 不再按旧"叙述句 20-35 字"口径把短段判碎。
+    （1-2 个逗号长句）、句均约 12-18 字。句均字数不再按旧"叙述句 20-35 字"口径把短段判碎。
     """
     # 1) 脱 <p> 等标签再统计（避免 html 化正文干扰空行计数）
     stripped = re.sub(r'</?[^>]+>', '', text)
@@ -1425,7 +1425,7 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
             count=over3_per_par,
             position=f'例如第 {first_over3_idx} 段含 {first_over3_count} 句；整章共 {over3_per_par} 段（占 {over3_ratio*100:.1f}%）',
             suggestion=(
-                f'文风铁律 4.1 规定每自然段 ≤ 2 个句号（一般以每自然段 1 个句号为主，=最多 2 句完整话），'
+                f'文风铁律规定每自然段 ≤ 2 个句号（一般以每自然段 1 个句号为主，=最多 2 句完整话），'
                 f'但本章有 {over3_per_par} 段堆了 ≥ 3 句小短句（漫画分镜脚本化是最浓 AI 味来源）。'
                 f'修复：把同 POV/同镜头/同动作链的 3+ 个小短句合并成 1–2 句完整中长句；'
                 f'绝不允许一句话硬剁成 3+ 个残切碎段。'
@@ -1442,7 +1442,7 @@ def _check_quantitative_hardcards(text: str, cfg: Dict, result: ValidationResult
             count=short_le15_ge2,
             position=f'例如第 {first_le15_idx} 段仅 {first_le15_len} 字就塞了 {first_le15_count} 句；整章共 {short_le15_ge2} 段（占 {short_le15_ratio*100:.1f}%）',
             suggestion=(
-                f'文风铁律 4.1 补充口径：≤15 字的短段只能含 ≤ 1 个句号（短段里绝对不允许塞 2 句完整话）。'
+                f'文风铁律补充口径：≤15 字的短段只能含 ≤ 1 个句号（短段里绝对不允许塞 2 句完整话）。'
                 f'修复：①把 2 句短段合并成 1 句逗号长句（16–28字），要么②拆成 2 个独立短段各含 1 句（仅用于重拍/转折/收尾）；'
                 f'绝不允许 7–13 字一段里挤 2 个句号。'
             ),
