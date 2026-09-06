@@ -676,6 +676,80 @@ def delete_outline(book_id, outline_id):
 
 # ==== Stats API ====
 
+@books_bp.route('/api/stats/today', methods=['GET'])
+@login_required
+def get_today_stats():
+    """跨作品今日写作统计：今日字数 / 今日章节 / 连续写作天数。
+
+    【2026-09-06 修复"实时统计不了"】原前端方案是 localStorage 手打卡（useWritingStats
+    hook），但该 hook 无任何组件调用 + AI 生成章节不经过手打计数 → 统计恒为 0。
+    改为后端基于 Chapter 真实数据实时聚合：任何写入口（AI 采纳落地/编辑器保存/批量续写）
+    都会更新 chapter.updated_at → 天然实时、多端一致。
+
+    参数（GET query）：
+      date: 前端本地日期 YYYY-MM-DD（默认按 tz 推算服务器当前本地日）
+      tz:   本地时区分钟偏移（如中国 +480，默认 480；纽约 -300）
+
+    口径（与前端工作台横幅一致）：
+      今日字数 = 本地"今天"有更新过的章节（非卷）word_count 之和（每章计一次）
+      今日章节 = 本地"今天"有更新过的章节数
+      连续天数 = 从今天（今天未写则从昨天）往前，连续每天都有章节更新的最大天数
+    """
+    from app import Book, Chapter
+    from datetime import timedelta
+
+    try:
+        tz = int(request.args.get('tz', '480'))
+    except ValueError:
+        tz = 480
+    local_now = datetime.now(timezone.utc) + timedelta(minutes=tz)
+    date_str = request.args.get('date') or local_now.date().isoformat()
+    try:
+        local_today = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        local_today = local_now.date()
+
+    # 本地日起点的 UTC 时刻：本地 0 点 = UTC(本地 - tz)
+    day_start_utc = datetime(local_today.year, local_today.month, local_today.day, tzinfo=timezone.utc) - timedelta(minutes=tz)
+    # 连续天数回看窗口：400 天足够（streak > 400 不现实）
+    lookback_start_utc = day_start_utc - timedelta(days=399)
+
+    user_books = Book.query.filter_by(user_id=request.current_user_id).with_entities(Book.id).all()
+    book_ids = [b[0] for b in user_books]
+    if not book_ids:
+        return jsonify({'today_words': 0, 'today_chapters': 0, 'streak': 0})
+
+    rows = (Chapter.query
+            .filter(Chapter.book_id.in_(book_ids), Chapter.is_volume == False,  # noqa: E712
+                    Chapter.updated_at >= lookback_start_utc)
+            .with_entities(Chapter.updated_at, Chapter.word_count)
+            .all())
+
+    # 按本地日聚合（SQLite 取回的 updated_at 可能为 naive UTC → 统一补 tz）
+    words_by_day, chapters_by_day = {}, {}
+    for dt, wc in rows:
+        if dt is None:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        local_day = (dt + timedelta(minutes=tz)).date()
+        words_by_day[local_day] = words_by_day.get(local_day, 0) + (wc or 0)
+        chapters_by_day[local_day] = chapters_by_day.get(local_day, 0) + 1
+
+    # 连续天数：今天有写从今天起算；今天还没写则从昨天起算（不把"今天还没写"当断签）
+    streak_day = local_today if local_today in chapters_by_day else local_today - timedelta(days=1)
+    streak = 0
+    d = streak_day
+    while d in chapters_by_day:
+        streak += 1
+        d -= timedelta(days=1)
+
+    return jsonify({
+        'today_words': words_by_day.get(local_today, 0),
+        'today_chapters': chapters_by_day.get(local_today, 0),
+        'streak': streak,
+    })
+
 @books_bp.route('/api/books/<book_id>/stats', methods=['GET'])
 def get_book_stats(book_id):
     from app import (db, Book, BookBible, Chapter, ChapterVersion, Character,

@@ -265,6 +265,15 @@ export const api = {
 
   // Stats
   getBookStats: (bookId: string) => request<StatsData>(`/books/${bookId}/stats`),
+  // 跨作品今日统计（今日字数/今日章节/连续天数）：后端按章节 updated_at 实时聚合，
+  // 传本地日期与时区偏移（分钟）保证"今天"边界与用户感知一致
+  getTodayStats: () => {
+    const now = new Date();
+    const tz = -now.getTimezoneOffset(); // JS 偏移与 ISO 相反（北京为 -480 → +480）
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    return request<{ today_words: number; today_chapters: number; streak: number }>(
+      `/stats/today?date=${date}&tz=${tz}`, { cache: 'no-store' });
+  },
 
   // Export
   getExportUrl: (bookId: string, format: string) => {

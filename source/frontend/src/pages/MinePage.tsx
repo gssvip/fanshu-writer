@@ -110,18 +110,10 @@ export default function MinePage() {
   }, [aiConfig.recognition_model]);
 
   useEffect(() => {
-    // 读取写作打卡数据
-    try {
-      const raw = localStorage.getItem('app-writing-history') ?? localStorage.getItem(legacyKey('writing-history'));
-      if (raw) {
-        const hist = JSON.parse(raw);
-        const today = new Date().toISOString().slice(0, 10);
-        setWritingHist({
-          todayWords: hist.lastDate === today ? hist.todayWords || 0 : 0,
-          streak: hist.streak || 0,
-        });
-      }
-    } catch { /* ignore */ }
+    // 写作打卡：后端实时聚合（同工作台横幅，旧 localStorage 方案统计恒为 0 已弃用）
+    api.getTodayStats().then(s => {
+      setWritingHist({ todayWords: s.today_words || 0, streak: s.streak || 0 });
+    }).catch(() => { /* 未登录/网络失败：保持 0 显示 */ });
   }, []);
 
   useEffect(() => {

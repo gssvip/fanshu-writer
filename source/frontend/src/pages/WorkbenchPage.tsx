@@ -171,18 +171,12 @@ export default function WorkbenchPage() {
       }
     }).catch(() => setLoading(false));
 
-    // 读取今日统计
-    try {
-      const raw = localStorage.getItem('app-writing-history') ?? localStorage.getItem(legacyKey('writing-history'));
-      if (raw) {
-        const hist = JSON.parse(raw);
-        const today = new Date().toISOString().slice(0, 10);
-        if (hist.lastDate === today) {
-          setTodayStats({ words: hist.todayWords || 0, chapters: hist.todayChapters || 0 });
-        }
-        setStreak(hist.streak || 0);
-      }
-    } catch { /* ignore */ }
+    // 读取今日统计（后端实时聚合：AI 采纳/手动保存都会更新章节 updated_at → 统计即时生效；
+    // 旧 localStorage 方案的写入 hook 无组件调用，统计恒为 0，已弃用）
+    api.getTodayStats().then(s => {
+      setTodayStats({ words: s.today_words || 0, chapters: s.today_chapters || 0 });
+      setStreak(s.streak || 0);
+    }).catch(() => { /* 未登录/网络失败：保持 0 显示 */ });
   }, []);
 
   async function handleCreateBook() {
