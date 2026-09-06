@@ -87,7 +87,7 @@ except ImportError:
 
 # P3：LLM Gateway 统一入口（错误分类 + 智能重试 + 空内容检测）
 try:
-    from llm_gateway import LLMGateway, ModelResult, FailureClass, LLMError, get_llm_config, create_gateway, build_auth_headers, get_output_limit
+    from llm_gateway import LLMGateway, ModelResult, FailureClass, LLMError, get_llm_config, create_gateway, build_auth_headers, get_output_limit, _learn_output_limit
 except ImportError:
     LLMGateway = None
     ModelResult = None
@@ -97,6 +97,9 @@ except ImportError:
     create_gateway = None
     def get_output_limit(base_url: str, model: str) -> int:
         """导入失败时的回退实现：未知上限，不钳制。"""
+        return 0
+    def _learn_output_limit(base_url: str, model: str, error_text: str, requested: int) -> int:
+        """导入失败时的回退实现：不解析。"""
         return 0
     def build_auth_headers(api_key: str, content_type: bool = True) -> dict:
         """导入失败时的回退实现：仅下发 Authorization: Bearer（标准 OpenAI 兼容）。"""
@@ -952,6 +955,33 @@ def _llm_chat(messages, api_key=None, base_url=None, model=None,
     if result.ok:
         return result.content, ''
     return '', result.error or 'LLM 返回空内容'
+
+def _post_llm_adaptive(api_key, base_url, model, payload, timeout=180, stream=False):
+    """直连 LLM POST（app.py 未走网关的链路）：400/422/429 报 max_tokens 超限时，
+    按报错自学习真实上限，钳制后重发一次。
+
+    【max_tokens 按模型能力"不限"】ctx 给足 131072 后，未知模型（不在已知表、
+    进程内也没报错过）首次调用可能越界被拒——网关路径（chat/chat_stream）已内置
+    此自愈，这里覆盖 app.py 直连 requests.post 的正文/审校链路，行为保持一致。
+    """
+    resp = requests.post(f'{base_url}/chat/completions',
+                         headers=build_auth_headers(api_key), json=payload,
+                         timeout=timeout, stream=stream)
+    if resp.status_code in (400, 422, 429):
+        _txt = ''
+        try:
+            _eb = resp.json()
+            if isinstance(_eb, dict) and isinstance(_eb.get('error'), dict):
+                _txt = _eb['error'].get('message') or ''
+        except Exception:
+            _txt = (resp.text or '')[:200]
+        _lim = _learn_output_limit(base_url, model, _txt, payload.get('max_tokens') or 0)
+        if _lim and _lim < (payload.get('max_tokens') or 0):
+            resp = requests.post(f'{base_url}/chat/completions',
+                                 headers=build_auth_headers(api_key),
+                                 json={**payload, 'max_tokens': _lim},
+                                 timeout=timeout, stream=stream)
+    return resp
 
 def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chapter_num=0, count_fn=None):
     """【字数铁律】公共字数修正函数：初稿字数不在 2300-2500 区间时调 AI 重写。
@@ -6338,10 +6368,12 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
         'system_prompt': system_prompt,
         'user_prompt': user_prompt,
         'temperature': temperature,
-        # 【字数铁律】给足输出空间不物理截断；含 PRE_WRITE_CHECK 13行表 + CHANGES JSON 12字段，12000 token 确保完整。
-        # 【输出上限适配】模型上限低于 12000（如 deepseek-chat 8192）时按已知/已学习上限钳制，
-        # 防下游直连 requests.post 的调用（去AI味/字数修正/审校等）400
-        'max_tokens': min(12000, get_output_limit(base_url, model) or 12000),
+        # 【字数铁律】给足输出空间不物理截断；含 PRE_WRITE_CHECK 13行表 + CHANGES JSON 12字段。
+        # 【max_tokens 按模型能力"不限"】给足 131072（与智驾 _DIM_MAX_TOKENS 同策略，旧值
+        # 12000 ≈ 6000 中文字对思考型模型仍可能截断正文），交由已知/自学习输出上限钳制：
+        # glm-5.3→128000、deepseek-chat→8192…防下游直连 requests.post 的调用
+        # （去AI味/字数修正/审校等）越界 400
+        'max_tokens': min(131072, get_output_limit(base_url, model) or 131072),
         'chapter_plan': chapter_plan,
         'current_chapter_num': current_chapter_num,
         'vol_chapter': vol_chapter,
@@ -6486,12 +6518,11 @@ def ai_continue(book_id):
                            + deai_rules_block
                            + "\n\n【硬性约束】修改后字数仍须 2400±100（2300-2500区间，含标点），保留原章节的剧情走向和钩子，只改文风不改剧情。")
             try:
-                deai_resp = requests.post(f'{base_url}/chat/completions',
-                    headers=build_auth_headers(api_key),
-                    json={'model': model,
-                          'messages': [{'role':'system','content':deai_system},
-                                       {'role':'user','content':f'请审校以下章节正文：\n\n{draft_content}'}],
-                          'temperature': 0.5, 'max_tokens': max_tokens},
+                deai_resp = _post_llm_adaptive(api_key, base_url, model,
+                    {'model': model,
+                     'messages': [{'role':'system','content':deai_system},
+                                  {'role':'user','content':f'请审校以下章节正文：\n\n{draft_content}'}],
+                     'temperature': 0.5, 'max_tokens': max_tokens},
                     timeout=180)
                 deai_result = deai_resp.json()
                 polished = deai_result['choices'][0]['message']['content'].strip()
@@ -6863,14 +6894,13 @@ def ai_continue_stream(book_id):
             # 流式生成正文初稿，收集完整内容用于后写校验（P0-1）
             # 【空回复修复1】非 200 显式报错（旧实现遍历错误页无 data 帧→流静默结束→前端"空回复"）
             full_content_parts = []
-            resp = requests.post(f'{base_url}/chat/completions',
-                headers=build_auth_headers(api_key),
-                json={'model': model,
-                      'messages': [{'role': 'system', 'content': system_prompt},
-                                   {'role': 'user', 'content': ctx['user_prompt']}],
-                      'temperature': ctx['temperature'],
-                      'max_tokens': ctx['max_tokens'],
-                      'stream': True},
+            resp = _post_llm_adaptive(api_key, base_url, model,
+                {'model': model,
+                 'messages': [{'role': 'system', 'content': system_prompt},
+                              {'role': 'user', 'content': ctx['user_prompt']}],
+                 'temperature': ctx['temperature'],
+                 'max_tokens': ctx['max_tokens'],
+                 'stream': True},
                 stream=True, timeout=180)
             if resp.status_code != 200:
                 _err_txt = ''
@@ -7109,11 +7139,10 @@ def ai_continue_batch(book_id):
 
             # Bug3 修复：LLM 调用添加状态码与结构检查，避免 KeyError 静默失败
             try:
-                resp = requests.post(f'{base_url}/chat/completions',
-                    headers=build_auth_headers(api_key),
-                    json={'model': model, 'messages': [{'role':'system','content':system_prompt},
-                                                        {'role':'user','content':ctx['user_prompt']}],
-                          'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens']},
+                resp = _post_llm_adaptive(api_key, base_url, model,
+                    {'model': model, 'messages': [{'role':'system','content':system_prompt},
+                                                  {'role':'user','content':ctx['user_prompt']}],
+                     'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens']},
                     timeout=180)
             except requests.exceptions.RequestException as re_err:
                 try:
@@ -7486,12 +7515,11 @@ def ai_continue_batch_stream(book_id):
                 full_parts = []
                 last_heartbeat = _time.time()
                 try:
-                    resp = requests.post(f'{base_url}/chat/completions',
-                        headers=build_auth_headers(api_key),
-                        json={'model': model, 'messages': [{'role':'system','content':system_prompt},
-                                                            {'role':'user','content':ctx['user_prompt']}],
-                              'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens'],
-                              'stream': True},
+                    resp = _post_llm_adaptive(api_key, base_url, model,
+                        {'model': model, 'messages': [{'role':'system','content':system_prompt},
+                                                      {'role':'user','content':ctx['user_prompt']}],
+                         'temperature': ctx['temperature'], 'max_tokens': ctx['max_tokens'],
+                         'stream': True},
                         stream=True, timeout=180)
                 except requests.exceptions.RequestException as re_err:
                     try:
@@ -7592,12 +7620,11 @@ def ai_continue_batch_stream(book_id):
                     try:
                         deai_hb = f'data: {json.dumps({"type": "heartbeat", "chapter_num": cur_ch, "message": f"正在去AI味审校第{cur_ch}章..."}, ensure_ascii=False)}\n\n'
                         deai_resp = yield from _run_blocking_with_heartbeat(
-                            lambda: requests.post(f'{base_url}/chat/completions',
-                                headers=build_auth_headers(api_key),
-                                json={'model': model,
-                                      'messages': [{'role':'system','content':deai_system},
-                                                   {'role':'user','content':f'请审校以下章节正文：\n\n{polished_content}'}],
-                                      'temperature': 0.5, 'max_tokens': ctx['max_tokens']},
+                            lambda: _post_llm_adaptive(api_key, base_url, model,
+                                {'model': model,
+                                 'messages': [{'role':'system','content':deai_system},
+                                              {'role':'user','content':f'请审校以下章节正文：\n\n{polished_content}'}],
+                                 'temperature': 0.5, 'max_tokens': ctx['max_tokens']},
                                 timeout=180),
                             deai_hb)
                         if deai_resp.status_code == 200:

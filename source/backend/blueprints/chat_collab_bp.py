@@ -2087,7 +2087,9 @@ def chat_smart():
             if auto_ctx_info['chapters'] or auto_ctx_info['dims']:
                 yield f'data: {json.dumps({"type": "meta", "kind": "auto_context", "info": auto_ctx_info}, ensure_ascii=False)}\n\n'
 
-            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=4096):
+            # 智驾通用对话 max_tokens 按模型能力"不限"：给足 _DIM_MAX_TOKENS，
+            # 由 llm_gateway 按已知/自学习输出上限钳制（旧硬编码 4096 会截断长回复）
+            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=_DIM_MAX_TOKENS):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT  # 裸注释心跳帧：前端自动忽略，不进正文
                     continue
@@ -4117,7 +4119,9 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
     messages = [{'role': 'system', 'content': sys_prompt}, {'role': 'user', 'content': user_msg}]
     content = ''
     try:
-        for chunk in gw_stream_with_hb(gw, messages, temperature=0.85, max_tokens=4096):
+        # 写正文 max_tokens 按模型能力"不限"：给足 _DIM_MAX_TOKENS（旧硬编码 4096 ≈ 2000
+        # 中文字即截断，正是字数铁律反复触发修正的元凶），网关按已知/自学习上限钳制
+        for chunk in gw_stream_with_hb(gw, messages, temperature=0.85, max_tokens=_DIM_MAX_TOKENS):
             if chunk is HEARTBEAT:
                 yield SSE_HEARTBEAT_COMMENT
                 continue
@@ -4155,7 +4159,7 @@ def _action_chapter(book, session, instruction, gw, sse, target_chapter_num, pre
         def _wc_blocking_call():
             return _ensure_word_count(
                 body_content, api_key=api_key, base_url=base_url,
-                model=model, max_tokens=4096, chapter_num=target_chapter_num,
+                model=model, max_tokens=_DIM_MAX_TOKENS, chapter_num=target_chapter_num,
                 count_fn=count_words)
 
         _wc_result = yield from _run_blocking_with_heartbeat(
@@ -5040,7 +5044,8 @@ def smart_general():
             if auto_ctx_info['chapters'] or auto_ctx_info['dims']:
                 yield sse({'type': 'meta', 'kind': 'auto_context', 'info': auto_ctx_info})
 
-            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=4096):
+            # 智驾通用生成 max_tokens 按模型能力"不限"（同 chat_smart，旧硬编码 4096 截断长内容）
+            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=_DIM_MAX_TOKENS):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
                     continue
@@ -7295,7 +7300,7 @@ def smart_deai():
         cur_messages = messages
         validation_meta = []
         try:
-            max_tok = 4096
+            max_tok = _DIM_MAX_TOKENS  # 去AI味整章重写：按模型能力给足（旧 4096 会截断长章）
             max_attempts = 4
             yield sse({'type': 'delta', 'content': f'正在为《{chapter.title}》去AI味…\n\n'})
             for _attempt in range(max_attempts):
