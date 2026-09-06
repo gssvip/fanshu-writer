@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -1266,19 +1267,31 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
 
   return (
     <div className="smart-skill-selector compact" data-gt-assistant-selector>
-      <button
-        className="smart-skill-toggle"
-        data-gt-assistant-toggle
-        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
-        title="切换助手（7款内置角色）· 下方可配置联网搜索 Key"
-      >
-        👤 <span style={{ fontWeight: 600 }}>{curRole.emoji}{curRole.name}</span>
-        <span className="smart-skill-arrow">{open ? '▲' : '▼'}</span>
-      </button>
+      {/* 助手切换 + 联网搜索Key入口并排（Key 入口从列表底部移出：手机端 .smart-toolbar 有
+          max-height:40vh 裁剪 + 三层嵌套滚动，列表底部的入口在小屏上根本滚不到/看不到） */}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+        <button
+          className="smart-skill-toggle"
+          data-gt-assistant-toggle
+          onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+          title="切换助手（7款内置角色）"
+          style={{ flex: 1 }}
+        >
+          👤 <span style={{ fontWeight: 600 }}>{curRole.emoji}{curRole.name}</span>
+          <span className="smart-skill-arrow">{open ? '▲' : '▼'}</span>
+        </button>
+        <button
+          data-gt-searchcfg-toggle
+          onClick={(e) => { e.stopPropagation(); setCfgOpen(true); loadCfg(); }}
+          title="配置联网搜索 Key（Tavily / Exa / Brave）"
+          style={{ border: '1px solid #bfe3d2', background: '#eafaf3', color: '#0a7d4f',
+                   borderRadius: 6, padding: '0 10px', fontSize: 15, cursor: 'pointer', flex: '0 0 auto' }}
+        >🌐</button>
+      </div>
       {open && (
         <div className="smart-skill-list" data-gt-assistant-popover
           onClick={(e) => { e.stopPropagation(); }}
-          style={{ maxHeight: cfgOpen ? 'none' : 320, overflowY: 'auto', zIndex: 102, position: 'relative' }}
+          style={{ maxHeight: 260, overflowY: 'auto', zIndex: 102, position: 'relative' }}
         >
           {roles.map(r => {
             const active = currentId === r.id;
@@ -1296,25 +1309,17 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
               </div>
             );
           })}
-          {/* 分隔：联网搜索 Key 配置 */}
-          <div
-            style={{ margin: '6px 2px 0', borderTop: '1px solid #eee', padding: '6px 2px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
-            data-gt-searchcfg-toggle
-            onClick={(e) => { e.stopPropagation(); setCfgOpen(true); loadCfg(); }}
-          >
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#0a7d4f' }}>🌐 联网搜索 Key</span>
-            <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 999, background: '#eafaf3', color: '#0a7d4f' }}>设置 ›</span>
-          </div>
         </div>
       )}
 
-      {/* 🌐 联网搜索 Key 配置浮层（fixed 浮层，规避父容器裁剪；独立成层，点击必响应） */}
-      {cfgOpen && (
+      {/* 🌐 联网搜索 Key 配置浮层：Portal 到 body，彻底摆脱手机端
+          .smart-toolbar(max-height:40vh)/.smart-dim-collapsible(overflow:hidden) 的裁剪与层级竞争 */}
+      {cfgOpen && createPortal(
         <div
           data-gt-searchcfg-popover
           onClick={(e) => { e.stopPropagation(); }}
           style={{
-            position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', zIndex: 400,
+            position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', zIndex: 1300,
             width: Math.min(360, typeof window !== 'undefined' ? window.innerWidth - 40 : 360), maxHeight: '80vh', overflowY: 'auto',
             background: '#fff', borderRadius: 14, padding: 14,
             border: '1px solid #e0e0ea', boxShadow: '0 10px 40px rgba(0,0,0,0.18)',
@@ -1354,7 +1359,8 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
               不填也能联网（DuckDuckGo 兜底）；填 Tavily/Exa/Brave 任一生效，结果更稳更准。保存后立即生效。
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
