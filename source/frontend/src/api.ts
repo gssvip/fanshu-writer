@@ -65,14 +65,14 @@ export function warmUpBackend(): void {
  * - 第 3 次失败后等 15 秒重试（累计约 26 秒，覆盖后端唤醒 + 数据库冷启动窗口）
  * - 第 4 次仍失败则抛错
  */
-async function fetchWithRetry(url: string, options: RequestInit, externalSignal?: AbortSignal, maxRetries = 3): Promise<Response> {
+async function fetchWithRetry(url: string, options: RequestInit, externalSignal?: AbortSignal, maxRetries = 3, timeoutMs = 60000): Promise<Response> {
   const delays = [3000, 8000, 15000]; // 重试间隔（毫秒）
   let lastError: any;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (externalSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       const onExternalAbort = () => controller.abort();
       if (externalSignal) externalSignal.addEventListener('abort', onExternalAbort);
       const res = await fetch(url, { ...options, signal: controller.signal });
@@ -121,13 +121,13 @@ async function fetchStream(url: string, cfg: RequestInit, signal?: AbortSignal):
   }
 }
 
-async function request<T>(url: string, options?: RequestInit, signal?: AbortSignal): Promise<T> {
+async function request<T>(url: string, options?: RequestInit, signal?: AbortSignal, timeoutMs = 60000, maxRetries = 3): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(options?.headers as Record<string, string> || {}) };
   const token = getToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   try {
-    const res = await fetchWithRetry(`${getApiBaseUrl()}${url}`, { ...options, headers }, signal);
+    const res = await fetchWithRetry(`${getApiBaseUrl()}${url}`, { ...options, headers }, signal, maxRetries, timeoutMs);
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({ error: `请求失败 (HTTP ${res.status})` }));
@@ -236,7 +236,15 @@ export const api = {
   fetchAIModels: (baseUrl: string, apiKey: string, configId?: string) =>
     request<{ models: { id: string; owned_by: string }[] }>('/ai/models', { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, config_id: configId }) }),
   testAIConnection: (baseUrl: string, apiKey: string, model: string) =>
-    request<{ success: boolean; reply: string; model: string; usage?: any }>('/ai/test', { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, model }) }),
+    // 测试连接：后端最多等 90s（思考型模型推理慢），前端给 95s 余量且不重试
+    // （重试会重复发请求浪费 token，且 4xx 超时本身不会重试）
+    request<{ success: boolean; reply: string; model: string; usage?: any }>(
+      '/ai/test',
+      { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, model }) },
+      undefined,
+      95000,
+      0,
+    ),
   aiChat: (messages: { role: string; content: string }[]) => request<{ content: string; usage?: any }>('/ai/chat', { method: 'POST', body: JSON.stringify({ messages }) }),
   aiChatStream: (messages: { role: string; content: string }[], signal?: AbortSignal) => {
     const cfg: RequestInit = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages }) };

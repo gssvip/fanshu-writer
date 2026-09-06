@@ -1290,6 +1290,8 @@ def _do_test_connection(base_url, api_key, model):
     base = _normalize_llm_base_url(base_url, model)
 
     def _post(temp):
+        # timeout=90：思考型模型（DeepSeek-R1 / GLM-5.3 等）即使 max_tokens=20
+        # 也会先做内部推理，实际耗时 20-60s 很常见；30s 会误判超时。
         return req.post(
             f"{base}/chat/completions",
             headers=build_auth_headers(api_key),
@@ -1300,7 +1302,7 @@ def _do_test_connection(base_url, api_key, model):
                 'temperature': temp,
                 'stream': False
             },
-            timeout=30
+            timeout=90
         )
 
     # 思考型模型（DeepSeek-R1/GLM-5.3 等）要求 temperature=1：先按名单钳制，
@@ -1412,7 +1414,7 @@ def test_ai_connection():
     except requests.exceptions.ConnectionError:
         return jsonify({'error': '无法连接到服务器，请检查 API 地址'}), 400
     except requests.exceptions.Timeout:
-        return jsonify({'error': '请求超时，请检查网络或稍后重试'}), 400
+        return jsonify({'error': '请求超时（已等待 90s）。若使用思考型模型（R1/GLM-5.3 等）推理较慢属正常，可稍后重试；否则请检查网络或 API 地址'}), 400
     except Exception as e:
         return jsonify({'error': f'测试失败：{str(e)}'}), 500
 
