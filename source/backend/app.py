@@ -955,6 +955,17 @@ def _llm_chat(messages, api_key=None, base_url=None, model=None,
 
 def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chapter_num=0, count_fn=None):
     """【字数铁律】公共字数修正函数：初稿字数不在 2300-2500 区间时调 AI 重写。
+
+    【2026-09-06 多轮收敛重构】旧版只重写一轮、失败即保留初稿，铁律形同虚设——实测
+    3018 字初稿一轮"精简"后反被压到 1189 字（思考型模型把 token 烧在推理上致正文被
+    max_tokens 截断 + 概述式压缩），最终 3018 字照常输出。改为最多 3 轮收敛：
+      ① 提示词带具体删/扩字数预算 + "逐句删减非概述重写"反压缩指令；
+      ② GLM 思考型模型重写时发 thinking=disabled（机械编辑不吃推理红利，思考会把
+         token 烧在推理上截断正文；模型拒收 disabled 由网关自愈退 enabled+low）；
+      ③ finish_reason=length（截断）→ 该轮作废、输出预算翻倍再来一轮；
+      ④ 未命中区间则把上轮实际字数写进反馈再试；
+      ⑤ 轮次耗尽在 {初稿+各轮有效候选} 中择 |字数-2400| 最小者（旧版只会
+         初稿/单轮二选一，"修正比初稿更偏"时必输给初稿）。
     四种创作模式（多Agent/流式/连续/连续流式）统一调用此函数。
     返回 (修正后内容, 备注)。
     备注：空串表示未触发修正或修正成功无异常；非空串表示修正过程的备注信息。
@@ -976,38 +987,92 @@ def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chap
         # 过短可能是生成失败，不浪费 token 重写
         return content, f'[字数铁律] 初稿仅{draft_len}字，疑似生成失败，未触发重写'
 
-    direction = '精简删减冗余' if draft_len > 2500 else '扩写补充场景细节'
-    method = ('精简方法：删冗余形容词/重复心理描写/过度环境渲染/总结性句子，保留对话动作与剧情走向。'
-              if draft_len > 2500 else
-              '扩写方法：增加感官细节/动作描写/对话节拍/场景纵深，不增加新剧情不改变走向。')
-    rewrite_system = f"""你是字数修正编辑。当前章节初稿{draft_len}字，需{direction}至 2400字±100（2300-2500字区间，含标点）。
+    # 【输出上限适配】默认 12000 会撞 8k 输出上限的模型直接 400，按已知/已学习上限钳制
+    wc_max_tok = min(int(max_tokens), get_output_limit(base_url, model) or int(max_tokens))
+    # GLM 系重写时关思考：机械编辑无需推理，防思考型把 token 烧在推理上截断正文
+    _extra = {'thinking': {'type': 'disabled'}} if 'glm' in (model or '').lower() else {}
 
-【字数绝对铁律】最终输出必须落在 2300-2500 字区间，这是不可违反的硬约束，优先级高于一切。
-【保留要求】保留原章节的剧情走向、人物对话、章尾钩子、关键信息，不改变故事内容，只调整篇幅。
+    def _rewrite_call(system_prompt, source_text, mt):
+        """调 LLM 重写一轮，返回 (正文或空串, 是否被 max_tokens 截断)。"""
+        messages = [{'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': f'请修正以下章节正文字数：\n\n{source_text}'}]
+        try:
+            if LLMGateway is not None:
+                # 走网关：自带超时重试/429·400 上限钳制/thinking 拒收自愈。
+                # max_retries=1：多轮循环本身已是冗余，压最坏耗时（3轮×2次尝试）
+                _r = LLMGateway(base_url, api_key, model, timeout=180, max_retries=1).chat(
+                    messages, temperature=0.5, max_tokens=mt, **_extra)
+                if not _r.ok:
+                    return '', False
+                return _r.content.strip(), (_r.finish_reason == 'length')
+            resp = requests.post(f'{base_url}/chat/completions',
+                headers=build_auth_headers(api_key),
+                json={'model': model, 'messages': messages,
+                      'temperature': 0.5, 'max_tokens': mt},
+                timeout=180)
+            result = resp.json()
+            _fr = ((result.get('choices') or [{}])[0].get('finish_reason') or '')
+            return (result['choices'][0]['message']['content'] or '').strip(), _fr == 'length'
+        except Exception:
+            return '', False
+
+    candidates = [(draft_len, content)]  # 全部有效候选（含初稿），末轮择优
+    trail = []                            # 各轮字数轨迹（写进备注，前端可见）
+    base_text, base_len = content, draft_len  # 每轮重写底稿（择更接近目标者）
+    feedback = ''
+
+    for attempt in (1, 2, 3):
+        if base_len > 2500:
+            budget = f'当前{base_len}字，需删减约{base_len - 2400}字，使最终字数落在 2300-2500 字区间。'
+            method = ('删减方法：逐句删掉冗余形容词、重复心理描写、枝节场景，保留全部对话、动作与剧情走向。'
+                      '⚠️ 是删句子，不是把正文压缩成梗概——严禁概述式重写。')
+        else:
+            budget = f'当前{base_len}字，需扩写约{2400 - base_len}字，使最终字数落在 2300-2500 字区间。'
+            method = ('扩写方法：在原文基础上逐段补充感官细节、动作节拍、对话停顿，不增加新剧情不改变走向。'
+                      '⚠️ 原文段落必须全部保留，只做增补，严禁借机重写压缩。')
+        rewrite_system = f"""你是字数修正编辑。{budget}
+
 {method}
-只输出修正后的完整正文，不输出任何说明或前缀。"""
-    try:
-        # 【输出上限适配】默认 12000 会撞 8k 输出上限的模型直接 400，按已知/已学习上限钳制
-        _wc_max_tok = min(int(max_tokens), get_output_limit(base_url, model) or int(max_tokens))
-        rewrite_resp = requests.post(f'{base_url}/chat/completions',
-            headers=build_auth_headers(api_key),
-            json={'model': model,
-                  'messages': [{'role': 'system', 'content': rewrite_system},
-                               {'role': 'user', 'content': f'请修正以下章节正文字数：\n\n{content}'}],
-                  'temperature': 0.5, 'max_tokens': _wc_max_tok},
-            timeout=180)
-        rewrite_result = rewrite_resp.json()
-        rewritten = rewrite_result['choices'][0]['message']['content'].strip()
+
+【字数绝对铁律】最终输出必须落在 2300-2500 字区间（含标点），这是不可违反的硬约束，优先级高于一切。
+【保留要求】保留原章节的剧情走向、人物对话、章尾钩子、关键信息，不改变故事内容，只调整篇幅。
+{feedback}只输出修正后的完整正文，不输出任何说明或前缀。"""
+        rewritten, truncated = _rewrite_call(rewrite_system, base_text, wc_max_tok)
+        if not rewritten:
+            trail.append(f'第{attempt}轮未返回')
+            feedback = '【上轮反馈】上一轮未返回有效内容，请重新输出修正后的完整正文。\n'
+            continue
         rewritten_len = count_fn(rewritten)
-        if rewritten and 2300 <= rewritten_len <= 2500:
-            return rewritten, f'[字数铁律] 初稿{draft_len}字，AI修正至{rewritten_len}字。'
-        elif rewritten and rewritten_len > 500:
-            if abs(rewritten_len - 2400) < abs(draft_len - 2400):
-                return rewritten, f'[字数铁律] 初稿{draft_len}字，AI修正后{rewritten_len}字仍偏离，已采纳更接近目标版本。'
-            return content, f'[字数铁律] 初稿{draft_len}字，AI修正后{rewritten_len}字仍偏离，保留初稿。'
-        return content, f'[字数铁律] 初稿{draft_len}字，AI修正返回异常，保留初稿。'
-    except Exception as e:
-        return content, f'[字数铁律] 初稿{draft_len}字，AI修正异常：{str(e)[:80]}，保留初稿。'
+        if truncated:
+            # 截断轮的字数是假象（正文被掐断而非写完），不作候选；翻倍输出预算再来
+            trail.append(f'第{attempt}轮{rewritten_len}字(截断)')
+            wc_max_tok = min(wc_max_tok * 2, 16384)
+            feedback = (f'【上轮反馈】上一轮输出不完整（被长度截断，仅得到{rewritten_len}字），'
+                        f'请完整输出修正后的全文。\n')
+            continue
+        trail.append(f'第{attempt}轮{rewritten_len}字')
+        if 2300 <= rewritten_len <= 2500:
+            return rewritten, f'[字数铁律] 初稿{draft_len}字，经{attempt}轮修正至{rewritten_len}字。'
+        if rewritten_len > 500:
+            candidates.append((rewritten_len, rewritten))
+            if abs(rewritten_len - 2400) < abs(base_len - 2400):
+                base_text, base_len = rewritten, rewritten_len
+                feedback = (f'【上轮反馈】上轮修正后{rewritten_len}字仍'
+                            f'{"过长" if rewritten_len > 2500 else "过短"}，'
+                            f'需再{"删减" if rewritten_len > 2500 else "扩写"}约{abs(rewritten_len - 2400)}字。\n')
+            else:
+                feedback = ('【上轮反馈】上一轮修正偏差过大，已回退原稿；'
+                           '请严格按本轮删/扩预算逐句处理，不要整篇重写。\n')
+        else:
+            feedback = (f'【上轮反馈】上一轮仅{rewritten_len}字（疑似被压缩成梗概），'
+                        f'请务必在原稿基础上只做删减/增补，输出完整正文。\n')
+
+    # 轮次耗尽仍未命中：在全部候选中择最接近 2400 者
+    best_len, best_text = min(candidates, key=lambda c: abs(c[0] - 2400))
+    trail_txt = '，'.join(trail)
+    if best_text is content:
+        return content, f'[字数铁律] 初稿{draft_len}字，3轮修正（{trail_txt}）后仍偏离，保留初稿。'
+    return best_text, f'[字数铁律] 初稿{draft_len}字，3轮修正（{trail_txt}）后仍偏离，已采纳最接近目标版本（{best_len}字）。'
 
 _CN_DIGITS = {'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'零':0,'〇':0}
 _CN_UNITS = {'十':10,'百':100,'千':1000,'万':10000,'亿':100000000}
