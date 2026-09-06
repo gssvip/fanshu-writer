@@ -1894,8 +1894,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 
 /* AI 测试连接 */
 .ai-action-row{display:flex;gap:8px;align-items:stretch}
-/* 两按钮等宽、横排均匀分布：flex:1 平分容器宽度，white-space:nowrap 防换行撑高 */
-.ai-action-row .btn-primary,.ai-action-row .ai-test-btn{flex:1;display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 12px;line-height:1.2;white-space:nowrap}
+/* 两按钮严格等宽：flex:1 1 0 + width:0 + min-width:0 强制忽略内容宽度平分容器；
+   之前仅 flex:1 时，min-width:auto 默认值会让内容长的按钮（"保存AI配置"）
+   撑出更宽的基础宽度，导致视觉上两按钮不等宽 */
+.ai-action-row .btn-primary,.ai-action-row .ai-test-btn{flex:1 1 0;width:0;min-width:0;display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 12px;line-height:1.2;white-space:nowrap}
 .ai-test-btn{border-color:#00b894;color:#00b894}
 .ai-test-btn:hover{background:#e8f8f5}
 .test-result{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:var(--radius-sm);margin-top:8px;font-size:13px;line-height:1.5}
