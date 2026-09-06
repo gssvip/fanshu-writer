@@ -984,24 +984,10 @@ def _post_llm_adaptive(api_key, base_url, model, payload, timeout=180, stream=Fa
     return resp
 
 def _ensure_word_count(content, api_key, base_url, model, max_tokens=12000, chapter_num=0, count_fn=None):
-    """【字数铁律】公共字数修正函数：初稿字数不在 2300-2500 区间时调 AI 重写。
+    """字数铁律修正：初稿不在 2300-2500 区间时最多 3 轮 AI 重写收敛。
+    四种创作模式（多Agent/流式/连续/连续流式）统一调用。返回 (内容, 备注)。
 
-    【2026-09-06 多轮收敛重构】旧版只重写一轮、失败即保留初稿，铁律形同虚设——实测
-    3018 字初稿一轮"精简"后反被压到 1189 字（思考型模型把 token 烧在推理上致正文被
-    max_tokens 截断 + 概述式压缩），最终 3018 字照常输出。改为最多 3 轮收敛：
-      ① 提示词带具体删/扩字数预算 + "逐句删减非概述重写"反压缩指令；
-      ② GLM 思考型模型重写时发 thinking=disabled（机械编辑不吃推理红利，思考会把
-         token 烧在推理上截断正文；模型拒收 disabled 由网关自愈退 enabled+low）；
-      ③ finish_reason=length（截断）→ 该轮作废、输出预算翻倍再来一轮；
-      ④ 未命中区间则把上轮实际字数写进反馈再试；
-      ⑤ 轮次耗尽在 {初稿+各轮有效候选} 中择 |字数-2400| 最小者（旧版只会
-         初稿/单轮二选一，"修正比初稿更偏"时必输给初稿）。
-    四种创作模式（多Agent/流式/连续/连续流式）统一调用此函数。
-    返回 (修正后内容, 备注)。
-    备注：空串表示未触发修正或修正成功无异常；非空串表示修正过程的备注信息。
-
-    count_fn: 字数统计函数，默认 _count_cn_chars（去空白含所有标点）。
-              传入 count_words 可与章节保存/列表显示口径一致（中文+中文标点+英文单词+数字串）。
+    count_fn: 字数统计函数，默认 _count_cn_chars，传 count_words 与章节列表口径一致。
     """
     if not content or not content.strip():
         return content, ''
