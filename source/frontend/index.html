@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" translate="no">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="./wangbiao.png" />
@@ -13,6 +13,10 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="蚂蚁写作" />
+    <!-- 禁止翻译扩展染指 DOM（双保险之一）：翻译器重写 React 管理的文本节点
+         会导致 react-dom 卸载时 removeChild 崩溃（facebook/react#11538）；
+         另一层保险是 main.tsx 里的 installBrowserTranslationDomGuard() -->
+    <meta name="google" content="notranslate" />
 
     <title>蚂蚁写作</title>
     <script>

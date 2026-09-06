@@ -1,7 +1,12 @@
 import { Component } from 'react';
 import { createRoot } from 'react-dom/client'
+import { installBrowserTranslationDomGuard } from './lib/installBrowserTranslationDomGuard'
 import './index.css'
 import App from './App.tsx'
+
+// 必须在 React 挂载前安装：防止浏览器翻译扩展改写 DOM 后
+// react-dom 卸载子树时 removeChild/insertBefore 抛 NotFoundError 崩掉整棵树
+installBrowserTranslationDomGuard();
 
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null; info: string }> {
   constructor(props: any) {
