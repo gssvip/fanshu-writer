@@ -710,9 +710,6 @@ export default function MinePage() {
                   })}
                 </div>
               )}
-              <div className="text-muted" style={{ fontSize: 11, marginTop: 4 }}>
-                点 ⭐ 为当前使用模型；✕ 移除即从此商家中去掉该模型（智驾通用不再显示）。
-              </div>
             </div>
             <div className="form-field">
               <label>API Key <span className={`key-status ${aiConfig.has_key ? 'set' : 'unset'}`}>{aiConfig.has_key ? '(已设置)' : '(未设置)'}</span></label>
