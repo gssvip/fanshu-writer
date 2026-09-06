@@ -1,0 +1,1 @@
+import{n as a}from"./index-CSEYd4xx.js";var i=a();function e({size:a=24,className:e,style:l}){return(0,i.jsx)("img",{src:"wangbiao.webp",width:a,height:a,alt:"AI 智驾","aria-label":"AI 智驾",className:e,style:{objectFit:"contain",display:"inline-block",verticalAlign:"middle",...l},draggable:!1})}export{e as t};

@@ -4227,9 +4227,24 @@ textarea.input.paper-textarea{
   flex: 1 1 auto; min-width: 0;
   display: inline-flex; align-items: center; justify-content: center;
   gap: 4px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden;
   font-size: 12px;
 }
+/* emoji 单独成 flex 子项：固定行高(line-height:1)，🧩/🧠 字形高度差异不再撑高行盒，
+   两个标题高度完全一致 → 文字上下严格居中对齐 */
+.review-head-emoji {
+  flex: 0 0 auto; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+/* 文字单独成 flex 子项：固定行高，负责超宽截断省略 */
+.review-head-text {
+  flex: 0 1 auto; min-width: 0;
+  line-height: 1.4;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 徽章内联展示：chat-tool-badge 默认 absolute（给有定位锚点的角落徽章用），
+   标题里无锚点会乱飘；改 static 内联后随 flex 垂直居中、位置确定 */
+.review-head-title .chat-tool-badge { position: static; }
 @media (max-width: 768px) {
   .review-head-title { font-size: 11.5px; }
 }
@@ -4239,9 +4254,11 @@ textarea.input.paper-textarea{
 .review-grid-cell .impact-preview-head > :first-child {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
-/* 头部更紧凑：少 padding / 小字号 → 真正一行高度 */
+/* 头部更紧凑：少 padding / 小字号 → 真正一行高度；
+   min-height 统一固定高度 → 无论内容差异（刷新按钮/徽章），两个按钮严格等高、文字上下位置一致 */
 .review-grid-cell .impact-preview-head {
   padding: 5px 8px; font-size: 11.5px; gap: 4px;
+  min-height: 34px;
 }
 .review-grid-cell .impact-preview-toggle { font-size: 10.5px; padding: 0 2px; }
 /* 手机端也强制同一行（不换行），继续压小 */

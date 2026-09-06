@@ -4233,7 +4233,10 @@ export default function ChatPanel() {
                      重算后事件日志更准，校审出的防遗忘/一致性报告也更准。 */}
                   <div className="impact-preview-panel review-grid-cell">
                     <div className="impact-preview-head" onClick={() => setShowBackfill(s => !s)}>
-                      <span className="review-head-title">🧩 事件日志</span>
+                      <span className="review-head-title">
+                        <span className="review-head-emoji">🧩</span>
+                        <span className="review-head-text">事件日志</span>
+                      </span>
                       <span className="impact-preview-toggle">{showBackfill ? '▲' : '▼'}</span>
                     </div>
                     {showBackfill && (
@@ -4284,7 +4287,8 @@ export default function ChatPanel() {
                   <div className="opt-report-inline impact-preview-panel review-grid-cell">
                     <div className="impact-preview-head">
                       <span className="review-head-title" onClick={(e) => { e.stopPropagation(); setShowOptReport(s => !s); }} style={{cursor:'pointer'}}>
-                        🧠 系统学习
+                        <span className="review-head-emoji">🧠</span>
+                        <span className="review-head-text">系统学习</span>
                         {optimizationReport && optimizationReport.failure_count > 0 && (
                           <span className="chat-tool-badge" style={{fontSize:10}}>{optimizationReport.failure_count}</span>
                         )}
