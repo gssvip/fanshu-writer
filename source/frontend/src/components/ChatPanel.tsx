@@ -1278,7 +1278,7 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
       {open && (
         <div className="smart-skill-list" data-gt-assistant-popover
           onClick={(e) => { e.stopPropagation(); }}
-          style={{ maxHeight: cfgOpen ? 'none' : 260, overflowY: 'auto', zIndex: 102, position: 'relative' }}
+          style={{ maxHeight: cfgOpen ? 'none' : 320, overflowY: 'auto', zIndex: 102, position: 'relative' }}
         >
           {roles.map(r => {
             const active = currentId === r.id;

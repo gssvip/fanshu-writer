@@ -3887,7 +3887,9 @@ textarea.input.paper-textarea{
 @media (max-width: 600px) {
   .smart-dim-collapsible {
     overflow: hidden; transition: max-height 0.25s ease, opacity 0.2s ease;
-    max-height: 300px; opacity: 1;
+    /* 520px：容纳两排维度按钮(~80px)+助手切换(~38px)+展开的7角色列表+联网Key入口(~276px)，
+       旧值300px会把列表底部的"🌐 联网搜索 Key"入口裁掉（手机端拉取不到） */
+    max-height: 520px; opacity: 1;
   }
   .smart-dim-collapsible[data-collapsed="true"] {
     max-height: 0; opacity: 0; padding: 0; margin: 0;
