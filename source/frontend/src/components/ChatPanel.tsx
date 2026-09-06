@@ -1274,7 +1274,7 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
           className="smart-skill-toggle"
           data-gt-assistant-toggle
           onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
-          title="切换助手（7款内置角色）"
+          title="切换助手（10款内置角色）"
           style={{ flex: 1 }}
         >
           👤 <span style={{ fontWeight: 600 }}>{curRole.emoji}{curRole.name}</span>
@@ -1289,9 +1289,9 @@ function GeneralAssistantSelector({ roles, currentId, onSelect }: {
         >🌐</button>
       </div>
       {open && (
-        <div className="smart-skill-list" data-gt-assistant-popover
+        <div className="smart-skill-list smart-assistant-list" data-gt-assistant-popover
           onClick={(e) => { e.stopPropagation(); }}
-          style={{ maxHeight: 260, overflowY: 'auto', zIndex: 102, position: 'relative' }}
+          style={{ zIndex: 102, position: 'relative' }}
         >
           {roles.map(r => {
             const active = currentId === r.id;

@@ -3948,6 +3948,27 @@ textarea.input.paper-textarea{
   line-height: 1.6;
 }
 
+/* 手机端助手角色列表：两列网格。
+   背景：10 个角色单列高度超出 .smart-toolbar(40vh 限高)+嵌套滚动，
+   触摸滚动被外层聊天区抢走，只能拉到前几个（如"剧情设计师"），
+   后面的角色永远滑不到。两列后高度减半，无需滚动即可全部可见。 */
+@media (max-width: 600px) {
+  .smart-assistant-list {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4px;
+    padding: 6px;
+  }
+  /* grid 子项默认 min-width:auto 会撑破列宽，置 0 才能让角色名正常省略号截断 */
+  .smart-assistant-list .smart-skill-item {
+    min-width: 0;
+    padding: 6px;
+  }
+  /* 两列列表展开后整块工具栏变高，放宽限高避免小屏（如 667px 高、40vh 仅 267px）
+     仍需滚动才能看全；选完角色列表即收起，不会长期占用屏幕 */
+  .smart-toolbar { max-height: 55vh; }
+}
+
 /* 正文Tab：章节信息 + 动作按钮 */
 .smart-chapter-info {
   font-size: 12px; color: var(--text-secondary); padding: 4px 0;
