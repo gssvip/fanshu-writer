@@ -84,12 +84,11 @@ def chat_general():
         wrap_message_with_context = lambda msg, bt, bb: msg
     # P0 真联网搜索：多引擎调度桥（Tavily/Exa/Brave/DuckDuckGo兜底 + 智谱原生web_search）
     try:
-        from web_search_bridge import (should_use_web_search, run_web_search,
+        from web_search_bridge import (run_web_search,
                                        format_search_context_for_llm, get_native_websearch_params)
         _search_available = True
     except Exception:
         _search_available = False
-        def should_use_web_search(*a, **k): return False
         def run_web_search(*a, **k):
             from dataclasses import dataclass
             @dataclass
@@ -643,8 +642,10 @@ def chat_general():
             # ============== P0 真联网搜索接入 ==============
             # 0) 先把用户配置的搜索 Key 同步进 env（无 env 时才用；配置路由保存后立即生效）
             _sync_search_keys_from_preference()
-            # 1) 是否需要搜：联网开关开启=强制搜（绕开创作类话题不搜的过滤）；未开启=启发式判定
-            _need_search = _search_available and (web_search_enabled or should_use_web_search(message, trimmed))
+            # 1) 【默认关闭联网】只看用户开关：开关开=搜，开关关=绝不搜。
+            #    （旧版"未开启时启发式自动判定 should_use_web_search"等于默认半开，
+            #     用户要求通用聊天默认关闭联网——现在未亮灯就是真不联网）
+            _need_search = _search_available and web_search_enabled
             _search_ctx = ''
             if _need_search:
                 try:
@@ -668,8 +669,9 @@ def chat_general():
                 if messages and messages[-1].get('role') == 'user':
                     messages[-1]['content'] = (str(messages[-1].get('content', '')) + '\n\n' + _search_ctx)[:12000]
             # 6) 模型原生联网参数（智谱 GLM 开原生 web_search 工具，质量比独立搜索更高；不消耗第三方 Key）
+            #    【默认关闭联网】同上：只跟随用户开关（旧版 scan_intent 命中也自动开，等于默认半开）
             try:
-                _native_p = get_native_websearch_params(_mg, _bg, enabled=_need_search or (scan_intent and _search_available))
+                _native_p = get_native_websearch_params(_mg, _bg, enabled=_need_search)
                 if _native_p and isinstance(_native_p, dict):
                     # deep-merge 到 _mcp_native_kwargs（tools 数组保留，extra_body 解包）
                     if 'extra_body' in _native_p and isinstance(_native_p['extra_body'], dict):

@@ -337,15 +337,16 @@ _KNOWN_OUTPUT_LIMITS = {
     'claude-3-7-sonnet': 64000, 'claude-sonnet-4': 64000, 'claude-opus-4': 32000,
     # Google
     'gemini-2.5-pro': 65536, 'gemini-2.5-flash': 65536, 'gemini-2.0-flash': 8192,
-    # 智谱 GLM（5.x 最大输出 131072；4.x 较低——不在此列的 GLM 靠 400 自学习）
-    'glm-5.3': 131072, 'glm-5.3-flash': 131072, 'glm-5.2': 131072,
-    'glm-5': 131072, 'glm-5-turbo': 131072,
+    # 智谱 GLM（5.x 实测输出上限 128000——非 131072，超发会被拒（实测 GLM 走 HTTP 429
+    # 报 "Field 'max_output_tokens' must be at most 128000"）；4.x 较低——不在此列的靠自学习）
+    'glm-5.3': 128000, 'glm-5.3-flash': 128000, 'glm-5.2': 128000,
+    'glm-5': 128000, 'glm-5-turbo': 128000,
 }
 
 # (base_url, model) → 报错学到的输出上限（进程级缓存，重启后首跑自学习一次）
 _LEARNED_OUTPUT_LIMITS: dict[tuple[str, str], int] = {}
 
-_MAX_TOKENS_MENTION_RE = re.compile(r'max[\s_-]?tokens', re.I)
+_MAX_TOKENS_MENTION_RE = re.compile(r'max[\s_-]?(?:output[\s_-]?)?tokens', re.I)
 # 上限值锚点：紧随"maximum allowed value of / at most / 不能超过 / 最大值为"等措辞的数字
 _OUTPUT_LIMIT_ANCHOR_RE = re.compile(
     r'(?:maximum allowed (?:value|number) of|at most|maximum of|limit (?:is|of)'
@@ -546,9 +547,26 @@ class LLMGateway:
                                 body_text = (err.get("message") or "")[:300]
                     except Exception:
                         body_text = (resp.text or "")[:200]
+                    # 【GLM 参数校验走 429】（同 chat_stream）max_output_tokens 超限被报成
+                    # 429 时先解析钳制再重发；真·限流解析不出 → 正常失败返回
+                    if resp.status_code == 429:
+                        _limit_429 = _learn_output_limit(self.base_url, self.model,
+                                                         body_text, payload["max_tokens"])
+                        if _limit_429 and _limit_429 < payload["max_tokens"]:
+                            payload["max_tokens"] = _limit_429
+                            continue
                     # 【输出上限自适应】400/422 且报错指向 max_tokens 超限 → 解析真实
                     # 上限、钳制 payload 后立即重发（解析不出具体数字则退 8192 兜底）
                     if resp.status_code in (400, 422):
+                        # 【思考禁用自愈】发 thinking=disabled 被强制思考模型（GLM-5.3 等）
+                        # 拒绝 → 退回最轻思考档（enabled+low）重发
+                        _th = payload.get('thinking')
+                        if (isinstance(_th, dict) and _th.get('type') == 'disabled'
+                                and 'thinking' in body_text):
+                            payload['thinking'] = {'type': 'enabled'}
+                            payload['reasoning_effort'] = 'low'
+                            payload['temperature'] = 1
+                            continue
                         # 【思考温度自愈】报错要求思考开启时 temperature=1（名单外的
                         # 强制思考模型也会报）→ 钳到 1 立即重发，不把限制抛给上层
                         if ('temperature' in body_text and 'set to 1' in body_text
@@ -667,12 +685,35 @@ class LLMGateway:
         for attempt in range(1, max_attempts + 1):
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout, stream=True)
+                # 【GLM 参数校验走 429】实测 GLM-5.x 把 max_output_tokens 超限报成 HTTP 429
+                # （"Field 'max_output_tokens' must be at most 128000"），并非配额耗尽：
+                # 先尝试解析上限钳制重发一次；真·限流文案不含 max_tokens 字样解析不出
+                # → 落回下方正常 429 处理（不重试直接抛，避免打空配额）。
+                if resp.status_code == 429:
+                    _err_429 = _error_text(resp)
+                    _limit_429 = _learn_output_limit(self.base_url, self.model,
+                                                     _err_429, payload["max_tokens"])
+                    if _limit_429 and _limit_429 < payload["max_tokens"]:
+                        payload["max_tokens"] = _limit_429
+                        resp = requests.post(url, headers=headers, json=payload,
+                                             timeout=self.timeout, stream=True)
                 # 【输出上限自适应】400/422 且报错指向 max_tokens 超限 → 解析真实上限、
                 # 钳制 payload 后重发一次；解析不出具体数字则退 8192 兜底（均只重发一次）。
                 if resp.status_code in (400, 422):
-                    # 【思考温度自愈】报错要求思考开启时 temperature=1 → 钳到 1 重发
                     _err_txt = _error_text(resp)
-                    if ('temperature' in _err_txt and 'set to 1' in _err_txt
+                    # 【思考禁用自愈】通用聊天默认关思考发 thinking=disabled，若该模型
+                    # 强制思考（GLM-5.3 等）会 400 拒绝 → 退回最轻思考档（enabled+low）重发
+                    _th = payload.get('thinking')
+                    if (isinstance(_th, dict) and _th.get('type') == 'disabled'
+                            and 'thinking' in _err_txt):
+                        payload['thinking'] = {'type': 'enabled'}
+                        payload['reasoning_effort'] = 'low'
+                        # 思考开启时上游要求 temperature=1（GLM 5.2/5.3 实测），一并钳制
+                        payload['temperature'] = 1
+                        resp = requests.post(url, headers=headers, json=payload,
+                                             timeout=self.timeout, stream=True)
+                    # 【思考温度自愈】报错要求思考开启时 temperature=1 → 钳到 1 重发
+                    elif ('temperature' in _err_txt and 'set to 1' in _err_txt
                             and payload.get("temperature") != 1):
                         payload["temperature"] = 1
                         resp = requests.post(url, headers=headers, json=payload,

@@ -4714,11 +4714,11 @@ export default function ChatPanel() {
                             <span style={{ color: '#aaa' }}>{showModelPicker ? '▲' : '▼'}</span>
                           </button>
 
-                          {/* ── 🔍 联网搜索 Toggle：占 1/4（高亮=强制联网搜，未亮=自动判定） ── */}
+                          {/* ── 🔍 联网搜索 Toggle：占 1/4（高亮=联网搜，未亮=不联网） ── */}
                           <button
                             className={`gt-4cell ${generalWebSearch ? 'gt-toggle-on' : 'gt-toggle-off'}`}
                             onClick={(e) => { e.stopPropagation(); setGeneralWebSearch(s => !s); }}
-                            title={generalWebSearch ? '🔍 联网搜索已开启：每次提问都先联网搜索最新资料再回答' : '🔍 点击开启联网搜索：每次提问都先联网搜索最新资料（不开时按内容自动判定）'}
+                            title={generalWebSearch ? '🔍 联网搜索已开启：每次提问都先联网搜索最新资料再回答' : '🔍 点击开启联网搜索：开启后每次提问都先联网搜最新资料；关闭时不联网（默认关闭）'}
                             style={{ ..._chipBase, border: '1px solid #d6e4d8', background: generalWebSearch ? '#eafaf3' : '#fafafa', cursor: 'pointer', color: generalWebSearch ? '#0a7d4f' : '#555' }}
                           >
                             🔍<span style={{ fontWeight: 600 }}>联网</span>
@@ -4729,7 +4729,7 @@ export default function ChatPanel() {
                             className={`gt-4cell ${generalDeepThink > 0 ? 'gt-toggle-on' : 'gt-toggle-off'}`}
                             data-gt-deeppicker-chip
                             onClick={(e) => { e.stopPropagation(); setDeepThinkOpen(s => !s); }}
-                            title={`深度思考${generalDeepThink > 0 ? '：' + ({1: '标准思考', 2: '深度思考'} as Record<number, string>)[generalDeepThink] : '（关闭）'}. 点击选择思考程度`}
+                            title={`深度思考${generalDeepThink > 0 ? '：' + ({1: '标准思考', 2: '深度思考'} as Record<number, string>)[generalDeepThink] : '（关闭·默认）'}。点击选择思考程度`}
                             style={{ ..._chipBase, border: '1px solid #d8d0ec', background: generalDeepThink > 0 ? '#f1ecfa' : '#fafafa', cursor: 'pointer', color: generalDeepThink > 0 ? '#6236c9' : '#555' }}
                           >
                             <span style={{ fontWeight: 600 }}>

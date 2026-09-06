@@ -1894,10 +1894,14 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 
 /* AI 测试连接 */
 .ai-action-row{display:flex;gap:8px;align-items:stretch}
-/* 两按钮严格等宽：flex:1 1 0 + width:0 + min-width:0 强制忽略内容宽度平分容器；
-   之前仅 flex:1 时，min-width:auto 默认值会让内容长的按钮（"保存AI配置"）
-   撑出更宽的基础宽度，导致视觉上两按钮不等宽 */
-.ai-action-row .btn-primary,.ai-action-row .ai-test-btn{flex:1 1 0;width:0;min-width:0;display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 12px;line-height:1.2;white-space:nowrap}
+/* 两按钮完全同尺寸（三处历史坑，2026-09-06 实测修复）：
+   ① flex:0 0 calc(50% - 4px)：两按钮计算值完全一致，规避 flex:1 平分奇数宽度时
+      的亚像素取整偏差（实测 554px 行宽被 snap 成 272/274）
+   ② height:40px 定高：emoji（🔌）字形会撑高行盒，min-height:40 挡不住——实测
+      次按钮被撑到 50px，比主按钮高 10px
+   ③ margin-top:0：覆盖 .tool-panel .btn-primary 的 margin-top:10px（该规则把
+      主按钮下推且被 stretch 截短，与次按钮上下错位） */
+.ai-action-row .btn-primary,.ai-action-row .ai-test-btn{flex:0 0 calc(50% - 4px);height:40px;margin-top:0;display:inline-flex;align-items:center;justify-content:center;padding:8px 12px;line-height:1.2;white-space:nowrap}
 .ai-test-btn{border-color:#00b894;color:#00b894}
 .ai-test-btn:hover{background:#e8f8f5}
 .test-result{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:var(--radius-sm);margin-top:8px;font-size:13px;line-height:1.5}

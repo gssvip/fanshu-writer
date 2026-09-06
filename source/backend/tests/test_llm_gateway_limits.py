@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 
@@ -101,6 +102,27 @@ class TestParseMaxTokensLimit:
 
     def test_empty_message(self):
         assert lg._parse_max_tokens_limit('', 27000) == 0
+
+    def test_glm_max_output_tokens_field(self):
+        """GLM 实测文案（2026-09-06）：字段名是 max_output_tokens，且走 HTTP 429。"""
+        msg = "Field 'max_output_tokens' must be at most 128000"
+        assert lg._parse_max_tokens_limit(msg, 131072) == 128000
+
+    def test_glm_known_table_128000(self):
+        """已知表 GLM-5.x 上限按实测修正为 128000（原 131072 会直接 429）。"""
+        assert lg._known_output_limit('glm-5.3') == 128000
+        assert lg._known_output_limit('glm-5.2') == 128000
+
+
+class _Resp429:
+    status_code = 429
+
+    def __init__(self, msg):
+        self.text = msg
+        self._msg = msg
+
+    def json(self):
+        return {"error": {"message": self._msg}}
 
 
 class TestKnownOutputLimit:
@@ -214,6 +236,63 @@ class TestChatStreamAdaptation:
         gw = LLMGateway('https://x.com/v1', 'sk-x', 'unknown-model-xyz')
         with pytest.raises(LLMError):
             list(gw.chat_stream([{'role': 'user', 'content': 'hi'}], max_tokens=2000))
+
+    def test_429_glm_style_clamps_and_resends(self, monkeypatch):
+        """GLM 参数校验走 429（2026-09-06 实测）：解析 max_output_tokens 上限
+        → 钳制重发成功；真·限流（文案无 max_tokens）不重发直接抛。"""
+        calls = []
+
+        def post(url, **kw):
+            calls.append(kw['json']['max_tokens'])
+            if len(calls) == 1:
+                return _Resp429("Field 'max_output_tokens' must be at most 128000")
+            return _RespStream200(_SSE_OK)
+
+        monkeypatch.setattr('llm_gateway.requests.post', post)
+        gw = LLMGateway('https://x.com/v1', 'sk-x', 'unknown-model-429')
+        out = ''.join(gw.chat_stream([{'role': 'user', 'content': 'hi'}], max_tokens=131072))
+        assert out == '正文'
+        assert calls == [131072, 128000]
+        assert lg._LEARNED_OUTPUT_LIMITS[('https://x.com/v1', 'unknown-model-429')] == 128000
+
+    def test_429_real_ratelimit_raises_no_retry(self, monkeypatch):
+        """真·限流 429（无 max_tokens 字样）：不触发钳制重发，直接抛错不打空配额。"""
+        calls = []
+
+        def post(url, **kw):
+            calls.append(1)
+            return _Resp429("You exceeded your current quota, please retry later")
+
+        monkeypatch.setattr('llm_gateway.requests.post', post)
+        gw = LLMGateway('https://x.com/v1', 'sk-x', 'unknown-model-rl')
+        with pytest.raises(LLMError) as ei:
+            list(gw.chat_stream([{'role': 'user', 'content': 'hi'}], max_tokens=4096))
+        assert '429' in str(ei.value)
+        assert len(calls) == 1  # 没有重发
+
+    def test_thinking_disabled_selfheal(self, monkeypatch):
+        """默认关思考发 thinking=disabled 被强制思考模型 400 拒 → 退回 enabled+low
+        且温度一并钳到 1（GLM 思考开启要求 temperature=1）。"""
+        payloads = []
+
+        def post(url, **kw):
+            # deepcopy 快照：网关自愈是原地改 payload 后重发，直接 append 引用会让
+            # payloads[0] 也跟着变成自愈后的参数，断言失真
+            payloads.append(copy.deepcopy(kw['json']))
+            if len(payloads) == 1:
+                return _Resp400("Invalid parameter: thinking type disabled "
+                                "is not allowed for this model")
+            return _RespStream200(_SSE_OK)
+
+        monkeypatch.setattr('llm_gateway.requests.post', post)
+        gw = LLMGateway('https://x.com/v1', 'sk-x', 'glm-5.3')
+        out = ''.join(gw.chat_stream([{'role': 'user', 'content': 'hi'}], max_tokens=4096,
+                                     thinking={'type': 'disabled'}))
+        assert out == '正文'
+        assert payloads[0]['thinking'] == {'type': 'disabled'}
+        assert payloads[1]['thinking'] == {'type': 'enabled'}
+        assert payloads[1]['reasoning_effort'] == 'low'
+        assert payloads[1]['temperature'] == 1
 
 
 class TestChatAdaptation:

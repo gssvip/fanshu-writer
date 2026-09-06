@@ -692,20 +692,20 @@ class _ThinkingSplitter:
 def _native_reasoning_kwargs(model: str, deep_think: int) -> dict:
     """智谱 GLM 原生思考模型的推理程度控制（OpenAI 兼容顶层参数）。
 
-    背景：GLM-5.3 / GLM-5.3-FLASH 强制开启思考（thinking.type 传 disabled 会报错），
-    且思考 token 与正文共享同一个 max_tokens 开销池——**无法**让思考"不计入消耗"。
-    只能从源头控制思考深度与思考 token 量：按 deep_think 档位下发 reasoning_effort。
-      deep_think>=2 → max   深度推理（默认）
-      deep_think==1 → high  增强推理
-      deep_think==0 → low   最轻思考（5.3 无法关闭思考，就用 low 最小化思考占用，
-                            避免思考先占满 max_tokens、正文没配额 → 正文为空）
-    仅对支持 reasoning_effort 的 GLM-5.2/5.3 生效；更早 GLM（4.x/5.0/5.1）走
-    thinking.type 开关；非 GLM 模型（deepseek-reasoner 等）不注入，防参数报错。
+    【默认关闭思考】deep_think=0（用户开关未开）时一律发 thinking.type=disabled：
+      - GLM-4.x/5.0/5.1 本就支持关闭 → 真关闭；
+      - GLM-5.2/5.3 若属强制思考模型拒收 disabled，由 llm_gateway.chat_stream 的
+        【思考禁用自愈】退回 enabled+reasoning_effort=low 最轻档兜底（只多一次往返）。
+    deep_think>=1 时按档位下发 reasoning_effort：
+      >=2 → max 深度推理；==1 → high 增强推理。
+    仅对 GLM 生效；非 GLM 模型（deepseek-reasoner 等）不注入，防参数报错。
     """
     m = (model or '').lower()
     if 'glm-' not in m:
         return {}
     if 'glm-5.3' in m or 'glm-5.2' in m:
+        if deep_think <= 0:
+            return {'thinking': {'type': 'disabled'}}
         return {
             'thinking': {'type': 'enabled'},
             'reasoning_effort': {2: 'max', 1: 'high'}.get(deep_think, 'low'),
