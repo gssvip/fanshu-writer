@@ -18,11 +18,12 @@ cat > dist/version.json <<EOF
 EOF
 echo "version.json 内容: $(cat dist/version.json)"
 
-# 给 JS/CSS 引用加版本戳，强制浏览器重新下载（避免 Vite hash 未变时中间缓存不刷新）
-sed -i "s|src=\"\\(./assets/index-[^\"]*\\.js\\)\"|src=\"\\1?v=${DEPLOY_TS}\"|g" dist/index.html
-sed -i "s|href=\"\\(./assets/index-[^\"]*\\.css\\)\"|href=\"\\1?v=${DEPLOY_TS}\"|g" dist/index.html
-echo "index.html 更新后引用:"
-grep -oE 'assets/index-[^" ]+\?v=[0-9]+' dist/index.html || true
+# ⚠️ 严禁给 JS/CSS 引用加 ?v= 等查询参数（历史事故 2026-09-06，同 ci.yml 内注释）：
+#   React.lazy 拆分后懒加载 chunk 以裸 URL 回引主包，入口带 ?v= 会导致主包
+#   被加载两份（两份 React）→ Invalid hook call（React error #321）整站崩。
+#   防缓存由内容哈希文件名 + Render no-store + 页面内版本自检三层覆盖。
+echo "index.html 引用（应无任何 ?v= 查询参数）:"
+grep -oE 'assets/index-[^" ]+\.(js|css)' dist/index.html || true
 
 echo "=== 复制产物到 backend/static ==="
 cd /workspace/source

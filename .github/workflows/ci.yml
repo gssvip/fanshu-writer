@@ -132,9 +132,12 @@ jobs:
           JS_FILE=$(grep -oE 'assets/index-[^"]+\.js' dist/index.html | head -1)
           printf '{"v":"%s","t":%s,"js":"%s"}' "$SHA" "$TS" "$JS_FILE" > dist/version.json
           echo "version.json: $(cat dist/version.json)"
-          # 给 JS/CSS 引用加版本戳，防中间缓存（与旧 deploy.sh 行为一致）
-          sed -i "s|src=\"\(\./assets/index-[^\"]*\.js\)\"|src=\"\1?v=$TS\"|g" dist/index.html
-          sed -i "s|href=\"\(\./assets/index-[^\"]*\.css\)\"|href=\"\1?v=$TS\"|g" dist/index.html
+          # ⚠️ 严禁给 JS/CSS 引用加 ?v= 等任何查询参数（历史事故 2026-09-06）：
+          #   React.lazy 拆分后，懒加载 chunk 内部以裸 URL（./index-xxx.js）回引主包；
+          #   入口 script 若带 ?v=，浏览器会按完整 URL 识别 ES 模块 → 主包被加载
+          #   两份（两份 React）→ Invalid hook call（Minified React error #321）整站崩。
+          #   防缓存已由三层机制覆盖：①产物文件名含内容哈希（部署即换 URL）
+          #   ②Render 的 index.html 为 no-store ③页面内版本自检脚本（version.json 比对+强制刷新）。
 
       - name: 同步产物 → source/backend/static（Render 托管源）
         run: |
