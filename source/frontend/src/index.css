@@ -4221,6 +4221,21 @@ textarea.input.paper-textarea{
 }
 /* 头部里 标题弹性占满/截断，右侧按钮固定不缩 */
 .smart-flex-fill { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; }
+/* 校审双面板（🧩事件日志 / 🧠系统学习）折叠头标题：同一类 → 字号统一 + 占满头部居中，
+   两个按钮观感一致（此前事件日志标题是普通 span 靠左、系统学习标题 flex 但内容左对齐且旁有徽章/刷新按钮，排布不齐） */
+.review-head-title {
+  flex: 1 1 auto; min-width: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px;
+}
+@media (max-width: 768px) {
+  .review-head-title { font-size: 11.5px; }
+}
+@media (max-width: 480px) {
+  .review-head-title { font-size: 11px; }
+}
 .review-grid-cell .impact-preview-head > :first-child {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
@@ -4241,9 +4256,6 @@ textarea.input.paper-textarea{
 @media (max-width: 480px) {
   .review-grid-cell .impact-preview-head {
     padding: 4px 5px; font-size: 10.5px;
-  }
-  .review-grid-cell .impact-preview-head > :first-child {
-    max-width: 65%;
   }
   .review-grid-cell .impact-preview-toggle { font-size: 10px; }
 }

@@ -4233,7 +4233,7 @@ export default function ChatPanel() {
                      重算后事件日志更准，校审出的防遗忘/一致性报告也更准。 */}
                   <div className="impact-preview-panel review-grid-cell">
                     <div className="impact-preview-head" onClick={() => setShowBackfill(s => !s)}>
-                      <span>🧩 事件日志</span>
+                      <span className="review-head-title">🧩 事件日志</span>
                       <span className="impact-preview-toggle">{showBackfill ? '▲' : '▼'}</span>
                     </div>
                     {showBackfill && (
@@ -4283,13 +4283,13 @@ export default function ChatPanel() {
                      用户可 ✅采纳（补丁自动追加到系统 prompt 末尾，后续所有维度/章节生成都生效）· 📝自定义编辑 · ❌忽略 */}
                   <div className="opt-report-inline impact-preview-panel review-grid-cell">
                     <div className="impact-preview-head">
-                      <span className="smart-flex-fill" onClick={(e) => { e.stopPropagation(); setShowOptReport(s => !s); }} style={{cursor:'pointer'}}>
+                      <span className="review-head-title" onClick={(e) => { e.stopPropagation(); setShowOptReport(s => !s); }} style={{cursor:'pointer'}}>
                         🧠 系统学习
                         {optimizationReport && optimizationReport.failure_count > 0 && (
-                          <span className="chat-tool-badge" style={{marginLeft:6,fontSize:10}}>{optimizationReport.failure_count}</span>
+                          <span className="chat-tool-badge" style={{fontSize:10}}>{optimizationReport.failure_count}</span>
                         )}
                         {optimizationReport && (optimizationReport.applied_patch_count || 0) > 0 && (
-                          <span className="chat-tool-badge" style={{marginLeft:4,fontSize:10,background:'var(--accent-light)',color:'var(--accent)'}}>
+                          <span className="chat-tool-badge" style={{fontSize:10,background:'var(--accent-light)',color:'var(--accent)'}}>
                             ✓ {optimizationReport.applied_patch_count}
                           </span>
                         )}
