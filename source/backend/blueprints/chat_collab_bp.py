@@ -4636,15 +4636,21 @@ def check_dim_readiness(bb, dim_key: str) -> dict:
 
 
 def _build_dim_context(book, bb, dim_key, with_self=True):
-    """构建指定维度的上下文：其他已填维度作为参考 + 当前维度已有内容。
-    完整注入各维度内容，不截断（避免信息缺失导致设定错乱）。
+    """构建指定维度的上下文：仅注入上游依赖维度（管道式信息流）+ 当前维度已有内容。
+
+    依据 DIMENSION_DEPENDENCIES（与创作流程一致：构思→设定→世界观→大纲→剧情→情节节点）：
+    - 只注入当前维度 required + recommended 的上游维度内容，未列入依赖的维度不再全量注入；
+    - 下游/无关维度注入会与上游转述互相污染且浪费 token；
+    - 依赖维度内容完整注入不截断（避免信息缺失导致设定错乱）。
     """
     target = _DIM_KEY_TO_SPEC.get(dim_key)
     if not target:
         return '', ''
+    deps = DIMENSION_DEPENDENCIES.get(dim_key, {'required': [], 'recommended': []})
+    relevant = set(deps['required'] + deps['recommended'])
     parts = []
     for d in SMART_DIMENSIONS:
-        if d['key'] == dim_key:
+        if d['key'] == dim_key or d['key'] not in relevant:
             continue
         if bb:
             v = (getattr(bb, d['field'], '') or '').strip()
@@ -5704,8 +5710,8 @@ def smart_generate():
     core_params = _core_params_iron_block(bb, book)
 
     # ===== 【direct 模式·上游方向锁定】执行性展开维度（设定/世界观/人物/剧情/伏笔/地图）=====
-    # 上游必填依赖已完善时：注入上游维度全文 + 方向锁定铁律，禁止另起方向与已定上游冲突。
-    # 这是"东拼西凑"的对症修复：下游生成不再漂移，构思的 direction 层权威落到生成时。
+    # 上游依赖全文已由 _build_dim_context 按 DIMENSION_DEPENDENCIES 注入（见上方【已有设定参考】），
+    # 这里不再重复注入全文（避免双注浪费 token），仅追加方向锁定铁律。
     # reroll=True（整体重新生成）：换一个展开角度，但方向仍锁定不变。
     direct_lock_note = ''
     if spec.get('mode') == 'direct':
@@ -5713,23 +5719,16 @@ def smart_generate():
             _dep_req = DIMENSION_DEPENDENCIES.get(dim_key, {}).get('required', [])
             _filled_deps = [k for k in _dep_req if _is_dim_filled(bb, k)]
             if _filled_deps:
-                _dep_full_parts = []
-                for _dk in _filled_deps:
-                    _dspec = _DIM_KEY_TO_SPEC.get(_dk, {})
-                    _dval = (getattr(bb, _dspec.get('field', ''), '') or '').strip() if bb else ''
-                    if _dval:
-                        if _dk == 'character_profiles' and _dval.startswith('['):
-                            _dval = _character_profiles_to_text(_dval)
-                        _dep_full_parts.append(f'【已定{_dspec.get("label", _dk)}·方向锁定原文（最高权威，必须严格遵循）】\n{_dval}')
-                if _dep_full_parts:
-                    _roll_note = ('\n【整体重新生成·reroll】上一次生成的内容作者不满意，请换一个展开角度重新组织本维度'
-                                  '（不同的组织结构/切入顺序/细节侧重），但方向仍以上述锁定原文为准，禁止漂移。'
-                                  if reroll else '')
-                    direct_lock_note = ('\n\n' + '\n\n'.join(_dep_full_parts)
-                                        + '\n\n【方向锁定铁律·违规=作废】本维度是执行性展开，上面的已定上游就是方向源头：'
-                                          '所有体系/人物/事件必须在其框架内展开细化，禁止另起炉灶、禁止引入与上游冲突的体系/人设/走向；'
-                                          '若展开中发现上游有空缺，按上游已有逻辑自然补全，不得反向推翻上游。'
-                                        + _roll_note)
+                _dep_labels = '、'.join(_DIM_KEY_TO_SPEC[k]['label'] for k in _filled_deps if k in _DIM_KEY_TO_SPEC)
+                _roll_note = ('\n【整体重新生成·reroll】上一次生成的内容作者不满意，请换一个展开角度重新组织本维度'
+                              '（不同的组织结构/切入顺序/细节侧重），但方向仍以上游设定为准，禁止漂移。'
+                              if reroll else '')
+                direct_lock_note = ('\n【方向锁定铁律·违规=作废】本维度是执行性展开，上方【已有设定参考】中的'
+                                    + (_dep_labels or '上游设定')
+                                    + '就是方向源头（最高权威，必须严格遵循）：'
+                                      '所有体系/人物/事件必须在其框架内展开细化，禁止另起炉灶、禁止引入与上游冲突的体系/人设/走向；'
+                                      '若展开中发现上游有空缺，按上游已有逻辑自然补全，不得反向推翻上游。'
+                                    + _roll_note)
         except Exception:
             direct_lock_note = ''
 

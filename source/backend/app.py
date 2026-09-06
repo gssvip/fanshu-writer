@@ -4583,6 +4583,67 @@ def _filter_bible_by_relevance(bb, appearing_chars, max_per_field=None):
 
     return result
 
+
+# 【P1·按需检索通道】通用词黑名单：字段名/泛词不做命中词（避免整库误命中）
+_ONDEMAND_STOP_TERMS = {
+    '主角', '反派', '配角', '身份', '性格', '动机', '背景', '关系', '能力', '物品', '姓名',
+    '境界', '等级', '体系', '设定', '规则', '简介', '描述', '总结', '备注', '卷首', '卷中', '卷尾',
+    'name', 'type', 'data', 'summary', 'title', 'volume', 'nodes', 'index', 'level', 'items',
+}
+
+
+def _build_ondemand_bible_snippets(bb, query_text, appearing_chars=None, total_budget=600, per_snippet=200):
+    """【P1·按需检索通道】从全量设定维度（大纲/世界观/核心规则/构思/物资库/地图/关系图谱）
+    中，以当前创作上下文为查询做倒排匹配，捞出命中的专有名词片段。
+
+    - 维度内容按段落分块，提取块内"专有词条"：【】标题 / 行首「XXX：」字段名；
+    - 词条出现在 query_text（情节节点卷纲+前4章正文+作者指令）中 → 该块命中；
+    - 出场人物名直接出现在块内 → 该块命中（关系图谱/物资库等无结构字段也能捞到）；
+    - 每块截取 ≤per_snippet 字，总预算 total_budget 字（用到才注入，替代 P0b 删除的全量注入）。
+    返回拼接好的片段文本（无命中返回 ''）。
+    """
+    if not bb or not query_text or not query_text.strip():
+        return ''
+    dim_fields = [
+        ('plot_design', '大纲'),
+        ('worldbuilding', '世界观'),
+        ('key_rules', '核心规则'),
+        ('concept', '构思'),
+        ('inventory', '物资库'),
+        ('locations', '地图'),
+        ('relation_graph', '关系图谱'),
+    ]
+    names = [n for n in (appearing_chars or []) if n and len(n) >= 2]
+    out_lines = []
+    used = 0
+    for field, label in dim_fields:
+        if used >= total_budget:
+            break
+        raw = (getattr(bb, field, '') or '').strip()
+        if not raw:
+            continue
+        # 按空行/【】标题边界分块（保持段落语义）
+        blocks = [b.strip() for b in re.split(r'\n\s*\n|\n(?=[【\[])', raw) if b and b.strip()]
+        for block in blocks:
+            if used >= total_budget:
+                break
+            # 提取块内专有词条：【】标题 + 行首「XXX：」字段名
+            terms = set(re.findall(r'【([^】]{2,12})】', block))
+            for ln in block.split('\n'):
+                m = re.match(r'^[「\[]?([^\s：:，,]{2,10})[」\]]?[：:]', ln.strip())
+                if m:
+                    terms.add(m.group(1))
+            matched = any(t and t not in _ONDEMAND_STOP_TERMS and t in query_text for t in terms)
+            if not matched and names:
+                matched = any(n in block for n in names)
+            if not matched:
+                continue
+            snippet = block[:per_snippet]
+            out_lines.append(f'（{label}）{snippet}')
+            used += len(snippet)
+    return '\n'.join(out_lines) if out_lines else ''
+
+
 def _collect_relevant_reports(book_id, current_chapter_num, window=10, max_reports=3, per_report_limit=800):
     """收集当前章号 ±window 范围内的动态报告，每份截取摘要。
     优先时效性（接近当前章号），其次数量上限。"""
@@ -5955,37 +6016,19 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
     filtered_bible = _filter_bible_by_relevance(bb, appearing_chars)
 
     bible_sections = []
-    # 【大纲】五幕式总纲（权重最高，对齐整体走向）
-    if filtered_bible.get('plot_design'):
-        bible_sections.append(('【大纲·五幕式总纲】（参考当前进度对齐整体走向）', filtered_bible['plot_design'], 3))
-    # 【剧情·卷纲规划】改造：从全量 timeline 注入改为前一卷+本卷+后一卷三卷注入
-    # 避免上下文膨胀且聚焦当前创作位置，前卷回顾+本卷进行+后卷走向确保连贯
+    # ===== 【P0b·正文瘦身】全量设定注入已删除（管道式信息流，与用户确认一致）=====
+    # 删除项：大纲 plot_design / 世界观 worldbuilding / 核心规则 key_rules / 构思 concept /
+    #         物资库 inventory / 地图 locations / 关系图谱 relation_graph
+    # 原因：上游设定已在维度生成阶段被下游转述进【卷纲·情节节点】与【动态文件】，
+    #       正文阶段再全量注入只会与转述冲突 + 浪费 token；需要专有名词细节时
+    #       由下方【按需检索通道】(P1) 倒排命中精准捞片段（总预算600字）。
+    # 【剧情·卷纲规划】情节节点通道：前一卷+本卷+后一卷三卷注入（含情节节点）
     adjacent_outlines = _get_adjacent_volumes_outline(book_id, vol_index)
     if adjacent_outlines:
         bible_sections.append((adjacent_outlines.split('\n')[0], '\n'.join(adjacent_outlines.split('\n')[1:]).strip(), 3))
-    # 【人物及关系】合并 character_profiles + relation_graph
+    # 【人物】出场人物（相关性筛选后）
     if filtered_bible.get('character_profiles'):
         bible_sections.append(('【人物档案】（保持人设一致）', filtered_bible['character_profiles'], 3))
-    if bb.relation_graph and bb.relation_graph.strip():
-        rg_text = bb.relation_graph[:1000]
-        bible_sections.append(('【人物关系图谱】（保持关系一致性）', rg_text, 2))
-    # 【物资库】角色持有物品/境界约束
-    if bb.inventory and bb.inventory.strip():
-        inv_text = bb.inventory[:1000]
-        bible_sections.append(('【物资库·境界库】（角色持有物品约束，不可凭空获得）', inv_text, 2))
-    # 【地图】地点信息
-    if bb.locations and bb.locations.strip():
-        loc_text = bb.locations[:1000]
-        bible_sections.append(('【地图·地点信息·全局】（若与本卷地点冲突，以本卷为准）', loc_text, 1))
-    # 核心规则/金手指（绝不可违反）
-    if filtered_bible.get('key_rules'):
-        bible_sections.append(('【核心规则/金手指】（绝不可违反）', filtered_bible['key_rules'], 3))
-    # 世界观设定
-    if filtered_bible.get('worldbuilding'):
-        bible_sections.append(('【世界观设定】', filtered_bible['worldbuilding'], 2))
-    # 核心构思
-    if filtered_bible.get('concept'):
-        bible_sections.append(('【核心构思】', filtered_bible['concept'], 1))
     # 文风指南
     if filtered_bible.get('style_guide'):
         bible_sections.append(('【文风指南】', filtered_bible['style_guide'], 1))
@@ -6037,6 +6080,21 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
         prev_ch_num = current_chapter_num - 1
         prev_tag = '【上一章（已生成未保存，必须严格承接此章剧情）】'
         chapters_text = (chapters_text + '\n\n' if chapters_text and chapters_text != '（开篇第一章，无前文）' else '') + f'{prev_tag}\n【第{prev_ch_num}章】\n{prev_trimmed}'
+
+    # ===== 【P1·按需检索通道】专有名词倒排匹配，从全量设定维度精准捞片段 =====
+    # 查询 = 情节节点三卷卷纲 + 前4章正文（含未保存上一章）+ 出场人物 + 作者指令；
+    # 索引 = 大纲/世界观/核心规则/构思/物资库/地图/关系图谱的分块词条（【】标题/行首字段名/人物名）；
+    # 命中才注入：每词条≤200字，总预算600字（用到才给，替代 P0b 删除的全量注入）。
+    try:
+        _ondemand_query = '\n'.join(filter(None, [adjacent_outlines, chapters_text, instruction]))
+        _ondemand_snippets = _build_ondemand_bible_snippets(bb, _ondemand_query, appearing_chars=appearing_chars)
+    except Exception:
+        _ondemand_snippets = ''
+    ondemand_block = ''
+    if _ondemand_snippets:
+        ondemand_block = f"""
+【按需检索·设定片段】（根据本章情节节点/前文命中的专有名词，从设定维度精准捞取的片段，细节以此为准）：
+{_ondemand_snippets}"""
 
     # 轻量RAG：基于当前章出场角色召回相关历史章节摘要，补充前4章窗口盲区
     # 让 AI 看到涉及角色在更早章节的经历，避免"角色历史行为遗忘"
@@ -6254,17 +6312,17 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 {core_params_block}
 {chapter_lang_style_block}
 
-【设定权威分级·冲突仲裁规则】（P0-3）
+【设定权威分级·冲突仲裁规则】（P0-3·正文瘦身版）
 当下方各层设定发生冲突时，按权威层级从高到低取信：
-- direction 层（最高）：核心构思 concept —— 作者意图，不可被下层推翻
-- foundation 层：大纲 plot_design、世界观 worldbuilding —— 全书骨架
-- rules 层：核心规则 key_rules、伏笔 foreshadowing —— 不可违反的铁律
-- runtime 层：动态文件 dynamic_volumes —— 当前卷的运行时状态
+- plot 层（最高）：卷纲与情节节点（前中后三卷规划）—— 当前卷剧情框架
+- rules 层：伏笔任务清单（本章应埋/应收）—— 不可遗漏的铁律
+- runtime 层：动态文件/本卷维度数据 —— 当前卷的运行时状态
 - memory 层（最低）：前4章正文 —— 即时剧情衔接依据
-若卷纲与本卷动态文件冲突，以卷纲为准；若动态文件与前4章正文冲突，以动态文件为准。
+若情节节点与本卷动态文件冲突，以情节节点为准；若动态文件与前4章正文冲突，以动态文件为准。
 
-【项目宪法 - 已确认设定】（必须严格遵守，不可矛盾。包含：大纲/剧情卷纲/人物及关系/物资库/地图/核心规则/世界观/伏笔等）
+【项目宪法 - 已确认设定】（必须严格遵守，不可矛盾。包含：卷纲情节节点/出场人物/本卷维度数据/文风等）
 {bible_context[:5000]}
+{ondemand_block}
 
 {memory_section}
 {dynamic_memory_section}
