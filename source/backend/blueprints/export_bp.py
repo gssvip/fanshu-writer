@@ -503,6 +503,12 @@ def import_book_zip():
             db.session.add(outline)
 
         update_book_stats(book.id)
+        # 【dyn5】导入小说后自动回填动态报告（后台线程按每5章顺序补齐，用户无需手动生成）
+        try:
+            from app import _auto_backfill_dynamic_reports_async
+            _auto_backfill_dynamic_reports_async(book.id)
+        except Exception:
+            pass  # 回填失败不影响导入
         return jsonify(book.to_dict()), 201
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -636,6 +642,12 @@ def import_book_files():
                     ch_obj.parent_id = vol.id
 
         update_book_stats(book.id)
+        # 【dyn5】导入小说后自动回填动态报告（后台线程按每5章顺序补齐，用户无需手动生成）
+        try:
+            from app import _auto_backfill_dynamic_reports_async
+            _auto_backfill_dynamic_reports_async(book.id)
+        except Exception:
+            pass  # 回填失败不影响导入
         return jsonify(book.to_dict()), 201
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -706,6 +718,12 @@ def append_import_chapters(book_id):
         resort_chapters_by_title(book_id, rebin_volumes=True)
 
         update_book_stats(book_id)
+        # 【dyn5】追加导入后自动补齐缺失的动态报告（后台线程按每5章顺序补齐）
+        try:
+            from app import _auto_backfill_dynamic_reports_async
+            _auto_backfill_dynamic_reports_async(book_id)
+        except Exception:
+            pass  # 回填失败不影响导入
         total = Chapter.query.filter_by(book_id=book_id, is_volume=False).count()
         return jsonify({'success': True, 'added': added, 'total': total}), 200
     finally:

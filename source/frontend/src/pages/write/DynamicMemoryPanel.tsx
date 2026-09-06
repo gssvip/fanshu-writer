@@ -32,21 +32,15 @@ export function DynamicMemoryPanel(props: {
   const [editorCollapsed, setEditorCollapsed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createStart, setCreateStart] = useState<number | ''>('');
-  const [createEnd, setCreateEnd] = useState<number | ''>('');
   const [batchMode, setBatchMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
   // 按卷动态识别
   const [dynVolumes, setDynVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
-  const [generatingVolReport, setGeneratingVolReport] = useState('');
   const [collapsedVolDyn, setCollapsedVolDyn] = useState<Set<number>>(new Set());
   // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
   const dynCollapseInitRef = useRef(false);
-  // 卷选择器
-  const [volSelectorOpen, setVolSelectorOpen] = useState(false);
   // 按卷编辑
   const [editingVolIdx, setEditingVolIdx] = useState<number | null>(null);
   const [editVolJson, setEditVolJson] = useState('');
@@ -68,11 +62,16 @@ export function DynamicMemoryPanel(props: {
   }
 
   useEffect(() => {
-    // 有缓存：直接用缓存数据，不重复请求（避免每次切 tab 都等网络延迟导致卡顿）
-    // 数据刷新依赖用户操作（自动检查/生成报告等会主动 refreshReports）
+    // 有缓存：先用缓存即时渲染（避免每次切 tab 都等网络延迟导致卡顿），
+    // 再后台静默刷新一次——【dyn5】动态报告已改为全自动生成（写满每5章/导入后回填），
+    // 新报告可能在缓存写入之后才落库，需要自动同步给用户看。
     if (_dmReportsCache[bookId]) {
       setReports(_dmReportsCache[bookId]);
       setLoading(false);
+      api.listDynamicReports(bookId).then(data => {
+        _dmReportsCache[bookId] = data;
+        setReports(data);
+      }).catch(() => { /* 静默失败，保持缓存数据 */ });
       return;
     }
     // 无缓存：显示加载态并发请求
@@ -199,59 +198,8 @@ export function DynamicMemoryPanel(props: {
     });
   }
 
-  // AI识别指定卷的动态文件：按5章一份批量生成动态报告
-  async function handleAnalyzeDynVolume(volId: string, volTitle: string) {
-    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，按每5章一份自动生成该卷所有动态报告（已存在的将跳过）。是否继续？`, async () => {
-      setAnalyzingVol(volId || volTitle);
-      setError('');
-      try {
-        const result = await api.batchGenerateDynamicReports(bookId, {
-          volume_id: volId,
-          volume_title: volTitle,
-          skill_pack_ids: selectedSkillPackIds,
-          overwrite: false,
-        });
-        // 重新拉取报告列表（按章号排序）
-        const fresh = await api.listDynamicReports(bookId);
-        setReports(fresh.sort((a, b) => a.chapter_start - b.chapter_start));
-        const msg = `✅ AI识别完成！\n卷「${result.volume_title}」（第${result.chapter_range[0]}-${result.chapter_range[1]}章）\n` +
-          `本次生成 ${result.generated_count} 份报告，跳过已存在 ${result.skipped_count} 份` +
-          (result.error_count > 0 ? `，失败 ${result.error_count} 份` : '');
-        alert(msg);
-      } catch (e: any) {
-        setError(e.message || 'AI识别失败');
-        alert('AI识别失败：' + (e.message || '请检查AI配置'));
-      }
-      setAnalyzingVol('');
-    });
-  }
-
-  // 按卷批量生成动态报告：每5章一份，自动补齐该卷所有5章区间（报告按钮）
-  async function handleGenerateVolumeReports(volId: string, volTitle: string) {
-    showConfirm(`将用 AI 分析「${volTitle}」的章节内容，按每5章一份生成该卷所有动态报告（已存在的将跳过），报告会显示在这一卷下方。是否继续？`, async () => {
-      setGeneratingVolReport(volId || volTitle);
-      setError('');
-      try {
-        const result = await api.batchGenerateDynamicReports(bookId, {
-          volume_id: volId,
-          volume_title: volTitle,
-          skill_pack_ids: selectedSkillPackIds,
-          overwrite: false,
-        });
-        // 重新拉取报告列表（按章号排序）
-        const fresh = await api.listDynamicReports(bookId);
-        setReports(fresh.sort((a, b) => Number(a.chapter_start) - Number(b.chapter_start)));
-        const msg = `✅ 报告生成完成！\n卷「${result.volume_title}」（第${result.chapter_range[0]}-${result.chapter_range[1]}章）\n` +
-          `本次生成 ${result.generated_count} 份，跳过已存在 ${result.skipped_count} 份` +
-          (result.error_count > 0 ? `，失败 ${result.error_count} 份` : '');
-        alert(msg);
-      } catch (e: any) {
-        setError(e.message || '生成失败');
-        alert('报告生成失败：' + (e.message || '请检查AI配置'));
-      }
-      setGeneratingVolReport('');
-    });
-  }
+  // 【dyn5】动态报告已改为全自动：写满每5章 / 导入作品后按顺序自动生成，无需手动触发。
+  // 保留的唯一 AI 入口是「📝 摘要」（按卷动态摘要写入 dynamic_volumes，属另一套数据）。
 
   // P0-4: AI识别指定卷的动态摘要（人物/事件/时间/地点/势力/伏笔/境界/关系），写入 dynamic_volumes
   async function handleAnalyzeDynamicVolume(volId: string, volTitle: string) {
@@ -451,60 +399,12 @@ export function DynamicMemoryPanel(props: {
     });
   }
 
-  async function handleCreate() {
-    if (!bookId) return;
-    if (createStart === '' || createEnd === '') {
-      alert('请填写起始章号和结束章号');
-      return;
-    }
-    if (createEnd < createStart) {
-      alert('结束章号不能小于起始章号');
-      return;
-    }
-    setGenerating(true);
-    setError('');
-    try {
-      const newReport = await api.createDynamicReport(bookId, {
-        chapter_start: createStart,
-        chapter_end: createEnd,
-      });
-      setReports(prev => [...prev, newReport].sort((a, b) => a.chapter_start - b.chapter_start));
-      setShowCreateModal(false);
-    } catch (e: any) {
-      setError(e.message || '创建失败');
-    }
-    setGenerating(false);
-  }
-
-  async function handleAutoCheck() {
-    if (!bookId) return;
-    setGenerating(true);
-    setError('');
-    try {
-      const result = await api.autoCheckDynamicReport(bookId);
-      if (result.report) {
-        setReports(prev => {
-          const filtered = prev.filter(r => r.id !== result.report!.id);
-          return [...filtered, result.report!].sort((a, b) => a.chapter_start - b.chapter_start);
-        });
-      } else {
-        alert('当前无需生成新报告（章节数未达到5的倍数，或该区间已有报告）');
-      }
-    } catch (e: any) {
-      setError(e.message || '检查失败');
-    }
-    setGenerating(false);
-  }
-
   if (loading) return <div className="page loading-screen"><span>加载动态文件...</span></div>;
 
   return (
     <div className="dm-panel">
       <div className="dm-header">
         <div className="dm-header-actions">
-          <button className="btn-ghost-sm" onClick={handleAutoCheck} disabled={generating || batchMode} title="检查并自动生成缺失的报告">
-            {generating ? '⏳ 处理中...' : '🔄 自动检查'}
-          </button>
           <button
             className={batchMode ? 'btn-primary-sm' : 'btn-ghost-sm'}
             onClick={() => batchMode ? exitBatchMode() : setBatchMode(true)}
@@ -513,26 +413,6 @@ export function DynamicMemoryPanel(props: {
           >
             {batchMode ? '✕ 退出批量' : '☑ 批量管理'}
           </button>
-          <button className="btn-primary-sm" onClick={() => { setCreateStart(''); setCreateEnd(''); setShowCreateModal(true); }} disabled={generating || batchMode}>
-            ＋ 生成报告
-          </button>
-          {(
-            <div style={{position:'relative'}}>
-              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || chapterCount === 0 || displayDynVolumes.length === 0} title={chapterCount === 0 ? '需要先创建章节才能AI识别' : '选择卷进行AI识别，识别结果自动归类到对应卷下'}>
-                {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
-              </button>
-              {volSelectorOpen && (
-                <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
-                  <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
-                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeDynVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
-                  {displayDynVolumes.map((vol, idx) => (
-                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeDynVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
-                  ))}
-                  <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -542,7 +422,7 @@ export function DynamicMemoryPanel(props: {
           <span>📊 已有 {chapterCount} 章 · {reports.length} 份报告</span>
           {chapterCount > 0 && (
             <span className="dm-progress-next">
-              下次自动生成：第{(Math.floor(chapterCount / 5) + 1) * 5}章保存时
+              ⚡ 每满5章自动生成一份（导入作品同样按顺序自动补齐），下次：第{(Math.floor(chapterCount / 5) + 1) * 5}章
             </span>
           )}
         </div>
@@ -554,7 +434,7 @@ export function DynamicMemoryPanel(props: {
         <div className="plot-volume-list" style={{marginBottom:16}}>
           <div style={{marginBottom:8}}>
             <p className="text-muted" style={{fontSize:12, margin:0}}>
-              📚 按卷查看：摘要（📝）→ 按5章一份生成报告（📄）→ 编辑（✏️）→ 删除（🗑️）；生成的报告显示在对应卷下方。
+              📚 按卷查看：摘要（📝）→ 编辑（✏️）→ 删除（🗑️）；动态报告每满5章自动生成并显示在对应卷下方，无需手动触发。
             </p>
           </div>
           {displayDynVolumes.map((vol, idx) => {
@@ -576,9 +456,7 @@ export function DynamicMemoryPanel(props: {
                   {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
                   <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
                     {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 摘要识别中...</span>}
-                    {generatingVolReport === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 生成报告中...</span>}
-                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeDynamicVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={!!analyzingVol || !!generatingVolReport} title="AI识别本卷动态摘要（人物/事件/伏笔/关系）写入按卷动态文件">📝 摘要</button>
-                    <button className="btn-ghost-sm" onClick={() => handleGenerateVolumeReports(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={!!analyzingVol || !!generatingVolReport} title="按每5章生成一份动态报告，自动覆盖整卷并显示在本卷下方">📄 报告</button>
+                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeDynamicVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={!!analyzingVol} title="AI识别本卷动态摘要（人物/事件/伏笔/关系）写入按卷动态文件">📝 摘要</button>
                     <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolDynamic(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷动态文件数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
                     {hasData && (
                       <button className="btn-ghost-sm" onClick={() => deleteVolumeDynamic(idx)} style={{color:'#e74c3c'}} title="删除此卷动态文件数据">🗑️</button>
@@ -597,7 +475,7 @@ export function DynamicMemoryPanel(props: {
                         </div>
                       </div>
                     ) : !hasData ? (
-                      <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据：点击「📝 摘要」AI识别本卷综合摘要；点击「📄 报告」按每5章一份生成本卷所有动态报告。</p>
+                      <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据：点击「📝 摘要」AI识别本卷综合摘要；动态报告每满5章自动生成，无需手动触发。</p>
                     ) : (
                       <div className="plot-events">
                         {d.summary && <p><b>综合摘要：</b>{safeText(d.summary)}</p>}
@@ -616,7 +494,7 @@ export function DynamicMemoryPanel(props: {
                     <div style={{marginTop:12}}>
                       {volReports.length === 0 ? (
                         <p className="text-muted" style={{fontSize:12, margin:0}}>
-                          🗒️ 本卷暂未生成动态报告；点击右上角「📄 报告」按每5章一份批量生成，生成结果显示在此。
+                          🗒️ 本卷暂无动态报告：写满5章的整数倍后自动生成（如第5、10、15章…），结果显示在此。
                         </p>
                       ) : (
                         <div className="dm-volume-group" style={{borderTop:'1px solid var(--border)', paddingTop:8}}>
@@ -656,13 +534,13 @@ export function DynamicMemoryPanel(props: {
 
       {/* 报告区域 */}
       {reports.length === 0 ? (
-        <div className="bible-empty" onClick={() => { setCreateStart(''); setCreateEnd(''); setShowCreateModal(true); }}>
+        <div className="bible-empty">
           <span className="bible-empty-icon">🗂️</span>
           <p>暂无动态报告</p>
           <p className="text-muted">
             {chapterCount >= 5
-              ? '点击此处手动生成第一份报告'
-              : `写满5章后自动生成，当前${chapterCount}章`}
+              ? '已有完整5章区间，报告将在下一次章节保存时自动补齐（导入的作品导入后即自动按顺序生成）'
+              : `写满5章后自动生成，当前${chapterCount}章（导入的作品导入后自动按顺序生成）`}
           </p>
         </div>
       ) : (
@@ -729,7 +607,7 @@ export function DynamicMemoryPanel(props: {
             <>
               {/* 报告列表 - 按卷分类（每卷下展示该卷的动态报告，可折叠） */}
               {reportsByVolume.length === 0 ? (
-                <p className="text-muted" style={{fontSize:13,padding:'8px 0'}}>暂无动态报告，点击上方「自动检查」或「➕ 新建报告」生成。</p>
+                <p className="text-muted" style={{fontSize:13,padding:'8px 0'}}>暂无动态报告：写满每5章自动生成，导入的作品导入后按顺序自动补齐。</p>
               ) : (
                 <div className="dm-reports-by-volume">
                   {reportsByVolume.map(group => {
@@ -833,50 +711,6 @@ export function DynamicMemoryPanel(props: {
             </>
           )}
         </>
-      )}
-
-      {/* 创建报告弹窗 */}
-      {showCreateModal && (
-        <div className="modal-overlay" onClick={() => setShowCreateModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <h3>生成动态报告</h3>
-            <p className="text-muted" style={{ marginBottom: 12 }}>
-              AI将分析指定范围的章节内容，自动汇总成≤500字的防遗忘报告
-            </p>
-            <div className="dm-create-form">
-              <label>起始章号</label>
-              <input
-                type="number"
-                min={1}
-                max={chapterCount || undefined}
-                value={createStart}
-                placeholder="如 1"
-                onChange={e => {
-                  const v = e.target.value;
-                  setCreateStart(v === '' ? '' : (parseInt(v) || ''));
-                }}
-              />
-              <label>结束章号</label>
-              <input
-                type="number"
-                min={1}
-                max={chapterCount || undefined}
-                value={createEnd}
-                placeholder="如 5"
-                onChange={e => {
-                  const v = e.target.value;
-                  setCreateEnd(v === '' ? '' : (parseInt(v) || ''));
-                }}
-              />
-            </div>
-            <div className="confirm-actions">
-              <button className="btn-ghost-sm" onClick={() => setShowCreateModal(false)}>取消</button>
-              <button className="btn-primary-sm" onClick={handleCreate} disabled={generating}>
-                {generating ? '🤖 AI生成中...' : '✨ 生成'}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

@@ -11345,54 +11345,224 @@ def _generate_dynamic_report_content(book_id, chapter_start, chapter_end, skill_
         # 连降级都失败的极端情况
         return None, f'{str(e)} | last_error={last_error}'
 
-def _check_and_auto_generate_report(book_id):
-    """检查是否需要自动生成动态报告（每5章触发）"""
+def _check_and_auto_generate_report(book_id, max_intervals=1, revise_async=True):
+    """检查并自动生成动态报告（每5章一份，按顺序覆盖全部5章区间）。
+
+    【dyn5】导入小说与平台生成统一自动通道，用户无需手动生成：
+    - max_intervals=1（默认，章节保存的增量场景）：从最早的缺失区间按顺序补1个，控制请求耗时；
+    - max_intervals=None（导入后的全量回填场景）：从第1个区间按顺序补齐所有缺失报告；
+    - 每生成一份报告后同步创建状态快照，并触发【P2 逆向通道】维度增量修订
+      （revise_async=True 时后台线程执行，导入回填线程内传 False 串行执行避免并发打爆 LLM）。
+    返回 {'report': 最后一份新报告} / {'error': ...} / None（无需生成）。
+    """
     chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
     chapter_count = len(chapters)
     if chapter_count == 0:
         return None
 
-    # 计算当前应该有报告的最后一个区间
-    # 例如：5章 -> 区间1-5，10章 -> 区间1-5和6-10
-    current_end = (chapter_count // DYNAMIC_REPORT_INTERVAL) * DYNAMIC_REPORT_INTERVAL
-    if current_end == 0:
+    # 完整区间数：5章 -> 1-5；10章 -> 1-5和6-10（尾巴不足5章的暂不生成）
+    total_intervals = chapter_count // DYNAMIC_REPORT_INTERVAL
+    if total_intervals == 0:
         return None
 
-    # 检查该区间是否已有报告
-    existing = DynamicReport.query.filter_by(
-        book_id=book_id, chapter_start=current_end - DYNAMIC_REPORT_INTERVAL + 1,
-        chapter_end=current_end
-    ).first()
+    # 已有报告的区间集合
+    existing_reports = DynamicReport.query.filter_by(book_id=book_id).all()
+    existing_keys = {(r.chapter_start, r.chapter_end) for r in existing_reports}
 
-    if existing:
-        return None  # 已有报告，不重复生成
+    # 按顺序找缺失区间（1-5、6-10、…）
+    missing = []
+    for k in range(1, total_intervals + 1):
+        cs = (k - 1) * DYNAMIC_REPORT_INTERVAL + 1
+        ce = k * DYNAMIC_REPORT_INTERVAL
+        if (cs, ce) not in existing_keys:
+            missing.append((cs, ce))
+    if not missing:
+        return None
 
-    # 需要生成新报告
-    chapter_start = current_end - DYNAMIC_REPORT_INTERVAL + 1
-    content, error = _generate_dynamic_report_content(book_id, chapter_start, current_end)
-    if error:
-        return {'error': error}
+    # 增量场景从最早的缺失区间按顺序补（缺多个时每次保存补齐一个，逐步追平）；
+    # 全量回填（导入后）传 None 一次性按顺序补齐
+    if max_intervals:
+        missing = missing[:int(max_intervals)]
 
-    title = f'动态-({chapter_start}-{current_end}章)'
-    report = DynamicReport(
-        book_id=book_id, title=title, content=content or '',
-        chapter_start=chapter_start, chapter_end=current_end,
-        auto_generated=True
-    )
-    db.session.add(report)
-    db.session.commit()
+    last_report = None
+    last_error = None
+    for (cs, ce) in missing:
+        content, error = _generate_dynamic_report_content(book_id, cs, ce)
+        if error:
+            last_error = error
+            continue
+        report = DynamicReport(
+            book_id=book_id, title=f'动态-({cs}-{ce}章)', content=content or '',
+            chapter_start=cs, chapter_end=ce, auto_generated=True
+        )
+        db.session.add(report)
+        db.session.commit()
+        last_report = report
 
-    # 借鉴 PlotPilot 检查点快照：每5章自动备份 BookBible + DynamicMemory 关键状态
-    # 用户可回滚到某章节点重新创作，避免"写崩了无法恢复"
-    try:
-        _create_state_snapshot(book_id, current_end)
-    except Exception as snap_err:
+        # 借鉴 PlotPilot 检查点快照：每5章自动备份 BookBible + DynamicMemory 关键状态
         try:
-            app.logger.warning(f'快照创建失败（不影响主流程）: {snap_err}')
-        except Exception:
-            pass
+            _create_state_snapshot(book_id, ce)
+        except Exception as snap_err:
+            try:
+                app.logger.warning(f'快照创建失败（不影响主流程）: {snap_err}')
+            except Exception:
+                pass
 
-    return {'report': report.to_dict()}
+        # 【P2 逆向通道】章节→维度增量修订：按这5章正文修订人物/伏笔/地点维度
+        try:
+            if revise_async:
+                _revise_dimensions_from_chapters_async(book_id, cs, ce)
+            else:
+                _revise_dimensions_from_chapters(book_id, cs, ce)
+        except Exception:
+            pass  # 修订失败不影响报告生成
+
+    if last_report is not None:
+        return {'report': last_report.to_dict()}
+    if last_error:
+        return {'error': last_error}
+    return None
+
+
+def _revise_dimensions_from_chapters(book_id, chapter_start, chapter_end):
+    """【P2 逆向通道】章节→维度增量修订：写完章节后（每5章），基于该区间正文与维度现有内容，
+    用模型做差异修订，把新出场人物/新地点/新埋伏笔以"增量补丁"形式追加到对应维度。
+    只追加不改写既有内容（append-only，可随时人工编辑回滚），避免污染作者已定稿的设定。"""
+    book = Book.query.get(book_id)
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not book or not bb:
+        return None
+    config = AIConfig.get_active()
+    if not config or not config.api_key:
+        return None
+    api_key = config.api_key
+    base_url = (config.base_url or os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')).rstrip('/')
+    if not base_url.endswith('/v1'):
+        base_url += '/v1'
+    model = config.model or os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
+    # 识别类任务用识别模型（便宜快），为空回退主模型
+    model = (config.get_model_for_task('recognition') if config else None) or model
+
+    chapters = Chapter.query.filter_by(book_id=book_id, is_volume=False).order_by(Chapter.order_index).all()
+    target = chapters[chapter_start - 1:chapter_end]
+    if not target:
+        return None
+    chapters_text = '\n\n'.join(f'【{c.title or ""}】\n{(c.content or "")[:1200]}' for c in target)[:9000]
+
+    # 维度现有内容（做差异对照，避免重复追加已有信息）
+    dims = {
+        'character_profiles': (bb.character_profiles or '')[:2000],
+        'locations': (bb.locations or '')[:1500],
+        'foreshadowing': (bb.foreshadowing or '')[:1500],
+    }
+    dim_block = f"""【人物档案·现有内容】
+{dims['character_profiles'] or '（空）'}
+
+【地点·现有内容】
+{dims['locations'] or '（空）'}
+
+【伏笔·现有内容】
+{dims['foreshadowing'] or '（空）'}"""
+
+    system_prompt = f"""你是小说设定管理员。对照"维度现有内容"与第{chapter_start}-{chapter_end}章正文，做增量修订：
+只提取正文中【新出现且现有内容未记录】的信息，追加到对应维度。禁止复述已有内容，禁止改写/删除已有内容。
+
+输出严格 JSON（不要代码块包裹，不要解释）：
+{{
+  "character_profiles": "新出场/新变化人物的增量条目，纯文本，每人按『姓名：身份：性格：变化：』简洁一行；无新增输出空串",
+  "locations": "新出现的地点/场景增量条目，每条一行『地名：说明』；无新增输出空串",
+  "foreshadowing": "正文中新埋设或回收的伏笔增量条目，每条一行『伏笔：埋设/回收于第X-Y章』；无新增输出空串"
+}}"""
+
+    user_content = f"""作品：《{book.title}》
+{dim_block}
+
+【第{chapter_start}-{chapter_end}章正文】
+{chapters_text}
+
+请输出增量修订 JSON："""
+    try:
+        resp = requests.post(f'{base_url}/chat/completions',
+            headers=build_auth_headers(api_key),
+            json={
+                'model': model,
+                'messages': [
+                    {'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': user_content}
+                ],
+                'temperature': 0.2, 'max_tokens': 1500,
+            },
+            timeout=120)
+        result = resp.json()
+        raw = (result['choices'][0]['message']['content'] or '').strip()
+        # 剥离可能的 markdown 代码块
+        raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.S).strip()
+        data = json.loads(raw)
+    except Exception:
+        return None  # 解析失败静默跳过（不污染维度）
+
+    header = f'\n\n【第{chapter_start}-{chapter_end}章·增量修订（自动）】\n'
+    changed = []
+    for field, val in data.items():
+        if field not in ('character_profiles', 'locations', 'foreshadowing'):
+            continue
+        val = (val or '').strip()
+        if not val:
+            continue
+        cur = getattr(bb, field, '') or ''
+        setattr(bb, field, cur + header + val)
+        changed.append(field)
+    if changed:
+        db.session.commit()
+    return {'changed': changed}
+
+
+# 维度修订并发闸：同一时间只允许一个修订线程（导入回填量大时避免打爆 LLM）
+_DIM_REVISE_LOCK = threading.Lock()
+
+
+def _revise_dimensions_from_chapters_async(book_id, chapter_start, chapter_end):
+    """【P2】daemon 线程执行维度增量修订（不阻塞章节保存响应）。
+    忙时直接跳过：该区间的增量会随下一次快照/报告周期自然补上，不堆积任务。"""
+    def _bg():
+        if not _DIM_REVISE_LOCK.acquire(blocking=False):
+            return
+        try:
+            with app.app_context():
+                try:
+                    _revise_dimensions_from_chapters(book_id, chapter_start, chapter_end)
+                except Exception:
+                    pass
+        finally:
+            _DIM_REVISE_LOCK.release()
+    try:
+        t = threading.Thread(target=_bg, daemon=True)
+        t.start()
+        return t
+    except Exception:
+        return None
+
+
+def _auto_backfill_dynamic_reports_async(book_id):
+    """【dyn5】导入小说后自动回填动态报告（daemon 线程，不阻塞导入响应）。
+    从第1个5章区间按顺序补齐所有缺失报告，并在同一线程内串行触发维度增量修订（P2），
+    避免多区间并发修订打爆 LLM。未配置 AI Key 时静默跳过（报告可后续手动补）。"""
+    try:
+        book = Book.query.get(book_id)
+        if not book:
+            return None
+
+        def _bg():
+            with app.app_context():
+                try:
+                    _check_and_auto_generate_report(book_id, max_intervals=None, revise_async=False)
+                except Exception:
+                    pass
+        t = threading.Thread(target=_bg, daemon=True)
+        t.start()
+        return t
+    except Exception:
+        return None
 
 def _create_state_snapshot(book_id, chapter_end):
     """创建叙事状态检查点快照（借鉴 PlotPilot checkpoint）。
