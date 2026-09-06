@@ -358,7 +358,9 @@ def chat_roundtable():
             #        但前端"继续"按钮传的是 chatGeneralSessionId（general scope）→ 两条 session 彻底错开
             #        → state_loaded=F。 现在前端存好后端的 session_id，下次续会直接带它回来，100% 对位。
             _rt_real_sid = str(getattr(session, 'id', '') or session_id or '')
-            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_session", "info": {"session_id": _rt_real_sid, "scope": (scope or ''), "book_id": (str(book_id) if book_id else None)}}, ensure_ascii=False)}\n\n'
+            # 注意：f-string 表达式内不能出现与外层相同的引号（Python < 3.12 语法限制，
+            # CI 用 3.11）——scope 兜底值必须用 "" 而非 ''。
+            yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_session", "info": {"session_id": _rt_real_sid, "scope": (scope or ""), "book_id": (str(book_id) if book_id else None)}}, ensure_ascii=False)}\n\n'
 
             is_continue = _is_rt_continue(topic)
             state = _rt_load_state(session)
