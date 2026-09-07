@@ -3514,7 +3514,12 @@ export default function ChatPanel() {
       }
     }).catch((e: any) => {
       if (e.name !== 'AbortError') {
-        const msg = (e?.message || e?.error || '圆桌续会失败').trim() || '圆桌续会失败';
+        let msg = (e?.message || e?.error || '圆桌续会失败').trim() || '圆桌续会失败';
+        // 流中途断开（手机锁屏/切后台/网络切换）移动端浏览器抛 TypeError: network error / Failed to fetch
+        // —— 裸错误信息对用户无意义，转成准确指引（进度已存，重点继续即可从断点接着开）
+        if (e?.name === 'TypeError' || /network error|failed to fetch|networkerror/i.test(msg)) {
+          msg = '连接中断（手机锁屏/切后台或网络波动），已完成的发言已保存进度，稍后再点绿色"继续"按钮可从断点接着开，不会重复已讨论内容';
+        }
         appendAiNotice('❌ 圆桌续会失败：' + msg + '\n\n常见原因&解决：\n1) LLM上游限流 → 等30秒后重点继续\n2) 会话 state 丢失 → 重新发起一个新圆桌');
         setStreamError('');
       }

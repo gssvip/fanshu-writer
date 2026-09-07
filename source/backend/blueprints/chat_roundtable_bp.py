@@ -323,7 +323,10 @@ def chat_roundtable():
         # ⭐ nonlocal session：修复 D3 中 `session = rs` 导致 Python 把 session 当成 generate() 局部变量，
         #     结果在之前的 _rt_load_state(session) 就读到"没赋值的 local var"→ UnboundLocalError 崩溃。
         #     加上 nonlocal 后 session=rs 会写回外层 chat_roundtable 的 session，内外看到同一个指针。
-        nonlocal _rank_ctx_global, _rank_analyst_report, _rank_scan, session
+        # ⭐ nonlocal session_id：同理——D3-0/D3 里 `session_id = session.id` 让 Python 把 session_id 判成
+        #     generate() 局部变量；普通续会/全新会议路径不经过那两行赋值，最终 done/card 帧（943/923 行）
+        #     读 session_id 时 UnboundLocalError → 整场讨论完成后崩在收尾帧，前端报"圆桌续会失败"。
+        nonlocal _rank_ctx_global, _rank_analyst_report, _rank_scan, session, session_id
         all_messages = []
 
         def _emit(gen, speaker_id):
