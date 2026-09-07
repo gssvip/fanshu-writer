@@ -27,9 +27,11 @@ from blueprints.novel_rank_crawlers import (
     RANK_SITES,
     RANK_SOURCES,
     RANK_TYPE_LABELS,
+    _QIDIAN_RANK_LABEL,
     _clean,
     _find_category,
     _find_source,
+    crawl_qidian_api,
     crawl_rank_source,
     resolve_sources,
 )
