@@ -1486,7 +1486,7 @@ category：master
               const subs = (nrFilters?.subcategories || []).filter((s: NRCategory) => s.parentCode === nrCategoryCode);
               if (!subs.length) return null;
               return (
-                <div style={{marginTop:10,display:'flex',gap:8,alignItems:'flex-start'}}>
+                <div className="nr-row-sub" style={{marginTop:10,display:'flex',gap:8,alignItems:'flex-start'}}>
                   <span className="filter-label nr-filter-label nr-label-fixed"
                         style={{fontSize:13,color:'var(--text-muted)',fontWeight:600,
                                 minWidth:72,width:72,flex:'0 0 72px',paddingTop:6,

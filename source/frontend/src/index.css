@@ -5068,7 +5068,8 @@ textarea.input.paper-textarea{
   .nr-row-aligned,
   .nr-row-rank-type,
   .nr-row-gender,
-  .nr-row-category {
+  .nr-row-category,
+  .nr-row-sub {
     display: flex !important;
     flex-direction: column !important;   /* ✅ 强制列布局：label 在上，标签在下，各占一行不重叠 */
     flex-wrap: nowrap !important;
@@ -5084,12 +5085,15 @@ textarea.input.paper-textarea{
     height: auto !important;
   }
   .nr-row-category { margin-top: 8px !important; }
+  /* 主题细化行：组规则的 margin:0 0 6px 会盖掉内联 marginTop:10，这里补回与主题分类的间距 */
+  .nr-row-sub { margin-top: 10px !important; }
   /* ✅ 关键修复重叠：行内 tags 容器是 style={{flex: '1 1 0', ...}}，列方向下 flex-basis:0 高度坍缩到 0，强制恢复 content 高度 */
   .nr-filter-row > div,
   .nr-row-aligned > div,
   .nr-row-rank-type > div,
   .nr-row-gender > div,
-  .nr-row-category > div {
+  .nr-row-category > div,
+  .nr-row-sub > div {
     flex: 0 0 auto !important;
     width: 100% !important;
     min-width: 0 !important;
