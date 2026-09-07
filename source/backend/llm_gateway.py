@@ -505,16 +505,23 @@ class LLMGateway:
         self.timeout = timeout
         self.max_retries = max_retries
 
-    def _effective_max_tokens(self, max_tokens: int) -> int:
-        """请求值按模型已知/已学习输出上限钳制；上限未知则原样发出（报错自适应兜底）。"""
+    def _effective_max_tokens(self, max_tokens: int | None) -> int | None:
+        """请求值按模型已知/已学习输出上限钳制；上限未知则原样发出（报错自适应兜底）。
+
+        max_tokens=None 表示"完全不设上限"（payload 里不发送该字段，由上游用模型默认
+        输出上限执行）——直接原样返回 None，不做钳制。
+        """
+        if max_tokens is None:
+            return None
         limit = get_output_limit(self.base_url, self.model)
         return min(max_tokens, limit) if limit else max_tokens
 
     def chat(self, messages: list[dict], temperature: float = 0.7,
-             max_tokens: int = 4096, **extra) -> ModelResult:
+             max_tokens: int | None = 4096, **extra) -> ModelResult:
         """同步调用 LLM，返回 ModelResult。
 
         自动重试：可重试类错误最多重试 max_retries 次。
+        max_tokens=None → 不发送该字段（上游用模型默认输出上限，不占配额预留）。
         """
         result = ModelResult()
         url = f"{self.base_url}/chat/completions"
@@ -523,8 +530,10 @@ class LLMGateway:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": self._effective_max_tokens(max_tokens),
         }
+        _mt = self._effective_max_tokens(max_tokens)
+        if _mt is not None:
+            payload["max_tokens"] = _mt
         payload.update(extra)
         # 思考开启时上游要求 temperature=1，统一钳制避免 HTTP 400
         payload["temperature"] = _pin_temperature_for_thinking(self.model, extra, temperature)
@@ -648,7 +657,7 @@ class LLMGateway:
         return result
 
     def chat_stream(self, messages: list[dict], temperature: float = 0.7,
-                    max_tokens: int = 4096, yield_reasoning_heartbeat: bool = False,
+                    max_tokens: int | None = 4096, yield_reasoning_heartbeat: bool = False,
                     emit_reasoning: bool = False, **extra):
         """流式调用 LLM，yield delta content.
 
@@ -671,9 +680,13 @@ class LLMGateway:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": self._effective_max_tokens(max_tokens),
             "stream": True,
         }
+        # max_tokens=None → 不发送该字段：部分网关把 max_tokens 当配额预留额度（智驾通用/
+        # 圆桌发 131072 会秒撞 TPM 限流掐流），不设则按模型默认输出上限执行，反而更稳。
+        _mt = self._effective_max_tokens(max_tokens)
+        if _mt is not None:
+            payload["max_tokens"] = _mt
         payload.update(extra)
         # 思考开启时上游要求 temperature=1，统一钳制避免 HTTP 400
         payload["temperature"] = _pin_temperature_for_thinking(self.model, extra, temperature)
@@ -689,7 +702,7 @@ class LLMGateway:
                 # （"Field 'max_output_tokens' must be at most 128000"），并非配额耗尽：
                 # 先尝试解析上限钳制重发一次；真·限流文案不含 max_tokens 字样解析不出
                 # → 落回下方正常 429 处理（不重试直接抛，避免打空配额）。
-                if resp.status_code == 429:
+                if resp.status_code == 429 and "max_tokens" in payload:
                     _err_429 = _error_text(resp)
                     _limit_429 = _learn_output_limit(self.base_url, self.model,
                                                      _err_429, payload["max_tokens"])
@@ -719,16 +732,18 @@ class LLMGateway:
                         resp = requests.post(url, headers=headers, json=payload,
                                              timeout=self.timeout, stream=True)
                     else:
-                        _limit = _learn_output_limit(self.base_url, self.model,
-                                                     _err_txt, payload["max_tokens"])
-                        if _limit and _limit < payload["max_tokens"]:
-                            payload["max_tokens"] = _limit
-                            resp = requests.post(url, headers=headers, json=payload,
-                                                 timeout=self.timeout, stream=True)
-                        elif not _limit and payload["max_tokens"] > 8192:
-                            payload["max_tokens"] = 8192
-                            resp = requests.post(url, headers=headers, json=payload,
-                                                 timeout=self.timeout, stream=True)
+                        # 未发送 max_tokens（不限档）时无"超限"可言，跳过钳制重发
+                        if "max_tokens" in payload:
+                            _limit = _learn_output_limit(self.base_url, self.model,
+                                                         _err_txt, payload["max_tokens"])
+                            if _limit and _limit < payload["max_tokens"]:
+                                payload["max_tokens"] = _limit
+                                resp = requests.post(url, headers=headers, json=payload,
+                                                     timeout=self.timeout, stream=True)
+                            elif not _limit and payload["max_tokens"] > 8192:
+                                payload["max_tokens"] = 8192
+                                resp = requests.post(url, headers=headers, json=payload,
+                                                     timeout=self.timeout, stream=True)
                 # 【非 200 先分类，再决定重试 vs 直接抛】（旧实现非 200 一律一次不重试直接抛，
                 # 导致上游鉴权 SERVICE_BUSY 这种理应重试的 503 瞬间失败）
                 if resp.status_code != 200:
@@ -798,13 +813,15 @@ class LLMGateway:
                 # 【空回复根因修复】流走完但一个内容帧都没有 → 先非流式兜底再报错：
                 if not got_content:
                     # 思考耗尽修复：原生思考模型思考先占满 max_tokens、正文没配额 → 加倍上限重试。
-                    if got_reasoning and payload['max_tokens'] < 120000 and attempt < max_attempts:
+                    # （未发送 max_tokens 的不限档无加倍空间，直接走非流式兜底/重试）
+                    if got_reasoning and "max_tokens" in payload and payload['max_tokens'] < 120000 and attempt < max_attempts:
                         payload['max_tokens'] = min(payload['max_tokens'] * 2, 120000)
                         time.sleep(0.3)
                         continue
                     if got_reasoning:
+                        _mt_disp = payload.get('max_tokens') if "max_tokens" in payload else '未设置(模型默认)'
                         raise LLMError(
-                            f"思考型模型正文为空：模型思考已产出但 max_tokens={max_tokens} 被耗尽，"
+                            f"思考型模型正文为空：模型思考已产出但 max_tokens={_mt_disp} 被耗尽，"
                             f"无余量输出正文（model={self.model}）。请增大 max_tokens 或关闭思考模式",
                             FailureClass.FORMAT_ERROR,
                         )

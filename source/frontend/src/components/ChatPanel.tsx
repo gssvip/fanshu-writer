@@ -3275,8 +3275,13 @@ export default function ChatPanel() {
         }
       } catch (e: any) {
         if (e.name !== 'AbortError') {
-          const msg = (e?.message || e?.error || '圆桌会议出错').trim() || '圆桌会议出错';
-          appendAiNotice('❌ 圆桌会议出错：' + msg + '\n\n常见原因&解决：\n1) LLM上游503/限流 → 等30秒后重发\n2) 六个专家叠加调用可能触发模型配额上限 → 检查模型配置token配额');
+          let msg = (e?.message || e?.error || '圆桌会议出错').trim() || '圆桌会议出错';
+          // 流中途断开（手机锁屏/切后台/网络波动/网关掐流）浏览器抛 TypeError: network error
+          // —— 裸信息无意义，转为准确指引：已完成的发言进度已存，再发"继续"可从断点续开
+          if (e?.name === 'TypeError' || /network error|failed to fetch|networkerror/i.test(msg)) {
+            msg = '连接中断（手机锁屏/切后台、网络波动或上游限流掐断流式连接），已完成的发言进度已保存：再发一句"继续"即可从断点接着开，不会重复已讨论内容';
+          }
+          appendAiNotice('❌ 圆桌会议出错：' + msg + '\n\n常见原因&解决：\n1) LLM上游503/限流 → 等30秒后重发"继续"从断点续开\n2) 模型配额上限 → 检查模型配置token配额（智驾通用/圆桌已默认不设max_tokens上限）');
           setStreamError('');
           removeEmptyAi();
         }

@@ -2092,9 +2092,10 @@ def chat_smart():
             if auto_ctx_info['chapters'] or auto_ctx_info['dims']:
                 yield f'data: {json.dumps({"type": "meta", "kind": "auto_context", "info": auto_ctx_info}, ensure_ascii=False)}\n\n'
 
-            # 智驾通用对话 max_tokens 按模型能力"不限"：给足 _DIM_MAX_TOKENS，
-            # 由 llm_gateway 按已知/自学习输出上限钳制（旧硬编码 4096 会截断长回复）
-            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=_DIM_MAX_TOKENS):
+            # 智驾通用对话 max_tokens 完全不设限（None → payload 不发送该字段）：
+            # 部分网关把 max_tokens 当配额预留额度，发 131072 秒撞 TPM 限流掐流报 network error；
+            # 不设则按模型默认输出上限执行，反而更稳（流式生成不受影响）。
+            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=None):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT  # 裸注释心跳帧：前端自动忽略，不进正文
                     continue
@@ -5055,8 +5056,9 @@ def smart_general():
             if auto_ctx_info['chapters'] or auto_ctx_info['dims']:
                 yield sse({'type': 'meta', 'kind': 'auto_context', 'info': auto_ctx_info})
 
-            # 智驾通用生成 max_tokens 按模型能力"不限"（同 chat_smart，旧硬编码 4096 截断长内容）
-            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=_DIM_MAX_TOKENS):
+            # 智驾通用生成 max_tokens 完全不设限（同 chat_smart：None → 不发送字段，
+            # 避免 max_tokens 被网关当配额预留额度而秒撞 TPM 限流）
+            for chunk in gw_stream_with_hb(gw, messages, temperature=0.8, max_tokens=None):
                 if chunk is HEARTBEAT:
                     yield SSE_HEARTBEAT_COMMENT
                     continue

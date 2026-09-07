@@ -515,7 +515,7 @@ def chat_roundtable():
                     for _tk2, _tp2 in _rt_stream_turn(_gw_c, [
                         {'role': 'system', 'content': _var_replace(_sys)},
                         {'role': 'user', 'content': f'请按讨论结论创作《{"book_title" if book else "本书"}》的【{_label}】维度'},
-                    ], 0.7, _dim_max_tokens(_dk), attempts=2):
+                    ], 0.7, None, attempts=2):
                         # body 为正文增量；__done__ 是全文汇总，跳过避免重复
                         if _tp2 is None or _tk2 == '__done__':
                             continue
@@ -592,7 +592,7 @@ def chat_roundtable():
                             {'role': 'user', 'content': f'主持人开场，议题：{topic_final}，作者意见：{feedback}'}]
                 gw_mod = LLMGateway(_bg, _kg, _mg)
                 full_parts = []
-                for f in _emit(_rt_stream_turn(gw_mod, adj_msgs, 0.6, _DIM_MAX_TOKENS), 'moderator'):
+                for f in _emit(_rt_stream_turn(gw_mod, adj_msgs, 0.6, None), 'moderator'):
                     yield f
                 adj_open = ''.join(full_parts)
                 all_messages.append({'role': 'assistant', 'content': f'【{_MODERATOR_ROLE[0]}】\n{adj_open}'})
@@ -712,7 +712,7 @@ def chat_roundtable():
 
                 gw_mod = LLMGateway(_bg, _kg, _mg)
                 full_parts = []
-                for f in _emit(_rt_stream_turn(gw_mod, mod_messages, 0.6, _DIM_MAX_TOKENS), 'moderator'):
+                for f in _emit(_rt_stream_turn(gw_mod, mod_messages, 0.6, None), 'moderator'):
                     yield f
                 mod_content = ''.join(full_parts)
                 all_messages.append({'role': 'assistant', 'content': f'【{_MODERATOR_ROLE[0]}】\n{mod_content}'})
@@ -732,6 +732,9 @@ def chat_roundtable():
                 _rt_persist_messages(session, history, topic_final, mod_content, [], '')
 
             # ========== 讨论：从断点/开头继续，按 target_total 轮×N位依次发言 ==========
+            # 注：本函数全部 LLM 调用 max_tokens=None（不发送该字段）——圆桌 6 专家×2 轮串行
+            # 大量请求，网关把 max_tokens 当配额预留额度时发大值秒撞 TPM 限流掐流（前端表现为
+            # network error）；不设按模型默认输出上限执行，全部走流式（gw_stream_with_hb）。
             done_count = len(done)
             gw_sp0 = LLMGateway(_bg, _kg, _mg)
             # 计算 target_total 的统一公式（新会议/resuming/append/adjust 都复用）：
@@ -805,7 +808,7 @@ def chat_roundtable():
                 sp_messages.append({'role': 'user', 'content': (discussion_history + f"\n【轮次】第{round_num}轮 → 轮到【{sp_name}】发言，请开始：\n")[:12000]})
 
                 full_parts = []
-                for f in _emit(_rt_stream_turn(gw_sp0, sp_messages, 0.7, _DIM_MAX_TOKENS), speaker_id):
+                for f in _emit(_rt_stream_turn(gw_sp0, sp_messages, 0.7, None), speaker_id):
                     yield f
                 sp_content = ''.join(full_parts)
 
@@ -890,7 +893,7 @@ def chat_roundtable():
 
             gw_sum = LLMGateway(_bg, _kg, _mg)
             full_parts = []
-            for f in _emit(_rt_stream_turn(gw_sum, sum_messages, 0.5, _DIM_MAX_TOKENS), 'moderator_summary'):
+            for f in _emit(_rt_stream_turn(gw_sum, sum_messages, 0.5, None), 'moderator_summary'):
                 yield f
             sum_content = ''.join(full_parts)
             all_messages.append({'role': 'assistant', 'content': f'【总结报告】\n{sum_content}'})
