@@ -950,25 +950,27 @@ export const api = {
     }),
 
   // 从大纲总纲一次性提取各卷剧情（替代逐卷循环，更稳定）
+  // 后端为非流式一次性 LLM 大 JSON 生成（timeout=300s），前端 timeout 必须放宽，
+  // 否则 60s 默认超时必挂（大卷数书生成 10+ 卷 JSON 轻松超 60s，此前"一直失败"的根因）
   extractVolumesFromOutline: (bookId: string, skillPackIds?: string[], volumeCount?: number) =>
     request<{ success: boolean; volumes: any[]; bible: any }>(`/books/${bookId}/ai-extract-volumes-from-outline`, {
       method: 'POST',
       body: JSON.stringify({ skill_pack_ids: skillPackIds || [], volume_count: volumeCount }),
-    }),
+    }, undefined, 360000),
 
   // 导入剧情大纲文本，自动识别拆分到各卷（正则优先，AI兜底）
   importPlotOutline: (bookId: string, outlineText: string, skillPackIds?: string[]) =>
     request<{ success: boolean; volumes: any[]; imported_count: number; bible: any }>(`/books/${bookId}/ai-import-plot-outline`, {
       method: 'POST',
       body: JSON.stringify({ outline_text: outlineText, skill_pack_ids: skillPackIds || [] }),
-    }),
+    }, undefined, 360000),
 
   // 反生成五幕式总纲：从各卷剧情(timeline)反向提炼总纲，写入大纲维度(plot_design)
   reverseGenerateOutline: (bookId: string, skillPackIds?: string[]) =>
     request<{ success: boolean; master_outline: string; bible: any }>(`/books/${bookId}/ai-reverse-generate-outline`, {
       method: 'POST',
       body: JSON.stringify({ skill_pack_ids: skillPackIds || [] }),
-    }),
+    }, undefined, 360000),
 
   // 一键清空剧情分卷大纲（timeline）
   clearTimeline: (bookId: string) =>

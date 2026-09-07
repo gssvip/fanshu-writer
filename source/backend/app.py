@@ -4809,6 +4809,66 @@ def _validate_and_align_timeline_volumes(parsed_tl, total_volumes):
         aligned.append(placeholder)
     return aligned, f'timeline仅生成{actual}卷，少于用户设定的{total_volumes}卷，已自动补齐到{total_volumes}卷（后{total_volumes - actual}卷为占位，建议手动重写补齐或重新执行分卷提取）'
 
+
+def _parse_llm_volume_json(content):
+    """LLM 返回的各卷 JSON 数组稳健解析（提取各卷 / 导入大纲AI兜底 两处共用）。
+
+    四策略递进：剥 fence 整段解析 → 包裹对象解包 → 正则数组提取 → 截断修复。
+    策略4专治大卷数书的 JSON 输出撞模型 token 上限被截断：截掉尾部不完整对象补 ]
+    救回已完整生成的卷（配合下游 _validate_and_align_timeline_volumes 的卷数对齐，
+    少了会自动补占位卷，不会静默缺卷）。
+    返回 (volumes or None, parse_error or None)。
+    """
+    import re as _re
+    cleaned = (content or '').strip()
+    fence_match = _re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
+    if fence_match:
+        cleaned = fence_match.group(1).strip()
+
+    volumes = None
+    parse_error = None
+    # 策略1+2：整段解析（数组 / 含 volumes 字段的包裹对象 / 单卷对象）
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            volumes = parsed
+        elif isinstance(parsed, dict):
+            for k in ('volumes', 'data', 'result', 'items', 'list'):
+                if isinstance(parsed.get(k), list):
+                    volumes = parsed[k]
+                    break
+            if volumes is None and 'volume' in parsed:
+                volumes = [parsed]
+    except (json.JSONDecodeError, ValueError) as e:
+        parse_error = str(e)
+
+    # 策略3：正则提取最外层数组（非贪婪优先，回退贪婪）
+    if not volumes:
+        for pattern in (r'\[\s*\{[\s\S]*\}\s*\]', r'\[[\s\S]*\]'):
+            m = _re.search(pattern, cleaned)
+            if m:
+                try:
+                    cand = json.loads(m.group())
+                    if isinstance(cand, list) and cand:
+                        volumes = cand
+                        break
+                except (json.JSONDecodeError, ValueError) as e:
+                    parse_error = str(e)
+
+    # 策略4：截断修复
+    if not volumes and cleaned.startswith('[') and cleaned.rfind('}') > 0:
+        _last_brace = cleaned.rfind('}')
+        for _cand in (cleaned[:_last_brace + 1] + ']',
+                      cleaned[:cleaned.rfind(',', 0, _last_brace) + 1].rstrip().rstrip(',') + ']'):
+            try:
+                _repaired = json.loads(_cand)
+                if isinstance(_repaired, list) and _repaired and all(isinstance(v, dict) for v in _repaired):
+                    volumes = _repaired
+                    break
+            except (json.JSONDecodeError, ValueError):
+                continue
+    return volumes, parse_error
+
 # 网文风格流派标签库（基于2025中国网络文学蓝皮书与起点三江榜趋势）
 # 题材 → 风格流派映射表（长篇）
 # 数据来源：番茄小说/起点中文网/七猫小说/晋江文学城等主流平台分类页调研整理
@@ -9741,44 +9801,8 @@ def ai_extract_volumes_from_outline(book_id):
         idx = _extract_volume_index(raw)
         return idx if idx > 0 else (i + 1)
 
-    volumes = None
-    parse_error = None
-
-    # 策略1：去除 markdown 代码块围栏后，直接尝试整段解析
-    cleaned = content.strip()
-    fence_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
-    if fence_match:
-        cleaned = fence_match.group(1).strip()
-
-    # 策略2：尝试整段 JSON 解析（数组 或 含 volumes 字段的对象）
-    try:
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, list):
-            volumes = parsed
-        elif isinstance(parsed, dict):
-            # 兼容 {"volumes": [...]} / {"data": [...]} / {"result": [...]} 等包裹
-            for k in ('volumes', 'data', 'result', 'items', 'list'):
-                if isinstance(parsed.get(k), list):
-                    volumes = parsed[k]
-                    break
-            # 单个对象当一卷处理
-            if volumes is None and 'volume' in parsed:
-                volumes = [parsed]
-    except (json.JSONDecodeError, ValueError) as e:
-        parse_error = str(e)
-
-    # 策略3：正则提取最外层数组（非贪婪优先，回退贪婪）
-    if not volumes:
-        for pattern in (r'\[\s*\{[\s\S]*\}\s*\]', r'\[[\s\S]*\]'):
-            m = re.search(pattern, cleaned)
-            if m:
-                try:
-                    cand = json.loads(m.group())
-                    if isinstance(cand, list) and cand:
-                        volumes = cand
-                        break
-                except (json.JSONDecodeError, ValueError) as e:
-                    parse_error = str(e)
+    # 稳健解析（四策略公共函数：整段/包裹/正则/截断修复，与导入大纲AI兜底共用）
+    volumes, parse_error = _parse_llm_volume_json(content)
 
     if not volumes or not isinstance(volumes, list) or len(volumes) == 0:
         return jsonify({'error': 'AI返回格式错误，无法解析为JSON数组', 'raw': content[:800], 'parse_error': parse_error}), 500
@@ -10146,39 +10170,8 @@ def ai_import_plot_outline(book_id):
         if err:
             return jsonify({'error': err}), 500
 
-        # 稳健解析 AI 返回（三策略：整段→对象包裹→正则数组），与 ai_extract_volumes_from_outline 一致
-        import re as _re2
-        cleaned = content.strip()
-        fence_match = _re2.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
-        if fence_match:
-            cleaned = fence_match.group(1).strip()
-
-        ai_volumes = None
-        try:
-            parsed = json.loads(cleaned)
-            if isinstance(parsed, list):
-                ai_volumes = parsed
-            elif isinstance(parsed, dict):
-                for k in ('volumes', 'data', 'result', 'items', 'list'):
-                    if isinstance(parsed.get(k), list):
-                        ai_volumes = parsed[k]
-                        break
-                if ai_volumes is None and 'volume' in parsed:
-                    ai_volumes = [parsed]
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-        if not ai_volumes:
-            for pattern in (r'\[\s*\{[\s\S]*\}\s*\]', r'\[[\s\S]*\]'):
-                m = _re2.search(pattern, cleaned)
-                if m:
-                    try:
-                        cand = json.loads(m.group())
-                        if isinstance(cand, list) and cand:
-                            ai_volumes = cand
-                            break
-                    except (json.JSONDecodeError, ValueError):
-                        pass
+        # 稳健解析 AI 返回（四策略公共函数：整段/包裹/正则/截断修复，与提取各卷共用）
+        ai_volumes, _ai_parse_err = _parse_llm_volume_json(content)
 
         if not ai_volumes:
             return jsonify({'error': 'AI返回格式错误，无法解析为JSON数组', 'raw': content[:500]}), 500
