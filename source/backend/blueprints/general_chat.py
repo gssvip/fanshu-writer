@@ -26,6 +26,7 @@ from session_persist import (
     load_session_messages,
     _safe_save_session_messages,
     _save_partial_on_disconnect,
+    _archive_truncate_after,
 )
 from blueprints.chat_collab_bp import (
     _DIM_MAX_TOKENS,
@@ -492,6 +493,8 @@ def chat_general():
     _trunc = data.get('truncate_history_to')
     if isinstance(_trunc, int) and not isinstance(_trunc, bool) and 0 <= _trunc < len(history):
         history = history[:_trunc]
+        # 全量存档同步截断：删掉被丢弃的尾部消息，避免"旧回复+新回复"重复回显
+        _archive_truncate_after(session, history)
     # 【P1-3 meta】把当前角色以 SSE meta 回传前端，便于右上角 chip UI 同步（保证刷新后 UI 显示的角色跟后端真正用到的一致）
     _p13_meta = {'role_id': chosen_role_id, 'role_name': _role_name, 'vars': _var_ctx}
     # 最大上下文：最近50条 + 首条保留（保留模型/角色/话题起始意图），应对长会话连续追问不轻易截断

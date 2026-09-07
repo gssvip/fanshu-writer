@@ -1622,8 +1622,12 @@ def update_ai_session(session_id):
     if not session:
         return jsonify({'error': 'Session not found'}), 404
     data = request.json
-    if 'messages' in data:
-        session.messages_json = json.dumps(data['messages'], ensure_ascii=False)
+    if 'messages' in data and isinstance(data['messages'], list):
+        # 全量覆盖消息：先重建全量存档（会给消息打 _seq，messages_json 同步带上保持对齐）
+        from session_persist import _archive_replace_all
+        msgs = [m for m in data['messages'] if isinstance(m, dict)]
+        _archive_replace_all(session_id, msgs)
+        session.messages_json = json.dumps(msgs, ensure_ascii=False)
     if 'title' in data:
         session.title = data['title']
     session.updated_at = datetime.now(timezone.utc)
@@ -1637,6 +1641,12 @@ def delete_ai_session(session_id):
         return jsonify({'error': 'Session not found'}), 404
     db.session.delete(session)
     db.session.commit()
+    # 清理全量存档行（独立连接，不受上面事务影响）
+    try:
+        from session_persist import _archive_delete_session
+        _archive_delete_session(session_id)
+    except Exception:
+        pass
     return jsonify({'success': True})
 
 # ==== 实体注册表 API（P2：跨维度重命名/合并） ====

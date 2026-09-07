@@ -44,6 +44,9 @@ from session_persist import (
     load_session_messages,
     _safe_save_session_messages,
     _save_partial_on_disconnect,
+    _archive_load_full,
+    _archive_count_map,
+    _archive_update_card_status,
 )
 
 # 内置人格角色表（单一定义，通用聊天 & 圆桌会议共用）已外置 persona_config.py
@@ -2147,6 +2150,7 @@ def _persist_card_status(session_id, card_id, new_status, new_content=None):
     """更新会话 messages_json 中指定卡片的 status（采纳/编辑/忽略后持久化）。
 
     用于解决：重新打开聊天界面时卡片又恢复为 pending 的问题。
+    同时同步全量存档表（覆盖 messages_json 瘦身后被裁掉的老消息里的卡片）。
     """
     if not session_id or not card_id:
         return
@@ -2174,6 +2178,8 @@ def _persist_card_status(session_id, card_id, new_status, new_content=None):
             db.session.rollback()
         except Exception:
             pass
+    # 存档表同步（不管 messages_json 里是否命中都执行：老卡片可能在瘦身版里已被裁掉）
+    _archive_update_card_status(session_id, card_id, new_status, new_content)
 
 
 @chat_collab_bp.route('/api/ai/chat/smart/apply-card', methods=['POST'])
@@ -3113,13 +3119,14 @@ def get_progress(book_id):
 
 @chat_collab_bp.route('/api/books/<book_id>/ai/sessions', methods=['GET'])
 def list_sessions(book_id):
-    """列出该书所有聊天会话。"""
+    """列出该书所有聊天会话。message_count 优先取全量存档数（messages_json 是瘦身版会偏小）。"""
     from app import AISession
     sessions = AISession.query.filter_by(book_id=book_id).order_by(AISession.updated_at.desc()).all()
+    counts = _archive_count_map([s.id for s in sessions])
     return jsonify({'sessions': [
         {'id': s.id, 'scope': s.scope, 'title': s.title,
          'updated_at': s.updated_at.isoformat() if s.updated_at else None,
-         'message_count': len(json.loads(s.messages_json or '[]'))}
+         'message_count': counts.get(s.id, len(json.loads(s.messages_json or '[]')))}
         for s in sessions
     ]})
 
@@ -3128,6 +3135,10 @@ def list_sessions(book_id):
 def get_session_messages(session_id):
     """获取单个聊天会话的全部消息（用于历史会话切换时加载聊天记录）。
 
+    全量存档优先（含未采纳卡片的完整正文，刷新后完整恢复）；无存档（旧会话/存档失败）
+    回退 messages_json 瘦身版；存档非空时把 messages_json 尾部存档缺失的消息补上
+    （个别轮次存档写入失败的兜底），保证历史对话永不为空。
+
     返回：{ id, title, scope, messages: [...] }
     messages 元素结构：{ role, content, cards? }
     """
@@ -3135,7 +3146,22 @@ def get_session_messages(session_id):
     session = AISession.query.get(session_id)
     if not session:
         return jsonify({'error': '会话不存在'}), 404
-    msgs = load_session_messages(session)
+    archived = _archive_load_full(session_id)
+    if archived is None:
+        msgs = load_session_messages(session)
+    else:
+        msgs = archived
+        mj = load_session_messages(session)
+        if isinstance(mj, list) and mj:
+            have_seqs = {m.get('_seq') for m in archived if isinstance(m.get('_seq'), int)}
+            for m in mj:
+                if not isinstance(m, dict):
+                    continue
+                sq = m.get('_seq')
+                if isinstance(sq, int) and sq in have_seqs:
+                    continue
+                d = {k: v for k, v in m.items() if k != '_seq'}
+                msgs.append(d)
     return jsonify({
         'id': session.id,
         'title': session.title,
