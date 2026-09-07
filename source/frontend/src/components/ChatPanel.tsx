@@ -55,12 +55,15 @@ function shouldShowSuggestions(dimKey: string | null, bible?: BookBible | null):
 }
 
 // ============================================================================
-// Action Card 单卡渲染（采纳 / 编辑 / 忽略）
+// Action Card 单卡渲染（采纳(覆盖) / 追加 / 编辑 / 忽略 四按钮）
 // ============================================================================
+// 落地模式：overwrite=采纳/编辑后覆盖原内容；append=追加到原内容后不覆盖
+export type CardApplyMode = 'overwrite' | 'append';
+
 interface CardViewProps {
   card: ActionCard;
-  onAdopt: (card: ActionCard) => void;
-  onEdit: (card: ActionCard, newContent: string) => void;
+  onAdopt: (card: ActionCard, mode: CardApplyMode) => void;
+  onEdit: (card: ActionCard, newContent: string, mode: CardApplyMode) => void;
   onIgnore: (card: ActionCard) => void;
   applying: boolean;
   onReplaceChapter?: (card: ActionCard, meta: any) => void;
@@ -426,7 +429,7 @@ const AdoptedCardCollapsed = memo(function AdoptedCardCollapsed({ card }: { card
             📈 {card.rankSourceLabel}
           </span>
         )}
-        <span className="chat-card-status">✓ 已落地 · {card.target}{wc > 0 ? ` · ${wc}字` : ''}</span>
+        <span className="chat-card-status">✓ {card.status === 'appended' ? '已追加落地' : '已采纳落地'} · {card.target}{wc > 0 ? ` · ${wc}字` : ''}</span>
         <span className="chat-card-toggle" style={{ marginLeft: 'auto', fontSize: 12, color: '#999' }}>
           {expanded ? '收起 ▲' : '展开 ▼'}
         </span>
@@ -448,7 +451,7 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
   // node 设计后卡片内容会被 TimelineCardBody 异步改写，draft / content 都要同步
   const handleContentMutated = (nextContent: string) => {
     setDraft(nextContent);
-    // 注：不直接 onEdit，留给用户在 UI 上点击"采纳/编辑后覆盖"来决定是否正式落盘。
+    // 注：不直接 onEdit，留给用户在 UI 上点击"采纳(覆盖)/追加"来决定是否正式落盘。
     // 但 card.content 要同步更新，否则 TimelineCardBody 重渲染时会回到旧内容：
     try { card.content = nextContent; } catch { /* frozen */ }
   };
@@ -484,9 +487,10 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
   }, [card.type, card.content, draft, chaptersPerVolume]);
   const isHalfwaySavePlot = !!(savePlotInfo && savePlotInfo.nodes.length > 0 && savePlotInfo.nodes.length < savePlotInfo.cc);
 
-  const handleSaveEdit = () => {
+  // 编辑后二次选择：mode='overwrite' 采纳落地（覆盖）| mode='append' 追加落地
+  const handleSaveEdit = (mode: CardApplyMode) => {
     if (!draft.trim()) return;
-    onEdit({ ...card, content: draft.trim(), status: 'edited' }, draft.trim());
+    onEdit({ ...card, content: draft.trim() }, draft.trim(), mode);
     setEditing(false);
   };
 
@@ -508,7 +512,7 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
     );
   }
 
-  if (status === 'adopted' || status === 'edited') {
+  if (status === 'adopted' || status === 'appended' || status === 'edited') {
     return <AdoptedCardCollapsed card={card} />;
   }
 
@@ -582,7 +586,7 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
             <button
               className="chat-card-btn"
               style={{ fontSize: 12, background: '#fef3c7', borderColor: '#fcd34d', color: '#92400e' }}
-              onClick={() => onAdopt({ ...card, content: draft || card.content })}
+              onClick={() => onAdopt({ ...card, content: draft || card.content }, 'append')}
               disabled={applying}
               title="把当前半截卡片的节点按章节号增量合并到卷里（不会覆盖已存在章节的节点）。推荐整卷写完后再统一采纳。"
             >
@@ -590,7 +594,7 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
             </button>
           )}
           <button className="chat-card-btn ghost" onClick={() => setEditing(true)} disabled={applying}>
-            编辑后覆盖
+            编辑
           </button>
           <button className="chat-card-btn ghost" onClick={() => onIgnore(card)} disabled={applying}>
             忽略此快照
@@ -643,10 +647,21 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
             rows={Math.min(16, Math.max(4, draft.split('\n').length))}
           />
           <div className="chat-card-actions">
-            <button className="chat-card-btn primary" onClick={handleSaveEdit} disabled={!draft.trim()}>
-              保存并落地
-            </button>
-            <button className="chat-card-btn" onClick={() => { setEditing(false); setDraft(card.content); }}>
+            {card.type === 'SAVE_CHAPTER' ? (
+              <button className="chat-card-btn primary" onClick={() => handleSaveEdit('overwrite')} disabled={!draft.trim()}>
+                保存并落地
+              </button>
+            ) : (
+              <>
+                <button className="chat-card-btn primary" onClick={() => handleSaveEdit('overwrite')} disabled={!draft.trim()}>
+                  采纳落地（覆盖原内容）
+                </button>
+                <button className="chat-card-btn" onClick={() => handleSaveEdit('append')} disabled={!draft.trim()}>
+                  追加落地
+                </button>
+              </>
+            )}
+            <button className="chat-card-btn ghost" onClick={() => { setEditing(false); setDraft(card.content); }}>
               取消
             </button>
           </div>
@@ -661,12 +676,19 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
                   {applying ? '替换中…' : '替换本章正文'}
                 </button>
               ) : (
-                <button className="chat-card-btn primary" onClick={() => onAdopt({ ...card, content: draft || card.content })} disabled={applying}>
+                <button className="chat-card-btn primary" onClick={() => onAdopt({ ...card, content: draft || card.content }, 'overwrite')} disabled={applying}
+                  title="直接落地并全覆盖该维度现有内容">
                   {applying ? '落地中…' : (card.type === 'SAVE_CHAPTER' ? '采纳(覆盖同章)' : '采纳')}
                 </button>
               )}
+              {!isReplaceMode && card.type !== 'SAVE_CHAPTER' && (
+                <button className="chat-card-btn" onClick={() => onAdopt({ ...card, content: draft || card.content }, 'append')} disabled={applying}
+                  title="追加到该维度现有内容之后，不覆盖">
+                  追加
+                </button>
+              )}
               <button className="chat-card-btn" onClick={() => setEditing(true)} disabled={applying}>
-                编辑后覆盖
+                编辑
               </button>
               <button className="chat-card-btn ghost" onClick={() => onIgnore(card)} disabled={applying}>
                 忽略
@@ -889,8 +911,8 @@ const RankScanCard = memo(function RankScanCard({ rankScan, platform, concept, o
 interface MessageBubbleProps {
   message: AIMessage;
   index: number;
-  onAdopt: (c: ActionCard) => void;
-  onEdit: (c: ActionCard, content: string) => void;
+  onAdopt: (c: ActionCard, mode: CardApplyMode) => void;
+  onEdit: (c: ActionCard, content: string, mode: CardApplyMode) => void;
   onIgnore: (c: ActionCard) => void;
   applyingCardId: string | null;
   streaming: boolean;
@@ -2614,15 +2636,15 @@ export default function ChatPanel() {
     setMessages(prev => prev.filter((_, i) => i !== index));
   }, []);
 
-  // ========== 卡片操作 ==========
-  const handleAdopt = useCallback(async (card: ActionCard) => {
+  // ========== 卡片操作（四按钮协议：overwrite=采纳(覆盖) / append=追加） ==========
+  const handleAdopt = useCallback(async (card: ActionCard, mode: CardApplyMode) => {
     if (!bookId) return;
     setApplyingCardId(card.id);
     try {
-      const r = await api.applyChatCard(bookId, card, sessionId || undefined);
+      const r = await api.applyChatCard(bookId, card, sessionId || undefined, mode);
       setMessages(prev => prev.map(m => {
         if (m.role !== 'assistant' || !m.cards) return m;
-        return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...c, status: 'adopted' as const } : c) };
+        return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...c, status: (mode === 'overwrite' ? 'adopted' : 'appended') as any } : c) };
       }));
       refreshProgress();
       if (card.type !== 'SAVE_CHAPTER') {
@@ -2650,7 +2672,16 @@ export default function ChatPanel() {
       } else if (card.type === 'SAVE_PLOT') {
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: '✅ 情节节点已采纳落地到剧情线。关闭聊天面板回到「剧情」Tab 即可看到本卷节点详细列表。',
+          content: mode === 'append'
+            ? '✅ 情节节点已追加合并到剧情线（原有卷内容保留）。关闭聊天面板回到「剧情」Tab 即可看到本卷节点详细列表。'
+            : '✅ 情节节点已采纳落地（已覆盖原剧情线）。关闭聊天面板回到「剧情」Tab 即可看到本卷节点详细列表。',
+        }]);
+      } else if (card.type !== 'SAVE_CHAPTER') {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: mode === 'append'
+            ? `✅ 已追加到「${card.target || r.label || '对应维度'}」（原内容保留，追加写入）。`
+            : `✅ 已采纳落地到「${card.target || r.label || '对应维度'}」（原内容已全覆盖）。`,
         }]);
       }
     } catch (e: any) {
@@ -2682,17 +2713,21 @@ export default function ChatPanel() {
     }
   }, [bookId, markBibleDirty]);
 
-  const handleEdit = useCallback(async (card: ActionCard, newContent: string) => {
+  const handleEdit = useCallback(async (card: ActionCard, newContent: string, mode: CardApplyMode) => {
     if (!bookId) return;
     setApplyingCardId(card.id);
     try {
       const editedCard = { ...card, content: newContent };
-      const r = await api.applyChatCard(bookId, editedCard, sessionId || undefined);
+      const r = await api.applyChatCard(bookId, editedCard, sessionId || undefined, mode);
       setMessages(prev => prev.map(m => {
         if (m.role !== 'assistant' || !m.cards) return m;
-        return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...editedCard, status: 'edited' as const } : c) };
+        return { ...m, cards: m.cards.map(c => c.id === card.id ? { ...editedCard, status: (mode === 'overwrite' ? 'adopted' : 'appended') as any } : c) };
       }));
       refreshProgress();
+      if (card.type !== 'SAVE_CHAPTER') {
+        markBibleDirty();
+        api.getBible(bookId).then(bb => setBible(bb)).catch(() => {});
+      }
       if (card.type === 'SAVE_CHAPTER' && (r as any).chapter_id) {
         const ch = r as any;
         const actionLabel = ch.action === 'updated' ? '已覆盖同章号章节' : '已新建章节';
@@ -2707,13 +2742,20 @@ export default function ChatPanel() {
           setNextChapterNum(rr.next_chapter_num);
         }).catch(() => {});
         api.smartChapters(bookId).then(rr => setChapters(rr.chapters || [])).catch(() => {});
+      } else if (card.type !== 'SAVE_CHAPTER') {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: mode === 'append'
+            ? `✅ 编辑后已追加到「${card.target || r.label || '对应维度'}」（原内容保留）。`
+            : `✅ 编辑后已采纳落地到「${card.target || r.label || '对应维度'}」（原内容已全覆盖）。`,
+        }]);
       }
     } catch (e: any) {
       setStreamError(e.message || '落地失败');
     } finally {
       setApplyingCardId(null);
     }
-  }, [bookId, sessionId, refreshProgress]);
+  }, [bookId, sessionId, refreshProgress, markBibleDirty]);
 
   const handleIgnore = useCallback((card: ActionCard) => {
     setMessages(prev => prev.map(m => {

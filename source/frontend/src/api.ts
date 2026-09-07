@@ -1042,10 +1042,11 @@ export const api = {
     return fetchStream(`${getApiBaseUrl()}/ai/chat/smart`, cfg, signal);
   },
   // 采纳 Action Card，落地到对应维度
-  applyChatCard: (bookId: string, card: ActionCard, sessionId?: string) =>
-    request<{ ok: boolean; field: string; label: string; progress: ProgressMap }>(
+  // mode: 'overwrite'=采纳(全覆盖/编辑后覆盖) | 'append'=追加(不覆盖原内容)；缺省由后端按旧逻辑兼容
+  applyChatCard: (bookId: string, card: ActionCard, sessionId?: string, mode?: 'overwrite' | 'append') =>
+    request<{ ok: boolean; field: string; label: string; applied_mode?: string; card_status?: string; progress: ProgressMap }>(
       '/ai/chat/smart/apply-card',
-      { method: 'POST', body: JSON.stringify({ book_id: bookId, card, session_id: sessionId }) }
+      { method: 'POST', body: JSON.stringify({ book_id: bookId, card, session_id: sessionId, mode }) }
     ),
   // 创作进度地图
   getProgressMap: (bookId: string) => request<ProgressMap>(`/books/${bookId}/ai/progress`),
@@ -1221,7 +1222,7 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ book_id: bookId, chapter_id: chapterId, content, session_id: sessionId, card_id: cardId }) }
     ),
   // 更新卡片状态（忽略等不落地操作持久化）
-  updateCardStatus: (sessionId: string, cardId: string, status: 'ignored' | 'adopted' | 'edited') =>
+  updateCardStatus: (sessionId: string, cardId: string, status: 'ignored' | 'adopted' | 'appended' | 'edited') =>
     request<{ ok: boolean }>(
       '/ai/chat/smart/update-card-status',
       { method: 'POST', body: JSON.stringify({ session_id: sessionId, card_id: cardId, status }) }

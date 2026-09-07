@@ -2178,16 +2178,21 @@ def _persist_card_status(session_id, card_id, new_status, new_content=None):
 def apply_card():
     """采纳 Action Card，落地到对应维度。
 
-    SAVE_CHAPTER 模式：落地到 Chapter 表。
+    body 新增 mode 字段（四按钮协议）：
+      - mode='overwrite'（采纳/编辑后覆盖）→ 覆盖该维度原内容（人物卡=清空后写入；
+        剧情卡=以卡片卷为准整体重建 timeline）
+      - mode='append'（追加）→ 追加到该维度原内容后，不覆盖（人物卡=合并追加；
+        剧情卡=按 volume_index upsert 增量合并）
+      - 未传 mode 时向后兼容旧前端：status='edited' → 覆盖；默认 → 追加
+
+    SAVE_CHAPTER 模式（mode 不生效，章节固定按章号/标题 upsert）：
       - 自动识别章节号（parse_chapter_number）
       - 同章节号（或同标题）的章节存在 → 覆盖内容，不再追加
       - 不存在 → 新建章节
       - 落地后调用 resort_chapters_by_title(rebin_volumes=True)
         按章节号自动排序，按 50 章/卷自动新建/归入卷
-    其他维度：
-      - status='edited'（编辑后落地）→ 覆盖该维度原内容
-      - status='adopted' 或默认（直接采纳）→ 追加到该维度原内容后
-    落地成功后会持久化卡片 status（adopted/edited），避免重开聊天又提示采纳。
+    落地成功后会持久化卡片 status（adopted=覆盖落地 / appended=追加落地），
+    避免重开聊天又提示采纳。
     """
     from app import db, BookBible, Character, Chapter, parse_chapter_number, resort_chapters_by_title, AISession
     data = request.json or {}
@@ -2198,10 +2203,13 @@ def apply_card():
     title = card.get('title', '')
     card_id = card.get('id', '')
     session_id = data.get('session_id')
-    # 编辑后落地用覆盖模式，直接采纳用追加模式
-    is_edit_overwrite = (card.get('status') == 'edited')
-    # 落地后要回写的卡片状态（采纳=adopted，编辑后落地=edited）
-    new_card_status = 'edited' if is_edit_overwrite else 'adopted'
+    # 四按钮协议：mode 显式指定覆盖/追加；未传时兼容旧前端（edited→覆盖，默认→追加）
+    mode = data.get('mode')
+    if mode not in ('overwrite', 'append'):
+        mode = 'overwrite' if card.get('status') == 'edited' else 'append'
+    is_edit_overwrite = (mode == 'overwrite')
+    # 落地后要回写的卡片状态（覆盖落地=adopted，追加落地=appended）
+    new_card_status = 'adopted' if is_edit_overwrite else 'appended'
 
     # ====== 空判断/ctype校验 拆成独立分支，报错更精确，避免一刀切"无效的卡片或内容为空"排查困难 ======
     if not ctype:
@@ -2358,6 +2366,7 @@ def apply_card():
         # bible 可能不存在，但 progress 仍要返回
         bb = BookBible.query.filter_by(book_id=book_id).first()
         return jsonify({'ok': True, 'field': spec['field'], 'label': spec['label'],
+                        'applied_mode': mode, 'card_status': new_card_status,
                         'progress': build_progress_map(bb),
                         **result_extra})
 
@@ -2374,8 +2383,8 @@ def apply_card():
             # 一次生成多个人物时，content 含多个人物块（空行分隔），全部解析后追加
             char_list = _parse_character_card_multi(title, content)
 
-            # 编辑后落地：覆盖模式——清空原人物列表后写入新人物
-            # 直接采纳：追加模式——保留原人物后追加新人物
+            # 覆盖模式（采纳/编辑后覆盖）——清空原人物列表后写入新人物
+            # 追加模式——保留原人物后追加新人物
             if is_edit_overwrite:
                 # 覆盖：删除原 Character 表记录 + 重置 character_profiles
                 try:
@@ -2435,6 +2444,10 @@ def apply_card():
                     if isinstance(parsed_tl, list):
                         existing_vols = parsed_tl
                 except (json.JSONDecodeError, ValueError, TypeError):
+                    existing_vols = []
+                # 四按钮协议·采纳(全覆盖)：以卡片卷为准整体重建 timeline，丢弃旧卷；
+                # 追加：保留 existing_vols，按 volume_index upsert 增量合并（旧行为）
+                if is_edit_overwrite:
                     existing_vols = []
 
                 def _volume_field_nonempty(v):
@@ -2711,10 +2724,10 @@ def apply_card():
             existing = (getattr(bb, field, '') or '').strip()
             entry = f'【{title}】\n{content}' if title else content
             if is_edit_overwrite:
-                # 编辑后落地：覆盖原内容（用户已编辑，以新内容为准）
+                # 采纳(全覆盖)/编辑后落地：覆盖原内容（以本次卡片内容为准）
                 setattr(bb, field, entry)
             else:
-                # 直接采纳：追加到原内容后
+                # 追加：追加到原内容后，不覆盖
                 setattr(bb, field, f'{existing}\n\n{entry}'.strip() if existing else entry)
 
             # M1a: 伏笔维度落地后自动解析为 DAG（结构化状态追踪）
@@ -2776,7 +2789,7 @@ def apply_card():
                     f'时间：{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}\n'
                     f'落地维度：{spec_label}（字段={spec.get("field","")}，卡片类型={ctype}）\n'
                     f'卡片标题：{title or "(未命名卡片)"}\n'
-                    f'落地模式：{"覆盖（编辑后落地）" if is_edit_overwrite else "追加（直接采纳）"}\n'
+                    f'落地模式：{"覆盖（采纳/编辑后全覆盖）" if is_edit_overwrite else "追加（保留原内容，追加写入）"}\n'
                     f'内容摘要：{preview}\n'
                     f'→ 以后聊到相关内容时，请以此为"智驾已写入"的事实依据，不要重复从零讨论已落过卡的相同话题。'
                 )
@@ -2789,6 +2802,7 @@ def apply_card():
             _tb.print_exc()
 
     return jsonify({'ok': True, 'field': spec['field'], 'label': spec['label'],
+                    'applied_mode': mode, 'card_status': new_card_status,
                     'progress': build_progress_map(bb),
                     **result_extra})
 
@@ -3069,7 +3083,7 @@ def _parse_character_card(title, content):
 def update_card_status():
     """更新卡片状态（用于忽略等不落地的操作持久化）。
 
-    body: { session_id, card_id, status: 'ignored'|'adopted'|'edited' }
+    body: { session_id, card_id, status: 'ignored'|'adopted'|'appended'|'edited' }
     返回: { ok: true }
     """
     data = request.json or {}
@@ -3078,7 +3092,7 @@ def update_card_status():
     new_status = data.get('status', 'ignored')
     if not session_id or not card_id:
         return jsonify({'error': '缺少 session_id 或 card_id'}), 400
-    if new_status not in ('ignored', 'adopted', 'edited'):
+    if new_status not in ('ignored', 'adopted', 'appended', 'edited'):
         return jsonify({'error': '无效的 status'}), 400
     _persist_card_status(session_id, card_id, new_status)
     return jsonify({'ok': True})

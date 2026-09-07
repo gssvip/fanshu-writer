@@ -97,7 +97,7 @@ export interface ActionCard {
   title: string;
   content: string;
   target: string;      // 目标维度标签
-  status?: 'pending' | 'adopted' | 'edited' | 'ignored';
+  status?: 'pending' | 'adopted' | 'appended' | 'edited' | 'ignored';
   subtitle?: string;   // 副标题（榜单风向来源说明）
   rankSourceLabel?: string; // 榜单风向标签（如 "🍅番茄新书榜·男频都市"）
 }
