@@ -53,7 +53,9 @@ from blueprints.nd_helpers import (
     _nd_build_full_volume_card,
     _nd_clear_state,
     _nd_collect_all_save_plot_volumes,
+    _nd_extract_save_plot_vols,
     _nd_load_state,
+    _nd_merge_state_vols,
     _nd_save_state,
     _parse_last_chapter_from_text,
     _parse_volume_index_from_text,
@@ -414,8 +416,8 @@ def chat_general():
     enriched = _var_replace(user_with_ref)
 
     # ======= 节点设计师：续会 / 新卷启动 注入上下文 =======
-    # 学习圆桌会议续会机制：命中"继续/接着/往下"类纯续会指令 → 加载 state
-    # 从 meta_json['node_designer_state'] 拿到 last_ch，拼一段「从Y+1开始不要重复」的系统注入给 LLM
+    # 学习圆桌会议续会机制：命中"继续/接着/往下"类纯续会指令（含前端合成的「继续节点设计…」）→ 加载 state
+    # 从 node_designer_state 小表拿到 last_ch，拼一段「从Y+1开始不要重复」的系统注入给 LLM
     # 命中明确"第N卷 节点设计"新卷指令 → 清掉旧 state（上卷进度作废，新卷从头来）
     _nd_is_node_role = (chosen_role_id == 'node_designer')
     _nd_state = None
@@ -453,29 +455,36 @@ def chat_general():
                     enriched = (enriched or '').rstrip() + '\n' + inject
                 _nd_meta_for_closure = dict(_nd_state)
         else:
-            # 非续会：启动新请求 → 建立初始 state（从用户消息里解析 volume_index / cpv）
-            init_vi = None
-            if new_vi is not None:
-                init_vi = new_vi
+            _msg_vi = _parse_volume_index_from_text(message) if message else None
+            _nd_state = _nd_load_state(session)
+            if _nd_state and (_msg_vi is None or _msg_vi == int(_nd_state.get('volume_index') or 0)):
+                # 普通追问/改某章（非续会非新卷）→ 沿用已有进度，绝不能把 last_ch 清零
+                # （旧逻辑无脑重置 last_ch=0 → 下一轮「继续」就从第1章整卷重生成，P0 事故）
+                _nd_meta_for_closure = dict(_nd_state)
             else:
-                init_vi = _parse_volume_index_from_text(message)
-            if init_vi is None:
-                # 从历史 AI（前一条）里兜底看有没有"第X卷"
-                init_vi = _parse_volume_index_from_text(last_assistant_text) or 1
-            init_cpv = 50
-            try:
-                _mcpv = re.search(r'(?:cpv|每卷章数|章节数|共)\s*[=:：]*\s*(\d{1,3})\s*章', message or '')
-                if _mcpv:
-                    init_cpv = max(10, min(200, int(_mcpv.group(1))))
-            except Exception:
-                pass
-            _nd_meta_for_closure = {
-                'volume_index': init_vi or 1,
-                'cpv': init_cpv,
-                'last_ch': 0,
-                'volume_title': '',
-                'updated_at': datetime.now(timezone.utc).isoformat(),
-            }
+                # 无历史进度，或明确指向另一卷 → 新任务：建立初始 state（从用户消息里解析 volume_index / cpv）
+                init_vi = None
+                if new_vi is not None:
+                    init_vi = new_vi
+                else:
+                    init_vi = _msg_vi
+                if init_vi is None:
+                    # 从历史 AI（前一条）里兜底看有没有"第X卷"
+                    init_vi = _parse_volume_index_from_text(last_assistant_text) or 1
+                init_cpv = 50
+                try:
+                    _mcpv = re.search(r'(?:cpv|每卷章数|章节数|共)\s*[=:：]*\s*(\d{1,3})\s*章', message or '')
+                    if _mcpv:
+                        init_cpv = max(10, min(200, int(_mcpv.group(1))))
+                except Exception:
+                    pass
+                _nd_meta_for_closure = {
+                    'volume_index': init_vi or 1,
+                    'cpv': init_cpv,
+                    'last_ch': 0,
+                    'volume_title': '',
+                    'updated_at': datetime.now(timezone.utc).isoformat(),
+                }
 
     history = load_session_messages(session)
     # 【重新生成】truncate_history_to：仅保留历史前 N 条（含本条前的 user），丢弃旧 AI 回复及其后续，
@@ -829,6 +838,14 @@ def chat_general():
                                 _new_state['cpv'] = _cand
                     except Exception:
                         pass
+                    # 累计 vols 进 state：本轮输出卡片 + 之前累计的按章号合并
+                    # （历史消息里落盘的卡片 content 会被截断，续会合并全卷卡只能靠 state['vols']）
+                    try:
+                        _cur_vols = _nd_extract_save_plot_vols(parse_cards(complete))
+                        if _cur_vols:
+                            _new_state['vols'] = _nd_merge_state_vols(_new_state.get('vols'), _cur_vols)
+                    except Exception:
+                        pass
                     _nd_save_state(session, db, _new_state)
                 except Exception:
                     pass
@@ -858,8 +875,8 @@ def chat_general():
                         except Exception:
                             pass
                     if _is_full and (_existing_nodes_count < _cpv or not cards):
-                        # 收集所有历史分段卡片 + 本次 complete 里的卡片 → 合并成全卷统一卡片
-                        all_vols, dvi, dcpv = _nd_collect_all_save_plot_volumes(history, complete)
+                        # 收集 state 累计 vols + 本次 complete 里的卡片 + 历史会话卡片 → 合并成全卷统一卡片
+                        all_vols, dvi, dcpv = _nd_collect_all_save_plot_volumes(history, complete, _nd_meta_for_closure.get('vols'))
                         vi_for_build = dvi or _vi
                         cpv_for_build = dcpv or _cpv
                         if all_vols or _is_full:
@@ -913,6 +930,13 @@ def chat_general():
                     if isinstance(_lc, int) and _lc > int(_new_state.get('last_ch') or 0):
                         _new_state['last_ch'] = _lc
                     _new_state['updated_at'] = datetime.now(timezone.utc).isoformat()
+                    # 异常中断也要累计 vols（半截卡片里的已完成章节点别丢）
+                    try:
+                        _cur_vols = _nd_extract_save_plot_vols(parse_cards(partial))
+                        if _cur_vols:
+                            _new_state['vols'] = _nd_merge_state_vols(_new_state.get('vols'), _cur_vols)
+                    except Exception:
+                        pass
                     _nd_save_state(session, db, _new_state)
                 except Exception:
                     pass

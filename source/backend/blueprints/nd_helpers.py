@@ -2,17 +2,19 @@
 
 背景：节点设计师生成整卷 50 章节点是长流式输出（4-10 分钟），中途断连/超时/
 模型忘吐卡片是 P0 高频事故。本模块承载全部"断点续会"硬能力：
-  1. 续会指令识别：_is_nd_continue（"继续/接着"纯续会 vs 指定章修改）
+  1. 续会指令识别：_is_nd_continue（纯"继续/接着"短句 + 前端合成的"继续节点设计…"）
   2. 进度解析：_parse_last_chapter_from_text / _parse_volume_index_from_text
      （双路：优先 SAVE_PLOT 卡片 JSON 里的 nodes.chapters，正则兜底）
-  3. 状态持久化：_nd_save/_load/_clear_state（session.meta_json['node_designer_state']）
+  3. 状态持久化：_nd_save/_load/_clear_state（独立 node_designer_state 小表）
+     ⚠️ ai_sessions ORM 没有 meta_json 列，写 session.meta_json 会被 SQLAlchemy
+     静默忽略（和圆桌 roundtable_state 踩过的同一个坑），必须走独立小表。
   4. 终极兜底：_nd_collect_all_save_plot_volumes + _nd_build_full_volume_card
-     （模型没给整卷合并卡时，从历史半截卡片聚合出全卷合并版）
+     （模型没给整卷合并卡时，从 state 累计卡片 + 当前输出聚合出全卷合并版）
   5. 续会注入：_nd_build_continue_user_injection（把断点进度转成续会 prompt）
 
 对 parse_cards 的依赖用函数内延迟导入（chat_collab_bp 顶层 import 本模块，
 反向顶层 import 会循环；parse_cards 是纯文本解析，运行时导入无副作用）。
-使用方：blueprints/chat_collab_bp.py: chat_general 的 node_designer 分支。
+使用方：blueprints/general_chat.py: chat_general 的 node_designer 分支。
 """
 from __future__ import annotations
 
@@ -20,9 +22,14 @@ import json
 import re
 
 _ND_STATE_KEY = 'node_designer_state'
+_ND_STATE_TABLE = 'node_designer_state'
 
 _ND_CONTINUE_HINTS = ('继续', '接着', '续', '往下', '没写完', '接着生成', '继续生成', '继续写', '接着写')
 _ND_FULL_RE = re.compile(r'^\s*(?:继续|接着|续会?|往下(?:生成|写)?|没写完|(?:继续|接着|继续吧|接着吧)(?:生成|节点|写|出)?|(?:节点|节点设计)\s*(?:继续|接着))\s*[。.!！，,？?]*\s*$')
+# 前端 ChatPanel 合成的续会指令前缀（继续按钮/一键继续构造的 prompt，形如
+# 「继续节点设计。当前卷：第X卷。已完成：…」）——必须识别为续会，否则会被当成
+# 新请求重置 last_ch=0 → 整卷从头重生成（P0 事故）
+_ND_FRONTEND_CONTINUE_RE = re.compile(r'^(?:继续|接着|往下)\s*节点设计')
 
 # 明确指令"第N卷"启动（命中就视为新区任务 → 清旧续会状态）
 _ND_NEW_RE = re.compile(r'第\s*(\d+)\s*卷')
@@ -33,11 +40,16 @@ _ND_VOLUME_RE = re.compile(r'第\s*(\d+)\s*卷')
 
 
 def _is_nd_continue(msg: str) -> bool:
-    """节点设计师「继续」指令识别：和圆桌同口径，避免误抢普通创作追问。"""
+    """节点设计师「继续」指令识别：
+    ① 纯「继续/接着/往下…」短句（和圆桌同口径，避免误抢普通创作追问）
+    ② 前端合成的续会指令：以「继续/接着/往下 节点设计」开头（ChatPanel 继续/一键继续按钮的 prompt）
+    """
     m = (msg or '').strip().lstrip('，。,.！!？? ').strip()
     if not m:
         return False
     if _ND_FULL_RE.match(m):
+        return True
+    if _ND_FRONTEND_CONTINUE_RE.match(m):
         return True
     # 宽松版：开头带"继续/接着"且整句极短（≤12字），且不包含明确的新卷/改某章指令
     if any(m.startswith(h) for h in ('继续', '接着', '往下')) and len(m) <= 12:
@@ -50,13 +62,23 @@ def _is_nd_continue(msg: str) -> bool:
 
 
 def _is_nd_new_volume_request(msg: str) -> int | None:
-    """若用户消息明确带"第N卷"+"节点设计/情节节点/设计情节"关键词 → 返回卷号 N（启动新区任务）。"""
+    """若用户消息明确带"第N卷"+"节点设计/情节节点/设计情节"关键词 → 返回卷号 N（启动新区任务）。
+
+    两类误判必须排除（否则会清掉续会进度 → 整卷重生成）：
+      ① 前端合成的续会指令（「继续节点设计。当前卷：第X卷。…」）
+      ② 含"第X章"的章节级修改（如"继续写第3卷第25章"）
+    多个卷号取最后一个（"第1卷写完了，设计第2卷"→2）。
+    """
     if not msg:
         return None
-    m = _ND_NEW_RE.search(msg)
-    if not m:
+    if _ND_FRONTEND_CONTINUE_RE.match((msg or '').strip().lstrip('，。,.！!？? ').strip()):
         return None
-    vi = int(m.group(1))
+    matches = _ND_NEW_RE.findall(msg)
+    if not matches:
+        return None
+    if _ND_CHAPTER_RE.search(msg):
+        return None
+    vi = int(matches[-1])
     if vi < 1 or vi > 99:
         return None
     keywords = ('节点', '情节', '大纲', '设计', '生成', '剧情', '写')
@@ -135,21 +157,110 @@ def _parse_volume_index_from_text(text: str) -> int | None:
     return None
 
 
+def _nd_ind_connect():
+    """复用圆桌的独立连接工厂（独立于请求 db.session，不受回滚/GeneratorExit 影响；运行时导入避免循环）。"""
+    from blueprints.chat_collab_bp import _rt_ind_connect
+    return _rt_ind_connect()
+
+
+def _nd_ind_ensure_table(ind_sess):
+    """幂等建 node_designer_state 小表（session_id PK + state_json 全文 + updated_at）。"""
+    from sqlalchemy import text as _t
+    ind_sess.execute(_t(f"""
+        CREATE TABLE IF NOT EXISTS {_ND_STATE_TABLE} (
+            session_id VARCHAR(36) PRIMARY KEY,
+            state_json TEXT NOT NULL,
+            updated_at TEXT
+        )
+    """))
+    ind_sess.commit()
+
+
 def _nd_save_state(session, db, state: dict) -> None:
-    """把节点设计师进度写回 session.meta_json（保留已有键，不影响圆桌/role/ai_config）。"""
+    """把节点设计师进度写入独立 node_designer_state 小表（真持久化）。
+
+    血泪：ai_sessions ORM 没有 meta_json 列 → 旧实现写 session.meta_json 内存属性
+    被 SQLAlchemy 静默忽略 → 续会状态从没落过盘 → 「继续」解析不到进度就整卷重生成。
+    方案照抄圆桌 roundtable_state：独立连接 + 独立小表 upsert，不受请求回滚影响。
+    """
+    sid = str(getattr(session, 'id', '') or '').strip()
+    if not sid or not isinstance(state, dict):
+        return
     try:
-        meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
-        if not isinstance(meta, dict):
-            meta = {}
-        meta[_ND_STATE_KEY] = state
-        session.meta_json = json.dumps(meta, ensure_ascii=False)
-        db.session.add(session)
-        db.session.commit()
+        from datetime import datetime, timezone
+        _eng, _SM = _nd_ind_connect()
+        try:
+            _s = _SM()
+            try:
+                _nd_ind_ensure_table(_s)
+                from sqlalchemy import text as _t
+                _json = json.dumps(state, ensure_ascii=False)
+                _ts = datetime.now(timezone.utc).isoformat()
+                # SQLite/PG 都支持的 upsert：先 UPDATE，受影响=0 再 INSERT
+                _up = _s.execute(
+                    _t(f"UPDATE {_ND_STATE_TABLE} SET state_json = :sj, updated_at = :ts WHERE session_id = :sid"),
+                    {'sj': _json, 'ts': _ts, 'sid': sid})
+                if getattr(_up, 'rowcount', 0) == 0:
+                    _s.execute(
+                        _t(f"INSERT INTO {_ND_STATE_TABLE} (session_id, state_json, updated_at) VALUES (:sid, :sj, :ts)"),
+                        {'sid': sid, 'sj': _json, 'ts': _ts})
+                _s.commit()
+            finally:
+                try:
+                    _s.close()
+                except Exception:
+                    pass
+        finally:
+            try:
+                _eng.dispose()
+            except Exception:
+                pass
+        # 兼容：同步写内存属性（本请求生命周期内的旧读法仍好使；不是DB列，不落盘）
+        try:
+            meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
+            if not isinstance(meta, dict):
+                meta = {}
+            meta[_ND_STATE_KEY] = state
+            session.meta_json = json.dumps(meta, ensure_ascii=False)
+        except Exception:
+            pass
     except Exception:
         pass
 
 
 def _nd_load_state(session):
+    """读节点设计师进度：优先独立小表；兜底内存 meta_json 属性（同请求生命周期内）。"""
+    sid = str(getattr(session, 'id', '') or '').strip()
+    if sid:
+        try:
+            _eng, _SM = _nd_ind_connect()
+            try:
+                _s = _SM()
+                try:
+                    _nd_ind_ensure_table(_s)
+                    from sqlalchemy import text as _t
+                    _row = _s.execute(
+                        _t(f"SELECT state_json FROM {_ND_STATE_TABLE} WHERE session_id = :sid LIMIT 1"),
+                        {'sid': sid}).fetchone()
+                    if _row is not None:
+                        try:
+                            st = json.loads(str(_row[0]) or 'null')
+                        except Exception:
+                            st = None
+                        if isinstance(st, dict):
+                            return st
+                finally:
+                    try:
+                        _s.close()
+                    except Exception:
+                        pass
+            finally:
+                try:
+                    _eng.dispose()
+                except Exception:
+                    pass
+        except Exception:
+            pass
     try:
         meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
         if isinstance(meta, dict):
@@ -161,23 +272,129 @@ def _nd_load_state(session):
 
 
 def _nd_clear_state(session, db) -> None:
+    """清掉节点设计师续会进度（明确启动"第N卷"新任务时调用）。"""
+    sid = str(getattr(session, 'id', '') or '').strip()
+    if sid:
+        try:
+            _eng, _SM = _nd_ind_connect()
+            try:
+                _s = _SM()
+                try:
+                    _nd_ind_ensure_table(_s)
+                    from sqlalchemy import text as _t
+                    _s.execute(_t(f"DELETE FROM {_ND_STATE_TABLE} WHERE session_id = :sid"), {'sid': sid})
+                    _s.commit()
+                finally:
+                    try:
+                        _s.close()
+                    except Exception:
+                        pass
+            finally:
+                try:
+                    _eng.dispose()
+                except Exception:
+                    pass
+        except Exception:
+            pass
     try:
         meta = session.meta_json if isinstance(session.meta_json, dict) else json.loads((session.meta_json or None) or '{}')
-        if not isinstance(meta, dict):
-            meta = {}
-        if _ND_STATE_KEY in meta:
+        if isinstance(meta, dict) and _ND_STATE_KEY in meta:
             del meta[_ND_STATE_KEY]
             session.meta_json = json.dumps(meta, ensure_ascii=False)
-            db.session.add(session)
-            db.session.commit()
     except Exception:
         pass
 
 
-def _nd_collect_all_save_plot_volumes(session_history: list, current_text: str) -> tuple[list[dict], int | None, int | None]:
-    """从历史会话 messages + 当前 AI 输出 complete 里，搜集所有出现过的 SAVE_PLOT 卡片的 volume 对象。
+def _nd_extract_save_plot_vols(cards: list) -> list[dict]:
+    """从已解析的卡片列表（parse_cards 的返回值）里抽取 SAVE_PLOT 的 volume dict 列表。"""
+    vols: list[dict] = []
+    if not isinstance(cards, list):
+        return vols
+    for c in cards:
+        if not isinstance(c, dict) or c.get('type') != 'SAVE_PLOT':
+            continue
+        content = c.get('content') or ''
+        if not str(content).startswith('['):
+            continue
+        try:
+            arr = json.loads(content)
+            if isinstance(arr, list):
+                vols.extend(v for v in arr if isinstance(v, dict))
+        except Exception:
+            pass
+    return vols
+
+
+def _nd_merge_state_vols(prev_vols, new_vols) -> list[dict]:
+    """把两批 volume dict 按 volume_index 合并（nodes 按章号 ch_map 合并、新覆盖旧），
+    作为 state['vols'] 持久化——历史消息里的卡片 content 落盘时会被截断（PG 安全线），
+    续会合并兜底必须靠这份累计数据，不能依赖会话历史里的卡片。"""
+    try:
+        from node_design_bp import _parse_chapters_field
+    except Exception:
+        return [v for v in (prev_vols or []) if isinstance(v, dict)]
+    merged: dict[int, dict] = {}
+    order: list[int] = []
+    for v in list(prev_vols or []) + list(new_vols or []):
+        if not isinstance(v, dict):
+            continue
+        vi = v.get('volume_index')
+        if not isinstance(vi, int) or not (1 <= vi <= 99):
+            # 容错：volume_id 是数字也认
+            try:
+                vi = int(str(v.get('volume_id') or '').strip() or '0')
+            except Exception:
+                vi = 0
+            if not (1 <= vi <= 99):
+                continue
+            v = dict(v)
+            v['volume_index'] = vi
+        cur = merged.get(vi)
+        if cur is None:
+            cur = {'volume_index': vi}
+            merged[vi] = cur
+            order.append(vi)
+        # 卷级字段：非空才覆盖（新值优先）
+        for k in ('volume', 'volume_id', 'volume_title', 'summary', 'main_plot', 'core_conflict', 'ending_hook'):
+            nv = v.get(k)
+            if isinstance(nv, str) and nv.strip():
+                cur[k] = nv
+        if isinstance(v.get('key_events'), list) and v['key_events']:
+            cur['key_events'] = list(v['key_events'])
+        if isinstance(v.get('chapter_count'), int) and v.get('chapter_count'):
+            cur['chapter_count'] = v['chapter_count']
+        # nodes 按章号合并（新覆盖旧；区间展开成单章，去重粒度=章）
+        nodes = v.get('nodes')
+        if isinstance(nodes, list) and nodes:
+            ch_map: dict[int, dict] = {}
+            for src in (cur.get('nodes') or [], nodes):
+                for n in src:
+                    if not isinstance(n, dict):
+                        continue
+                    chs = _parse_chapters_field(n.get('chapters'))
+                    if not chs:
+                        continue
+                    a, b = chs
+                    if a > b:
+                        a, b = b, a
+                    for ch in range(a, b + 1):
+                        cp = dict(n)
+                        cp['chapters'] = ch
+                        ch_map[ch] = cp
+            if ch_map:
+                cur['nodes'] = [ch_map[k] for k in sorted(ch_map.keys())]
+    return [merged[vi] for vi in order]
+
+
+def _nd_collect_all_save_plot_volumes(session_history: list, current_text: str, state_vols: list | None = None) -> tuple[list[dict], int | None, int | None]:
+    """从 state 累计卡片 + 当前 AI 输出 complete + 历史会话里，搜集所有出现过的 SAVE_PLOT 卡片的 volume 对象。
+    （历史会话里落盘的卡片 content 会被截断到 120 字，JSON 基本解析不出——
+    真正可靠的数据源是 state['vols'] 累计和当前 complete 里的卡片。）
     返回 ([volume_dict,...], detected_vi, detected_cpv)。"""
     vols: list[dict] = []
+    # 0) state 累计的 vols（优先：完整、未截断；排在最前，让后面的新卡片覆盖旧值）
+    if isinstance(state_vols, list):
+        vols.extend(v for v in state_vols if isinstance(v, dict))
     # 1) 当前 complete 里的 cards
     try:
         for c in _lazy_parse_cards(current_text):
@@ -247,6 +464,15 @@ def _nd_build_full_volume_card(vols_list: list[dict], vi: int, cpv: int) -> dict
         vol_id = str(vi)
         for v in vols_list:
             if not isinstance(v, dict):
+                continue
+            # 只合并目标卷：state 累计里可能混有别的卷，卷级字段/nodes 都不能串卷
+            _vvi = v.get('volume_index')
+            if not isinstance(_vvi, int) or not (1 <= _vvi <= 99):
+                try:
+                    _vvi = int(str(v.get('volume_id') or '0') or 0)
+                except Exception:
+                    _vvi = 0
+            if _vvi and _vvi != vi:
                 continue
             # 取卷级字段（非空才覆盖）
             if v.get('volume'):
@@ -327,8 +553,8 @@ def _nd_build_continue_user_injection(state: dict) -> str:
         # 已完成整卷还继续 → 提示已完成，如需修改按章节号改
         return ("\n【系统续会上下文】作者说「继续」，但本卷进度记录显示："
                 f"第{vi}卷（共{total}章）已经完成到第{last_ch}章=整卷写完。"
-                "请直接告诉作者：「这一卷50章已经全部设计完成啦。需要改某一章直接对我说『第X章改XXX』就行。」"
-                "不要再重复输出已写完的章节节点。\n")
+                f"请直接告诉作者：「这一卷{total}章已经全部设计完成啦。需要改某一章直接对我说『第X章改XXX』；要开新卷直接说『第N卷 节点设计』。」"
+                "不要再重复输出已写完的章节节点，也不要再输出全卷卡片。\n")
     # 判定是不是收尾段：剩余章节数 ≤ 30（约占 cpv 60%以内），或 last_ch ≥ total*0.7
     remaining = total - last_ch
     is_final_leg = (remaining <= 30) or (last_ch >= int(total * 0.7))

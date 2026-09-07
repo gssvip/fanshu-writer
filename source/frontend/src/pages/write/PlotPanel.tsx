@@ -881,13 +881,6 @@ ${existingVols || '（暂无）'}
             >
               📥 导入剧情大纲
             </button>
-            <button
-              className="btn-primary-sm"
-              onClick={addVolumeOutline}
-              title="手动添加一卷空大纲"
-            >
-              ＋ 添加卷大纲
-            </button>
           </div>
           {/* 工作流提示：打通总纲→分卷→提取→导入→AI创作，相互反哺非强制 */}
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.6 }}>

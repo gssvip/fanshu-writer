@@ -28,12 +28,13 @@ def load_session_messages(session) -> list[dict]:
 # ============================================================================
 # 会话历史瘦身 + 安全提交（解决 messages_json 150KB+ 导致 PG SSL 断连）
 # 根因：session 存完整卡片内容，一次 UPDATE 100~300KB，Render/Neon PG 代理掐断 SSL 连接。
-# 解法：① 落盘前瘦身（卡片只留元信息，单条截 800 字，12 轮/48KB 上限）
+# 解法：① 落盘前瘦身（卡片只留元信息；正文不再常规截断，超长改由前端折叠展示）
 #       ② 断连异常 rollback → dispose 死连接 → 重查 session → 重试一次。
 # ============================================================================
 
-# 落盘前单条消息最大字符（正文写作单条 AI assistant 内容可能 6000+ 字，会超）
-_PERSIST_MSG_MAX_CHARS = 800
+# 落盘前单条消息最大字符：正常消息/单章正文（≤8000字）永不截断（用户要求保留完整内容，前端折叠展示），
+# 12000 仅作为异常巨型消息（如整卷 JSON 直排）的 PG 安全阀，保证"只剩最后4条"时总包也不会爆。
+_PERSIST_MSG_MAX_CHARS = 12000
 # 落盘前卡片内容最大字符（卡片正文其实会落地到 Chapter/BookBible，session 里仅作回显，不需要完整）
 _PERSIST_CARD_CONTENT_MAX_CHARS = 120
 # 落盘前最多保留的"消息条数上限"（50 轮 = 100 条 + 首条冗余 = 102；匹配通用聊天"最近50条+首条"上下文）
@@ -47,8 +48,8 @@ def _compact_history_for_persist(history: list) -> list:
 
     规则（顺序执行）：
       1. 砍卡片 content：每条 cards[*].content 截断到 120 字（卡片正文已落地在 BookBible/Chapter，session 里不用冗余保存全文）
-      2. 砍消息 content：每条 message.content 截断到 800 字
-      3. 砍历史深度：只保留最后 24 条消息
+      2. 消息正文不截断（保留完整内容，超长由前端折叠展示）；仅超 12000 字的异常巨型消息才截断（PG 安全阀）
+      3. 砍历史深度：只保留最后 102 条消息
       4. 若总 JSON 还超 48KB：循环砍中间消息，直到合规或只剩最后 4 条
 
     返回：新的 list（不原地修改传入 history，避免影响 SSE 正在发的卡片内容）
@@ -65,10 +66,10 @@ def _compact_history_for_persist(history: list) -> list:
     for m in h:
         if not isinstance(m, dict):
             continue
-        # 消息正文截断
+        # 消息正文：正常保留完整内容（前端折叠展示）；仅异常巨型消息（>12000字）才截断作 PG 安全阀
         c = m.get('content')
         if isinstance(c, str) and len(c) > _PERSIST_MSG_MAX_CHARS:
-            m['content'] = c[:_PERSIST_MSG_MAX_CHARS] + '\n…（会话历史超长已截断，完整内容以采纳落地后的维度/章节为准）'
+            m['content'] = c[:_PERSIST_MSG_MAX_CHARS] + '\n…（异常超长消息已截断）'
         # 卡片列表内容截断（最关键，卡片 content 可能是 6000 字正文或 80KB timeline JSON）
         cards = m.get('cards')
         if isinstance(cards, list):
