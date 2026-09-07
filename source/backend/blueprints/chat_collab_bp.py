@@ -1408,7 +1408,7 @@ def _rt_create_dimension_system(dim_key: str, book, iron: str, consensus: str, e
 ⑥对标参考风格。做成可直接指导写作的可执行规范。''')
     else:
         parts.append('\n【输出要求】结构化分节输出该维度完整设定，具体可采纳。')
-    parts.append('\n【排版】使用纯中文 markdown 层级输出，去掉 * 与 # 装饰符号。')
+    parts.append('\n【排版】使用纯中文层级输出，去掉 * 与 # 装饰符号；绝对禁止输出 JSON 数组/对象、英文键名和 [ ] { } " : , 等英文符号（剧情线维度按专属铁律输出 JSON 除外）。')
     return '\n'.join(parts)
 
 # 安全提取卷号：接受 dict 或 str，返回 int 或 0
@@ -1659,9 +1659,11 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
         for label, field, cap in dims:
             val = (getattr(bb, field, '') or '').strip()
             if val:
-                # 人物维度：JSON 数组转自然语言，避免 AI 模仿 JSON 格式
+                # 【纯文字铁律】JSON 存储维度注入前一律转自然语言，避免 AI 模仿 JSON 格式输出
                 if field == 'character_profiles' and val.startswith('['):
                     val = _character_profiles_to_text(val)
+                elif field == 'timeline' and (val.startswith('[') or val.startswith('{')):
+                    val = _json_to_plain_text(val)
                 # 系统 prompt 9 维度注入字符硬上限（避免单维度 10K+ 导致 3 轮对话就撞 LLM ctx 上限）
                 if len(val) > cap:
                     # 先在语义分界处（双换行/句号）截断，不破坏结构
@@ -2200,6 +2202,9 @@ def apply_card():
     card = data.get('card', {})
     ctype = card.get('type', '')
     content = (card.get('content') or '').strip()
+    # 【纯文字铁律·落地端防线】非剧情线卡片内容若为 JSON（历史污染/旧会话卡片重放），
+    # 落地前转纯文本，杜绝 JSON 符号写入 Bible 维度字段
+    content = _plain_json_fallback(ctype, content)
     title = card.get('title', '')
     card_id = card.get('id', '')
     session_id = data.get('session_id')
@@ -3281,9 +3286,11 @@ def _action_master_create(book, session, instruction, gw, sse):
             existing = (getattr(bb, dim, '') or '').strip()
         ctx_parts = []
         for k, v in generated.items():
-            # 人物维度转自然语言
+            # 【纯文字铁律】JSON 存储维度注入前一律转自然语言（人物/剧情线），防下游模仿 JSON
             if k == 'character_profiles' and v.startswith('['):
                 v = _character_profiles_to_text(v)
+            elif k == 'timeline' and (v.startswith('[') or v.startswith('{')):
+                v = _json_to_plain_text(v)
             ctx_parts.append(f'【{_DIM_LABELS.get(k, k)}】\n{v}')
         ctx_block = '\n\n'.join(ctx_parts) if ctx_parts else '（暂无）'
 
@@ -4359,6 +4366,9 @@ PLAIN_TEXT_LAYOUT_RULES = """
    四）禁止行首 > 引用块
    五）禁止 ``` 代码块
    六）禁止用 1. / 2. / (1) 这类编号列表符号
+   七）绝对禁止输出 JSON 数组或 JSON 对象——不要出现 [ ] { } " " : , 等英文符号，
+       不要出现 name identity summary volume main_events 之类的英文键名（本条对大纲、设定、人物、
+       世界观、伏笔、地点、文风等全部维度生效；唯一例外：剧情线维度被明确要求按卷 JSON 输出）
 2. 正确的纯文字排版形式：
    一）分节标题：直接写成“第一幕：XXX”“本卷目标”“第3卷·XX卷”“主角名”等，前后各空一行即可（不要加#、不要加*）
    二）条目列表：用“一、二、三、…”“1）2）3）…”“甲、乙、丙…”或中文顿号直接并列，缩进用空格，禁止用 - 或 * 或 1. 开头
@@ -4682,16 +4692,18 @@ def _build_dim_context(book, bb, dim_key, with_self=True):
         if bb:
             v = (getattr(bb, d['field'], '') or '').strip()
             if v:
-                # 人物维度：character_profiles 存的是 JSON 数组，注入前转成自然语言，避免 AI 模仿 JSON 格式
+                # 【纯文字铁律】JSON 存储维度注入前一律转自然语言（人物/剧情线），防下游模仿 JSON
                 if d['key'] == 'character_profiles' and v.startswith('['):
                     v = _character_profiles_to_text(v)
+                elif d['key'] == 'timeline' and (v.startswith('[') or v.startswith('{')):
+                    v = _json_to_plain_text(v)
                 parts.append(f'【{d["label"]}】\n{v}')
     ctx = '\n\n'.join(parts)
     self_content = ''
     if bb and with_self:
         self_content = (getattr(bb, target['field'], '') or '').strip()
         if self_content:
-            # 人物维度自身已有内容也转自然语言
+            # 人物维度自身已有内容也转自然语言（timeline 自身保持 JSON，按卷落地需要）
             if dim_key == 'character_profiles' and self_content.startswith('['):
                 self_content = _character_profiles_to_text(self_content)
     return ctx, self_content
@@ -4845,8 +4857,11 @@ def _build_auto_context_block(user_text, book_id, bb):
         raw = ''
         if bb:
             raw = (getattr(bb, spec['field'], '') or '').strip()
+            # 【纯文字铁律】JSON 存储维度引用注入前转自然语言（人物/剧情线），防模仿 JSON
             if dim_key == 'character_profiles' and raw.startswith('['):
                 raw = _character_profiles_to_text(raw)
+            elif dim_key == 'timeline' and (raw.startswith('[') or raw.startswith('{')):
+                raw = _json_to_plain_text(raw)
         if raw:
             snippet = raw if len(raw) <= 2500 else (raw[:1800] + '\n…（中间省略）…\n' + raw[-700:])
             lines.append(f'【引用·维度内容】{label}（已从设定库载入，无需作者再发）')
@@ -4893,6 +4908,102 @@ def _character_profiles_to_text(json_str):
         return '\n\n'.join(blocks) if blocks else json_str
     except Exception:
         return json_str
+
+
+# 通用 JSON→纯文本转换：已知英文键名映射中文标签（覆盖剧情线卷结构/人物/常见结构）
+_JSON_FIELD_LABELS = {
+    'volume': '卷名', 'volume_index': '卷序', 'volume_id': '卷标识', 'act': '幕',
+    'summary': '概要', 'main_plot': '主线', 'core_conflict': '核心冲突',
+    'ending_hook': '卷尾钩子', 'main_events': '主要事件', 'nodes': '情节节点',
+    'title': '标题', 'chapters': '对应章节', 'type': '类型',
+    'bury': '伏笔埋设', 'payoff': '伏笔回收', 'arc_points': '弧线要点',
+    'name': '姓名', 'role': '角色', 'identity': '身份', 'gender': '性别',
+    'age': '年龄', 'appearance': '外貌', 'personality': '性格',
+    'motivation': '动机', 'background': '背景', 'relationships': '关系',
+    'abilities': '能力', 'items': '物品', 'realm': '境界',
+    'description': '描述', 'content': '内容', 'goal': '目标', 'key_events': '关键事件',
+}
+
+_CN_CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'
+
+
+def _json_value_to_text(val):
+    """递归把 JSON 值转纯中文文本：dict→键值行，list→①②编号块，标量→原样。"""
+    if isinstance(val, dict):
+        lines = []
+        for k, v in val.items():
+            label = _JSON_FIELD_LABELS.get(k, k)
+            if isinstance(v, (dict, list)):
+                lines.append(f'{label}：')
+                sub = _json_value_to_text(v)
+                if sub.strip():
+                    lines.append(sub)
+            else:
+                sv = str(v).strip()
+                if sv:
+                    lines.append(f'{label}：{sv}')
+        return '\n'.join(lines)
+    if isinstance(val, list):
+        parts = []
+        for i, item in enumerate(val):
+            mark = _CN_CIRCLED[i] if i < len(_CN_CIRCLED) else f'第{i + 1}项、'
+            body = _json_value_to_text(item)
+            if body.strip():
+                # 编号拼到首行行首（dict 块也有 ①②…，多事件不混淆）
+                first_nl = body.find('\n')
+                body = (f'{mark}{body[:first_nl]}\n{body[first_nl + 1:]}'
+                        if first_nl > 0 else f'{mark}{body}')
+                parts.append(body)
+        return '\n\n'.join(parts)
+    return str(val).strip()
+
+
+def _json_to_plain_text(text):
+    """把 JSON 数组/对象文本转成纯中文分节文本（timeline 卷结构等通用兜底）。
+
+    用途：LLM 被上游 JSON 污染输出 JSON 结构时（典型：大纲模仿剧情线 JSON），
+    转成"卷名：xxx／概要：xxx／主要事件：①…"的纯文字形式；解析失败原样返回。
+    """
+    if not text:
+        return text
+    s = text.strip()
+    m = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', s)
+    if m:
+        s = m.group(1).strip()
+    if not (s.startswith('[') or s.startswith('{')):
+        return text
+    try:
+        parsed = json.loads(s)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return text
+    if isinstance(parsed, dict):
+        for k in ('volumes', 'data', 'result', 'items', 'list'):
+            if isinstance(parsed.get(k), list):
+                parsed = parsed[k]
+                break
+    out = _json_value_to_text(parsed)
+    return out if out and out.strip() else text
+
+
+def _plain_json_fallback(dim_key, content):
+    """【纯文字铁律兜底】非 timeline 维度：内容以 [ 或 { 开头时一律转纯文本。
+
+    所有智驾维度输出铁律是纯中文自然语言（timeline 例外，按卷 JSON 落地）。
+    人物维度优先用专用转换器（键名映射更全），其余维度走通用转换器。
+    """
+    if dim_key in ('timeline', 'SAVE_PLOT') or not content:
+        return content
+    s = content.lstrip()
+    m = re.match(r'```(?:json)?\s*([\s\S]*?)\s*```', s)
+    if m:
+        s = m.group(1).strip()
+    if not (s.startswith('[') or s.startswith('{')):
+        return content
+    if dim_key in ('character_profiles', 'SAVE_CHARACTER'):
+        out = _character_profiles_to_text(s)  # s 已剥 fence，专用转换器不再自剥
+    else:
+        out = _json_to_plain_text(content)
+    return out if out and out.strip() else content
 
 
 # ----------------------------------------------------------------------------
@@ -5103,6 +5214,8 @@ def smart_general():
                 else:
                     # 统一纯文本清理卡片内容/标题
                     card['content'] = _clean_text_to_plain(card.get('content', ''))
+                    # 【纯文字铁律】非剧情线卡片兜底：LLM 仍输出 JSON 时转纯文本
+                    card['content'] = _plain_json_fallback(card.get('type') or '', card['content'])
                     if card.get('title'):
                         card['title'] = _clean_text_to_plain(card['title'])
                 _enrich_card_rank_meta(card, _rank_scan)
@@ -6470,8 +6583,8 @@ def smart_generate():
                         clean_content = fence.group(1).strip()
                 else:
                     clean_content = _clean_text_to_plain(clean_content)
-                    if dim_key == 'character_profiles' and clean_content.lstrip().startswith('['):
-                        clean_content = _character_profiles_to_text(clean_content)
+                    # 【纯文字铁律】用户粘贴内容是 JSON 时也统一转纯文本（智驾全维度纯文字口径）
+                    clean_content = _plain_json_fallback(dim_key, clean_content)
                 # 流式 delta：按 80 字/块输出，保持前端打字效果一致
                 _chunk_sz = 80
                 for _i in range(0, len(clean_content), _chunk_sz):
@@ -6594,9 +6707,8 @@ def smart_generate():
                         pass
                 else:
                     cleaned = _clean_text_to_plain(cleaned)
-                    # 人物维度：JSON 数组转自然语言
-                    if dim_key == 'character_profiles' and cleaned.lstrip().startswith('['):
-                        cleaned = _character_profiles_to_text(cleaned)
+                    # 【纯文字铁律】非 timeline 维度兜底：LLM 仍输出 JSON 时转纯文本
+                    cleaned = _plain_json_fallback(dim_key, cleaned)
                 # EMPTY_OUTPUT 兜底2：清理后仍空但 raw 有字数 → 用原始仅去 fence/html 的版本（宁脏勿空）
                 if (not cleaned or len(cleaned.strip()) < 2) and len(raw_no_think.strip()) >= _EMPTY_FALLBACK_LEN:
                     fallback = raw_no_think.strip()
@@ -6711,9 +6823,9 @@ def smart_dim_edit():
     if not current_content and bb:
         current_content = (getattr(bb, spec['field'], '') or '').strip()
 
-    # 人物维度：current_content 是 JSON 数组时转自然语言，避免 AI 模仿 JSON 格式
-    if dim_key == 'character_profiles' and current_content.startswith('['):
-        current_content = _character_profiles_to_text(current_content)
+    # 【纯文字铁律】非 timeline 维度：current_content 是 JSON 时（如剧情线卷结构被误存进大纲）
+    # 先转纯文本再进 prompt——否则修订铁律"保留原文整体结构"会让 LLM 忠实保持 JSON 符号输出
+    current_content = _plain_json_fallback(dim_key, current_content)
 
     ctx, _ = _build_dim_context(book, bb, dim_key, with_self=False)
 
@@ -6843,9 +6955,8 @@ def smart_dim_edit():
                         pass
                 else:
                     cleaned = _clean_text_to_plain(cleaned)
-                    # 人物维度兜底：若 AI 仍输出 JSON 数组，转成自然语言
-                    if dim_key == 'character_profiles' and cleaned.lstrip().startswith('['):
-                        cleaned = _character_profiles_to_text(cleaned)
+                    # 【纯文字铁律】非 timeline 维度兜底：LLM 仍输出 JSON 时转纯文本
+                    cleaned = _plain_json_fallback(dim_key, cleaned)
                 # EMPTY_OUTPUT 兜底：清理后空但 raw(去think后) ≥30 字 → 保守清理
                 if (not cleaned or len(cleaned.strip()) < 2) and len(raw_no_think.strip()) >= _EMPTY_FALLBACK_LEN:
                     fallback = raw_no_think.strip()
@@ -7091,6 +7202,8 @@ def smart_batch():
                                 pass
                         else:
                             cleaned = _clean_text_to_plain(cleaned)
+                            # 【纯文字铁律】非 timeline 维度兜底：LLM 仍输出 JSON 时转纯文本
+                            cleaned = _plain_json_fallback(dim_key, cleaned)
                         # EMPTY_OUTPUT 兜底：清理后空但 raw(去think后) ≥30 字 → 保守清理仅去 fence/html
                         if (not cleaned or len(cleaned.strip()) < 2) and len(raw_no_think.strip()) >= _EMPTY_FALLBACK_LEN:
                             fallback = raw_no_think.strip()
@@ -7291,8 +7404,11 @@ def smart_deai():
         for d in SMART_DIMENSIONS:
             v = (getattr(bb, d['field'], '') or '').strip()
             if v:
+                # 【纯文字铁律】JSON 存储维度注入前一律转自然语言（人物/剧情线），防模仿 JSON
                 if d['key'] == 'character_profiles' and v.startswith('['):
                     v = _character_profiles_to_text(v)
+                elif d['key'] == 'timeline' and (v.startswith('[') or v.startswith('{')):
+                    v = _json_to_plain_text(v)
                 parts.append(f'【{d["label"]}】\n{v}')
         bible_ctx = '\n\n'.join(parts)
 
@@ -7795,7 +7911,10 @@ def _register_split_domains():
         _RT_CREATE_FIELD=_RT_CREATE_FIELD,
         _auto_rank_scan_from_nl=_auto_rank_scan_from_nl,
         _build_toc_block=_build_toc_block,
+        _character_profiles_to_text=_character_profiles_to_text,
         _clean_text_to_plain=_clean_text_to_plain,
+        _json_to_plain_text=_json_to_plain_text,
+        _plain_json_fallback=_plain_json_fallback,
         _core_params_iron_block=_core_params_iron_block,
         _detect_dim_from_text=_detect_dim_from_text,
         _dim_max_tokens=_dim_max_tokens,

@@ -499,7 +499,13 @@ def chat_roundtable():
                         try:
                             _v = getattr(_bb, _RT_CREATE_FIELD[_fk], None)
                             if _v and str(_v).strip():
-                                _bb_existing[_fk] = str(_v)
+                                # 【纯文字铁律】JSON 存储维度（人物/剧情线）注入前转自然语言，防 LLM 模仿 JSON 输出
+                                _sv = str(_v)
+                                if _fk == 'character_profiles' and _sv.lstrip().startswith('['):
+                                    _sv = _character_profiles_to_text(_sv)
+                                elif _fk == 'timeline' and (_sv.lstrip().startswith('[') or _sv.lstrip().startswith('{')):
+                                    _sv = _json_to_plain_text(_sv)
+                                _bb_existing[_fk] = _sv
                         except Exception:
                             pass
                 _iron = _core_params_iron_block(_bb, book) if (book and _bb) else ''
