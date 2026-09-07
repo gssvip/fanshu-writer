@@ -1247,8 +1247,9 @@ _RT_CREATE_DIMS = {
     'style_guide':        ('文风指南', 'APPLY_STYLE'),
 }
 # 默认"全部维度"顺序（与用户在各维度面板看到的顺序一致）
-_RT_CREATE_ALL = ['concept', 'key_rules', 'worldbuilding', 'character_profiles',
-                  'plot_design', 'timeline', 'foreshadowing', 'locations', 'style_guide']
+# 人物在大纲之后：大纲先定各卷功能位/人物方向，人物按大纲锚定设计（同 DIMENSION_DEPENDENCIES）
+_RT_CREATE_ALL = ['concept', 'key_rules', 'worldbuilding', 'plot_design',
+                  'character_profiles', 'timeline', 'foreshadowing', 'locations', 'style_guide']
 
 # 各维度对应的 BB 字段（读已有内容 / 采纳时写入）
 _RT_CREATE_FIELD = {
@@ -1281,8 +1282,8 @@ def _rt_parse_create_dims(text: str):
         ('concept', r'(?:核心?构思|核心创意|点子|logline|一句话故事)'),
         ('key_rules', r'(?:核心规则|核心设定|力量体系|规则|设定)'),
         ('worldbuilding', r'(?:世界观|世界设定|世界背景)'),
-        ('character_profiles', r'(?:人物档案|人物设定|人物|角色)'),
         ('plot_design', r'(?:剧情大纲|全书大纲|大纲|五幕)'),
+        ('character_profiles', r'(?:人物档案|人物设定|人物|角色)'),
         ('timeline', r'(?:剧情线|时间线|剧情|情节|卷剧情)'),
         ('foreshadowing', r'(?:伏笔|埋线)'),
         ('locations', r'(?:地点|地图|地图设定|场景)'),
@@ -1323,8 +1324,8 @@ def _rt_general_dim_request(text: str):
         ('concept', r'(?:核心?构思|创意|logline|卖点|一句话(?:故事|梗))'),
         ('key_rules', r'(?:核心规则|核心设定|力量体系|规则|设定)'),
         ('worldbuilding', r'(?:世界观|世界设定|世界背景|世界架构)'),
-        ('character_profiles', r'(?:人物档案|人物设定|人物|角色|主角|配角|反派)'),
         ('plot_design', r'(?:全书大纲|剧情大纲|大纲|分卷大纲)'),
+        ('character_profiles', r'(?:人物档案|人物设定|人物|角色|主角|配角|反派)'),
         ('timeline', r'(?:剧情线|时间线|情节|卷剧情|剧情)'),
         ('foreshadowing', r'(?:伏笔|埋线|伏?笔)'),
         ('locations', r'(?:地点|地图|区域|场景设定|地理)'),
@@ -1806,7 +1807,7 @@ def build_progress_map(bb) -> dict:
 
     # 下一步建议：优先指向第一个非 solid 的核心维度
     next_step = None
-    priority_order = ['concept', 'character_profiles', 'worldbuilding', 'key_rules', 'plot_design', 'timeline', 'foreshadowing', 'style_guide']
+    priority_order = ['concept', 'key_rules', 'worldbuilding', 'plot_design', 'character_profiles', 'timeline', 'foreshadowing', 'style_guide']
     for f in priority_order:
         item = next((x for x in result if x['field'] == f), None)
         if item and item['status'] != 'solid':
@@ -3136,7 +3137,8 @@ def get_session_messages(session_id):
 
 # 动作 → 默认维度（master_create 用）
 _ACTION_DIMENSIONS = {
-    'master_create': ['concept', 'key_rules', 'worldbuilding', 'character_profiles', 'plot_design'],
+    # 人物在大纲之后：批量生成时大纲先进 generated 上下文，人物按大纲各卷目标锚定设计
+    'master_create': ['concept', 'key_rules', 'worldbuilding', 'plot_design', 'character_profiles'],
 }
 
 # 维度字段 → 卡片类型（master_create 产出时映射）
@@ -3321,6 +3323,7 @@ def _action_master_create(book, session, instruction, gw, sse):
             '13)人物背景故事(家庭/成长经历/教育经历/重要事件/形成原因300字以上) '
             '14)关键关系网(家人/师友/爱人/仇敌/上司/下属 至少8人，每人关系类型+态度+羁绊来源+利益交集) '
             '15)角色弧线：开篇状态 → 转折事件 → 中期转变 → 终局归宿/结局。'
+            '每个角色的功能位与出场卷次须与【大纲】各卷人物方向对应。'
             '每个角色至少 300 字，合计不少于 1800 字；纯中文按字段分行输出，禁止 JSON 符号。'
         ) if dim == 'character_profiles' else ''
         plot_design_more = (
@@ -4530,7 +4533,7 @@ SMART_DIMENSIONS = [
     {'key': 'key_rules',          'label': '设定',       'field': 'key_rules',          'card': 'SAVE_RULE',         'icon': '⚙️', 'hint': '能力体系/修炼体系/科技树，硬规则（构思已定金手指方向时直接生成）', 'mode': 'direct'},
     {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': '🌍', 'hint': '故事发生的世界，独特规则或设定（生成中会提取世界地图架构到“地图”维度）', 'mode': 'direct'},
     {'key': 'plot_design',        'label': '大纲',       'field': 'plot_design',        'card': 'SAVE_OUTLINE_NODE', 'icon': '📋', 'hint': '主线走向，五幕式总纲（卷数与五幕映射已锁定，方案只在每卷目标组织上差异）', 'mode': 'suggest'},
-    {'key': 'character_profiles', 'label': '人物',       'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': '👤', 'hint': '主角和核心配角的动机、性格、关系网（构思已定主角/反派框架时直接生成）', 'mode': 'direct'},
+    {'key': 'character_profiles', 'label': '人物',       'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': '👤', 'hint': '主角和核心配角的动机、性格、关系网（大纲已定各卷人物方向时直接生成）', 'mode': 'direct'},
     {'key': 'timeline',           'label': '剧情',       'field': 'timeline',           'card': 'SAVE_PLOT',         'icon': '📖', 'hint': '关键剧情节点的时间顺序（大纲已定每卷目标时直接生成）', 'mode': 'direct'},
     {'key': 'foreshadowing',      'label': '伏笔',       'field': 'foreshadowing',      'card': 'SAVE_FORESHADOW',   'icon': '🔮', 'hint': '长线伏笔的埋设与回收计划（基于大纲/剧情派生，直接生成）', 'mode': 'direct'},
     {'key': 'locations',          'label': '地图',       'field': 'locations',          'card': 'SAVE_LOCATION',     'icon': '🗺️', 'hint': '故事中的地点、势力分布、世界地图架构（基于世界观派生，直接生成）', 'mode': 'direct'},
@@ -4549,8 +4552,12 @@ _DIM_KEY_TO_SPEC = {d['key']: d for d in SMART_DIMENSIONS}
 # 设计原则：
 #   - concept 是所有维度的源头（一句话讲清故事核）
 #   - worldbuilding/key_rules 是剧情/人物的设定基础
+#   - plot_design（五幕总纲）是 character_profiles（人物）的前置：
+#     大纲先锁定各卷功能位与人物方向，人物按大纲锚定设计（角色弧线挂靠五幕节点），
+#     反过来"先人物后大纲"会为人设硬造剧情=拼凑感根源之一
 #   - plot_design（五幕总纲）是 timeline（分卷剧情）的前置
 #   - timeline（分卷剧情）是 foreshadowing（伏笔回收计划）的前置
+#   管道式信息流：构思→设定→世界观→大纲→人物→剧情→伏笔
 # ============================================================================
 DIMENSION_DEPENDENCIES = {
     'concept':            {'required': [], 'recommended': []},
@@ -4558,7 +4565,7 @@ DIMENSION_DEPENDENCIES = {
     'worldbuilding':      {'required': ['concept'], 'recommended': ['key_rules']},
     'plot_design':        {'required': ['concept'], 'recommended': ['worldbuilding', 'key_rules']},
     'timeline':           {'required': ['plot_design'], 'recommended': ['character_profiles', 'worldbuilding']},
-    'character_profiles': {'required': ['concept'], 'recommended': ['worldbuilding']},
+    'character_profiles': {'required': ['concept', 'plot_design'], 'recommended': ['worldbuilding']},
     'foreshadowing':      {'required': ['plot_design'], 'recommended': ['timeline']},
     'locations':          {'required': ['worldbuilding'], 'recommended': []},
     'style_guide':        {'required': [], 'recommended': ['concept']},
@@ -5205,7 +5212,7 @@ def smart_suggest():
             _direct_hints = {
                 'key_rules': '力量体系/等级阶梯/经济数值严格按构思第六节金手指方向展开，禁止另起体系',
                 'worldbuilding': '地理/势力/历史严格按构思第九节世界观卖点钩子展开，禁止另起世界观',
-                'character_profiles': '主角严格按构思第七节魅力公式、反派按第八节框架展开，禁止换人设方向',
+                'character_profiles': '主角严格按构思第七节魅力公式、反派按第八节框架展开，角色功能位与弧线锚定大纲各卷目标，禁止换人设方向',
                 'timeline': '各卷剧情严格按大纲每卷目标/冲突/卷尾钩子展开，禁止偏离五幕框架',
                 'foreshadowing': '伏笔埋设/回收按大纲与剧情节点派生，禁止凭空新开主线级伏笔',
                 'locations': '地点严格按世界观地理分块与势力分布派生，禁止另起地名体系',
@@ -6672,6 +6679,10 @@ def smart_dim_edit():
     edit_request = (data.get('edit_request') or '').strip()
     skill_pack_ids = data.get('skill_pack_ids') or []
     session_id = data.get('session_id')
+    # P0 榜单风向：前端扫榜结果 rank_scan 注入（卡片溯源元数据用；【NameError 修复】此前
+    # 下方 _enrich_card_rank_meta(card, _rank_scan) 引用了从未定义的 _rank_scan，
+    # 生成卡片时直接 NameError → SSE error 帧"name '_rank_scan' is not defined"）
+    _rank_scan = data.get('rank_scan') if isinstance(data.get('rank_scan'), dict) else None
 
     if not book_id or dim_key not in _DIM_KEY_TO_SPEC or not edit_request:
         return jsonify({'error': '参数无效：需要 book_id/dimension/edit_request'}), 400
@@ -6897,6 +6908,9 @@ def smart_batch():
     requirement = (data.get('requirement') or '').strip()
     skill_pack_ids = data.get('skill_pack_ids') or []
     session_id = data.get('session_id')
+    # P0 榜单风向：前端扫榜结果 rank_scan 注入（卡片溯源元数据用；【NameError 修复】同 dim-edit，
+    # 下方两处 _enrich_card_rank_meta 引用了从未定义的 _rank_scan，批量生成卡片时 NameError）
+    _rank_scan = data.get('rank_scan') if isinstance(data.get('rank_scan'), dict) else None
 
     if not book_id or not dims:
         return jsonify({'error': '参数无效：需要 book_id/dimensions'}), 400
