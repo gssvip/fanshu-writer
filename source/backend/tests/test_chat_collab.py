@@ -132,10 +132,11 @@ class TestBuildProgressMap:
 
     def test_next_step_skips_solid(self):
         from blueprints.chat_collab_bp import build_progress_map
-        # concept 已完善，next_step 应跳到 character_profiles
+        # concept 已完善，next_step 按 priority_order 跳到 key_rules
+        # （管道式信息流：构思→设定→世界观→大纲→人物，与 SMART_DIMENSIONS 依赖图一致）
         bb = _FakeBB(concept='x' * 600)
         m = build_progress_map(bb)
-        assert m['next_step']['field'] == 'character_profiles'
+        assert m['next_step']['field'] == 'key_rules'
 
 
 class TestBuildContextMessages:
