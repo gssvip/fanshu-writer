@@ -626,10 +626,8 @@ export default function MinePage() {
                   }
                 }}>
                   {AI_PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                  {/* 当前配置本身就是自定义时才显示该选项（兜底旧数据），正常情况下不再有多余的"自定义" */}
-                  {aiConfig.provider && !AI_PROVIDERS.some(p => p.value === aiConfig.provider) && (
-                    <option value={aiConfig.provider}>自定义</option>
-                  )}
+                  {/* 自定义：任意 OpenAI 兼容接口，选择后自行填写 API地址 与模型 */}
+                  <option value="custom">自定义</option>
                 </select>
               </div>
             </div>
