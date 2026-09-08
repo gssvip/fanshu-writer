@@ -899,6 +899,10 @@ const RankScanCard = memo(function RankScanCard({ rankScan, platform, concept, o
           <ItemList title="热门元素·爽点" icon="🔥" items={intel.popular_elements || []} color="#b45309" />
           <ItemList title="雷区·毒点要素" icon="💣" items={intel.landmine_elements || []} color="#b91c1c" />
           <ItemList title="书名公式参考" icon="📘" items={intel.title_formulas || []} color="#0369a1" />
+          <ItemList title="金手指类型拆解" icon="⚡" items={intel.golden_finger_types || []} color="#7c3aed" />
+          <ItemList title="简介写法套路" icon="✍️" items={intel.intro_formulas || []} color="#0d9488" />
+          <ItemList title="核心设定卖点" icon="🏗️" items={intel.setting_selling_points || []} color="#c2410c" />
+          <ItemList title="黄金三章套路" icon="📖" items={intel.golden_three_patterns || []} color="#4338ca" />
         </div>
       )}
     </div>
@@ -2002,6 +2006,10 @@ export default function ChatPanel() {
             popular_elements: info.popular_elements || [],
             landmine_elements: info.landmine_elements || [],
             title_formulas: info.title_formulas || [],
+            golden_finger_types: info.golden_finger_types || [],
+            intro_formulas: info.intro_formulas || [],
+            setting_selling_points: info.setting_selling_points || [],
+            golden_three_patterns: info.golden_three_patterns || [],
             market_snapshot: info.market_snapshot || {},
             market_intel: info.market_intel || {},
             scanned_at: info.scanned_at || '',

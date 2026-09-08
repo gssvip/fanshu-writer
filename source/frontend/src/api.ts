@@ -421,6 +421,10 @@ export const api = {
         popular_elements: string[];
         landmine_elements: string[];
         title_formulas: string[];
+        golden_finger_types?: string[];
+        intro_formulas?: string[];
+        setting_selling_points?: string[];
+        golden_three_patterns?: string[];
       };
       category_keyword_match?: Record<string, unknown>;
       report?: string;
