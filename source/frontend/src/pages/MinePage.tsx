@@ -785,13 +785,8 @@ export default function MinePage() {
 
             <div className="ai-action-row">
               <button className="btn-primary" onClick={handleSaveAIConfig} disabled={saving}>
-                {saving ? '保存中...' : formMode === 'create' ? '➕ 创建并启用' : '💾 保存修改'}
+                {saving ? '保存中...' : '💾 保存配置'}
               </button>
-              {formMode === 'create' && (
-                <button className="btn-secondary" onClick={handleCancelCreate} disabled={saving}>
-                  取消新建
-                </button>
-              )}
               <button className="btn-secondary ai-test-btn" onClick={handleTestConnection} disabled={testing}>
                 {testing ? '⏳ 测试中...' : '🔌 测试连接'}
               </button>
