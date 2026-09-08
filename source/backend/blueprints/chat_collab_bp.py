@@ -116,6 +116,10 @@ def _format_rank_context(rank_scan: dict | None) -> str:
         populars = rank_scan.get('popular_elements') or []
         landmines = rank_scan.get('landmine_elements') or []
         formulas = rank_scan.get('title_formulas') or []
+        gold_fingers = rank_scan.get('golden_finger_types') or []
+        intro_f = rank_scan.get('intro_formulas') or []
+        setting_sp = rank_scan.get('setting_selling_points') or []
+        golden3 = rank_scan.get('golden_three_patterns') or []
 
         def _join(arr, cap=7):
             xs = [str(x).strip() for x in (arr or []) if str(x).strip()]
@@ -137,7 +141,15 @@ def _format_rank_context(rank_scan: dict | None) -> str:
         lines.append('· 读者买单要素（流行卖点）：' + _join(populars))
         lines.append('· 读者弃文毒点（务必回避）：' + _join(landmines))
         lines.append('· 书名公式范例：' + _join(formulas))
-        lines.append('【执行要求】构思/设定/大纲/多选方案/圆桌讨论时：**优先吸收"读者买单要素"与"开篇钩子套路"并融合；避开"读者弃文毒点"；书名/方案标题可参考"书名公式范例"**。若情报与用户明确指定相悖，以用户指定为准但需在结论里提示"这样做会偏离市场风向"。')
+        if gold_fingers:
+            lines.append('· 上榜书金手指类型拆解：' + _join(gold_fingers))
+        if intro_f:
+            lines.append('· 上榜书简介写法套路：' + _join(intro_f))
+        if setting_sp:
+            lines.append('· 上榜书核心设定卖点：' + _join(setting_sp))
+        if golden3:
+            lines.append('· 黄金三章结构套路：' + _join(golden3))
+        lines.append('【执行要求】构思/设定/大纲/多选方案/圆桌讨论时：**优先吸收"读者买单要素"与"开篇钩子套路"并融合；避开"读者弃文毒点"；书名/方案标题可参考"书名公式范例"；金手指设计与黄金三章节奏优先参考"金手指类型拆解/黄金三章套路"**。若情报与用户明确指定相悖，以用户指定为准但需在结论里提示"这样做会偏离市场风向"。')
         return '\n'.join(lines)
     except Exception:
         return ''
@@ -302,6 +314,10 @@ def _flatten_report_fields(report: dict) -> dict:
         'popular_elements': report.get('popular_elements') or [],
         'landmine_elements': report.get('landmine_elements') or [],
         'title_formulas': report.get('title_formulas') or [],
+        'golden_finger_types': report.get('golden_finger_types') or [],
+        'intro_formulas': report.get('intro_formulas') or [],
+        'setting_selling_points': report.get('setting_selling_points') or [],
+        'golden_three_patterns': report.get('golden_three_patterns') or [],
         'sources_label': report.get('rank_aggregate_label') or '',
     }
 
@@ -342,6 +358,10 @@ def _rank_scan_to_sse_meta(rank_scan: dict, platform: str, *, from_nl: bool,
             'popular_elements': report.get('popular_elements') or rank_scan.get('popular_elements') or [],
             'landmine_elements': report.get('landmine_elements') or rank_scan.get('landmine_elements') or [],
             'title_formulas': report.get('title_formulas') or rank_scan.get('title_formulas') or [],
+            'golden_finger_types': report.get('golden_finger_types') or rank_scan.get('golden_finger_types') or [],
+            'intro_formulas': report.get('intro_formulas') or rank_scan.get('intro_formulas') or [],
+            'setting_selling_points': report.get('setting_selling_points') or rank_scan.get('setting_selling_points') or [],
+            'golden_three_patterns': report.get('golden_three_patterns') or rank_scan.get('golden_three_patterns') or [],
             'market_snapshot': report.get('market_snapshot') or rank_scan.get('market_snapshot') or {},
             'market_intel': rank_scan.get('market_intel') or {},
             'scanned_at': report.get('scanned_at') or rank_scan.get('scanned_at') or '',
@@ -1317,7 +1337,8 @@ def _rt_general_dim_request(text: str):
     if not _act:
         return None
     # 动作词必须确凿（常见 AI 违例词首字符）——否则如"帮我看看"不触发
-    if not re.search(r'(?:生成|创作|产出|起草|草拟|制定|编排|设计|建立|搭|规划|形成|整理)\s*(?:一份|一套|一个|完整的|详细的|全面的)?', t):
+    # 注：写 走 "写出来/写一下/写个" 等确凿搭配，避免"写得怎么样"这类评价句误触发
+    if not re.search(r'(?:生成|创作|产出|起草|草拟|制定|编排|设计|建立|搭|规划|形成|整理|写(?:出来|一下|个|好|份|完))\s*(?:一份|一套|一个|完整的|详细的|全面的)?', t):
         return None
     # 明确"全部/所有维度"
     if re.search(r'(?:全部|所有|各|多|一系列|整\s*套)\s*(?:维度|设定|内容|方案)', t):
@@ -8003,6 +8024,7 @@ def _register_split_domains():
         _get_or_create_session_for_book=_get_or_create_session_for_book,
         _is_rt_continue=_is_rt_continue,
         _rt_create_dimension_system=_rt_create_dimension_system,
+        _rt_general_dim_request=_rt_general_dim_request,
         _rt_load_state=_rt_load_state,
         _rt_load_state_by_sid_independent=_rt_load_state_by_sid_independent,
         _rt_parse_create_dims=_rt_parse_create_dims,

@@ -521,12 +521,16 @@ def _aggregate_market_llm(concept: str, merged_items: list[dict], matched_labels
             'popular_elements': [],
             'landmine_elements': [],
             'title_formulas': [],
+            'golden_finger_types': [],
+            'intro_formulas': [],
+            'setting_selling_points': [],
+            'golden_three_patterns': [],
         }
     user_prompt = f"【用户构想】\n{concept[:800]}\n\n"
     user_prompt += "【匹配的新书榜 TOP 10】\n"
     for idx, it in enumerate(merged_items[:10], 1):
         title = _clean(it.get('bookTitle') or it.get('title'))
-        intro = _clean(it.get('intro') or it.get('bookIntro') or '')[:160]
+        intro = _clean(it.get('intro') or it.get('bookIntro') or '')[:400]
         tags = []
         raw_tags = it.get('tags') or it.get('categoryName') or ''
         if isinstance(raw_tags, list):
@@ -540,22 +544,27 @@ def _aggregate_market_llm(concept: str, merged_items: list[dict], matched_labels
             line += f"\n    简介：{intro}"
         user_prompt += line + "\n"
     user_prompt += (
-        "\n【任务】从上方新书榜 TOP 10（已命中分类：" + '、'.join(matched_labels) + "）"
-        " 总结出面向网文作者的市场情报，仅输出一个 JSON 对象，不要任何解释文字，不要 ```json 包裹。"
-        " JSON 结构（固定 4 个数组，每项是一句中文，每条 20~60 字，数组每项 5~8 条）：\n"
+        "\n【任务】认真研读上方新书榜 TOP 10（已命中分类：" + '、'.join(matched_labels) + "）"
+        " 的书名、简介、标签，像爆款拆书编辑一样深挖，总结面向网文作者的市场情报。"
+        " 仅输出一个 JSON 对象，不要任何解释文字，不要 ```json 包裹。"
+        " JSON 结构（固定 8 个数组，每项是一句中文，每条 20~80 字，每个数组 4~8 条）：\n"
         "{\n"
-        "  \"opening_patterns\": [\"开篇钩子套路1\", \"钩子2\"...],\n"
-        "  \"popular_elements\": [\"读者买单要素1\", \"要素2\"...],\n"
-        "  \"landmine_elements\": [\"读者弃文毒点1\", \"毒点2\"...],\n"
-        "  \"title_formulas\": [\"书名公式范例1（用占位符）\", \"公式2\"]\n"
+        "  \"opening_patterns\": [\"开篇钩子套路（第1章怎么抓住读者）\"...],\n"
+        "  \"popular_elements\": [\"读者买单要素/热门爽点元素\"...],\n"
+        "  \"landmine_elements\": [\"读者弃文毒点/避雷要素\"...],\n"
+        "  \"title_formulas\": [\"书名公式范例（用占位符+点名学自哪本）\"...],\n"
+        "  \"golden_finger_types\": [\"上榜书金手指类型拆解（类型+爽点结构+适用题材，点名哪本书）\"...],\n"
+        "  \"intro_formulas\": [\"上榜书简介写法套路（开篇冲突句式/金手指亮法/悬念留法）\"...],\n"
+        "  \"setting_selling_points\": [\"上榜书核心设定卖点（世界观/力量体系/身份反差的差异化打法）\"...],\n"
+        "  \"golden_three_patterns\": [\"黄金三章结构套路（从简介反推：第1章困境/第2章金手指/第3章爽点+钩子）\"...]\n"
         "}\n"
     )
     messages = [
-        {'role': 'system', 'content': '你是网文爆款数据分析助手，说话精炼、全用中文、不输出废话、只给结论。所有数组项必须是中文短句，控制长度。'},
+        {'role': 'system', 'content': '你是番茄/起点爆款拆书数据分析编辑：只依据给出的榜单数据做归纳，每条结论尽量点名具体榜上书；说话精炼、全用中文、不输出废话、只给可落地的结论。'},
         {'role': 'user', 'content': user_prompt},
     ]
-    resp = _call_small_llm_json(messages, max_tokens=900)
-    # 规则级兜底 + 长度裁剪
+    resp = _call_small_llm_json(messages, max_tokens=1800)
+    # 规则级兜底 + 长度裁剪（新深度字段失败时静默为空，不阻塞主情报）
     def _arr(key: str, fallback: list[str]) -> list[str]:
         v = resp.get(key) or fallback
         if not isinstance(v, list):
@@ -563,16 +572,33 @@ def _aggregate_market_llm(concept: str, merged_items: list[dict], matched_labels
         cleaned = []
         for x in v:
             s = _clean(str(x))
-            if 4 <= len(s) <= 120:
+            if 4 <= len(s) <= 160:
                 cleaned.append(s)
             if len(cleaned) >= 8:
                 break
         return cleaned or fallback
+    def _arr_soft(key: str) -> list[str]:
+        """新深度情报：LLM 没给就空列表，不注入规则兜底（避免假数据污染）。"""
+        v = resp.get(key)
+        if not isinstance(v, list):
+            return []
+        cleaned = []
+        for x in v:
+            s = _clean(str(x))
+            if 4 <= len(s) <= 160:
+                cleaned.append(s)
+            if len(cleaned) >= 8:
+                break
+        return cleaned
     return {
         'opening_patterns': _arr('opening_patterns', ['开篇用旁白抛出世界观规则，随即切主角生死危机场面']),
         'popular_elements': _arr('popular_elements', ['能力分阶解锁+可视化进度']),
         'landmine_elements': _arr('landmine_elements', ['开篇堆砌设定>2段，无冲突']),
         'title_formulas': _arr('title_formulas', ['《前缀：核心卖点》']),
+        'golden_finger_types': _arr_soft('golden_finger_types'),
+        'intro_formulas': _arr_soft('intro_formulas'),
+        'setting_selling_points': _arr_soft('setting_selling_points'),
+        'golden_three_patterns': _arr_soft('golden_three_patterns'),
     }
 
 
@@ -667,7 +693,8 @@ def _core_rank_scan_for_concept(concept: str, platform: str = 'fanqie',
     if all_items:
         agg = _aggregate_market_llm(concept, all_items, matched_labels)
     else:
-        agg = {'opening_patterns': [], 'popular_elements': [], 'landmine_elements': [], 'title_formulas': []}
+        agg = {'opening_patterns': [], 'popular_elements': [], 'landmine_elements': [], 'title_formulas': [],
+               'golden_finger_types': [], 'intro_formulas': [], 'setting_selling_points': [], 'golden_three_patterns': []}
 
     # 4) 关键词抽取（规则，不用LLM）
     keyword_set: set[str] = set()
@@ -714,6 +741,10 @@ def _core_rank_scan_for_concept(concept: str, platform: str = 'fanqie',
         'popular_elements': agg.get('popular_elements', []),
         'landmine_elements': agg.get('landmine_elements', []),
         'title_formulas': agg.get('title_formulas', []),
+        'golden_finger_types': agg.get('golden_finger_types', []),
+        'intro_formulas': agg.get('intro_formulas', []),
+        'setting_selling_points': agg.get('setting_selling_points', []),
+        'golden_three_patterns': agg.get('golden_three_patterns', []),
         'rank_aggregate_label': (
             f"{'番茄' if platform == 'fanqie' else '起点'}·新书榜 × {len(matched_labels)}个"
             f"{'/'.join(matched_labels[:2]) + ('…' if len(matched_labels) > 2 else '')}"

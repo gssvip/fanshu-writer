@@ -1,6 +1,6 @@
 """【圆桌会议 + 联网搜索配置域】（自 chat_collab_bp.py 拆出，架构门禁 P2a）。
 
-共享符号（CARD_REGISTRY, _DIM_KEY_CARD, _DIM_MAX_TOKENS, _RT_CREATE_ALL, _RT_CREATE_DIMS, _RT_CREATE_FIELD, _auto_rank_scan_from_nl, _build_toc_block, _clean_text_to_plain, _core_params_iron_block, _detect_dim_from_text, _dim_max_tokens, _enrich_card_rank_meta, _format_rank_context, _get_latest_chapter_info, _get_or_create_session_for_book, _is_rt_continue, _rt_create_dimension_system, _rt_load_state, _rt_load_state_by_sid_independent, _rt_parse_create_dims, _rt_persist_messages, _rt_save_state, _rt_stream_turn, build_chat_system_prompt, chat_collab_bp, parse_cards, strip_cards）由 chat_collab_bp.py 末尾的
+共享符号（CARD_REGISTRY, _DIM_KEY_CARD, _DIM_MAX_TOKENS, _RT_CREATE_ALL, _RT_CREATE_DIMS, _RT_CREATE_FIELD, _auto_rank_scan_from_nl, _build_toc_block, _clean_text_to_plain, _core_params_iron_block, _detect_dim_from_text, _dim_max_tokens, _enrich_card_rank_meta, _format_rank_context, _get_latest_chapter_info, _get_or_create_session_for_book, _is_rt_continue, _rt_create_dimension_system, _rt_general_dim_request, _rt_load_state, _rt_load_state_by_sid_independent, _rt_parse_create_dims, _rt_persist_messages, _rt_save_state, _rt_stream_turn, build_chat_system_prompt, chat_collab_bp, parse_cards, strip_cards）由 chat_collab_bp.py 末尾的
 _register_split_domains() 调用 init() 注入——本模块不反向 import
 chat_collab_bp，避免循环导入；路由经 register() 挂到同一个
 Blueprint，URL / endpoint / methods 与拆分前的装饰器注册完全一致。
@@ -436,7 +436,17 @@ def chat_roundtable():
             #  resuming    —— 开会中途断连/手动停止，接着剩余回合开完既定轮数
             #  其余         —— 全新会议（两轮）
             # 【创作模式】作者要求"按讨论结果创作各维度/某维度" → 直接产出可采纳卡片
-            _create_dims = _rt_parse_create_dims(topic) if (state and state.get('completed')) else None
+            # 两条触发路径：
+            #  1) 显式指令："按讨论结果创作设定/根据讨论生成世界观"（_rt_parse_create_dims）
+            #  2) 自然语言点名维度："生成设定/帮我把世界观写出来/构思一下大纲"（_rt_general_dim_request）
+            #     —— 圆桌已结束 + 消息是明确生成指令 → 直接按对应维度要求创作，不再当普通反馈
+            _create_dims = None
+            if state and state.get('completed'):
+                _create_dims = _rt_parse_create_dims(topic)
+                if _create_dims is None:
+                    _nl_dims = _rt_general_dim_request(topic)
+                    if _nl_dims:
+                        _create_dims = _nl_dims
             create_mode = bool(_create_dims is not None)
             append_mode = bool(is_continue and state and state.get('completed'))
             # 已完成 + 用户发的不是"继续"/创作指令而是自然反馈 → 进入调整阶段，复用上次议题与讨论上下文
@@ -655,25 +665,48 @@ def chat_roundtable():
                             _rank_ctx_global = _format_rank_context(_rank_scan)
 
                             def _rt_report_md2(rp: dict) -> str:
+                                """把 rank_scan payload 渲染成榜单分析师可用的完整情报文本。
+
+                                字段对齐 _auto_rank_scan_from_nl 返回结构：
+                                platform / rank_aggregate_label / matched_categories /
+                                report.top_books(title+intro+tags) / 四大情报 + 深度情报新字段。
+                                """
                                 lines: list[str] = []
-                                lines.append(f"📈 圆桌开场前系统已自动扫榜成功｜平台：{rp.get('platform_label','番茄新书榜')}")
-                                if rp.get('scan_time'):  lines.append(f"· 扫榜时间：{rp['scan_time']}")
-                                if rp.get('subcategory_label'): lines.append(f"· 命中赛道：{rp['subcategory_label']}")
-                                if rp.get('books') and isinstance(rp['books'], list):
-                                    tops = rp['books'][:5]
-                                    lines.append(f"· TOP{len(tops)} 同类题材上榜书（书名+一句话钩子+作者）：")
+                                _plat = '番茄' if rp.get('platform') == 'fanqie' else ('起点' if rp.get('platform') == 'qidian' else '番茄')
+                                _rep = rp.get('report') if isinstance(rp.get('report'), dict) else {}
+                                _books = _rep.get('top_books') or rp.get('top_books') or []
+                                lines.append(f"📈 圆桌开场前系统已自动扫榜成功｜平台：{_plat}新书榜")
+                                if rp.get('rank_aggregate_label'):
+                                    lines.append(f"· 扫榜口径：{rp['rank_aggregate_label']}")
+                                _cats = rp.get('matched_categories') or []
+                                if _cats:
+                                    lines.append(f"· 命中赛道：{'；'.join(str(x) for x in _cats[:3])}")
+                                _kws = (_rep.get('meta') or {}).get('detected_keywords') or []
+                                if _kws:
+                                    lines.append(f"· 命中关键词：{'、'.join(str(x) for x in _kws[:10])}")
+                                if isinstance(_books, list) and _books:
+                                    tops = _books[:8]
+                                    lines.append(f"· TOP{len(tops)} 同类题材上榜书（书名｜简介｜标签，请认真研读书名与简介的钩子写法）：")
                                     for i, b in enumerate(tops, 1):
-                                        parts = []
-                                        if b.get('title'): parts.append(str(b['title']))
-                                        if b.get('hook_1line'): parts.append(str(b['hook_1line']))
-                                        if b.get('author'): parts.append(f"作者：{b['author']}")
-                                        lines.append(f"  {i}. " + " ｜ ".join(parts) if parts else f"  {i}. {b}")
-                                for key, zh in [('reader_buy_points', '读者买单要素·共性卖点'),
-                                                ('reader_abandon_points', '读者弃文毒点·共性避坑'),
-                                                ('title_formula_examples', '书名公式范例'),
-                                                ('opening_hook_templates', '开篇钩子套路模板'),
-                                                ('market_advice', '市场落地方向建议')]:
-                                    v = rp.get(key)
+                                        if not isinstance(b, dict):
+                                            continue
+                                        parts = [f"《{b.get('title', '')}》"]
+                                        _intro = str(b.get('intro') or '').strip()[:180]
+                                        if _intro:
+                                            parts.append(f"简介：{_intro}")
+                                        _tags = b.get('tags') or []
+                                        if isinstance(_tags, list) and _tags:
+                                            parts.append(f"标签：{'/'.join(str(x) for x in _tags[:5])}")
+                                        lines.append(f"  {i}. " + " ｜ ".join(parts))
+                                for key, zh in [('popular_elements', '读者买单要素·共性卖点'),
+                                                ('landmine_elements', '读者弃文毒点·共性避坑'),
+                                                ('title_formulas', '书名公式范例'),
+                                                ('opening_patterns', '开篇钩子套路模板'),
+                                                ('golden_finger_types', '上榜书金手指类型拆解'),
+                                                ('intro_formulas', '上榜书简介写法套路'),
+                                                ('setting_selling_points', '上榜书核心设定卖点'),
+                                                ('golden_three_patterns', '黄金三章结构套路（从简介反推）')]:
+                                    v = rp.get(key) or _rep.get(key)
                                     if isinstance(v, str) and v.strip():
                                         lines.append(f"\n【{zh}】\n{v.strip()}")
                                     elif isinstance(v, list) and v:
@@ -683,14 +716,14 @@ def chat_roundtable():
                                 return "\n".join(lines).strip()
                             _rank_analyst_report = _rt_report_md2(_rank_scan)
                             # 扫榜完成给用户一帧提示（可选）
-                            # 提变量，避免嵌套 f-string + json.dumps 里 \" 导致 SyntaxError（Python 不允许 f-string {} 内有反斜杠）
-                            _plat2 = _rank_scan.get('platform_label', '番茄新书榜') if isinstance(_rank_scan, dict) else '番茄新书榜'
-                            _nb2 = len((_rank_scan.get('books') or []) if isinstance(_rank_scan, dict) else [])
+                            _plat2 = '番茄' if (_rank_scan.get('platform') == 'fanqie') else '起点' if isinstance(_rank_scan, dict) and _rank_scan.get('platform') == 'qidian' else '番茄'
+                            _rep2 = _rank_scan.get('report') if isinstance(_rank_scan, dict) and isinstance(_rank_scan.get('report'), dict) else {}
+                            _nb2 = len((_rep2.get('top_books') or []) if isinstance(_rep2, dict) else [])
                             _sse_meta_obj2 = {
                                 'type': 'meta',
                                 'kind': 'roundtable_status',
                                 'info': {
-                                    'text': f'✅ 扫榜完成：{_plat2}｜命中 {_nb2} 本TOP书，榜单分析师第一个发言会展示。'
+                                    'text': f'✅ 扫榜完成：{_plat2}新书榜｜命中 {_nb2} 本TOP书，榜单分析师第一个发言会展示。'
                                 }
                             }
                             yield f'data: {json.dumps(_sse_meta_obj2, ensure_ascii=False)}\n\n'
@@ -798,11 +831,13 @@ def chat_roundtable():
                         "下面这份报告是刚从番茄/起点新书榜**真实抓下来的 TOP 书数据 + LLM 情报聚合**：\n\n"
                         + _rank_analyst_report.strip() +
                         "\n================================\n"
-                        "【你的第一轮发言要求（只在第一轮且你第一个说话时执行）】：\n"
-                        "1) 开场先给一张「📈 扫榜情报摘要」：平台+赛道+扫榜时间、TOP3 一句话钩子、共性卖点、共性毒点\n"
-                        "2) 然后给出「🎯 市场落地方向」：基于榜单，对本次议题具体建议怎么切赛道、怎么取名、前3章钩子怎么埋\n"
-                        "3) 最后给后续专家一个「📢 给全桌的定调」：明确告诉毒舌读者/架构师/世界观策划/爆款编辑/润色编辑/采访——他们讨论时应该优先吸收风向的哪些点、避开哪些坑\n"
-                        "4) 不拍脑袋，每一条建议必须标注'参考榜上书XXX的套路'/'避开榜上书XXX的毒点'\n"
+                        "【你的第一轮发言要求（只在第一轮且你第一个说话时执行）】——必须按以下五步深挖榜单，最后落到给本书的爆款构思：\n"
+                        "1) 「📈 扫榜情报摘要」：平台+赛道+扫榜时间、TOP3 一句话钩子、共性卖点、共性毒点\n"
+                        "2) 「📖 榜单拆书·五个维度逐一分析」：①书名（TOP 书命名规律：题材词/身份词/反差词/数字词怎么组合，为什么3秒抓人）②简介（钩子句式：开篇冲突怎么抛、金手指怎么亮、悬念怎么留）③设定（同赛道爆款的核心设定卖点是什么，靠什么差异化）④金手指（上榜书的金手指类型盘点：签到/系统/重生/吞噬/模拟器…各自爽点结构与适用题材）⑤黄金三章（从简介反推：第1章怎么开困境、第2章金手指怎么落地、第3章第一个爽点怎么兑现+钩子怎么埋）\n"
+                        "3) 「✍️ 学习结论」：从以上五维拆解中提炼出可复用的爆款公式（书名公式/简介公式/金手指设计公式/黄金三章节奏公式），每条标注'学自榜上《XXX》'\n"
+                        "4) 「💡 我们的爆款构思」：基于学习结论+本次议题，给出本书的具体构思方向——推荐书名 2-3 个、一句话卖点、金手指建议、开篇钩子建议，明确说'为什么按榜单风向这样做能火'\n"
+                        "5) 「📢 给全桌的定调」：明确告诉毒舌读者/架构师/世界观策划/爆款编辑/润色编辑/采访——后续讨论应优先吸收风向的哪些点、避开哪些坑\n"
+                        "【铁律】不拍脑袋，每一条结论必须标注'参考榜上书XXX的套路'/'避开榜上书XXX的毒点'；拆解要具体到可执行，禁止'书名很重要'这种废话。\n"
                     )
                 if book_id and base_system:
                     sp_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + sp_system
@@ -858,9 +893,15 @@ def chat_roundtable():
 【总结要求】
 {f'''把讨论收束成一份清晰的总结报告（本次是【调整阶段】，请结合作者意见『{feedback[:120]}』，在上一版结论基础上说明：哪些做了修正、哪些维持、最终结论是否变化；「落地采纳建议」只针对调整后仍要采纳的维度）。结构必须是：
 
-# 圆桌会议调整结论：{topic_final[:40]}''' if adjust_mode else f'''把讨论收束成一份清晰的总结报告，结构必须是：
+# 圆桌会议调整结论：{topic_final[:40]}''' if adjust_mode else f'''把讨论收束成一份清晰详细的总结报告，结构必须是：
 
 # 圆桌会议总结：{topic_final[:40]}'''}
+
+## 备选书名（3个）
+给出 3 个风格差异化的备选书名，每个书名后用一句话说明该方向的卖点/钩子；书名必须贴合本次讨论的题材与核心创意，可参考讨论中提到的书名公式
+
+## 小说简介（150字以内）
+150 字以内，讲清主角处境、核心冲突、金手指与最大爽点，可直接用作书籍详情页简介；超字数视作不合格
 
 ## 核心共识
 列出大家都同意的结论，每条一句话
@@ -884,8 +925,7 @@ def chat_roundtable():
 
 严格按这个结构输出，用markdown标题分级，结论要明确，别模棱两可。
 
-【落地采纳建议的书写要求】
-"落地采纳建议"小节除上述格式外，每条必须写"是否采纳"（建议采纳/有条件采纳/暂不采纳）；本小节用纯中文 markdown 输出，不要出现 [[CARD:...]] 这类标记，卡片另由系统整理。
+【重要边界】本报告只做书名/简介/共识/分歧/建议，**不要**直接展开输出各维度的完整内容（如完整设定、完整大纲）——那些由作者之后点名某个维度时再单独生成。报告中也不出现 [[CARD:...]] 这类标记。
 本次议题已识别相关维度：{_sum_dim_note}
 """
 
@@ -905,34 +945,11 @@ def chat_roundtable():
             all_messages.append({'role': 'assistant', 'content': f'【总结报告】\n{sum_content}'})
             yield f'data: {json.dumps({"type": "speaker_done", "speaker": "moderator_summary"}, ensure_ascii=False)}\n\n'
 
-            # ========== 单独整理"落地采纳建议卡片"（不进讨论气泡，作为可采纳的 ActionCard 下发） ==========
+            # ========== 【报告即终点】不再自动产出各维度内容卡片 ==========
+            # 讨论后只交付详细总结报告（含备选书名+简介+共识/分歧/建议）；
+            # 各维度内容由作者后续自然语言点名（"生成设定/帮我把世界观写出来"）时，
+            # 走上方 create_mode 按对应维度要求单独生成可采纳卡片。
             sum_cards = []
-            try:
-                yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_status", "info": {"text": "正在整理可落地的采纳建议…"}}, ensure_ascii=False)}\n\n'
-                _card_sys = _MODERATOR_ROLE[1] + f"""
-
-【任务】根据下面的圆桌会议总结，把"落地采纳建议"小节里判定为「建议采纳/有条件采纳」的维度整理成可落地的 Action Card。
-
-【输出格式】只输出卡片标记，禁止一切解释/前言/后记，一个维度一张，格式严格如下：
-[[CARD:卡片类型|标题|具体内容]]
-
-【卡片类型对照】SAVE_CONCEPT=构思, SAVE_RULE=设定, SAVE_WORLDSETTING=世界观, SAVE_OUTLINE_NODE=大纲, SAVE_PLOT=剧情, SAVE_CHARACTER=人物, SAVE_FORESHADOW=伏笔, SAVE_LOCATION=地图, APPLY_STYLE=文风
-【内容要求】卡片内容必须具体、可直接写入对应维度（如"采纳到人物"就写清楚姓名/性格/动机等）；拿不准的维度宁可不产，少于一行不要产。
-"""
-                _card_msg = [{'role': 'system', 'content': _var_replace(_card_sys)},
-                             {'role': 'user', 'content': sum_content[:8000]}]
-                _card_full = []
-                for _tk, _tp in _rt_stream_turn(gw_sum, _card_msg, 0.3, 2048):
-                    if _tk == 'body':
-                        _card_full.append(_tp)
-                _card_txt = ''.join(_card_full) or ''
-                sum_cards = parse_cards(_card_txt)
-            except Exception:
-                sum_cards = []
-            # 下发卡片；顺带清理总结正文里可能残留的卡片标记
-            for _card in sum_cards:
-                _enrich_card_rank_meta(_card, _rank_scan)
-                yield f'data: {json.dumps({"type": "card", "card": _card, "session_id": session_id}, ensure_ascii=False)}\n\n'
             sum_content = strip_cards(sum_content or '').strip()
             all_messages[-1]['content'] = f'【总结报告】\n{sum_content}'
 
@@ -943,9 +960,6 @@ def chat_roundtable():
 
             # 把整场（含追加轮）的可复盘消息落盘 → 刷新界面不丢
             _mod_open = state.get('moderator_open', '') if isinstance(state, dict) else ''
-            # 落盘的卡片也同步 enrich，保证后续复盘/续会仍保留风向来源
-            for _c in sum_cards:
-                _enrich_card_rank_meta(_c, _rank_scan)
             _rt_persist_messages(session, history, topic_final, _mod_open, done, sum_content, summary_cards=sum_cards)
 
             full_discussion = [
