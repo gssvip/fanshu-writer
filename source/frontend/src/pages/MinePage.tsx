@@ -12,6 +12,8 @@ export default function MinePage() {
   // 多配置支持：最多 10 个，可切换（实际权威值以 listAIConfigs 返回的 max 字段为准，后端 MAX_CONFIGS=10）
   const [configList, setConfigList] = useState<AIConfig[]>([]);
   const [maxConfigs, setMaxConfigs] = useState(10);
+  // 表单模式：edit = 编辑已保存的某条配置；create = 新建独立配置草稿（保存时新建，不覆盖任何已有配置）
+  const [formMode, setFormMode] = useState<'edit' | 'create'>('edit');
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeSection, setActiveSection] = useState('');
@@ -131,12 +133,17 @@ export default function MinePage() {
   }, [currentUser]);
 
   // 拉取全部配置列表 + 当前激活配置，保证 UI 与后端一致
+  // 刷新时保持在看的那条（仍在列表里就不跳走；已不存在则回落到激活条）
   function refreshConfigs() {
     api.listAIConfigs().then((res) => {
       setConfigList(res.configs);
       if (typeof (res as any).max === 'number') setMaxConfigs((res as any).max);
-      const active = res.configs.find(c => c.is_active) || res.configs[0];
-      if (active) setAIConfig(active);
+      setAIConfig((prev: AIConfig) => {
+        const still = res.configs.find(c => c.id === prev.id);
+        if (still) return still;
+        const active = res.configs.find(c => c.is_active) || res.configs[0];
+        return active || prev;
+      });
     }).catch(() => {
       // 兼容旧后端：list 接口不存在时回退到单配置接口
       api.getAIConfig().then(setAIConfig).catch(() => {});
@@ -159,11 +166,18 @@ export default function MinePage() {
     setUsageLoading(false);
   }
 
-  // 切换激活配置：切换后立即重新加载该配置详情
-  async function handleSwitchConfig(id: string) {
-    if (id === aiConfig.id) return;
+  // 切换"正在查看/编辑"的配置：只加载进表单，不改变全局激活
+  function handleSwitchConfig(id: string) {
+    if (formMode === 'create') setFormMode('edit');
+    const cfg = configList.find(c => c.id === id);
+    if (cfg) setAIConfig(cfg);
+  }
+
+  // 把当前查看的配置设为全局激活（所有 AI 调用改用它）
+  async function handleActivateConfig() {
+    if (!aiConfig.id) return;
     try {
-      const cfg = await api.activateAIConfig(id);
+      const cfg = await api.activateAIConfig(aiConfig.id);
       setAIConfig(cfg);
       await refreshConfigs();
     } catch (e: any) {
@@ -171,29 +185,29 @@ export default function MinePage() {
     }
   }
 
-  // 添加一个新提供商：把表单切到该提供商模板（保存时后端自动按 provider 复用或新建）
+  // 新建独立配置：进入草稿模式（保存时后端新建一行，绝不覆盖已保存的配置）
   function handleNewConfig() {
     if (configList.length >= maxConfigs) {
-      alert(`最多 ${maxConfigs} 个提供商配置，请先删除一个`);
+      alert(`最多 ${maxConfigs} 个配置，请先删除一个`);
       return;
     }
-    const menu = prompt(
-      '选择要添加的提供商（填 value，如：deepseek / kimi / zhipu / moonshot / local / custom，留空为自定义）：'
-    );
-    if (menu === null) return;
-    const provider = (menu || '').trim().toLowerCase() || 'custom';
-    const preset = AI_PROVIDERS.find(p => p.value === provider);
+    const preset = AI_PROVIDERS.find(p => p.value === 'deepseek');
+    setFormMode('create');
+    setShowModelList(false);
     setAIConfig({
-      ...aiConfig,
-      provider,
-      name: preset?.label || (provider === 'custom' ? '自定义提供商' : provider),
-      base_url: preset?.base_url || (provider === 'custom' ? '' : aiConfig.base_url),
-      model: preset?.model || '',
-      models: preset?.model ? [preset.model] : [],
-      recognition_model: '',
-      api_key: '',
+      id: '', name: '', is_active: false,
+      provider: 'deepseek',
+      base_url: preset?.base_url || 'https://api.deepseek.com/v1',
+      model: preset?.model || '', models: [],
+      recognition_model: '', api_key: '',
+      temperature: 0.7, max_tokens: 4096, has_key: false,
     } as AIConfig);
-    alert(`已切换到「${preset?.label || provider}」→ 填好 API 地址与 Key 后拉取模型并保存`);
+  }
+
+  // 取消新建：回到编辑模式，重新加载激活配置
+  function handleCancelCreate() {
+    setFormMode('edit');
+    refreshConfigs();
   }
 
   // 删除配置：删除激活配置时后端自动激活剩下首条，前端刷新
@@ -207,7 +221,7 @@ export default function MinePage() {
     }
   }
 
-  // 保存提供商：POST 后端按 provider 复用/新建（合并多选模型、继承已有 Key），并自动激活
+  // 保存：新建模式 → POST 新建独立配置并自动激活；编辑模式 → PUT 只改当前这条
   async function handleSaveAIConfig() {
     const ok = await requireAuth();
     if (!ok) return;
@@ -217,20 +231,24 @@ export default function MinePage() {
     setTestResult(null);
     try {
       const label = AI_PROVIDERS.find(p => p.value === aiConfig.provider)?.label || aiConfig.provider;
-      const cfg = await api.createAIConfig({
+      const payload = {
         provider: aiConfig.provider,
         name: aiConfig.name || label,
         base_url: aiConfig.base_url,
-        api_key: aiConfig.api_key || '***',  // 掩码/空 → 后端保留或继承该提供商已有 Key
+        api_key: aiConfig.api_key || '***',  // 掩码/空 → 后端保留原值（新建时按未设置保存）
         model: aiConfig.model,
         models: aiConfig.models || [],
         recognition_model: aiConfig.recognition_model || '',
         temperature: aiConfig.temperature,
         max_tokens: aiConfig.max_tokens,
-      } as any);
+      } as any;
+      const cfg = formMode === 'create'
+        ? await api.createAIConfig(payload)
+        : await api.updateAIConfigById(aiConfig.id, payload);
+      setFormMode('edit');
       setAIConfig(cfg);
       await refreshConfigs();
-      alert('AI配置已保存');
+      alert(formMode === 'create' ? '新配置已创建并启用' : '修改已保存');
     } catch (e: any) {
       alert('保存失败: ' + e.message);
     }
@@ -520,56 +538,72 @@ export default function MinePage() {
             <h3>AI 配置</h3>
             <p className="text-muted">配置国产大模型 API，让AI帮你写作和审稿。所有提供商均兼容 OpenAI 接口格式。</p>
 
-            {/* 多配置切换：最多 10 个，旧配置保留不丢 */}
-            <div className="config-switcher" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 10px', background: 'var(--bg-soft, #f7f7f8)', borderRadius: 8, flexWrap: 'wrap' }}>
-              <label style={{ fontSize: 13, color: 'var(--text-muted, #888)', marginRight: 4 }}>当前提供商：</label>
+            {/* 多配置管理：新建永不覆盖旧配置；查看/编辑某条 ≠ 启用它，启用需显式操作 */}
+            <div className="config-switcher" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: formMode === 'create' ? 0 : 12, padding: '8px 10px', background: 'var(--bg-soft, #f7f7f8)', borderRadius: 8, flexWrap: 'wrap' }}>
+              <label style={{ fontSize: 13, color: 'var(--text-muted, #888)', marginRight: 4 }}>配置：</label>
               <select
                 className="input"
-                value={aiConfig.id}
-                onChange={e => {
-                  if (e.target.value === '__new__') { handleNewConfig(); return; }
-                  handleSwitchConfig(e.target.value);
-                }}
+                value={formMode === 'create' ? '' : aiConfig.id}
+                disabled={formMode === 'create'}
+                onChange={e => handleSwitchConfig(e.target.value)}
                 style={{ flex: 1, minWidth: 160, maxWidth: 280 }}
+                title={formMode === 'create' ? '正在新建配置，保存后自动回到列表' : '选择要查看/编辑的配置'}
               >
                 {configList.map(c => (
                   <option key={c.id} value={c.id}>
-                    {c.name}{c.is_active ? ' ✓' : ''} {c.has_key ? '🔑' : '🚫'}
+                    {c.name}{c.is_active ? '（当前使用）' : ''} {c.has_key ? '🔑' : '🚫'}
                   </option>
                 ))}
-                <option value="__new__">＋ 添加一个新提供商…</option>
               </select>
+              {formMode === 'edit' && !aiConfig.is_active && aiConfig.id && (
+                <button
+                  className="btn-primary"
+                  onClick={handleActivateConfig}
+                  style={{ padding: '6px 12px', fontSize: 13 }}
+                  title="把这条配置设为全局当前使用（所有AI调用改用它）"
+                >
+                  ⭐ 设为当前使用
+                </button>
+              )}
               <button
                 className="btn-primary"
                 onClick={handleNewConfig}
-                disabled={configList.length >= maxConfigs}
+                disabled={configList.length >= maxConfigs || formMode === 'create'}
                 style={{ padding: '6px 12px', fontSize: 13 }}
-                title={configList.length >= maxConfigs ? `最多 ${maxConfigs} 个配置` : '添加提供商'}
+                title={configList.length >= maxConfigs ? `最多 ${maxConfigs} 个配置` : '新建一条独立配置，不影响已保存的配置'}
               >
-                ＋ 添加
+                ＋ 新建配置
               </button>
-              <button
-                className="btn-icon"
-                onClick={() => handleDeleteConfig(aiConfig.id)}
-                disabled={configList.length <= 1}
-                style={{ fontSize: 13, padding: '6px 10px' }}
-                title={configList.length <= 1 ? '至少保留 1 个配置' : '删除当前配置'}
-              >
-                🗑️ 删除
-              </button>
+              {formMode === 'edit' && (
+                <button
+                  className="btn-icon"
+                  onClick={() => handleDeleteConfig(aiConfig.id)}
+                  disabled={configList.length <= 1}
+                  style={{ fontSize: 13, padding: '6px 10px' }}
+                  title={configList.length <= 1 ? '至少保留 1 个配置' : '删除当前编辑的配置'}
+                >
+                  🗑️ 删除
+                </button>
+              )}
               <span style={{ fontSize: 12, color: 'var(--text-muted, #888)' }}>
                 {configList.length} / {maxConfigs}
               </span>
             </div>
+            {formMode === 'create' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, padding: '8px 12px', border: '1px dashed var(--accent, #4B3FE3)', borderRadius: 8, background: 'var(--accent-light, rgba(75,63,227,0.06))', fontSize: 13, color: 'var(--text, inherit)' }}>
+                <span style={{ flex: 1 }}>✏️ 正在新建独立配置——保存后将成为新的一条并自动启用，已有配置不受任何影响。</span>
+                <button className="btn-ghost-sm" onClick={handleCancelCreate} title="放弃草稿，回到编辑模式">取消新建</button>
+              </div>
+            )}
 
             {/* 配置名称编辑 */}
             <div className="form-row" style={{ marginBottom: 12 }}>
-              <label>提供商展示名</label>
+              <label>配置名称</label>
               <input
                 className="input"
                 value={aiConfig.name}
                 onChange={e => setAIConfig((p: AIConfig) => ({ ...p, name: e.target.value }))}
-                placeholder="如：DeepSeek / 备用 / 公司账号"
+                placeholder="如：DeepSeek主号 / 智谱备用 / 公司账号"
               />
             </div>
 
@@ -779,8 +813,13 @@ export default function MinePage() {
 
             <div className="ai-action-row">
               <button className="btn-primary" onClick={handleSaveAIConfig} disabled={saving}>
-                {saving ? '保存中...' : '保存AI配置'}
+                {saving ? '保存中...' : formMode === 'create' ? '➕ 创建并启用' : '💾 保存修改'}
               </button>
+              {formMode === 'create' && (
+                <button className="btn-secondary" onClick={handleCancelCreate} disabled={saving}>
+                  取消新建
+                </button>
+              )}
               <button className="btn-secondary ai-test-btn" onClick={handleTestConnection} disabled={testing}>
                 {testing ? '⏳ 测试中...' : '🔌 测试连接'}
               </button>

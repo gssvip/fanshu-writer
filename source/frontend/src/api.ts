@@ -228,6 +228,7 @@ export const api = {
   updateAIConfig: (data: Partial<AIConfig>) => request<AIConfig>('/ai/config', { method: 'PUT', body: JSON.stringify(data) }),
   listAIConfigs: () => request<AIConfigList>('/ai/configs'),
   createAIConfig: (data: Partial<AIConfig>) => request<AIConfig>('/ai/configs', { method: 'POST', body: JSON.stringify(data) }),
+  updateAIConfigById: (id: string, data: Partial<AIConfig>) => request<AIConfig>(`/ai/configs/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   activateAIConfig: (id: string) => request<AIConfig>(`/ai/configs/${id}/activate`, { method: 'PUT' }),
   deleteAIConfig: (id: string) => request<{ ok: boolean }>(`/ai/configs/${id}`, { method: 'DELETE' }),
   // 智驾通用切换某提供商的当前模型并全局激活

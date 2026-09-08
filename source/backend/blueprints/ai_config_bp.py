@@ -6,14 +6,16 @@
 接口：
   GET    /api/ai/config                       返回当前激活配置（兼容旧接口）
   PUT    /api/ai/config                       更新当前激活配置（支持 models 数组 + model）
-  GET    /api/ai/configs                      列出全部配置（每个提供商一条）
-  POST   /api/ai/configs                      新增/更新一个提供商（合并 models，复用同 provider）
-  POST   /api/ai/configs/<id>/select-model    智驾设置某个 provider 的当前模型并全局激活
+  GET    /api/ai/configs                      列出全部配置（激活的排第一）
+  POST   /api/ai/configs                      新建独立配置（同 provider 可多条，互不覆盖）并自动激活
+  PUT    /api/ai/configs/<id>                 更新指定配置（掩码 api_key 保留原值，不改激活状态）
+  POST   /api/ai/configs/<id>/select-model    智驾设置某个配置的当前模型并全局激活
   PUT    /api/ai/configs/<id>/activate        切换激活
   DELETE /api/ai/configs/<id>                 删除配置（删除激活配置时自动激活剩下首条）
 
-「每个提供商一行，内部保存选定的多个模型」。所有 LLM 调用仍通过
-AIConfig.get_active() 取激活配置，用其 model 作为当前使用模型。
+「配置 = 一行」：同一 provider 也可以保存多条（如 主号/备用 各一条 key），
+新建永不覆盖已有配置；所有 LLM 调用仍通过 AIConfig.get_active()
+取激活配置，用其 model 作为当前使用模型。
 """
 import json
 
@@ -42,39 +44,42 @@ def _merge_models(base: list, add: list) -> list:
     return out
 
 
-@ai_config_bp.route('/api/ai/config', methods=['PUT'])
-def update_ai_config():
-    """更新当前激活配置（一个提供商一条）。
+def _apply_config_fields(cfg, data):
+    """把请求体里的常规字段写入配置行（不 commit，不处理激活）。
 
-    - models：用户选定的该提供商模型列表（JSON 数组）
-    - model：当前使用模型；models 内但 model 不在时，自动补充/修正
-    - api_key 为 '***' 或空时保留原值，避免掩码覆盖真实密钥。
+    - models：用户选定的模型列表（JSON 数组）
+    - model：当前使用模型；不在 models 里时自动补进列表首位
+    - base_url 归一化（参考当前 model）
+    - api_key 为 '***' 或空时保留原值，避免掩码覆盖真实密钥
     """
-    from app import db, AIConfig
     from llm_gateway import _normalize_llm_base_url
-    data = request.json or {}
-    cfg = AIConfig.get_active()
     for field in ['name', 'provider', 'recognition_model',
                   'temperature', 'max_tokens']:
         if field in data:
             setattr(cfg, field, data[field])
-    # models 数组（选定模型列表）
     if isinstance(data.get('models'), list):
         cfg.models = json.dumps([m for m in data['models'] if str(m).strip()])
-    models = cfg.get_models()
-    # base_url 归一化参考模型
     new_model = data.get('model', cfg.model)
     if 'model' in data:
         cfg.model = data['model']
     if 'base_url' in data:
         raw = data['base_url'] or ''
         cfg.base_url = _normalize_llm_base_url(raw, new_model)
-    # 当前 model 不在选定列表里时，挂到列表首尾（避免智驾点上空模型）
+    models = cfg.get_models()
+    # 当前 model 不在选定列表里时，挂到列表首位（避免智驾点上空模型）
     if models and new_model and new_model not in models:
-        models = [new_model] + models
-        cfg.models = json.dumps(models)
+        cfg.models = json.dumps([new_model] + models)
     if 'api_key' in data and data['api_key'] and data['api_key'] != '***':
         cfg.api_key = data['api_key']
+    return cfg
+
+
+@ai_config_bp.route('/api/ai/config', methods=['PUT'])
+def update_ai_config():
+    """更新当前激活配置（兼容旧接口）。"""
+    from app import db, AIConfig
+    cfg = AIConfig.get_active()
+    _apply_config_fields(cfg, request.json or {})
     db.session.commit()
     return jsonify(cfg.to_dict())
 
@@ -93,46 +98,24 @@ def list_ai_configs():
 
 @ai_config_bp.route('/api/ai/configs', methods=['POST'])
 def create_ai_config():
-    """新增/更新一个提供商（一个提供商一条）。
+    """新建一个独立配置并自动激活。
 
-    同一 provider 已存在时报错提示改为"拉取更新"，避免重复建行；
-    新 provider 则新建并自动激活。models 为选定的模型列表。
+    - 每次调用都新建一行，同一 provider 也允许保存多条（如"智谱-主号 / 智谱-备用"），
+      绝不覆盖/合并已有配置——要改已有配置请用 PUT /api/ai/configs/<id>。
+    - models 为选定的模型列表；api_key 为空或 '***' 时按未设置保存（编辑时可再补）。
     """
     from app import db, AIConfig
     from llm_gateway import _normalize_llm_base_url
     data = request.json or {}
+    if AIConfig.query.count() >= MAX_CONFIGS:
+        return jsonify({'error': f'最多 {MAX_CONFIGS} 个配置，请先删除一个'}), 400
     provider = str(data.get('provider') or 'custom')
-    raw_base = data.get('base_url', '') or ''
     new_models = data.get('models') if isinstance(data.get('models'), list) else []
     api_key = data.get('api_key', '') or ''
-    # 已存在同 provider → 复用（合并 models + 继承已有 key/地址缺省值）
-    existing = AIConfig.query.filter_by(provider=provider).first()
-    if existing:
-        if 'api_key' in data and data['api_key'] and data['api_key'] != '***':
-            api_key = data['api_key']
-        else:
-            api_key = existing.api_key
-        cur_models = existing.get_models()
-        merged = _merge_models(cur_models, new_models)
-        if 'model' in data and data.get('model'):
-            merged = _merge_models([data['model']], merged)
-        existing.model = data.get('model', '') or existing.model
-        existing.models = json.dumps(merged)
-        existing.name = data.get('name') or existing.name or provider
-        if data.get('base_url'):
-            existing.base_url = _normalize_llm_base_url(raw_base, data.get('model') or existing.model)
-        if api_key:
-            existing.api_key = api_key
-        AIConfig.query.filter_by(is_active=True).update({'is_active': False})
-        existing.is_active = True
-        db.session.commit()
-        return jsonify(existing.to_dict()), 201
-    if AIConfig.query.count() >= MAX_CONFIGS:
-        return jsonify({'error': f'最多 {MAX_CONFIGS} 个提供商配置，请先删除一个'}), 400
-    if not api_key or api_key == '***':
-        act = AIConfig.query.filter_by(is_active=True).first()
-        api_key = act.api_key if act else ''
+    if api_key == '***':
+        api_key = ''
     new_model = data.get('model', '') or (new_models[0] if new_models else '')
+    raw_base = data.get('base_url', '') or ''
     cfg = AIConfig(
         name=data.get('name') or data.get('provider_label') or provider,
         provider=provider,
@@ -140,7 +123,7 @@ def create_ai_config():
         models=json.dumps(new_models or ([new_model] if new_model else [])),
         recognition_model=data.get('recognition_model', ''),
         api_key=api_key,
-        base_url=_normalize_llm_base_url(raw_base, new_model) if raw_base else data.get('base_url', ''),
+        base_url=_normalize_llm_base_url(raw_base, new_model) if raw_base else raw_base,
         temperature=data.get('temperature', 0.7),
         max_tokens=data.get('max_tokens', 4096),
         is_active=True,
@@ -149,6 +132,22 @@ def create_ai_config():
     db.session.add(cfg)
     db.session.commit()
     return jsonify(cfg.to_dict()), 201
+
+
+@ai_config_bp.route('/api/ai/configs/<cfg_id>', methods=['PUT'])
+def update_ai_config_by_id(cfg_id):
+    """更新指定配置（不改激活状态）。
+
+    - api_key 为 '***' 或空时保留原值
+    - 同 provider 的其他配置不受影响
+    """
+    from app import db, AIConfig
+    cfg = AIConfig.query.get(cfg_id)
+    if not cfg:
+        return jsonify({'error': '配置不存在'}), 404
+    _apply_config_fields(cfg, request.json or {})
+    db.session.commit()
+    return jsonify(cfg.to_dict())
 
 
 @ai_config_bp.route('/api/ai/configs/<cfg_id>/select-model', methods=['POST'])
