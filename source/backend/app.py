@@ -5942,7 +5942,7 @@ def _build_continue_fingerprint_deps(book_id, bb, instruction, skill_pack_ids, t
                 return '0'
             return str(len(s)) + ':' + hashlib.sha1(str(s).encode('utf-8')).hexdigest()[:14]
         bb_fields_t = (
-            int(getattr(bb, 'id', 0) or 0),
+            str(getattr(bb, 'id', '') or ''),
             _fp(getattr(bb, 'concept', '') or ''),
             _fp(getattr(bb, 'key_rules', '') or ''),
             _fp(getattr(bb, 'worldbuilding', '') or ''),
@@ -5963,7 +5963,7 @@ def _build_continue_fingerprint_deps(book_id, bb, instruction, skill_pack_ids, t
         book_t = None
     else:
         book_t = (
-            int(book.id or 0),
+            str(book.id or ''),
             str(getattr(book, 'genre', '') or ''),
             str(getattr(book, 'book_type', '') or ''),
             str(getattr(book, 'title', '') or ''),
@@ -5974,7 +5974,7 @@ def _build_continue_fingerprint_deps(book_id, bb, instruction, skill_pack_ids, t
         )
     # recent_4ch_ids: 最近 4 章 id + word_count（正文每写完一章，下一章的 recent_4 滚动 → Key 自然变）
     recent_ch_t = tuple(
-        (int(cid), int(wc or 0)) for (cid, wc) in (recent_4ch_ids or [])
+        (str(cid), int(wc or 0)) for (cid, wc) in (recent_4ch_ids or [])
     )
     # 批次参数
     params_t = (
