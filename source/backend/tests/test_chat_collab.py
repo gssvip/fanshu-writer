@@ -478,3 +478,55 @@ class TestGeneralChatDisconnectRescue:
             from blueprints.nd_helpers import _nd_load_state
             st = _nd_load_state(s)
             assert st and int(st.get('last_ch') or 0) == 3, '断开后节点设计进度必须可续'
+
+
+class TestTimelineAdoptPreservesOtherVolumes:
+    """剧情线（SAVE_PLOT）采纳回归测试。
+
+    用户反馈：把第一卷节点设计完成后采纳，剧情维度其它卷的卷大纲消失了。
+    根因：apply_card 的 timeline 分支在 mode='overwrite' 时把 existing_vols 清空
+    重建，而节点设计卡只覆盖第一卷 → 其它卷被误删。现在 timeline 一律按卷
+    upsert 增量合并，永不整条清空。
+    """
+
+    def test_adopt_volume1_overwrite_keeps_volume2(self, app, client):
+        import json as _json
+        from app import db, Book, BookBible
+
+        with app.app_context():
+            book = Book(title='测试书')
+            db.session.add(book)
+            db.session.flush()
+
+            timeline = _json.dumps([
+                {'volume_index': 1, 'volume': '第1卷', 'summary': '一卷旧大纲',
+                 'nodes': [{'index': 1, 'chapters': 1, 'title': '旧节点'}]},
+                {'volume_index': 2, 'volume': '第2卷', 'summary': '二卷大纲',
+                 'nodes': [{'index': 1, 'chapters': 51, 'title': '二卷旧节点'}]},
+            ], ensure_ascii=False)
+            bb = BookBible(book_id=book.id, timeline=timeline)
+            db.session.add(bb)
+            db.session.commit()
+            book_id = book.id
+            bb_id = bb.id
+
+        card_content = _json.dumps([
+            {'volume_index': 1, 'volume': '第1卷', 'chapter_count': 50,
+             'summary': '一卷新大纲',
+             'nodes': [{'index': 1, 'chapters': 3, 'title': '新节点'}]},
+        ], ensure_ascii=False)
+
+        resp = client.post('/api/ai/chat/smart/apply-card', json={
+            'book_id': book_id,
+            'mode': 'overwrite',
+            'card': {'type': 'SAVE_PLOT', 'title': '第1卷情节节点', 'content': card_content},
+        })
+        assert resp.status_code == 200, resp.get_json()
+
+        with app.app_context():
+            fresh = db.session.get(BookBible, bb_id)
+            vols = _json.loads(fresh.timeline or '[]')
+            idxs = {v.get('volume_index'): v for v in vols if isinstance(v, dict)}
+            assert 1 in idxs, '第1卷应仍在 timeline'
+            assert 2 in idxs, '采纳第1卷后第2卷的卷大纲不能被清掉'
+            assert idxs[2]['summary'] == '二卷大纲', '第2卷内容必须原样保留'

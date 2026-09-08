@@ -2503,10 +2503,11 @@ def apply_card():
                         existing_vols = parsed_tl
                 except (json.JSONDecodeError, ValueError, TypeError):
                     existing_vols = []
-                # 四按钮协议·采纳(全覆盖)：以卡片卷为准整体重建 timeline，丢弃旧卷；
-                # 追加：保留 existing_vols，按 volume_index upsert 增量合并（旧行为）
-                if is_edit_overwrite:
-                    existing_vols = []
+                # 剧情线（timeline）永远是【按卷 upsert 增量合并】，不整条清空：
+                # SAVE_PLOT 卡片通常只覆盖单个卷（节点设计一次产一卷），若采纳时
+                # 把 existing_vols 清空重建，会导致其它卷的卷大纲/剧情节点被误删。
+                # 同卷命中时 _merge_volume_nodes_incremental 按章号增量合并 + _merge_volume 保卷级字段；
+                # 不同卷原样保留；is_edit_overwrite 仅影响卡片 status（adopted）与前端文案。
 
                 def _volume_field_nonempty(v):
                     """判断卷字段是否"有有效值"：空字符串/空列表/None/false/零 volume_index 不算。"""
