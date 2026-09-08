@@ -158,6 +158,17 @@ def chat_roundtable():
             return jsonify({'error': '书籍不存在'}), 404
         book_title = book.title or ''
         bb = BookBible.query.filter_by(book_id=book_id).first()
+        # 【议题里的卷数/章数要求 → 真正落库】用户在圆桌议题里说"按20卷设计/全书30卷"
+        # 之前完全被忽略（圆桌链路从不调用参数同步），铁律块读的还是旧值/默认值，
+        # 导致"要求不是十卷，却一直按十卷设计"。这里在构建 base_system 之前先同步，
+        # 让【核心创作参数铁律】读到用户本轮要求的卷数。（"继续/第12卷"等有负向过滤，不会误判）
+        try:
+            _auto_sync_params_from_user_message(book, bb, topic)
+        except Exception:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
         from app import Chapter, parse_chapter_number
         recent_chapters: list = []
         next_chapter_num: int | None = None

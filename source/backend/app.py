@@ -308,8 +308,9 @@ class Book(db.Model):
     chapter_count = db.Column(db.Integer, default=0)
     status = db.Column(db.String(20), default='draft')  # draft, writing, completed
     target_words = db.Column(db.Integer, default=0)
-    # 总卷数（用户自定义，不设上限）：作为五幕总纲/剧情大纲生成的核心依据
-    total_volumes = db.Column(db.Integer, default=10)
+    # 总卷数（用户自定义，不设上限）：作为五幕总纲/剧情大纲生成的核心依据。
+    # 0 = 未设定（创作链路按"由作者定义"处理）——严禁默认 10，否则"圆桌永远按十卷设计"
+    total_volumes = db.Column(db.Integer, default=0)
     # 小说风格流派（JSON 数组字符串，最多3种叠加）：爽文流/虐文流/系统流等
     novel_styles = db.Column(db.Text, default='[]')
     # 技能包三类划分：构思类/文风类/审查类 各自独立的 ID 列表（JSON 数组字符串）
@@ -706,7 +707,8 @@ class BookBible(db.Model):
     # M4c: 忽略的失败模式 bucket（JSON 数组），被忽略的 bucket 不出现在 optimization-report 里
     ignored_failure_buckets_json = db.Column(db.Text, default='')
     # 总卷数 + 风格流派（与 Book 表同步，创作时从 bible 直接读取注入各维度）
-    total_volumes = db.Column(db.Integer, default=10)
+    # 0 = 未设定，与 Book 表口径一致；严禁默认 10（历史脏数据的来源之一）
+    total_volumes = db.Column(db.Integer, default=0)
     novel_styles = db.Column(db.Text, default='[]')
     last_synced_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
@@ -5166,37 +5168,27 @@ def _sync_book_meta_to_bible(book, bb):
     """P0-3修复：把 book 的 total_volumes / novel_styles / genre / book_type 同步到 bible。
     在首次创建空 bible 或更新 book 时调用，确保各维度创作时能从 bible 读到权威元数据。
 
-    同步策略（核心：Book 表是用户创建/编辑作品时的“权威数据源”，除用户在 Bible 侧明确改过且 Book 仍为默认值的情况外，以 Book 为准）：
-    - book.tv != 默认(10) 且 bb.tv == 默认(10)   → 用户在 Book 改了，bb 还是默认值 → 同步（覆盖默认）
-    - book.tv != bb.tv  且 双方都不等于默认值  → 两边都非默认，以 Book（用户作品基本信息页）为准 → 同步
-    - bb.tv != 默认(10) 且 book.tv == 默认(10)   → 用户在 Bible 侧单独改了，Book 仍默认 → 保留 Bible，不同步
+    卷数同步策略（0 = 未设定 语义）：
+    - Book.total_volumes >= 1（用户已在建书表单/作品设置/聊天同步里设定）→ 以 Book 为准，
+      Bible 与之不一致就覆盖（Book 是作品基本信息页，是权威数据源）。
+    - Book.total_volumes == 0（未设定）→ 不动 Bible，保留 Bible 侧已有值。
+      历史版本曾把 0/None 强行视作"默认 10"参与比较，导致 Bible 滞留的 10 卷
+      永远清不掉、反向污染所有创作链路——这就是"圆桌永远按十卷设计"的根源之一。
     """
     if not book or not bb:
         return
-    DEFAULT_TV = 10
     try:
-        bk_tv = getattr(book, 'total_volumes', None)
-        bb_tv = getattr(bb, 'total_volumes', None)
-        # 统一成 int 便于比较，None/0 视作默认
         try:
-            bk_tv_i = int(bk_tv) if bk_tv else DEFAULT_TV
+            bk_tv = int(getattr(book, 'total_volumes', 0) or 0)
         except (ValueError, TypeError):
-            bk_tv_i = DEFAULT_TV
-        try:
-            bb_tv_i = int(bb_tv) if bb_tv else DEFAULT_TV
-        except (ValueError, TypeError):
-            bb_tv_i = DEFAULT_TV
-        need_sync = False
-        # Case A：Book 非默认 + BB 默认 → 用户在 Book 设定页选了 25 卷，BB 刚创建还是默认 10 → 必须同步
-        if bk_tv_i != DEFAULT_TV and bb_tv_i == DEFAULT_TV:
-            need_sync = True
-        # Case B：两边都非默认但数值不同 → Book 是权威（作品基本信息页），同步覆盖 Bible
-        elif bk_tv_i != DEFAULT_TV and bb_tv_i != DEFAULT_TV and bk_tv_i != bb_tv_i:
-            need_sync = True
-        # Case C：两边都是默认 → 什么都不做
-        # Case D：BB 非默认 + Book 默认 → 用户在 Bible 侧单独调过，保留 Bible
-        if need_sync:
-            bb.total_volumes = bk_tv_i
+            bk_tv = 0
+        if bk_tv >= 1:
+            try:
+                bb_tv = int(getattr(bb, 'total_volumes', 0) or 0)
+            except (ValueError, TypeError):
+                bb_tv = 0
+            if bb_tv != bk_tv:
+                bb.total_volumes = bk_tv
     except Exception:
         pass
     try:
@@ -5210,72 +5202,36 @@ def _sync_book_meta_to_bible(book, bb):
         pass
 
 def _get_total_volumes(bb, book=None):
-    """获取总卷数：严格按用户设定（BB→Book→Bible文本正则提取），不再硬编码默认 10。
+    """获取总卷数：严格按用户设定，不再硬编码默认 10。
     优先级：
-      1) BookBible.total_volumes（用户在智驾同步流中写入或作品侧设置同步）
-      2) Book.total_volumes
-      3) 从 Bible 的 concept / plot_design / timeline / key_rules / worldbuilding 等文本正则提取
-         "全书N卷/按N卷/N卷规划..."（防止用户把卷数写进卡片正文但没写入字段）
-      4) 最后兜底：若用户仍未设置，返回 0（上游 _core_params_iron_block 会感知 tv=0，
-         整条"总卷数N卷/越界拦截N卷"铁律不再输出，避免把 LLM 误导到 10 卷）。
-    卷数不设上限，仅校验下限 ≥1（当 tv≥1 时 clamp）。"""
-    tv = None
-    try:
-        tv = getattr(bb, 'total_volumes', None)
-    except Exception:
-        tv = None
-    if (not tv) and book is not None:
+      1) Book.total_volumes —— Book 表是用户创建/编辑作品时的"权威数据源"，
+         绝不允许 Bible 侧滞留的旧默认值（历史版本 ORM default=10 写入的 10）
+         压过用户在作品设置里的真实卷数（这就是"圆桌永远按十卷设计"的根源）
+      2) BookBible.total_volumes（用户在智驾同步流中写入、作品侧设置同步）
+      3) 两者都未设置（0/None）→ 返回 0：上游 _core_params_iron_block 感知 tv=0，
+         整条"总卷数N卷/越界拦截N卷"铁律不再输出，避免把 LLM 误导到 10 卷。
+
+    注意：不再从 Bible 维度正文里正则提取"全书N卷"——早期 LLM 幻觉出的卷数
+    一旦写进维度文本就会被锁死成铁律，形成"永远十卷"的自我强化。卷数只认
+    显式字段（建书表单 / 作品设置 / 聊天与圆桌议题的自动同步写入）。"""
+    def _tv_of(obj):
         try:
-            tv = getattr(book, 'total_volumes', None)
+            v = getattr(obj, 'total_volumes', None)
         except Exception:
-            tv = None
+            return 0
+        try:
+            v = int(v) if v else 0
+        except (ValueError, TypeError):
+            return 0
+        return v if v >= 1 else 0
 
-    # 第 3 层兜底：正则从已写入的 Bible 维度文本里找"全书N卷/按N卷..."
-    if not tv:
-        import re
-        _RE = re.compile(
-            r'(?:总卷数|全书|全本|整本书|一共|总共|合计|总计|计划|准备|打算|想|要|需要|改成|改为|设置为|设为|调整为|调成|调为|按|做成|写成|做|写|搞|设计成|规划成|规划|控制在|就|那就|那就按|就按|至少|最多|左右|大概|约|差不多)'
-            r'\s*(\d{1,4})\s*卷')
-        cand_texts = []
-        if bb:
-            for fld in ('concept', 'plot_design', 'timeline', 'key_rules', 'worldbuilding',
-                        'style_guide', 'character_profiles', 'locations', 'foreshadowing',
-                        'outline'):
-                try:
-                    v = getattr(bb, fld, None)
-                except Exception:
-                    v = None
-                if isinstance(v, str) and v:
-                    cand_texts.append(v)
-        if book is not None:
-            for fld in ('description', 'summary', 'outline'):
-                try:
-                    v = getattr(book, fld, None)
-                except Exception:
-                    v = None
-                if isinstance(v, str) and v:
-                    cand_texts.append(v)
-        for txt in cand_texts:
-            try:
-                m = _RE.search(txt)
-                if m:
-                    cand = int(m.group(1))
-                    if 1 <= cand <= 500:
-                        tv = cand
-                        break
-            except Exception:
-                continue
-
-    # 最后：如果用户仍未显式设置卷数，返回 0。
-    # 这样上游就不会输出"总卷数：10 卷 / 越界...10 卷"的错误铁律，
-    # 也不会给 LLM 任何"默认十卷"的暗示。真正的创作完全由用户定义。
-    try:
-        tv_i = int(tv) if tv else 0
-    except Exception:
-        tv_i = 0
-    if tv_i <= 0:
-        return 0
-    return max(1, tv_i)
+    for obj in (book, bb):
+        if obj is None:
+            continue
+        tv = _tv_of(obj)
+        if tv >= 1:
+            return tv
+    return 0
 
 def _get_chapters_per_volume(bb, book=None):
     """P3-10：按题材流派动态计算每卷章数，替代硬编码 50。
@@ -5327,12 +5283,23 @@ def _build_core_params_block(bb, book):
     styles_text = _get_novel_styles_text(bb, book)
     bt = getattr(book, 'book_type', 'novel') or 'novel'
     parts = ['【核心创作参数·全书依据·不可偏离】',
-             f'题材：{genre_label}（人物设定、世界观、剧情走向、爽点类型须契合该题材的读者期待）',
-             f'总卷数：{tv} 卷（全书所有分卷/五幕总纲/剧情大纲严格按此卷数规划，不得多不得少）']
-    if bt == 'novel':
-        parts.append(f'预计总字数：约 {tv*12} 万字（每卷约12万字，约50章/卷）')
+             f'题材：{genre_label}（人物设定、世界观、剧情走向、爽点类型须契合该题材的读者期待）']
+    if tv and tv >= 1:
+        parts.append(f'总卷数：{tv} 卷（全书所有分卷/五幕总纲/剧情大纲严格按此卷数规划，不得多不得少）')
     else:
-        parts.append(f'短篇结构：{tv} 个单元/幕')
+        # 用户尚未设定总卷数 → 不给任何数字暗示（尤其禁止默认十卷），先让作者确认分卷规模
+        parts.append('总卷数：由作者定义（作者尚未指定分卷时，先把建议的分卷规模写进方案让作者确认；'
+                     '严禁擅自默认"十卷/五卷/八卷/十二卷/5-8卷"等固定数字）')
+    if bt == 'novel':
+        if tv and tv >= 1:
+            parts.append(f'预计总字数：约 {tv*12} 万字（每卷约12万字，约50章/卷）')
+        else:
+            parts.append('预计总字数：按作者确认的分卷规模 × 每卷约12万字估算')
+    else:
+        if tv and tv >= 1:
+            parts.append(f'短篇结构：{tv} 个单元/幕')
+        else:
+            parts.append('短篇结构：单元/幕数由作者定义，先在方案里明确给出再推进')
     if styles_text:
         parts.append(f'风格流派：{styles_text}（人物塑造、节奏、爽点设计、叙事手法须契合所选流派，这是硬约束）')
     return '\n'.join(parts)

@@ -1183,8 +1183,14 @@ def _auto_sync_params_from_user_message(book, bb, message: str):
                 if bb is None:
                     bb = _BB(book_id=book.id)
                     db.session.add(bb)
-            _sync_book_meta_to_bible(book, bb, commit=False)
+            _sync_book_meta_to_bible(book, bb)
             db.session.commit()
+            # 卷数变了 → 失效该作品的 system prompt 缓存（general_chat/圆桌共用的铁律块要立刻读到新卷数）
+            try:
+                from app import PromptContextCache
+                PromptContextCache.get().invalidate_book(book.id)
+            except Exception:
+                pass
             synced_notes.append(f'【已同步】检测到你要求“{tv_new}卷”，已自动将作品总卷数从 {cur_tv or "未设定"} 更新为 {tv_new} 卷（后续五幕总纲/分卷规划/正文写作都会严格按此卷数执行）')
 
     # -------- 2. 每卷章数：提取并落 Book.chapters_per_volume（若有该字段） --------
@@ -1219,8 +1225,13 @@ def _auto_sync_params_from_user_message(book, bb, message: str):
                 if bb is None:
                     bb = _BB(book_id=book.id)
                     db.session.add(bb)
-            _sync_book_meta_to_bible(book, bb, commit=False)
+            _sync_book_meta_to_bible(book, bb)
             db.session.commit()
+            try:
+                from app import PromptContextCache
+                PromptContextCache.get().invalidate_book(book.id)
+            except Exception:
+                pass
             synced_notes.append(f'【已同步】检测到你要求“每卷 {cpv_new} 章”，已自动将每卷章数从 {cur_cpv or "默认"} 更新为 {cpv_new} 章（后续总章数上限会按 总卷数 × {cpv_new} 章计算）')
 
     return synced_notes
@@ -8010,6 +8021,7 @@ def _register_split_domains():
         _RT_CREATE_DIMS=_RT_CREATE_DIMS,
         _RT_CREATE_FIELD=_RT_CREATE_FIELD,
         _auto_rank_scan_from_nl=_auto_rank_scan_from_nl,
+        _auto_sync_params_from_user_message=_auto_sync_params_from_user_message,
         _build_toc_block=_build_toc_block,
         _character_profiles_to_text=_character_profiles_to_text,
         _clean_text_to_plain=_clean_text_to_plain,

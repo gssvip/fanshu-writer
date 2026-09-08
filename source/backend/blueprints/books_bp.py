@@ -87,16 +87,16 @@ def create_book():
                     'vip_price': VIP_LIFETIME_PRICE,
                     'vip_tier': 'lifetime',
                 }), 402
-    # 总卷数：长篇默认10，短篇默认1。卷数不设上限，由用户自行决定（不钳制）
+    # 总卷数：完全以用户设定为准，不再默认十卷。
+    # 前端未传 / 传 0 = 未设定（落库 0，创作链路按"由作者定义"处理，禁止默认十卷）；
+    # 用户填 N（≥1）就存 N，不设上限。
     book_type = data.get('book_type', 'novel')
-    default_vols = 1 if book_type == 'short_story' else 10
-    total_volumes = data.get('total_volumes') or default_vols
-    # 卷数校验：仅校验下限≥1，不设上限（用户填多少就是多少）
+    _raw_tv = data.get('total_volumes')
     try:
-        total_volumes = int(total_volumes)
-        total_volumes = max(1, total_volumes)
+        total_volumes = int(_raw_tv) if _raw_tv is not None and str(_raw_tv).strip() != '' else 0
+        total_volumes = max(0, total_volumes)
     except (ValueError, TypeError):
-        total_volumes = default_vols
+        total_volumes = 0
     # 风格流派：JSON 数组，最多3种
     novel_styles = data.get('novel_styles', [])
     if isinstance(novel_styles, list):
@@ -175,6 +175,13 @@ def update_book(book_id):
         if hasattr(book, 'novel_styles'):
             bb.novel_styles = book.novel_styles
     db.session.commit()
+    # 作品元数据（卷数/风格等）变了 → 立即失效智驾/圆桌的 system prompt 缓存，
+    # 否则圆桌会议最长 15 分钟内仍读到旧"总卷数"铁律（用户改了卷数却按旧卷数讨论）。
+    try:
+        from app import PromptContextCache
+        PromptContextCache.get().invalidate_book(book_id)
+    except Exception:
+        pass
     return jsonify(book.to_dict())
 
 @books_bp.route('/api/books/<book_id>', methods=['DELETE'])

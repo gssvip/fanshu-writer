@@ -527,10 +527,10 @@ export default function WorkbenchPage() {
                 <div className="form-field">
                   <label>总卷数（{range.min}-{range.max}） · {range.perVolumeWords}</label>
                   <div style={{display:'flex',alignItems:'center',gap:10}}>
-                    <input type="range" min={range.min} max={range.max} value={tv} onChange={e => setNewBookForm(prev => ({ ...prev, total_volumes: Number(e.target.value) }))} style={{flex:1}}/>
-                    <span style={{minWidth:48,textAlign:'center',fontWeight:600,color:'var(--accent)'}}>{tv} {newBookForm.book_type==='short_story'?'篇':'卷'}</span>
+                    <input type="range" min={range.min} max={range.max} value={tv > 0 ? tv : range.min} onChange={e => setNewBookForm(prev => ({ ...prev, total_volumes: Number(e.target.value) }))} style={{flex:1}}/>
+                    <span style={{minWidth:48,textAlign:'center',fontWeight:600,color:'var(--accent)'}}>{tv > 0 ? `${tv} ${newBookForm.book_type==='short_story'?'篇':'卷'}` : '未设定'}</span>
                   </div>
-                  {newBookForm.book_type==='novel' && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>预计总字数约 {tv*12} 万字（每卷约12万字，约50章/卷）</div>}
+                  {newBookForm.book_type==='novel' && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{tv > 0 ? `预计总字数约 ${tv*12} 万字（每卷约12万字，约50章/卷）` : '未设定卷数时，AI 创作前会先和你确认分卷规模'}</div>}
                 </div>
               );
             })()}
@@ -779,10 +779,10 @@ export default function WorkbenchPage() {
                 <div className="form-field">
                   <label>总卷数（{range.min}-{range.max}） · {range.perVolumeWords}</label>
                   <div style={{display:'flex',alignItems:'center',gap:10}}>
-                    <input type="range" min={range.min} max={range.max} value={tv} onChange={e => setEditBookForm(prev => ({ ...prev, total_volumes: Number(e.target.value) }))} style={{flex:1}}/>
-                    <span style={{minWidth:48,textAlign:'center',fontWeight:600,color:'var(--accent)'}}>{tv} {editBookForm.book_type==='short_story'?'篇':'卷'}</span>
+                    <input type="range" min={range.min} max={range.max} value={tv > 0 ? tv : range.min} onChange={e => setEditBookForm(prev => ({ ...prev, total_volumes: Number(e.target.value) }))} style={{flex:1}}/>
+                    <span style={{minWidth:48,textAlign:'center',fontWeight:600,color:'var(--accent)'}}>{tv > 0 ? `${tv} ${editBookForm.book_type==='short_story'?'篇':'卷'}` : '未设定'}</span>
                   </div>
-                  {editBookForm.book_type==='novel' && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>预计总字数约 {tv*12} 万字（每卷约12万字，约50章/卷）</div>}
+                  {editBookForm.book_type==='novel' && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{tv > 0 ? `预计总字数约 ${tv*12} 万字（每卷约12万字，约50章/卷）` : '未设定卷数时，AI 创作前会先和你确认分卷规模'}</div>}
                   <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>提示：题材、卷数、风格将作为后续五幕总纲、剧情大纲等所有创作维度的核心依据</div>
                 </div>
               );

@@ -281,10 +281,10 @@ export default function Home() {
                 <div className="form-group">
                   <label>总卷数（{range.min}-{range.max}） · {range.perVolumeWords}</label>
                   <div style={{display:'flex',alignItems:'center',gap:10}}>
-                    <input type="range" min={range.min} max={range.max} value={tv} onChange={e=>setNf({...nf,total_volumes:Number(e.target.value)})} style={{flex:1}}/>
-                    <span style={{minWidth:48,textAlign:'center',fontWeight:600,color:'var(--accent)'}}>{tv} {nf.book_type==='short_story'?'篇':'卷'}</span>
+                    <input type="range" min={range.min} max={range.max} value={tv > 0 ? tv : range.min} onChange={e=>setNf({...nf,total_volumes:Number(e.target.value)})} style={{flex:1}}/>
+                    <span style={{minWidth:48,textAlign:'center',fontWeight:600,color:'var(--accent)'}}>{tv > 0 ? `${tv} ${nf.book_type==='short_story'?'篇':'卷'}` : '未设定'}</span>
                   </div>
-                  {nf.book_type==='novel' && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>预计总字数约 {tv*12} 万字（每卷约12万字，约50章/卷）</div>}
+                  {nf.book_type==='novel' && <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>{tv > 0 ? `预计总字数约 ${tv*12} 万字（每卷约12万字，约50章/卷）` : '未设定卷数时，AI 创作前会先和你确认分卷规模'}</div>}
                 </div>
               );
             })()}

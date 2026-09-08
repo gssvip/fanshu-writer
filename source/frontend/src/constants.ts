@@ -582,9 +582,10 @@ export function getStylesForType(bookType: string): Record<string, string> {
 /** 根据类型获取卷数范围。卷数不设硬上限，max 仅用于滑块可视范围，用户可在其它输入框填更大值。 */
 export function getVolumeRange(bookType: string): { min: number; max: number; default: number; perVolumeWords: string } {
   if (bookType === 'short_story') {
-    return { min: 1, max: 20, default: 1, perVolumeWords: '每篇约3-5万字' };
+    // default=0 表示"未设定"：卷数完全由用户决定，禁止任何默认卷数（如十卷）污染创作链路
+    return { min: 1, max: 20, default: 0, perVolumeWords: '每篇约3-5万字' };
   }
-  return { min: 1, max: 100, default: 10, perVolumeWords: '每卷约12万字（约50章）' };
+  return { min: 1, max: 100, default: 0, perVolumeWords: '每卷约12万字（约50章）' };
 }
 
 /**
