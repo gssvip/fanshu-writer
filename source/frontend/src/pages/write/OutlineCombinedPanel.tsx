@@ -126,7 +126,8 @@ export function OutlineCombinedPanel(props: {
     if (!bookId) return;
     // 卷数默认值权威来源：book.total_volumes（用户创建小说时填的 25 卷），
     // 绝对不再默认写死 10——否则用户一弹窗回车就会把 25 卷覆盖成 10 卷。
-    const defaultFromBook = (totalVolumes && totalVolumes >= 1) ? String(totalVolumes) : '10';
+    // 未设定时建议值给 5（五幕一幕一卷的最小映射），由用户确认/修改，禁止暗示十卷。
+    const defaultFromBook = (totalVolumes && totalVolumes >= 1) ? String(totalVolumes) : '5';
     // 若用户创建时已经明确设定过卷数（≥1），**不再弹窗骚扰**直接使用；
     // 只有 totalVolumes 不可用时才弹窗让用户补填（避免用户手滑回车把 25 写成 10）。
     let volumeCount: number;

@@ -8455,6 +8455,10 @@ def ai_outline_master(book_id):
         volume_count = int(user_volume_count)
     else:
         volume_count = tv
+    # 【禁止默认卷数】用户既没显式传卷数、作品也没设定过总卷数 → 明确要求数字，
+    # 而不是偷偷按十卷生成（那是"圆桌永远十卷"的老病根），也不能 0 卷生成荒谬总纲。
+    if volume_count < 1:
+        return jsonify({'error': '尚未设定总卷数：请先在作品设置里填写总卷数（或在创作助手里说"改成N卷"），再生成五幕式总纲'}), 400
     # 反推总章数供 prompt 使用（按每卷章数计算，保证 prompt 与卷数一致）
     if not total_chapters or int(total_chapters) < 1:
         total_chapters = volume_count * chapters_per_volume
@@ -9673,6 +9677,9 @@ def ai_extract_volumes_from_outline(book_id):
         volume_count = int(user_volume_count)
     else:
         volume_count = tv
+    # 【禁止默认卷数】未显式传卷数且作品未设定总卷数 → 要求先设定，绝不偷偷按十卷提取
+    if volume_count < 1:
+        return jsonify({'error': '尚未设定总卷数：请先在作品设置里填写总卷数（或在创作助手里说"改成N卷"），再从总纲提取分卷'}), 400
 
     # 上下文：总纲 + 世界观 + 规则 + 人物
     context_parts = [f'【五幕式总纲】\n{bb.plot_design[:4000]}']
