@@ -405,3 +405,76 @@ class TestSavePartialOnDisconnect:
 
         # 不抛异常即为通过（内部吞掉 OperationalError）
         _save_partial_on_disconnect(_BrokenSession(), '续写', '', '部分内容')
+
+
+class TestGeneralChatDisconnectRescue:
+    """通用聊天 SSE 断开（GeneratorExit）抢救回归测试。
+
+    用户反馈：智驾生成中途点「停止」/刷新页面/意外终止后，刷新页面历史对话为空。
+    根因：generate() 只挂了 except Exception，而 GeneratorExit 是 BaseException
+    子类抓不到 → 已流出的内容直接丢弃。现在 except GeneratorExit 必须把已生成
+    内容（含结构化卡片）同步写进会话历史，并同步节点设计师续会 state。
+    """
+
+    def test_disconnect_mid_stream_rescues_partial(self, app, monkeypatch, tmp_path):
+        import io
+        import json as _json
+        import sys as _sys
+        from app import db, AISession, AIConfig
+        import blueprints.general_chat as gc
+
+        # 独立小表（全量存档/节点state）走 _rt_ind_connect：指到临时 SQLite，避免污染仓库
+        monkeypatch.setenv('SQLALCHEMY_DATABASE_URI', f'sqlite:///{tmp_path}/ind.db')
+
+        with app.app_context():
+            db.session.add(AIConfig(name='t', provider='deepseek', model='t-model',
+                                    api_key='sk-test', base_url='https://api.test',
+                                    is_active=True))
+            db.session.commit()
+
+        card_json = ('[{"volume_index":1,"chapter_count":50,'
+                     '"nodes":[{"chapters":3,"title":"测试节点"}]}]')
+
+        def fake_gw(*a, **k):
+            yield '节点设计进行中，已完成到第3章。\n'
+            yield '[[CARD:SAVE_PLOT|第1卷全卷节点|' + card_json + ']]'
+            raise GeneratorExit  # 模拟客户端断开掐断 SSE 流
+
+        monkeypatch.setattr(gc, 'gw_stream_with_hb', fake_gw)
+
+        payload = _json.dumps({'message': '第1卷节点设计', 'role_id': 'node_designer'}).encode()
+        environ = {
+            'REQUEST_METHOD': 'POST', 'PATH_INFO': '/api/ai/chat/general',
+            'SERVER_NAME': 't', 'SERVER_PORT': '80', 'wsgi.url_scheme': 'http',
+            'CONTENT_TYPE': 'application/json', 'CONTENT_LENGTH': str(len(payload)),
+            'wsgi.input': io.BytesIO(payload), 'wsgi.errors': _sys.stderr,
+            'wsgi.version': (1, 0), 'wsgi.multithread': True,
+            'wsgi.multiprocess': True, 'wsgi.run_once': False,
+        }
+        captured = {}
+
+        def start_response(status, headers, exc_info=None):
+            captured['status'] = status
+
+        body = app(environ, start_response)
+        assert captured['status'].startswith('200')
+        try:
+            for _ in body:
+                pass
+        except GeneratorExit:
+            pass  # generate() 抢救后 re-raise GeneratorExit，属预期透出
+
+        with app.app_context():
+            s = AISession.query.filter_by(scope='general_global').first()
+            assert s is not None, '通用聊天必须建会话'
+            msgs = _json.loads(s.messages_json or '[]')
+            assistant_msgs = [m for m in msgs if m.get('role') == 'assistant']
+            assert assistant_msgs, '断开后历史对话不能为空'
+            last = assistant_msgs[-1]
+            assert '第3章' in last['content'], '已流出的正文必须保留'
+            assert any(c.get('type') == 'SAVE_PLOT' for c in (last.get('cards') or [])), \
+                '半截卡片必须结构化保留（前端进度条/继续生成按钮依赖 cards）'
+            # 节点设计师续会 state：断点 last_ch 必须落盘，「继续生成」才能从第4章续写
+            from blueprints.nd_helpers import _nd_load_state
+            st = _nd_load_state(s)
+            assert st and int(st.get('last_ch') or 0) == 3, '断开后节点设计进度必须可续'

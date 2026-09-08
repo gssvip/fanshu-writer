@@ -2827,7 +2827,10 @@ export default function ChatPanel() {
       return null;
     };
     for (const m of msgs) {
-      if (m.role === 'assistant' && m.content) {
+      // 跳过系统通知类消息（❌失败提示/⚠️/【连接中断·抢救】里含「第8章改XXX」等示例文案，会虚抬进度）
+      const c0 = (m.content || '').trim();
+      const isNotice = m.role === 'assistant' && (c0.startsWith('❌') || c0.startsWith('⚠️') || c0.startsWith('【连接中断'));
+      if (m.role === 'assistant' && m.content && !isNotice) {
         const matches = m.content.match(chapterRE) || [];
         for (const raw of matches) {
           const head = raw.replace(/[章节回话卷]/g, '').replace(/^第/, '');
@@ -3136,9 +3139,9 @@ export default function ChatPanel() {
         let promptText = text.trim();
         if (!promptText || /^[\s\d第卷一二三四五六七八九十百千零两0-9]+$/.test(promptText)) {
           promptText = `请为${volTitle}设计情节节点。要求：单章单节点、无重叠无跳章、共50章/卷12万字规模、每章节点摘要支撑2400字正文、五幕对齐+爽点系统分层节奏；
-  ① 每章节点必须含 【资源·本章获得 resources_gained】【资源·本章消耗 resources_used】【总资源 total_resources_owned】三项：
+  ① 每章节点必须含 【资源·本章获得 resources_gained】【资源·本章消耗 resources_used】两项；【总资源 total_resources_owned】每5章统计一次（仅第5/10/15/20/25/30/35/40/45/50章节点携带，其余章省略）：
      - 分类口径：钱财/物品/武器法宝/功法能力/其它；每项写 名称×数量/规格
-     - 本章消耗/使用掉的资源，必须在【总资源】里消除扣减（上一章总资源 - 本章消耗 + 本章获得 = 本章总资源，跨章滚动严格连续）
+     - 消耗/使用掉的资源必须在总资源滚动核算中消除扣减（上一统计点总资源 - 本段消耗合计 + 本段获得合计 = 本段总资源，跨段滚动严格连续）
   ② 人物 characters 每人均需写关系：格式「姓名(关系:X)」，关系从 主角/家人/亲友/爱人/盟友/同僚/下属/上司/对手/敌对/路人/中立/陌生人 里选（可组合，如"林墨白(关系:亲友·师)"）
 最后给出 SAVE_PLOT 卡片（nodes 字段含 characters/resources_gained/resources_used/total_resources_owned）便于采纳。`;
         }
@@ -3799,10 +3802,12 @@ export default function ChatPanel() {
                       {/* 【P1 增强】节点设计师工具栏：进度条 + 一键继续按钮（命中 node_designer 角色才显示） */}
                       {(sessionRoleMap[chatGeneralSessionId || '__general_pending_session__'] || 'default') === 'node_designer' && (() => {
                         const prog = parseNodeDesignerProgress(messages, 50);
-                        const { last_ch, cpv, vi } = prog;
+                        const { last_ch, cpv, vi, from_card } = prog;
                         const done = Math.max(0, Math.min(cpv, last_ch));
                         const pct = cpv > 0 ? Math.max(0, Math.min(100, Math.round((done / cpv) * 100))) : 0;
-                        const isDone = done >= cpv;
+                        // 只有 SAVE_PLOT 卡片证实的完整进度才算"完成"：
+                        // 正则兜底会被模型开场白（"将设计第1章~第50章"）虚抬 → 意外终止后误判完成 → 继续按钮消失
+                        const isDone = from_card && done >= cpv;
                         return (
                           <div style={{
                             marginTop: 10,
@@ -3827,24 +3832,22 @@ export default function ChatPanel() {
                                   style={{ padding: '4px 12px', minHeight: 26, fontSize: 13 }}
                                   onClick={handleQuickContinue}
                                   disabled={streaming || isDone}
-                                  title={isDone ? '整卷已完成，如需修改某章直接说「第X章改XXX」' : '一键从写到的最后一章继续生成（等同于发送「继续」）'}
+                                  title={isDone ? '整卷已完成，如需修改某章直接说「第X章改XXX」，或点「重来」重新生成整卷' : '一键从写到的最后一章继续生成（等同于发送「继续」）'}
                                 >
                                   {isDone ? '全卷已完成' : '⏭️ 继续生成'}
                                 </button>
-                                {!isDone && (
-                                  <button
-                                    className="chat-send ghost"
-                                    style={{ padding: '4px 10px', minHeight: 26, fontSize: 12 }}
-                                    onClick={() => {
-                                      const n = vi || 1;
-                                      handleGeneral({ text: `第${n}卷 节点设计` });
-                                    }}
-                                    disabled={streaming}
-                                    title={`重新从第${vi || 1}卷第1章开始生成（覆盖当前进度）`}
-                                  >
-                                    🔄 重来第{vi || 1}卷
-                                  </button>
-                                )}
+                                <button
+                                  className="chat-send ghost"
+                                  style={{ padding: '4px 10px', minHeight: 26, fontSize: 12 }}
+                                  onClick={() => {
+                                    const n = vi || 1;
+                                    handleGeneral({ text: `第${n}卷 节点设计` });
+                                  }}
+                                  disabled={streaming}
+                                  title={`重新从第${vi || 1}卷第1章开始生成（覆盖当前进度）`}
+                                >
+                                  🔄 重来第{vi || 1}卷
+                                </button>
                               </div>
                             </div>
                             <div style={{

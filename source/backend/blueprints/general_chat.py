@@ -632,6 +632,70 @@ def chat_general():
     def generate():
         yield ': ping-heartbeat-keepalive\n\n'
         full_text = []
+        _persisted = False  # 正常完成已落盘标记：断流/异常抢救时防重复追加
+
+        def _nd_rescue_state():
+            """节点设计师：中断（用户停止/断连/异常）时把已输出到的 last_ch/vols 存进
+            state，支持「继续生成」断点续会。_nd_save_state 走独立小表连接，
+            不受请求 db.session 回滚影响，GeneratorExit 上下文安全。"""
+            if not (_nd_is_node_role and session and _nd_meta_for_closure):
+                return
+            try:
+                partial = ''.join(full_text)
+                _lc = _parse_last_chapter_from_text(partial)
+                _vi = _parse_volume_index_from_text(partial) or int(_nd_meta_for_closure.get('volume_index') or 1)
+                _new_state = dict(_nd_meta_for_closure)
+                _new_state['volume_index'] = _vi
+                if isinstance(_lc, int) and _lc > int(_new_state.get('last_ch') or 0):
+                    _new_state['last_ch'] = _lc
+                _new_state['updated_at'] = datetime.now(timezone.utc).isoformat()
+                # 中断也要累计 vols（半截卡片里已完成的章节点别丢）
+                try:
+                    _cur_vols = _nd_extract_save_plot_vols(parse_cards(partial))
+                    if _cur_vols:
+                        _new_state['vols'] = _nd_merge_state_vols(_new_state.get('vols'), _cur_vols)
+                except Exception:
+                    pass
+                _nd_save_state(session, db, _new_state)
+            except Exception:
+                pass
+
+        def _rescue_on_interrupt():
+            """断流/意外终止抢救：把已流出的内容（含结构化卡片）写进会话历史——
+            刷新页面后历史不为空，节点设计进度条/继续生成按钮依赖的 cards 也在。
+            GeneratorExit 上下文禁止 yield，本函数必须纯同步；任何异常吞掉，
+            绝不能让异常替代 GeneratorExit 逃逸到 WSGI 层。"""
+            nonlocal _persisted
+            if _persisted or session is None:
+                return
+            try:
+                partial = ''.join(full_text)
+                if not partial.strip():
+                    return
+                cards_r = parse_cards(partial)
+                for c in cards_r:
+                    c['content'] = _clean_text_to_plain(c.get('content', ''))
+                    if c.get('title'):
+                        c['title'] = _clean_text_to_plain(c['title'])
+                partial_cards = [{'id': c['id'], 'type': c['type'], 'title': c['title'],
+                                  'content': c['content'], 'target': c['target'],
+                                  'status': 'pending'} for c in cards_r]
+                partial_text = _clean_text_to_plain(strip_cards(partial))
+                if not partial_text and not partial_cards:
+                    return
+                # 用路由级 history（重新生成场景已按 truncate_history_to 截断过），
+                # 不能 load_session_messages——DB 里 messages_json 还是旧的未截断版
+                hist = [m for m in history if isinstance(m, dict)]
+                hist.append({'role': 'user', 'content': message})
+                hist.append({'role': 'assistant',
+                             'content': (f'【连接中断·已保留生成到一半的内容（约 {len(partial_text)} 字），'
+                                         f'可点击「继续生成」从断点续写】\n{partial_text}'),
+                             'cards': partial_cards})
+                _safe_save_session_messages(session, hist)
+                _persisted = True
+            except Exception:
+                pass
+
         try:
             # P1-3 首帧 ⓪：把"正在生效的角色+上下文变量"告诉前端（保证刷新后UI显示的角色和后端真实生效的一致）
             yield f'data: {json.dumps({"type": "meta", "kind": "role_applied", "info": _p13_meta}, ensure_ascii=False)}\n\n'
@@ -918,31 +982,26 @@ def chat_general():
             history.append({'role': 'assistant', 'content': clean_text,
                             'cards': persisted_cards})
             _safe_save_session_messages(session, history)
+            _persisted = True
             yield f'data: {json.dumps({"type": "done", "session_id": session_id}, ensure_ascii=False)}\n\n'
+        except GeneratorExit:
+            # ======= 用户点「停止」/刷新页面/关闭浏览器/网络断开：SSE 断 = Python 抛 GeneratorExit =======
+            # GeneratorExit 是 BaseException 子类 ❗except Exception 抓不到❗，之前就是这里漏了
+            # → 已流出的内容直接丢弃 → 刷新后历史对话为空。现在同步抢救进会话历史
+            # （含结构化卡片），节点设计师同时同步续会 state（继续生成按钮依赖 last_ch）。
+            try:
+                _rescue_on_interrupt()
+                _nd_rescue_state()
+            except Exception:
+                pass
+            raise
         except Exception as e:
             import traceback
             traceback.print_exc()
             # ======= 节点设计师：异常退出（Render断连/超时/模型错误）→ 也要把已输出到的 last_ch 存起来，支持续会 =======
-            if _nd_is_node_role and session and _nd_meta_for_closure:
-                try:
-                    partial = ''.join(full_text)
-                    _lc = _parse_last_chapter_from_text(partial)
-                    _vi = _parse_volume_index_from_text(partial) or int(_nd_meta_for_closure.get('volume_index') or 1)
-                    _new_state = dict(_nd_meta_for_closure)
-                    _new_state['volume_index'] = _vi
-                    if isinstance(_lc, int) and _lc > int(_new_state.get('last_ch') or 0):
-                        _new_state['last_ch'] = _lc
-                    _new_state['updated_at'] = datetime.now(timezone.utc).isoformat()
-                    # 异常中断也要累计 vols（半截卡片里的已完成章节点别丢）
-                    try:
-                        _cur_vols = _nd_extract_save_plot_vols(parse_cards(partial))
-                        if _cur_vols:
-                            _new_state['vols'] = _nd_merge_state_vols(_new_state.get('vols'), _cur_vols)
-                    except Exception:
-                        pass
-                    _nd_save_state(session, db, _new_state)
-                except Exception:
-                    pass
+            _nd_rescue_state()
+            # 意外终止（网关/模型错误）同样不能丢内容：已流出的部分写进历史，刷新后可见
+            _rescue_on_interrupt()
             yield f'data: {json.dumps({"type": "error", "error": str(e)}, ensure_ascii=False)}\n\n'
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream',

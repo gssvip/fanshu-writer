@@ -1443,7 +1443,53 @@ def _extract_volume_index_safe(vol):
 #   [[CARD:SAVE_CHARACTER|标题|内容]]
 #   [[CARD:SAVE_FORESHADOW|标题|内容]]
 # 支持内容中含 | 时用最后一个 | 分隔（标题不含 |）
-CARD_RE = re.compile(r'\[\[CARD:([A-Z_]+)\|([^\|]*)\|([\s\S]*?)\]\]')
+# (?!\]) 防吞尾：卡片内容常以 JSON 数组结尾（…}] + 闭合 ]]）→ 文本尾部是 "…}]]]"，
+# 旧正则非贪婪 \]\] 会把「JSON 末位 ] + 卡片闭合第1个 ]」当成闭合 → content 丢失最后一个 ]，
+# JSON.parse 全线失败（节点设计进度/采纳落地/前端渲染全部受害）。加负向前瞻后：
+# "…}]]]" 中第2、3个 ] 匹配 \]\] 但后面还有第4个 ] → 回溯，用第3、4个 ] 真正闭合。
+CARD_RE = re.compile(r'\[\[CARD:([A-Z_]+)\|([^\|]*)\|([\s\S]*?)\]\](?!\])')
+
+
+def _repair_card_json_tail(content: str) -> str:
+    """存量坏卡片修复：旧 CARD_RE 吞掉 JSON 结尾最后一个 ] 导致解析失败。
+    以 [ 或 { 开头、json.loads 失败、括号不平衡 → 补齐缺失尾部闭合符（能变合法才改）。"""
+    if not content or content[0] not in '[{':
+        return content
+    try:
+        json.loads(content)
+        return content  # 本来就合法
+    except Exception:
+        pass
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    for ch in content:
+        if esc:
+            esc = False
+            continue
+        if ch == '\\':
+            if in_str:
+                esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in '[{':
+            stack.append(ch)
+        elif ch == ']' and stack and stack[-1] == '[':
+            stack.pop()
+        elif ch == '}' and stack and stack[-1] == '{':
+            stack.pop()
+    if stack:
+        cand = content + ''.join(']' if c == '[' else '}' for c in reversed(stack))
+        try:
+            json.loads(cand)
+            return cand
+        except Exception:
+            return content
+    return content
 
 
 def parse_cards(text: str) -> list[dict]:
@@ -1451,6 +1497,7 @@ def parse_cards(text: str) -> list[dict]:
     cards = []
     for m in CARD_RE.finditer(text):
         ctype, title, content = m.group(1), m.group(2).strip(), m.group(3).strip()
+        content = _repair_card_json_tail(content)
         if ctype in CARD_REGISTRY:
             cards.append({
                 'id': str(uuid.uuid4())[:8],
