@@ -43,8 +43,6 @@ export default function MinePage() {
 
   // 自定义大模型列表（本地存储）
   const [customModels, setCustomModels] = useState<{ name: string; base_url: string; model: string }[]>([]);
-  const [showAddCustom, setShowAddCustom] = useState(false);
-  const [customModelForm, setCustomModelForm] = useState({ name: '', base_url: '', model: '' });
 
   // 本地存储设置
   const [localPath, setLocalPath] = useState('');
@@ -289,18 +287,6 @@ export default function MinePage() {
       setTestResult({ success: false, msg: e.message || '连接失败' });
     }
     setTesting(false);
-  }
-
-  function handleSaveCustomModel() {
-    if (!customModelForm.name.trim() || !customModelForm.base_url.trim() || !customModelForm.model.trim()) {
-      alert('请填写完整的名称、API地址和模型名称');
-      return;
-    }
-    const updated = [...customModels, { ...customModelForm }];
-    setCustomModels(updated);
-    try { localStorage.setItem('app-custom-models', JSON.stringify(updated)); } catch {}    setCustomModelForm({ name: '', base_url: '', model: '' });
-    setShowAddCustom(false);
-    alert('自定义模型已保存');
   }
 
   function handleDeleteCustomModel(idx: number) {
@@ -627,18 +613,6 @@ export default function MinePage() {
                 </div>
               </div>
             )}
-            {showAddCustom && (
-              <div className="custom-model-form">
-                <input className="input" placeholder="模型名称（如：我的本地模型）" value={customModelForm.name} onChange={e => setCustomModelForm(prev => ({ ...prev, name: e.target.value }))} />
-                <input className="input" placeholder="API地址（如：http://localhost:11434/v1）" value={customModelForm.base_url} onChange={e => setCustomModelForm(prev => ({ ...prev, base_url: e.target.value }))} />
-                <input className="input" placeholder="模型ID（如：llama3:8b）" value={customModelForm.model} onChange={e => setCustomModelForm(prev => ({ ...prev, model: e.target.value }))} />
-                <div className="form-row" style={{justifyContent:'flex-end'}}>
-                  <button className="btn-ghost-sm" onClick={() => setShowAddCustom(false)}>取消</button>
-                  <button className="btn-primary-sm" onClick={handleSaveCustomModel}>保存</button>
-                </div>
-              </div>
-            )}
-
             <div className="form-field">
               <label>API提供商</label>
               <div className="input-row">
@@ -652,11 +626,11 @@ export default function MinePage() {
                   }
                 }}>
                   {AI_PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                  <option value="custom">自定义</option>
+                  {/* 当前配置本身就是自定义时才显示该选项（兜底旧数据），正常情况下不再有多余的"自定义" */}
+                  {aiConfig.provider && !AI_PROVIDERS.some(p => p.value === aiConfig.provider) && (
+                    <option value={aiConfig.provider}>自定义</option>
+                  )}
                 </select>
-                <button className="btn-ghost-sm" onClick={() => setShowAddCustom(!showAddCustom)} title="添加自定义大模型配置">
-                  + 自定义
-                </button>
               </div>
             </div>
             <div className="form-field">
