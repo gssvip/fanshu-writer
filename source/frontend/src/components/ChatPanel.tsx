@@ -3115,8 +3115,7 @@ export default function ChatPanel() {
           });
         } catch (e: any) {
           if (e.name !== 'AbortError') {
-            const msg = (e?.message || e?.error || '续会失败').trim() || '续会失败';
-            appendAiNotice('❌ 续会失败：' + msg + '\n\n若要重开整卷：直接发送「第N卷」从头生成。若只改单章：直接说「第X章改XXX」。');
+            appendAiNotice('❌ 节点设计出错，发一句"继续"即可从断点接着写。');
             setStreamError('');
             removeEmptyAi();
           }
@@ -3203,8 +3202,7 @@ export default function ChatPanel() {
           //（避免"生成完了啥按钮都没"的困惑）。consumeSSE 已经把卡片挂到 AI 气泡上了，不用再手动处理。
         } catch (e: any) {
           if (e.name !== 'AbortError') {
-            const msg = (e?.message || e?.error || '节点设计失败').trim() || '节点设计失败';
-            appendAiNotice('❌ 节点设计失败：' + msg + '\n\n常见原因&解决：\n1) LLM上游503/限流 → 等30秒后发"继续"从上次进度续会（不需要重新从头）\n2) 意外终止/断连 → 直接发"继续"就能从上次进度续会（学习圆桌会议）\n3) 修改某章：直接对我说"第8章加强反派压迫感"/"第31章增加伏笔回收"即可，不需要重新跑整卷。');
+            appendAiNotice('❌ 节点设计出错，发一句"继续"即可从断点接着写。');
             setStreamError('');
             removeEmptyAi();
           }
