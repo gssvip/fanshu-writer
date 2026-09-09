@@ -169,19 +169,11 @@ export function SettingsCombinedPanel(props: {
   return (
     <div className="bible-edit-panel">
       <div className="bible-edit-header">
-        {/* 标题区直接放 Tab 切换器，去掉下方独立子Tab行，避免重复显示设定/文风 */}
-        <div className="outline-sub-tabs" style={{margin:0}}>
-          <button className={`outline-sub-tab ${subTab === 'rules' ? 'active' : ''}`} onClick={() => { setSubTab('rules'); setEditing(false); }}>
-            ⚙️ 设定
-          </button>
-          <button className={`outline-sub-tab ${subTab === 'style' ? 'active' : ''}`} onClick={() => { setSubTab('style'); setEditing(false); }}>
-            🎨 文风
-          </button>
-        </div>
+        <h3>{iconMap[subTab]} {labelMap[subTab]}</h3>
         <div className="bible-edit-actions" style={{flexShrink:0}}>
           {!editing ? (
             <>
-              {/* 设定/文风 共用：标题栏从左到右 —— Tab切换 / 维度创作 / 维度识别 / 删除 */}
+              {/* 设定/文风 共用：标题栏从左到右 —— 标题 / 维度创作 / 维度识别 / 删除 */}
               <button className="btn-primary-sm" onClick={() => { setAiMode(true); }} disabled={aiAssisting} title={`AI生成${labelMap[subTab]}内容`}>
                 {aiAssisting ? '⏳ 生成中...' : `✨ ${labelMap[subTab]}创作`}
               </button>
@@ -201,6 +193,16 @@ export function SettingsCombinedPanel(props: {
             </>
           )}
         </div>
+      </div>
+
+      {/* 子Tab切换 */}
+      <div className="outline-sub-tabs">
+        <button className={`outline-sub-tab ${subTab === 'rules' ? 'active' : ''}`} onClick={() => { setSubTab('rules'); setEditing(false); }}>
+          ⚙️ 设定
+        </button>
+        <button className={`outline-sub-tab ${subTab === 'style' ? 'active' : ''}`} onClick={() => { setSubTab('style'); setEditing(false); }}>
+          🎨 文风
+        </button>
       </div>
 
       {editing ? (
