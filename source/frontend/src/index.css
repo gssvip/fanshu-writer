@@ -3015,7 +3015,7 @@ textarea.input.paper-textarea{
 .settings-single-row{justify-content:flex-start;gap:10px}
 .settings-single-row .outline-sub-tab,
 .settings-single-row .btn-primary-sm,
-.settings-single-row .btn-ghost-sm{height:32px;min-height:32px;padding:0 18px;font-size:13px;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;white-space:nowrap;line-height:1;flex-shrink:0}
+.settings-single-row .btn-ghost-sm{height:32px;min-height:32px;padding:0 26px;font-size:13px;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;white-space:nowrap;line-height:1;flex-shrink:0}
 @media (max-width:767px){
   .settings-single-row{justify-content:space-between;gap:6px}
   .settings-single-row .outline-sub-tab,
