@@ -20,7 +20,7 @@ export function SettingsCombinedPanel(props: {
   showConfirm: (message: string, onConfirm: () => void) => void;
   onOpenAiCreate: (field: string) => void;
 }) {
-  const { bookId, bible, onBibleUpdate, concept, hasChapters, dimAnalyzing, onAnalyzeDimension, showConfirm, onOpenAiCreate } = props;
+  const { bookId, bible, onBibleUpdate, concept, hasChapters, dimAnalyzing, onAnalyzeDimension, showConfirm } = props;
   const [subTab, setSubTab] = useState<'rules' | 'style'>('rules');
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -201,15 +201,12 @@ export function SettingsCombinedPanel(props: {
         </button>
       </div>
 
-      {/* 文风 tab 专属：AI 创作按钮 */}
+      {/* 文风 tab 专属：AI 创作按钮（用户要求删除"详细创作"，仅保留 AI 生成文风指南） */}
       {subTab === 'style' && (
         <div className="volume-calc-section" style={{ borderLeft: '3px solid #e17055', paddingLeft: 10, marginBottom: 8 }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <button className="btn-primary-sm" onClick={() => { setAiMode(true); }} title="AI生成文风指南（写入 style_guide）">
               ✨ AI 生成文风指南
-            </button>
-            <button className="btn-ghost-sm" onClick={() => onOpenAiCreate('style_guide')} title="打开创作弹窗生成文风">
-              📝 详细创作
             </button>
           </div>
         </div>
