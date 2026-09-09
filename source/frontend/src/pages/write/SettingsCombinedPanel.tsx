@@ -157,35 +157,31 @@ export function SettingsCombinedPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      {/* 单行：设定/文风 Tab + AI创作 + AI识别 —— 四按钮等高同字号，手机端电脑端均一行 */}
+      {/* 单行：设定/文风/AI创作/AI识别 四按钮平铺，space-between 均匀分布，等高同字号 */}
       <div className="bible-edit-header settings-single-row">
-        <div className="outline-sub-tabs">
-          <button className={`outline-sub-tab ${subTab === 'rules' ? 'active' : ''}`} onClick={() => { setSubTab('rules'); setEditing(false); }}>
-            ⚙️ 设定
-          </button>
-          <button className={`outline-sub-tab ${subTab === 'style' ? 'active' : ''}`} onClick={() => { setSubTab('style'); setEditing(false); }}>
-            🎨 文风
-          </button>
-        </div>
-        <div className="bible-edit-actions" style={{flexShrink:0}}>
-          {!editing ? (
-            <>
-              <button className="btn-primary-sm" onClick={() => { setAiMode(true); }} disabled={aiAssisting} title={`AI生成${labelMap[subTab]}内容`}>
-                {aiAssisting ? '⏳ 生成中...' : '✨ AI创作'}
-              </button>
-              <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(currentField)} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? `AI分析已有章节，自动识别${labelMap[subTab]}内容` : '需要先创建章节才能AI识别'}>
-                {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
-              </button>
-            </>
-          ) : (
-            <>
-              <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
-              <button className="btn-primary-sm" onClick={saveEdit} disabled={saving}>
-                {saving ? '保存中...' : '💾 保存'}
-              </button>
-            </>
-          )}
-        </div>
+        <button className={`outline-sub-tab ${subTab === 'rules' ? 'active' : ''}`} onClick={() => { setSubTab('rules'); setEditing(false); }}>
+          ⚙️ 设定
+        </button>
+        <button className={`outline-sub-tab ${subTab === 'style' ? 'active' : ''}`} onClick={() => { setSubTab('style'); setEditing(false); }}>
+          🎨 文风
+        </button>
+        {!editing ? (
+          <>
+            <button className="btn-primary-sm" onClick={() => { setAiMode(true); }} disabled={aiAssisting} title={`AI生成${labelMap[subTab]}内容`}>
+              {aiAssisting ? '⏳ 生成中...' : '✨ AI创作'}
+            </button>
+            <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(currentField)} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? `AI分析已有章节，自动识别${labelMap[subTab]}内容` : '需要先创建章节才能AI识别'}>
+              {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
+            <button className="btn-primary-sm" onClick={saveEdit} disabled={saving}>
+              {saving ? '保存中...' : '💾 保存'}
+            </button>
+          </>
+        )}
       </div>
 
       {editing ? (

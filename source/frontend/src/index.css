@@ -3011,14 +3011,11 @@ textarea.input.paper-textarea{
 .outline-sub-tabs{display:flex;gap:6px;flex-shrink:0;min-width:0}
 .outline-sub-tab{padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:13px;line-height:1.4;white-space:nowrap}
 .outline-sub-tab.active{background:var(--accent-light);color:var(--accent);border-color:var(--accent);font-weight:700}
-/* 设定维度单行：四个按钮（Tab/AI创作/AI识别）等高同字号、等间距垂直对齐 */
-.settings-single-row{gap:6px;justify-content:flex-start}
-.settings-single-row .outline-sub-tabs,
-.settings-single-row .bible-edit-actions{gap:6px;min-width:0}
-.settings-single-row .bible-edit-actions{margin-left:0}
+/* 设定维度单行：四个按钮平铺，space-between 均匀分布（手机端电脑端一致） */
+.settings-single-row{justify-content:space-between;gap:6px}
 .settings-single-row .outline-sub-tab,
 .settings-single-row .btn-primary-sm,
-.settings-single-row .btn-ghost-sm{height:32px;min-height:32px;padding:0 14px;font-size:13px;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;white-space:nowrap;line-height:1;vertical-align:middle}
+.settings-single-row .btn-ghost-sm{height:32px;min-height:32px;padding:0 14px;font-size:13px;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;white-space:nowrap;line-height:1;flex-shrink:0}
 .bible-ai-prompt-input{font-size:15px;line-height:1.7;resize:vertical;min-height:200px;max-height:50vh}
 .bible-ai-loading{display:flex;flex-direction:column;align-items:center;gap:8px;padding:24px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-top:12px}
 .bible-ai-loading p{font-size:13px;color:var(--text-muted)}
