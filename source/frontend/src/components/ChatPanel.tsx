@@ -148,7 +148,12 @@ const TimelineCardBody = memo(function TimelineCardBody({
       // 用户主动取消或超时取消 → 不显示"失败"红警，避免误导；取消状态UI上的loading也会在finally被清除
       const isCancelled = e?.name === 'AbortError' || e?.cancelled === true || String(e?.message || '') === '请求已取消';
       if (!isCancelled) {
-        alert('节点设计失败：' + (e?.message || '请检查 AI 配置或稍候重试'));
+        // 连接中断/网络波动 → 简要说明即可，不贴长错误串
+        if (e?.name === 'TypeError' || /network error|failed to fetch|networkerror/i.test(String(e?.message || ''))) {
+          alert('❌ 节点设计中断，重新点击「节点设计」即可重试。');
+        } else {
+          alert('节点设计失败，请稍后重试。');
+        }
       }
     } finally {
       setDesigning(null);
