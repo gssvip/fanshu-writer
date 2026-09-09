@@ -3006,7 +3006,7 @@ textarea.input.paper-textarea{
 .bible-edit-panel{padding:12px 16px;display:flex;flex-direction:column}
 .bible-edit-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0}
 .bible-edit-header h3{font-size:16px;font-weight:700}
-.bible-edit-actions{display:flex;gap:8px;flex-wrap:nowrap;margin-left:auto;align-items:center}
+.bible-edit-actions{display:flex;gap:8px;flex-wrap:wrap}
 .bible-ai-prompt-input{font-size:15px;line-height:1.7;resize:vertical;min-height:200px;max-height:50vh}
 .bible-ai-loading{display:flex;flex-direction:column;align-items:center;gap:8px;padding:24px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-top:12px}
 .bible-ai-loading p{font-size:13px;color:var(--text-muted)}

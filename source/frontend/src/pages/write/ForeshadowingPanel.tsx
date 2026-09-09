@@ -434,18 +434,15 @@ export function ForeshadowingPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      <div className="bible-edit-header">
-        <span className="text-muted" style={{fontSize:12,cursor:'pointer',flexShrink:0}} onClick={() => setForeCollapsed(v => !v)}>
-          {foreCollapsed ? '▶ 展开' : '▼ 收起'}
-        </span>
-        <div className="bible-edit-actions" style={{position:'relative'}}>
+      <div className="bible-edit-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,position:'relative'}}>
           {(
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
                 {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
               {volSelectorOpen && (
-                <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
+                <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',left:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
                   <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
                   <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
                   {displayVolumes.map((vol, idx) => (
