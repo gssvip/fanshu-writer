@@ -239,8 +239,8 @@ export function OutlineCombinedPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      {/* 单行：大纲/世界观/AI识别(/删除) 按钮一排平铺，与设定维度同款布局 */}
-      <div className="bible-edit-header dims-single-row">
+      {/* 单行：大纲/世界观/AI识别(/删除) 按钮一排平铺；电脑端等长拉伸铺满整行、间距均匀 */}
+      <div className="bible-edit-header dims-single-row outline-dims-row">
         <button className={`outline-sub-tab ${subTab === 'outline' ? 'active' : ''}`} onClick={() => { setSubTab('outline'); setEditing(false); }}>
           📋 大纲
         </button>

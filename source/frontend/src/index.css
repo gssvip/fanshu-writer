@@ -3020,6 +3020,13 @@ textarea.input.paper-textarea{
   .dims-single-row .btn-primary-sm,
   .dims-single-row .btn-ghost-sm{padding:0 10px}
 }
+/* 大纲维度单行增强（仅电脑端）：按钮等长拉伸铺满整行、间距均匀更大气；设定维度保持原样 */
+@media (min-width:768px){
+  .outline-dims-row{gap:14px}
+  .outline-dims-row .outline-sub-tab,
+  .outline-dims-row .btn-primary-sm,
+  .outline-dims-row .btn-ghost-sm{flex:1 1 0;max-width:340px}
+}
 .bible-ai-prompt-input{font-size:15px;line-height:1.7;resize:vertical;min-height:200px;max-height:50vh}
 .bible-ai-loading{display:flex;flex-direction:column;align-items:center;gap:8px;padding:24px;background:var(--bg-secondary);border-radius:var(--radius-sm);margin-top:12px}
 .bible-ai-loading p{font-size:13px;color:var(--text-muted)}
