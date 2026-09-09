@@ -158,7 +158,7 @@ export function SettingsCombinedPanel(props: {
   return (
     <div className="bible-edit-panel">
       {/* 单行：设定/文风/AI创作/AI识别 四按钮平铺，space-between 均匀分布，等高同字号 */}
-      <div className="bible-edit-header settings-single-row">
+      <div className="bible-edit-header dims-single-row">
         <button className={`outline-sub-tab ${subTab === 'rules' ? 'active' : ''}`} onClick={() => { setSubTab('rules'); setEditing(false); }}>
           ⚙️ 设定
         </button>

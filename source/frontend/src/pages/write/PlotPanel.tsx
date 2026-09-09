@@ -844,7 +844,7 @@ ${existingVols || '（暂无）'}
       {/* 大纲工作流（从大纲维度迁移）：总纲→分卷规划→提取→导入→AI创作 全部在同一行，相互协作非强制。
           支持折叠，方便手机使用。 */}
       {!workflowCollapsed && (
-        <div className="volume-calc-section" style={{ borderLeft: '3px solid var(--accent)', paddingLeft: 10, marginBottom: 8 }}>
+        <div className="volume-calc-section" style={{ marginBottom: 8 }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             {/* 反生成五幕式总纲：从已导入的各卷剧情反向提炼，写入大纲维度 */}
             <button

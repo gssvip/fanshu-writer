@@ -239,41 +239,36 @@ export function OutlineCombinedPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      <div className="bible-edit-header">
-        <div className="bible-edit-actions" style={{flexShrink:0}}>
-          {!editing ? (
-            <>
-              <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(subTab === 'outline' ? 'outline' : 'worldview')} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别' : '需要先创建章节才能AI识别'}>
-                {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
-              </button>
-              {currentContent && (
-                <button className="btn-ghost-sm" onClick={handleDelete} style={{color:'#e74c3c'}}>🗑️ 删除</button>
-              )}
-            </>
-          ) : (
-            <>
-              <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
-              <button className="btn-primary-sm" onClick={saveEdit} disabled={saving}>
-                {saving ? '保存中...' : '保存'}
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* 子Tab切换 */}
-      <div className="outline-sub-tabs">
+      {/* 单行：大纲/世界观/AI识别(/删除) 按钮一排平铺，与设定维度同款布局 */}
+      <div className="bible-edit-header dims-single-row">
         <button className={`outline-sub-tab ${subTab === 'outline' ? 'active' : ''}`} onClick={() => { setSubTab('outline'); setEditing(false); }}>
           📋 大纲
         </button>
         <button className={`outline-sub-tab ${subTab === 'worldview' ? 'active' : ''}`} onClick={() => { setSubTab('worldview'); setEditing(false); }}>
           🌍 世界观
         </button>
+        {!editing ? (
+          <>
+            <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(subTab === 'outline' ? 'outline' : 'worldview')} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别' : '需要先创建章节才能AI识别'}>
+              {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
+            </button>
+            {currentContent && (
+              <button className="btn-ghost-sm" onClick={handleDelete} style={{color:'#e74c3c'}}>🗑️ 删除</button>
+            )}
+          </>
+        ) : (
+          <>
+            <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
+            <button className="btn-primary-sm" onClick={saveEdit} disabled={saving}>
+              {saving ? '保存中...' : '保存'}
+            </button>
+          </>
+        )}
       </div>
 
       {/* 五幕式总纲生成（仅大纲tab显示） */}
       {subTab === 'outline' && (
-        <div className="volume-calc-section" style={{ borderLeft: '3px solid var(--accent)', paddingLeft: 10, marginBottom: 8 }}>
+        <div className="volume-calc-section" style={{ marginBottom: 8 }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <button
               className="btn-primary-sm"
