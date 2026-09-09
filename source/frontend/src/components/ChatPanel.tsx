@@ -152,7 +152,7 @@ const TimelineCardBody = memo(function TimelineCardBody({
         if (e?.name === 'TypeError' || /network error|failed to fetch|networkerror/i.test(String(e?.message || ''))) {
           alert('❌ 节点设计中断，重新点击「节点设计」即可重试。');
         } else {
-          alert('节点设计失败，请稍后重试。');
+          alert('节点设计失败，请重新开始。');
         }
       }
     } finally {
