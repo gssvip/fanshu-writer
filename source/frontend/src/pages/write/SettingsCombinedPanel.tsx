@@ -173,9 +173,12 @@ export function SettingsCombinedPanel(props: {
         <div className="bible-edit-actions" style={{flexShrink:0}}>
           {!editing ? (
             <>
-              <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(currentField)} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别此维度内容' : '需要先创建章节才能AI识别'}>
-                {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
-              </button>
+              {/* 文风tab的AI识别已挪到下方按钮区（与AI创作一排）；设定tab保持header位置 */}
+              {subTab !== 'style' && (
+                <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(currentField)} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别此维度内容' : '需要先创建章节才能AI识别'}>
+                  {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
+                </button>
+              )}
               {currentContent && (
                 <button className="btn-ghost-sm" onClick={handleDelete} style={{color:'#e74c3c'}}>🗑️ 删除</button>
               )}
@@ -201,12 +204,15 @@ export function SettingsCombinedPanel(props: {
         </button>
       </div>
 
-      {/* 文风 tab 专属：AI 创作按钮（用户要求删除"详细创作"，仅保留 AI 生成文风指南） */}
+      {/* 文风 tab 专属：AI创作 + AI识别 一排 */}
       {subTab === 'style' && (
         <div className="volume-calc-section" style={{ borderLeft: '3px solid #e17055', paddingLeft: 10, marginBottom: 8 }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <button className="btn-primary-sm" onClick={() => { setAiMode(true); }} title="AI生成文风指南（写入 style_guide）">
-              ✨ AI 生成文风指南
+              ✨ AI创作
+            </button>
+            <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension('style_guide')} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别文风' : '需要先创建章节才能AI识别'}>
+              {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
             </button>
           </div>
         </div>
@@ -231,14 +237,17 @@ export function SettingsCombinedPanel(props: {
           <span className="bible-empty-icon">{iconMap[subTab]}</span>
           <p>暂无{labelMap[subTab]}内容</p>
           <p className="text-muted">点击此处编辑，或使用AI创作</p>
-          <div className="bible-empty-actions">
-            <button className="btn-primary-sm" onClick={(e) => { e.stopPropagation(); setAiMode(true); }} disabled={aiAssisting}>
-              {aiAssisting ? '⏳ 生成中...' : '✨ AI创作'}
-            </button>
-            <button className="btn-ghost-sm" onClick={(e) => { e.stopPropagation(); onAnalyzeDimension(currentField); }} disabled={dimAnalyzing || !hasChapters}>
-              {dimAnalyzing ? '⏳ 识别中...' : '🔍 AI识别'}
-            </button>
-          </div>
+          {/* 文风tab的快捷按钮已上移到顶部按钮区（AI创作+AI识别一排）；设定tab保持空状态快捷按钮 */}
+          {subTab === 'rules' && (
+            <div className="bible-empty-actions">
+              <button className="btn-primary-sm" onClick={(e) => { e.stopPropagation(); setAiMode(true); }} disabled={aiAssisting}>
+                {aiAssisting ? '⏳ 生成中...' : '✨ AI创作'}
+              </button>
+              <button className="btn-ghost-sm" onClick={(e) => { e.stopPropagation(); onAnalyzeDimension(currentField); }} disabled={dimAnalyzing || !hasChapters}>
+                {dimAnalyzing ? '⏳ 识别中...' : '🔍 AI识别'}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
