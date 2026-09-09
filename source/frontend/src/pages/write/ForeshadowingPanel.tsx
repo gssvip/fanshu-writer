@@ -435,7 +435,7 @@ export function ForeshadowingPanel(props: {
   return (
     <div className="bible-edit-panel">
       <div className="bible-edit-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <div style={{display:'flex',alignItems:'center',gap:8,position:'relative'}}>
+        <div className="bible-edit-actions" style={{display:'flex',alignItems:'center',gap:8,position:'relative'}}>
           {(
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
