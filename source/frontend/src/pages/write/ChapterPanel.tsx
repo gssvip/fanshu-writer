@@ -919,7 +919,7 @@ export function ChapterPanel(props: {
         </div>
         <div className="chapter-header-row2">
           <button
-            className="btn-ghost-sm btn-ai-recog"
+            className="btn-primary-sm"
             onClick={handleAiImportRecognize}
             disabled={aiImportRecognizing || !bookId || chapters.filter(c => !c.is_volume).length === 0}
             title="根据导入作品的文件名/章节标题+内容样本，AI自动识别填入空的创作维度（不覆盖已有内容）"
