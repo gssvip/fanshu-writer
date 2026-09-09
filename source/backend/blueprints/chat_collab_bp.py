@@ -4654,7 +4654,9 @@ def _downgrade_prompt_for_retry(messages, keep_dim=None):
 SMART_DIMENSIONS = [
     # mode 说明（维度生成模式）：
     #   suggest = 方向性选择维度：smart_suggest 生成 3-5 个差异化方案卡供作者多选一
-    #             （构思=方向源头 / 文风=口味偏好 / 大纲=结构路线多解，必须给选择）
+    #             （仅构思=方向源头 / 文风=口味偏好 出多方案；大纲原为 suggest，
+    #              但走到大纲时构思/设定已锁方向，多方案与已定上游不搭边=胡乱创作，
+    #              用户明确要求大纲不出多方案 → 已改 direct）
     #   direct  = 执行性展开维度：上游必填依赖已完善时不再出多方案（伪选择：上游已锁方向，
     #             多方案只会诱导 LLM 各换一套体系，选定后与已定构思打架=拼凑感根源），
     #             直接基于锁定上游生成 + 不满意整体重生成（reroll）；
@@ -4662,7 +4664,7 @@ SMART_DIMENSIONS = [
     {'key': 'concept',            'label': '构思',       'field': 'concept',            'card': 'SAVE_CONCEPT',      'icon': '💡', 'hint': '一句话讲清故事核：主角是谁、要什么、最大的阻碍', 'mode': 'suggest'},
     {'key': 'key_rules',          'label': '设定',       'field': 'key_rules',          'card': 'SAVE_RULE',         'icon': '⚙️', 'hint': '能力体系/修炼体系/科技树，硬规则（构思已定金手指方向时直接生成）', 'mode': 'direct'},
     {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': '🌍', 'hint': '故事发生的世界，独特规则或设定（生成中会提取世界地图架构到“地图”维度）', 'mode': 'direct'},
-    {'key': 'plot_design',        'label': '大纲',       'field': 'plot_design',        'card': 'SAVE_OUTLINE_NODE', 'icon': '📋', 'hint': '主线走向，五幕式总纲（卷数与五幕映射已锁定，方案只在每卷目标组织上差异）', 'mode': 'suggest'},
+    {'key': 'plot_design',        'label': '大纲',       'field': 'plot_design',        'card': 'SAVE_OUTLINE_NODE', 'icon': '📋', 'hint': '主线走向，五幕式总纲（构思已定故事核、卷数已锁定时直接生成）', 'mode': 'direct'},
     {'key': 'character_profiles', 'label': '人物',       'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': '👤', 'hint': '主角和核心配角的动机、性格、关系网（大纲已定各卷人物方向时直接生成）', 'mode': 'direct'},
     {'key': 'timeline',           'label': '剧情',       'field': 'timeline',           'card': 'SAVE_PLOT',         'icon': '📖', 'hint': '关键剧情节点的时间顺序（大纲已定每卷目标时直接生成）', 'mode': 'direct'},
     {'key': 'foreshadowing',      'label': '伏笔',       'field': 'foreshadowing',      'card': 'SAVE_FORESHADOW',   'icon': '🔮', 'hint': '长线伏笔的埋设与回收计划（基于大纲/剧情派生，直接生成）', 'mode': 'direct'},
@@ -5445,6 +5447,7 @@ def smart_suggest():
             _direct_hints = {
                 'key_rules': '力量体系/等级阶梯/经济数值严格按构思第六节金手指方向展开，禁止另起体系',
                 'worldbuilding': '地理/势力/历史严格按构思第九节世界观卖点钩子展开，禁止另起世界观',
+                'plot_design': '五幕式总纲严格按已定构思的故事核与已锁卷数展开：每卷目标/冲突/卷尾钩子全部服务于构思主线，禁止另起故事方向',
                 'character_profiles': '主角严格按构思第七节魅力公式、反派按第八节框架展开，角色功能位与弧线锚定大纲各卷目标，禁止换人设方向',
                 'timeline': '各卷剧情严格按大纲每卷目标/冲突/卷尾钩子展开，禁止偏离五幕框架',
                 'foreshadowing': '伏笔埋设/回收按大纲与剧情节点派生，禁止凭空新开主线级伏笔',
