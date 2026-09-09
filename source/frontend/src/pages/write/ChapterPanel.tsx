@@ -907,7 +907,7 @@ export function ChapterPanel(props: {
   return (
     <div className="chapter-list-panel">
       <div className="chapter-list-header">
-        <div className="chapter-header-row1">
+        <div className="chapter-header-row">
           <button className="btn-ghost-sm" onClick={() => onCreateVolume()} title="新建卷">📂 新卷</button>
           <button className="btn-ghost-sm" onClick={handleRebinVolumes} disabled={rebinning || !bookId || chapters.filter(c => !c.is_volume).length === 0} title="按50章/卷自动重新分卷（清空现有卷结构后重建）">
             {rebinning ? '⏳ 分卷中...' : '🔄 重新分卷'}
@@ -916,8 +916,6 @@ export function ChapterPanel(props: {
             {importingChapters ? '⏳ 导入中...' : '📥 导入章节'}
           </button>
           <button className="btn-secondary-sm" onClick={() => onCreateChapter()}>+ 新章节</button>
-        </div>
-        <div className="chapter-header-row2">
           <button
             className="btn-ghost-sm btn-ai-recog"
             onClick={handleAiImportRecognize}
