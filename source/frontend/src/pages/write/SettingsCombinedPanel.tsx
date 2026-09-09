@@ -20,7 +20,7 @@ export function SettingsCombinedPanel(props: {
   showConfirm: (message: string, onConfirm: () => void) => void;
   onOpenAiCreate: (field: string) => void;
 }) {
-  const { bookId, bible, onBibleUpdate, concept, hasChapters, dimAnalyzing, onAnalyzeDimension, showConfirm } = props;
+  const { bookId, bible, onBibleUpdate, concept, hasChapters, dimAnalyzing, onAnalyzeDimension } = props;
   const [subTab, setSubTab] = useState<'rules' | 'style'>('rules');
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -86,17 +86,6 @@ export function SettingsCombinedPanel(props: {
       setAiMode(false);
     } catch (e: any) { setAiError(e.message || 'AI辅助失败'); }
     setAiAssisting(false);
-  }
-
-  function handleDelete() {
-    if (!bookId) return;
-    showConfirm(`确定清空「${labelMap[subTab]}」的所有内容？此操作不可撤销。`, async () => {
-      try {
-        const updated = await api.updateBible(bookId, { [currentField]: '' } as any);
-        onBibleUpdate(updated);
-        try { window.dispatchEvent(new CustomEvent('app:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
-      } catch (e: any) { alert('删除失败: ' + e.message); }
-    });
   }
 
   const skillSelector = skillPacks.length > 0 && (
@@ -168,21 +157,25 @@ export function SettingsCombinedPanel(props: {
 
   return (
     <div className="bible-edit-panel">
+      {/* 单行：设定/文风 Tab + AI创作 + AI识别 —— 手机端电脑端均一行，无多余按钮 */}
       <div className="bible-edit-header">
-        <h3>{iconMap[subTab]} {labelMap[subTab]}</h3>
+        <div className="outline-sub-tabs">
+          <button className={`outline-sub-tab ${subTab === 'rules' ? 'active' : ''}`} onClick={() => { setSubTab('rules'); setEditing(false); }}>
+            ⚙️ 设定
+          </button>
+          <button className={`outline-sub-tab ${subTab === 'style' ? 'active' : ''}`} onClick={() => { setSubTab('style'); setEditing(false); }}>
+            🎨 文风
+          </button>
+        </div>
         <div className="bible-edit-actions" style={{flexShrink:0}}>
           {!editing ? (
             <>
-              {/* 设定/文风 共用：标题栏从左到右 —— 标题 / 维度创作 / 维度识别 / 删除 */}
               <button className="btn-primary-sm" onClick={() => { setAiMode(true); }} disabled={aiAssisting} title={`AI生成${labelMap[subTab]}内容`}>
-                {aiAssisting ? '⏳ 生成中...' : `✨ ${labelMap[subTab]}创作`}
+                {aiAssisting ? '⏳ 生成中...' : '✨ AI创作'}
               </button>
               <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(currentField)} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? `AI分析已有章节，自动识别${labelMap[subTab]}内容` : '需要先创建章节才能AI识别'}>
-                {dimAnalyzing ? '🤖 识别中...' : `🔍 ${labelMap[subTab]}识别`}
+                {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
               </button>
-              {currentContent && (
-                <button className="btn-ghost-sm" onClick={handleDelete} style={{color:'#e74c3c'}}>🗑️ 删除</button>
-              )}
             </>
           ) : (
             <>
@@ -193,16 +186,6 @@ export function SettingsCombinedPanel(props: {
             </>
           )}
         </div>
-      </div>
-
-      {/* 子Tab切换 */}
-      <div className="outline-sub-tabs">
-        <button className={`outline-sub-tab ${subTab === 'rules' ? 'active' : ''}`} onClick={() => { setSubTab('rules'); setEditing(false); }}>
-          ⚙️ 设定
-        </button>
-        <button className={`outline-sub-tab ${subTab === 'style' ? 'active' : ''}`} onClick={() => { setSubTab('style'); setEditing(false); }}>
-          🎨 文风
-        </button>
       </div>
 
       {editing ? (
@@ -222,7 +205,7 @@ export function SettingsCombinedPanel(props: {
       ) : (
         <div className="bible-empty" onClick={startEdit}>
           <p>暂无{labelMap[subTab]}内容</p>
-          <p className="text-muted">点击此处编辑，或使用右上角 {labelMap[subTab]}创作</p>
+          <p className="text-muted">点击此处编辑，或使用右上角 AI创作</p>
         </div>
       )}
     </div>
