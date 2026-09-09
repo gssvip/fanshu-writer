@@ -3115,7 +3115,7 @@ export default function ChatPanel() {
           });
         } catch (e: any) {
           if (e.name !== 'AbortError') {
-            appendAiNotice('❌ 节点设计出错，发一句"继续"即可从断点接着写。');
+            appendAiNotice('❌ 节点设计出错，发"继续"或点击继续即可从断点接着写。');
             setStreamError('');
             removeEmptyAi();
           }
@@ -3202,7 +3202,7 @@ export default function ChatPanel() {
           //（避免"生成完了啥按钮都没"的困惑）。consumeSSE 已经把卡片挂到 AI 气泡上了，不用再手动处理。
         } catch (e: any) {
           if (e.name !== 'AbortError') {
-            appendAiNotice('❌ 节点设计出错，发一句"继续"即可从断点接着写。');
+            appendAiNotice('❌ 节点设计出错，发"继续"或点击继续即可从断点接着写。');
             setStreamError('');
             removeEmptyAi();
           }
