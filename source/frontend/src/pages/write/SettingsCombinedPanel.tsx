@@ -205,7 +205,7 @@ export function SettingsCombinedPanel(props: {
       ) : (
         <div className="bible-empty" onClick={startEdit}>
           <p>暂无{labelMap[subTab]}内容</p>
-          <p className="text-muted">点击此处编辑，或使用右上角 AI创作</p>
+          <p className="text-muted">点击此处编辑，或点击上方 AI创作</p>
         </div>
       )}
     </div>
