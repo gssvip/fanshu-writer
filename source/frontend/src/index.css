@@ -2960,12 +2960,12 @@ textarea.input.paper-textarea{
     align-items:center;
     gap:1.2em;
   }
-  /* 电脑端显示副标题，字号与主标题一致，字间距三个空格，白色字 */
+  /* 电脑端显示副标题，字号比主标题小一号，淡显 */
   .concept-ai-create-cta .cta-sub-text{
     display:inline;
-    font-size:20px;
-    font-weight:700;
-    opacity:1;
+    font-size:16px;
+    font-weight:600;
+    opacity:0.72;
     letter-spacing:1.5em;
     margin-right:-1.5em;
     white-space:nowrap;
@@ -5452,7 +5452,7 @@ textarea.input.paper-textarea{
 }
 [data-theme="light"] .ai-master-banner .cta-title{ color: var(--accent) !important; }
 [data-theme="light"] .ai-master-banner .cta-ai{ color: var(--accent-hover) !important; text-shadow: none; }
-[data-theme="light"] .ai-master-banner .cta-sub-text{ color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary)) !important; opacity: 1; }
+[data-theme="light"] .ai-master-banner .cta-sub-text{ color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary)) !important; opacity: 0.72; font-size: 16px; }
 /* dark / 国风（水墨国风）= 宣纸暖白叠一层极淡墨山水图（水墨风），字统一浓墨色 */
 [data-theme="dark"] .ai-master-banner{
   background:
@@ -5502,7 +5502,8 @@ textarea.input.paper-textarea{
 }
 [data-theme="green"] .btn-primary.ai-master-banner .cta-sub-text{
   color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary)) !important;
-  opacity: 1;
+  opacity: 0.72;
+  font-size: 16px;
 }
 /* custom（自定义主题）= accent 渐变 + 白字 */
 [data-theme="custom"] .ai-master-banner{
