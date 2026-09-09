@@ -173,12 +173,12 @@ export function SettingsCombinedPanel(props: {
         <div className="bible-edit-actions" style={{flexShrink:0}}>
           {!editing ? (
             <>
-              {/* 设定/文风 共用：标题栏从左到右 —— 标题 / AI创作 / AI识别 / 删除 */}
-              <button className="btn-primary-sm" onClick={() => { setAiMode(true); }} disabled={aiAssisting} title="AI生成设定/文风指南">
-                {aiAssisting ? '⏳ 生成中...' : '✨ AI创作'}
+              {/* 设定/文风 共用：标题栏从左到右 —— 标题 / 维度创作 / 维度识别 / 删除 */}
+              <button className="btn-primary-sm" onClick={() => { setAiMode(true); }} disabled={aiAssisting} title={`AI生成${labelMap[subTab]}内容`}>
+                {aiAssisting ? '⏳ 生成中...' : `✨ ${labelMap[subTab]}创作`}
               </button>
-              <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(currentField)} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别此维度内容' : '需要先创建章节才能AI识别'}>
-                {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
+              <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(currentField)} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? `AI分析已有章节，自动识别${labelMap[subTab]}内容` : '需要先创建章节才能AI识别'}>
+                {dimAnalyzing ? '🤖 识别中...' : `🔍 ${labelMap[subTab]}识别`}
               </button>
               {currentContent && (
                 <button className="btn-ghost-sm" onClick={handleDelete} style={{color:'#e74c3c'}}>🗑️ 删除</button>
@@ -221,9 +221,8 @@ export function SettingsCombinedPanel(props: {
         </div>
       ) : (
         <div className="bible-empty" onClick={startEdit}>
-          <span className="bible-empty-icon">{iconMap[subTab]}</span>
           <p>暂无{labelMap[subTab]}内容</p>
-          <p className="text-muted">点击此处编辑，或使用右上角 AI创作</p>
+          <p className="text-muted">点击此处编辑，或使用右上角 {labelMap[subTab]}创作</p>
         </div>
       )}
     </div>
