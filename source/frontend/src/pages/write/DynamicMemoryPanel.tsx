@@ -38,7 +38,6 @@ export function DynamicMemoryPanel(props: {
   // 按卷动态识别
   const [dynVolumes, setDynVolumes] = useState<any[]>([]);
   const [analyzingVol, setAnalyzingVol] = useState('');
-  const [volSelectorOpen, setVolSelectorOpen] = useState(false);
   const [collapsedVolDyn, setCollapsedVolDyn] = useState<Set<number>>(new Set());
   // 每次进入维度默认折叠所有卷（tab 切换重新挂载，ref 重置）
   const dynCollapseInitRef = useRef(false);
@@ -405,21 +404,7 @@ export function DynamicMemoryPanel(props: {
   return (
     <div className="dm-panel">
       <div className="dm-header">
-        <div className="dm-header-actions" style={{position:'relative'}}>
-          {/* 全局 AI识别：带卷选择下拉，统一放标题栏右侧 */}
-          <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || chapters.length === 0} title={chapters.length > 0 ? '选择卷进行AI识别摘要' : '需要先创建章节才能AI识别'}>
-            {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
-          </button>
-          {volSelectorOpen && (
-            <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
-              <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
-              <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeDynamicVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
-              {displayDynVolumes.map((vol, idx) => (
-                <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeDynamicVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
-              ))}
-              <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
-            </div>
-          )}
+        <div className="dm-header-actions">
           <button
             className={batchMode ? 'btn-primary-sm' : 'btn-ghost-sm'}
             onClick={() => batchMode ? exitBatchMode() : setBatchMode(true)}
