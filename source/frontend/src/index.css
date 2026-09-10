@@ -2700,6 +2700,13 @@ textarea.input.paper-textarea{
 .chapter-list-header h3{font-size:16px;font-weight:700}
 .chapter-header-row1,.chapter-header-row2{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .chapter-header-row2{justify-content:flex-end}
+/* 章节维度头部：电脑端把「新卷」与「AI智驾」两排按钮合并为一行、等宽间距均匀；手机端保持不变 */
+@media (min-width:768px){
+  .chapter-list-header{flex-direction:row;flex-wrap:nowrap;align-items:center}
+  .chapter-header-row1,.chapter-header-row2{display:contents}
+  .chapter-list-header .btn{flex:1 1 0;min-width:0;justify-content:center}
+  .chapter-list-header .btn-ghost-sm,.chapter-list-header .btn-secondary-sm,.chapter-list-header .btn-primary-sm{display:inline-flex;align-items:center}
+}
 .chapter-count{font-size:12px;color:var(--text-muted);font-weight:400;margin-left:4px}
 .chapter-list{display:flex;flex-direction:column;gap:8px}
 .chapter-list-item{display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-sm);cursor:pointer;transition:all .15s}
