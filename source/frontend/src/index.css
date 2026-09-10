@@ -3014,6 +3014,22 @@ textarea.input.paper-textarea{
 .bible-edit-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0}
 .bible-edit-header h3{font-size:16px;font-weight:700}
 .bible-edit-actions{display:flex;gap:8px;flex-wrap:nowrap;margin-left:auto}
+/* 剧情维度工作流单行：一键清空+四个工作流按钮+折叠按钮合并一排。
+   电脑端折叠按钮靠行尾、与「导入剧情大纲」同排平齐；手机端折叠按钮紧跟「自动分卷规划」同排平齐（order 控制换行落点） */
+.plot-workflow-row{margin-left:0;width:100%;flex-wrap:wrap;justify-content:flex-start;align-items:center;gap:6px}
+.plot-workflow-row .header-collapse-btn{min-height:33px}
+@media (min-width:768px){
+  .plot-workflow-row .header-collapse-btn{margin-left:auto}
+}
+@media (max-width:767px){
+  .plot-workflow-row{gap:4px}
+  .plot-workflow-row .btn-plot-clear{order:1}
+  .plot-workflow-row .btn-plot-reverse{order:2}
+  .plot-workflow-row .btn-plot-calc{order:3}
+  .plot-workflow-row .header-collapse-btn{order:4;padding:6px 6px}
+  .plot-workflow-row .btn-plot-extract{order:5}
+  .plot-workflow-row .btn-plot-import{order:6}
+}
 .outline-sub-tab{padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:13px;line-height:1.4;white-space:nowrap}
 .outline-sub-tab.active{background:var(--accent-light);color:var(--accent);border-color:var(--accent);font-weight:700}
 /* 维度单行（设定/大纲共用）：子Tab与AI按钮一排平铺。电脑端靠左适度间距、按钮可更宽；手机端均匀分布 */

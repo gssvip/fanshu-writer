@@ -58,7 +58,6 @@ export function PlotPanel(props: {
   const [expandedVol, setExpandedVol] = useState<Set<number>>(new Set());
   // 工作流状态（getter 仍被按钮 disabled 使用；setter 已废弃，因 generateOutlineMaster 已移除）
   const [outlineWorkflowLoading] = useState<'' | 'master' | 'volume' | 'all'>('');
-  const [outlineWorkflowProgress] = useState('');
   // 工作流按钮区折叠（手机友好）
   const [workflowCollapsed, setWorkflowCollapsed] = useState(false);
   // 一键清空
@@ -818,11 +817,14 @@ ${existingVols || '（暂无）'}
           </div>
         </div>
       )}
+      {/* 工作流单行：一键清空 + 反生成/自动分卷规划/从大纲提取/导入 + 折叠按钮 同一排。
+          电脑端折叠按钮排在行尾、与「导入剧情大纲」同排平齐；
+          手机端由 CSS order 让折叠按钮紧跟「自动分卷规划」同排平齐。 */}
       <div className="bible-edit-header">
-        <div className="bible-edit-actions" style={{flexShrink:0}}>
+        <div className="bible-edit-actions plot-workflow-row">
           {displayVolumes.length > 0 && (
             <button
-              className="btn-ghost-sm"
+              className="btn-ghost-sm btn-plot-clear"
               onClick={handleClearAllVolumes}
               disabled={clearing}
               title="一键清空全部分卷大纲（不影响章节表和大纲总纲）"
@@ -831,6 +833,42 @@ ${existingVols || '（暂无）'}
               {clearing ? '⏳ 清空中...' : '🗑️ 一键清空'}
             </button>
           )}
+          {!workflowCollapsed && (<>
+            <button
+              className="btn-ghost-sm btn-plot-reverse"
+              onClick={handleReverseGenerateOutline}
+              disabled={reverseLoading || outlineWorkflowLoading !== ''}
+              title="从已导入/提取的各卷剧情，反向提炼五幕式总纲，填入大纲维度"
+              style={{ color: 'var(--accent)' }}
+            >
+              {reverseLoading ? '⏳ 反生成中...' : '🔄 反生成五幕式总纲'}
+            </button>
+            <button
+              className="btn-ghost-sm btn-plot-calc"
+              onClick={() => setShowVolumeCalc(s => !s)}
+              disabled={outlineWorkflowLoading !== ''}
+              title="输入卷数，按每卷50章×2400字自动生成分卷框架"
+              style={showVolumeCalc ? { background: 'var(--accent-light)', color: 'var(--accent)', fontWeight: 700 } : {}}
+            >
+              📊 自动分卷规划
+            </button>
+            <button
+              className="btn-ghost-sm btn-plot-extract"
+              onClick={handleExtractVolumes}
+              disabled={extractLoading || outlineWorkflowLoading !== ''}
+              title="从大纲总纲（五幕式/AI创作/AI识别/手编均可）一次性提取各卷剧情"
+            >
+              {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
+            </button>
+            <button
+              className="btn-ghost-sm btn-plot-import"
+              onClick={() => setImportModalOpen(true)}
+              disabled={importLoading}
+              title="导入剧情大纲文本，自动识别拆分到各卷"
+            >
+              📥 导入剧情大纲
+            </button>
+          </>)}
           <button
             className="btn-ghost-sm header-collapse-btn"
             onClick={() => setWorkflowCollapsed(v => !v)}
@@ -840,61 +878,6 @@ ${existingVols || '（暂无）'}
           </button>
         </div>
       </div>
-
-      {/* 大纲工作流（从大纲维度迁移）：总纲→分卷规划→提取→导入→AI创作 全部在同一行，相互协作非强制。
-          支持折叠，方便手机使用。 */}
-      {!workflowCollapsed && (
-        <div className="volume-calc-section" style={{ marginBottom: 8 }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            {/* 反生成五幕式总纲：从已导入的各卷剧情反向提炼，写入大纲维度 */}
-            <button
-              className="btn-ghost-sm"
-              onClick={handleReverseGenerateOutline}
-              disabled={reverseLoading || outlineWorkflowLoading !== ''}
-              title="从已导入/提取的各卷剧情，反向提炼五幕式总纲，填入大纲维度"
-              style={{ color: 'var(--accent)' }}
-            >
-              {reverseLoading ? '⏳ 反生成中...' : '🔄 反生成五幕式总纲'}
-            </button>
-            <button
-              className="btn-ghost-sm"
-              onClick={() => setShowVolumeCalc(s => !s)}
-              disabled={outlineWorkflowLoading !== ''}
-              title="输入卷数，按每卷50章×2400字自动生成分卷框架"
-              style={showVolumeCalc ? { background: 'var(--accent-light)', color: 'var(--accent)', fontWeight: 700 } : {}}
-            >
-              📊 自动分卷规划
-            </button>
-            <button
-              className="btn-ghost-sm"
-              onClick={handleExtractVolumes}
-              disabled={extractLoading || outlineWorkflowLoading !== ''}
-              title="从大纲总纲（五幕式/AI创作/AI识别/手编均可）一次性提取各卷剧情"
-            >
-              {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
-            </button>
-            <button
-              className="btn-ghost-sm"
-              onClick={() => setImportModalOpen(true)}
-              disabled={importLoading}
-              title="导入剧情大纲文本，自动识别拆分到各卷"
-            >
-              📥 导入剧情大纲
-            </button>
-          </div>
-          {/* 工作流提示：打通总纲→分卷→提取→导入→AI创作，相互反哺非强制 */}
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.6 }}>
-            💡 工作流可任选起点、相互反哺：
-            {bible?.plot_design?.trim() ? ' ✓有总纲' : ' ✗无总纲'}
-            {bible?.timeline?.trim() ? ' ✓有各卷' : ' ✗无各卷'}
-            <br />
-            有总纲→提取各卷；有各卷→反生成总纲；无总纲→分卷规划/导入/AI创作任选；节点设计无需总纲即可用
-          </div>
-          {outlineWorkflowProgress && (
-            <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 6 }}>{outlineWorkflowProgress}</div>
-          )}
-        </div>
-      )}
 
       {/* 自动分卷规划表单（点击按钮后展开） */}
       {showVolumeCalc && (
