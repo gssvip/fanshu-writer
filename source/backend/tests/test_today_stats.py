@@ -115,23 +115,38 @@ class TestTodayStats:
         assert data['streak'] == 2
 
     def test_timezone_boundary(self, client, app, models):
-        """时区边界：UTC 23:30 写的章，在 tz=+480（北京）属于"明天"。"""
+        """时区边界：北京 0-8 点写的章（UTC 前一天）应归入北京今天，而非 UTC 日期。
+
+        用固定绝对时刻 + 显式 date 参数构造确定性场景，不依赖运行时钟
+        （原实现基于 datetime.now 分支断言，在 UTC 16:00-24:00 窗口运行时
+        会误判 API 正确行为为失败 —— 时间炸弹，CI 每天有 1/3 概率踩中）。
+        """
         db, Book, Chapter = models
         headers = _register_and_login(client, 'writer4')
         book_id = _make_book(client, headers, '时区书')
-        # 构造 UTC 20:00（若当前时刻不足，用绝对日期）：取明天 UTC0点前8小时 = 北京明早8点
-        now = datetime.now(timezone.utc)
-        # 北京日期 = UTC+8h；取 now 向后推到"北京今天 23:59 对应的 UTC"难构造，
-        # 直接验证：utc_now 落在北京今天 → today_chapters=1
-        _make_chapter(app, db, Book, Chapter, book_id, '', '第1章', 2400, now)
-        rv = client.get('/api/stats/today?tz=480', headers=headers)
+        # 固定锚点：北京 2026-09-10（UTC+8）
+        # t1 = UTC 09-09 17:00 = 北京 09-10 01:00（属于北京9-10，但 UTC 日期是 09-09 → 时区分界关键样本）
+        # t2 = UTC 09-10 03:00 = 北京 09-10 11:00（两个日历都属于 9-10）
+        # t3 = UTC 09-08 20:00 = 北京 09-09 04:00（都不属于 9-10，昨天）
+        t1 = datetime(2026, 9, 9, 17, 0, tzinfo=timezone.utc)
+        t2 = datetime(2026, 9, 10, 3, 0, tzinfo=timezone.utc)
+        t3 = datetime(2026, 9, 8, 20, 0, tzinfo=timezone.utc)
+        _make_chapter(app, db, Book, Chapter, book_id, '', '第1章', 2400, t1)
+        _make_chapter(app, db, Book, Chapter, book_id, '', '第2章', 2400, t2)
+        _make_chapter(app, db, Book, Chapter, book_id, '', '第3章', 2400, t3)
+        rv = client.get('/api/stats/today?tz=480&date=2026-09-10', headers=headers)
         data = rv.get_json()
-        # now + 8h 与 now 同为北京今天（除非 now 恰在北京 16:00-24:00 → +8h 跨日）
-        beijing_hour = (now + timedelta(hours=8)).hour
-        if beijing_hour < 8:  # now 北京 16:00-24:00，+8h 已跨入明天
-            assert data['today_chapters'] == 0
-        else:
-            assert data['today_chapters'] == 1
+        # t1、t2 属于北京 9-10（2 章 4800 字）；t3 属于北京 9-9（昨天）
+        # 若时区处理错误按 UTC 日期归日，t1 会被误归 UTC 9-9 → 计数为 1 而非 2
+        assert data['today_chapters'] == 2
+        assert data['today_words'] == 4800
+        # 昨天（北京 9-9）：仅 t3（北京 9-9 04:00）→ 1 章
+        rv_y = client.get('/api/stats/today?tz=480&date=2026-09-09', headers=headers)
+        data_y = rv_y.get_json()
+        assert data_y['today_chapters'] == 1
+        assert data_y['today_words'] == 2400
+        # streak：9-10 有写 + 9-9 有写 = 2 天
+        assert data['streak'] == 2
 
     def test_cross_book_aggregation(self, client, app, models):
         """跨作品聚合：两本书各写一章，今日章节=2、字数求和。"""

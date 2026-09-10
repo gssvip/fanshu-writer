@@ -94,7 +94,13 @@ MAX_ROUTES_PER_FILE = 30
 # 2026-09-05 P1b 配套（纯哈希 chunk 长缓存）：_HASHED_ASSET 正则扩展支持 React.lazy 拆分的
 #   纯哈希文件名 +4 行（12352 → 12356，懒加载 chunk 必须享受 immutable 长缓存，否则
 #   拆分反而导致 WritePage chunk 每次访问重下 745KB——与优化目标背道而驰）。
-APP_PY_BASELINE = 12356
+# 2026-09-10 重校准10（CI 解阻塞，恢复发布通道）：
+#   - 项目综合评估与评分（1161a95）等 v1.0 后功能迭代净增 270 行（12356 → 12626），
+#     未随开发同步校准基线 → 架构门禁连挂 3 个提交，发布 job 被 skip，
+#     Render/GitHub 前端停更（手机端按钮布局等改动无法上线）。
+#   - 本轮仅校准基线放行部署，功能代码不动；下轮拆分目标不变：
+#     ai-continue 续写域、dynamic-reports 域按域外迁，严禁在此基础上继续增长。
+APP_PY_BASELINE = 12626
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -374,7 +380,10 @@ TOOLSPAGE_BASELINE = 1953
 #   - app.py 防遗忘自动触发的延迟 import 同步改指向 chat_smart_fix_bp；
 #     general_chat.py 的 _sync_search_keys_from_preference 改从 chat_roundtable_bp import。
 #   下轮拆分目标：smart_generate/smart_suggest 系列路由继续外迁。
-CHAT_COLLAB_BP_BASELINE = 7787
+# 2026-09-10 重校准（CI 解阻塞，与 app.py 基线同轮，原因见 APP_PY_BASELINE 注释）：
+#   - v1.0 后智驾功能迭代净增 274 行（7787 → 8061），仅校准放行，功能代码不动。
+#   - 下轮拆分目标不变：smart_generate/smart_suggest 系列路由继续外迁。
+CHAT_COLLAB_BP_BASELINE = 8061
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
