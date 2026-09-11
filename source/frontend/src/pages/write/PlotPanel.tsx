@@ -817,9 +817,11 @@ ${existingVols || '（暂无）'}
           </div>
         </div>
       )}
-      {/* 工作流单行：一键清空 + 反生成/自动分卷规划/从大纲提取/导入 + 折叠按钮 同一排。
-          电脑端折叠按钮排在行尾、与「导入剧情大纲」同排平齐；
-          手机端由 CSS order 让折叠按钮紧跟「自动分卷规划」同排平齐。 */}
+      {/* 工作流单行：一键清空 + 反生成/导入 + 自动分卷规划/从大纲提取 + 折叠按钮，全部平铺。
+          桌面单行（CSS order 还原「清空→反生成→自动分卷→提取→导入→折叠靠右」）；
+          手机端由 .plot-row-break 在「导入」后强制换行，固定两排：
+          排1 = 一键清空(可选)+反生成+导入；排2 = 自动分卷规划+从大纲提取各卷+折叠按钮
+          （折叠按钮永远排在「自动分卷规划」那排末位，不依赖一键清空是否出现）。 */}
       <div className="bible-edit-header">
         <div className="bible-edit-actions plot-workflow-row">
           {displayVolumes.length > 0 && (
@@ -844,6 +846,17 @@ ${existingVols || '（暂无）'}
               {reverseLoading ? '⏳ 反生成中...' : '🔄 反生成五幕式总纲'}
             </button>
             <button
+              className="btn-ghost-sm btn-plot-import"
+              onClick={() => setImportModalOpen(true)}
+              disabled={importLoading}
+              title="导入剧情大纲文本，自动识别拆分到各卷"
+            >
+              📥 导入剧情大纲
+            </button>
+          </>)}
+          <span className="plot-row-break" aria-hidden="true" />
+          {!workflowCollapsed && (<>
+            <button
               className="btn-ghost-sm btn-plot-calc"
               onClick={() => setShowVolumeCalc(s => !s)}
               disabled={outlineWorkflowLoading !== ''}
@@ -859,14 +872,6 @@ ${existingVols || '（暂无）'}
               title="从大纲总纲（五幕式/AI创作/AI识别/手编均可）一次性提取各卷剧情"
             >
               {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
-            </button>
-            <button
-              className="btn-ghost-sm btn-plot-import"
-              onClick={() => setImportModalOpen(true)}
-              disabled={importLoading}
-              title="导入剧情大纲文本，自动识别拆分到各卷"
-            >
-              📥 导入剧情大纲
             </button>
           </>)}
           <button

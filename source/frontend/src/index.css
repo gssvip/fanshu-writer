@@ -3014,26 +3014,34 @@ textarea.input.paper-textarea{
 .bible-edit-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0}
 .bible-edit-header h3{font-size:16px;font-weight:700}
 .bible-edit-actions{display:flex;gap:8px;flex-wrap:nowrap;margin-left:auto}
-/* 剧情维度工作流单行：一键清空+四个工作流按钮+折叠按钮合并一排。电脑端折叠按钮靠行尾、与「导入剧情大纲」同排平齐 */
-.plot-workflow-row{margin-left:0;width:100%;flex-wrap:wrap;justify-content:flex-start;align-items:center;gap:6px}
+/* 剧情维度工作流单行：一键清空+反生成+导入+自动分卷规划+从大纲提取+折叠按钮，全部平铺。
+   .plot-row-break 是换行占位：桌面隐藏（单行），手机端强制在「导入」后换行。
+   桌面 CSS order 还原「清空→反生成→自动分卷→提取→导入→折叠靠右」；
+   手机端固定两排：排1 = 一键清空(可选)+反生成+导入；排2 = 自动分卷规划+从大纲提取各卷+折叠按钮
+   （折叠按钮永远排在「自动分卷规划」那排末位，不依赖一键清空是否出现）。 */
+.plot-workflow-row{margin-left:0;width:100%;flex-wrap:nowrap;justify-content:flex-start;align-items:center;gap:6px}
+.plot-row-break{display:none}
 .plot-workflow-row .header-collapse-btn{min-height:33px}
 @media (min-width:768px){
-  .plot-workflow-row .header-collapse-btn{margin-left:auto}
+  /* 桌面单行：还原原始顺序（import 在 extract 之后、collapse 靠右）*/
+  .plot-workflow-row .btn-plot-clear{order:0}
+  .plot-workflow-row .btn-plot-reverse{order:1}
+  .plot-workflow-row .btn-plot-calc{order:2}
+  .plot-workflow-row .btn-plot-extract{order:3}
+  .plot-workflow-row .btn-plot-import{order:4}
+  .plot-workflow-row .header-collapse-btn{order:5;margin-left:auto}
 }
-/* 手机端：上下两排按钮等长（每排两个、各占一半宽），折叠按钮排末位并加宽一号 */
+/* 手机端：两排各 3 个等宽按钮上下对齐。
+   排1 = 一键清空(可选)+反生成+导入；排2 = 自动分卷规划+从大纲提取各卷+折叠按钮 */
 @media (max-width:767px){
-  .plot-workflow-row{gap:4px}
-  .plot-workflow-row .btn-plot-clear{order:1}
-  .plot-workflow-row .btn-plot-reverse{order:2}
-  .plot-workflow-row .btn-plot-calc{order:3}
-  .plot-workflow-row .btn-plot-extract{order:4}
-  .plot-workflow-row .btn-plot-import{order:5}
-  .plot-workflow-row .header-collapse-btn{order:6;width:60px}
+  .plot-workflow-row{gap:4px;align-items:stretch;flex-wrap:wrap}
+  .plot-row-break{display:block;flex:0 0 100%;height:0;margin:0;padding:0;overflow:hidden}
   .plot-workflow-row .btn-plot-clear,
   .plot-workflow-row .btn-plot-reverse,
+  .plot-workflow-row .btn-plot-import,
   .plot-workflow-row .btn-plot-calc,
   .plot-workflow-row .btn-plot-extract,
-  .plot-workflow-row .btn-plot-import{flex:1 1 calc(50% - 2px);min-width:0;font-size:12px;white-space:nowrap;display:flex;align-items:center;justify-content:center}
+  .plot-workflow-row .header-collapse-btn{flex:1 1 calc((100% - 8px)/3);min-width:0;font-size:12px;white-space:nowrap;display:flex;align-items:center;justify-content:center}
 }
 .outline-sub-tab{padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:13px;line-height:1.4;white-space:nowrap}
 .outline-sub-tab.active{background:var(--accent-light);color:var(--accent);border-color:var(--accent);font-weight:700}
