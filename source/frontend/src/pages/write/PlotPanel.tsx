@@ -849,7 +849,7 @@ ${existingVols || '（暂无）'}
               disabled={importLoading}
               title="导入剧情大纲文本，自动识别拆分到各卷"
             >
-               导入剧情大纲
+              📥 导入剧情大纲
             </button>
           </>)}
           {!workflowCollapsed && (<>
@@ -860,7 +860,7 @@ ${existingVols || '（暂无）'}
               title="输入卷数，按每卷50章×2400字自动生成分卷框架"
               style={showVolumeCalc ? { background: 'var(--accent-light)', color: 'var(--accent)', fontWeight: 700 } : {}}
             >
-               自动分卷规划
+              📊 自动分卷规划
             </button>
             <button
               className="btn-ghost-sm header-collapse-btn"

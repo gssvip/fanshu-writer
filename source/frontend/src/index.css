@@ -3038,7 +3038,7 @@ textarea.input.paper-textarea{
   .plot-workflow-row .btn-plot-import,
   .plot-workflow-row .btn-plot-calc,
   .plot-workflow-row .btn-plot-extract,
-  .plot-workflow-row .header-collapse-btn{flex:1 1 calc((100% - 8px)/3);min-width:0;font-size:12px;white-space:nowrap;display:flex;align-items:center;justify-content:center}
+  .plot-workflow-row .header-collapse-btn{flex:0 0 calc((100% - 8px)/3);min-width:0;font-size:12px;white-space:nowrap;display:flex;align-items:center;justify-content:center}
 }
 .outline-sub-tab{padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:13px;line-height:1.4;white-space:nowrap}
 .outline-sub-tab.active{background:var(--accent-light);color:var(--accent);border-color:var(--accent);font-weight:700}
