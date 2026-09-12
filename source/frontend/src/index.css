@@ -3029,16 +3029,33 @@ textarea.input.paper-textarea{
   .plot-workflow-row .btn-plot-import{order:4}
   .plot-workflow-row .header-collapse-btn{order:5;margin-left:auto}
 }
-/* 手机端：两排等宽按钮上下对齐。
-   排1 = 一键清空(可选)+反生成+导入；排2 = 自动分卷规划+折叠按钮+从大纲提取各卷 */
+/* 手机端：两排按钮左右边界对齐。
+   grid 3 列：1fr 1fr 1.4fr（折叠按钮比业务按钮宽 40%，即"宽一号"）
+   排1 = 反生成(1fr) | 自动分卷规划(1fr) | 折叠(1.4fr, 紧跟自动分卷规划) ← 3 元素
+   排2 = 从大纲提取(2fr, 跨 col 1+2) | 导入(1.4fr) ← 2 元素，与排1 整行左右对齐（总宽相同）
+   存在一键清空时：插入槽1，4 列变 4×1fr，反生成/自动分卷规划/折叠 顺移 + 折叠跨最后 2 列宽一号。 */
 @media (max-width:767px){
-  .plot-workflow-row{gap:4px;align-items:stretch}
-  .plot-workflow-row .btn-plot-clear,
+  .plot-workflow-row{display:grid;grid-template-columns:1fr 1fr 1.4fr;grid-template-rows:auto auto;gap:4px;align-items:stretch}
+  .plot-workflow-row .btn-plot-reverse{grid-column:1;grid-row:1}
+  .plot-workflow-row .btn-plot-calc{grid-column:2;grid-row:1}
+  .plot-workflow-row .header-collapse-btn{grid-column:3;grid-row:1}
+  .plot-workflow-row .btn-plot-extract{grid-column:1 / span 2;grid-row:2}
+  .plot-workflow-row .btn-plot-import{grid-column:3;grid-row:2}
+  /* 一键清空：插入槽1 → 4 列布局，业务按钮压缩 1fr，折叠跨最后 2 列（保持"宽一号"视觉） */
+  .plot-workflow-row:has(.btn-plot-clear){grid-template-columns:1fr 1fr 1fr 1.4fr}
+  .plot-workflow-row:has(.btn-plot-clear) .btn-plot-clear{grid-column:1;grid-row:1;display:flex}
+  .plot-workflow-row:has(.btn-plot-clear) .btn-plot-reverse{grid-column:2;grid-row:1}
+  .plot-workflow-row:has(.btn-plot-clear) .btn-plot-calc{grid-column:3;grid-row:1}
+  .plot-workflow-row:has(.btn-plot-clear) .header-collapse-btn{grid-column:4;grid-row:1}
+  .plot-workflow-row:has(.btn-plot-clear) .btn-plot-extract{grid-column:2 / span 2;grid-row:2}
+  .plot-workflow-row:has(.btn-plot-clear) .btn-plot-import{grid-column:3 / span 2;grid-row:2}
+  /* 通用按钮样式 */
   .plot-workflow-row .btn-plot-reverse,
-  .plot-workflow-row .btn-plot-import,
   .plot-workflow-row .btn-plot-calc,
   .plot-workflow-row .btn-plot-extract,
-  .plot-workflow-row .header-collapse-btn{flex:0 0 calc((100% - 8px)/3);min-width:0;font-size:12px;white-space:nowrap;display:flex;align-items:center;justify-content:center}
+  .plot-workflow-row .btn-plot-import,
+  .plot-workflow-row .btn-plot-clear{min-width:0;font-size:12px;white-space:nowrap;display:flex;align-items:center;justify-content:center;padding:0 6px;box-sizing:border-box}
+  .plot-workflow-row .header-collapse-btn{font-size:14px;padding:0;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
 }
 .outline-sub-tab{padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:13px;line-height:1.4;white-space:nowrap}
 .outline-sub-tab.active{background:var(--accent-light);color:var(--accent);border-color:var(--accent);font-weight:700}
