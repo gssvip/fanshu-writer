@@ -817,11 +817,9 @@ ${existingVols || '（暂无）'}
           </div>
         </div>
       )}
-      {/* 工作流单行：一键清空 + 反生成/导入 + 自动分卷规划/从大纲提取 + 折叠按钮，全部平铺。
-          桌面单行（CSS order 还原「清空→反生成→自动分卷→提取→导入→折叠靠右」）；
-          手机端由 .plot-row-break 在「导入」后强制换行，固定两排：
-          排1 = 一键清空(可选)+反生成+导入；排2 = 自动分卷规划+从大纲提取各卷+折叠按钮
-          （折叠按钮永远排在「自动分卷规划」那排末位，不依赖一键清空是否出现）。 */}
+      {/* 工作流按钮区：折叠按钮紧跟「自动分卷规划」后面（手机端自然排在其后）。
+          桌面端由 CSS order 还原「清空→反生成→自动分卷→提取→导入→折叠靠右」；
+          手机端 flex-wrap 自然换行，两排等宽对齐。 */}
       <div className="bible-edit-header">
         <div className="bible-edit-actions plot-workflow-row">
           {displayVolumes.length > 0 && (
@@ -851,10 +849,9 @@ ${existingVols || '（暂无）'}
               disabled={importLoading}
               title="导入剧情大纲文本，自动识别拆分到各卷"
             >
-              📥 导入剧情大纲
+               导入剧情大纲
             </button>
           </>)}
-          <span className="plot-row-break" aria-hidden="true" />
           {!workflowCollapsed && (<>
             <button
               className="btn-ghost-sm btn-plot-calc"
@@ -863,7 +860,14 @@ ${existingVols || '（暂无）'}
               title="输入卷数，按每卷50章×2400字自动生成分卷框架"
               style={showVolumeCalc ? { background: 'var(--accent-light)', color: 'var(--accent)', fontWeight: 700 } : {}}
             >
-              📊 自动分卷规划
+               自动分卷规划
+            </button>
+            <button
+              className="btn-ghost-sm header-collapse-btn"
+              onClick={() => setWorkflowCollapsed(v => !v)}
+              title={workflowCollapsed ? '展开工作流' : '折叠工作流（手机友好）'}
+            >
+              {workflowCollapsed ? '▾' : '▴'}
             </button>
             <button
               className="btn-ghost-sm btn-plot-extract"
@@ -874,13 +878,6 @@ ${existingVols || '（暂无）'}
               {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
             </button>
           </>)}
-          <button
-            className="btn-ghost-sm header-collapse-btn"
-            onClick={() => setWorkflowCollapsed(v => !v)}
-            title={workflowCollapsed ? '展开工作流' : '折叠工作流（手机友好）'}
-          >
-            {workflowCollapsed ? '▾' : '▴'}
-          </button>
         </div>
       </div>
 

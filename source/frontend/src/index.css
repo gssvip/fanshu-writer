@@ -3014,16 +3014,14 @@ textarea.input.paper-textarea{
 .bible-edit-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0}
 .bible-edit-header h3{font-size:16px;font-weight:700}
 .bible-edit-actions{display:flex;gap:8px;flex-wrap:nowrap;margin-left:auto}
-/* 剧情维度工作流单行：一键清空+反生成+导入+自动分卷规划+从大纲提取+折叠按钮，全部平铺。
-   .plot-row-break 是换行占位：桌面隐藏（单行），手机端强制在「导入」后换行。
-   桌面 CSS order 还原「清空→反生成→自动分卷→提取→导入→折叠靠右」；
-   手机端固定两排：排1 = 一键清空(可选)+反生成+导入；排2 = 自动分卷规划+从大纲提取各卷+折叠按钮
-   （折叠按钮永远排在「自动分卷规划」那排末位，不依赖一键清空是否出现）。 */
-.plot-workflow-row{margin-left:0;width:100%;flex-wrap:nowrap;justify-content:flex-start;align-items:center;gap:6px}
-.plot-row-break{display:none}
+/* 剧情维度工作流按钮区：折叠按钮紧跟「自动分卷规划」后面（HTML 顺序保证手机端自然换行后在其后）。
+   桌面 CSS order 还原「清空→反生成→自动分卷→折叠→提取→导入→折叠靠右」；
+   手机端 flex-wrap 自然换行，两排等宽对齐。 */
+.plot-workflow-row{margin-left:0;width:100%;flex-wrap:wrap;justify-content:flex-start;align-items:center;gap:6px}
 .plot-workflow-row .header-collapse-btn{min-height:33px}
 @media (min-width:768px){
-  /* 桌面单行：还原原始顺序（import 在 extract 之后、collapse 靠右）*/
+  /* 桌面单行：还原原始顺序（折叠按钮靠右）*/
+  .plot-workflow-row{flex-wrap:nowrap}
   .plot-workflow-row .btn-plot-clear{order:0}
   .plot-workflow-row .btn-plot-reverse{order:1}
   .plot-workflow-row .btn-plot-calc{order:2}
@@ -3031,11 +3029,10 @@ textarea.input.paper-textarea{
   .plot-workflow-row .btn-plot-import{order:4}
   .plot-workflow-row .header-collapse-btn{order:5;margin-left:auto}
 }
-/* 手机端：两排各 3 个等宽按钮上下对齐。
-   排1 = 一键清空(可选)+反生成+导入；排2 = 自动分卷规划+从大纲提取各卷+折叠按钮 */
+/* 手机端：两排等宽按钮上下对齐。
+   排1 = 一键清空(可选)+反生成+导入；排2 = 自动分卷规划+折叠按钮+从大纲提取各卷 */
 @media (max-width:767px){
-  .plot-workflow-row{gap:4px;align-items:stretch;flex-wrap:wrap}
-  .plot-row-break{display:block;flex:0 0 100%;height:0;margin:0;padding:0;overflow:hidden}
+  .plot-workflow-row{gap:4px;align-items:stretch}
   .plot-workflow-row .btn-plot-clear,
   .plot-workflow-row .btn-plot-reverse,
   .plot-workflow-row .btn-plot-import,
