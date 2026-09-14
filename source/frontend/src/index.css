@@ -3051,6 +3051,8 @@ textarea.input.paper-textarea{
   .plot-workflow-row .btn-plot-extract,
   .plot-workflow-row .btn-plot-import{min-width:0;font-size:12px;white-space:nowrap;display:flex;align-items:center;justify-content:center;padding:0 4px;box-sizing:border-box}
   .plot-workflow-row .header-collapse-btn{font-size:14px;padding:0;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
+  /* 折叠态：业务按钮已卸载，只剩折叠按钮 → 占满整行，便于点击展开 */
+  .plot-workflow-row.is-collapsed .header-collapse-btn{grid-column:1 / -1;width:100%}
 }
 .outline-sub-tab{padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:13px;line-height:1.4;white-space:nowrap}
 .outline-sub-tab.active{background:var(--accent-light);color:var(--accent);border-color:var(--accent);font-weight:700}

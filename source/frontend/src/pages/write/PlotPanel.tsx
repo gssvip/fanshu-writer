@@ -821,7 +821,7 @@ ${existingVols || '（暂无）'}
           桌面端由 CSS order 还原「清空→反生成→自动分卷→提取→导入→折叠靠右」；
           手机端 flex-wrap 自然换行，两排等宽对齐。 */}
       <div className="bible-edit-header">
-        <div className="bible-edit-actions plot-workflow-row">
+        <div className={`bible-edit-actions plot-workflow-row${workflowCollapsed ? ' is-collapsed' : ''}`}>
           {displayVolumes.length > 0 && (
             <button
               className="btn-ghost-sm btn-plot-clear"
@@ -851,8 +851,6 @@ ${existingVols || '（暂无）'}
             >
               📥 导入剧情大纲
             </button>
-          </>)}
-          {!workflowCollapsed && (<>
             <button
               className="btn-ghost-sm btn-plot-calc"
               onClick={() => setShowVolumeCalc(s => !s)}
@@ -863,13 +861,6 @@ ${existingVols || '（暂无）'}
               📊 自动分卷规划
             </button>
             <button
-              className="btn-ghost-sm header-collapse-btn"
-              onClick={() => setWorkflowCollapsed(v => !v)}
-              title={workflowCollapsed ? '展开工作流' : '折叠工作流（手机友好）'}
-            >
-              {workflowCollapsed ? '▾' : '▴'}
-            </button>
-            <button
               className="btn-ghost-sm btn-plot-extract"
               onClick={handleExtractVolumes}
               disabled={extractLoading || outlineWorkflowLoading !== ''}
@@ -878,6 +869,14 @@ ${existingVols || '（暂无）'}
               {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
             </button>
           </>)}
+          {/* 折叠按钮始终渲染，确保折叠后仍可点击展开 */}
+          <button
+            className="btn-ghost-sm header-collapse-btn"
+            onClick={() => setWorkflowCollapsed(v => !v)}
+            title={workflowCollapsed ? '展开工作流' : '折叠工作流（手机友好）'}
+          >
+            {workflowCollapsed ? '▾' : '▴'}
+          </button>
         </div>
       </div>
 
