@@ -3014,6 +3014,9 @@ textarea.input.paper-textarea{
 .bible-edit-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0}
 .bible-edit-header h3{font-size:16px;font-weight:700}
 .bible-edit-actions{display:flex;gap:8px;flex-wrap:nowrap;margin-left:auto}
+/* 剧情维度：减少顶部留白，让「反生成五幕式总纲」等工作流按钮栏上移，避免浪费空间 */
+.bible-edit-panel:has(.plot-workflow-row){padding-top:4px}
+.bible-edit-panel:has(.plot-workflow-row) .bible-edit-header{margin-bottom:8px}
 /* 剧情维度工作流按钮区：折叠按钮紧跟「自动分卷规划」后面（HTML 顺序保证手机端自然换行后在其后）。
    桌面 CSS order 还原「清空→反生成→自动分卷→折叠→提取→导入→折叠靠右」；
    手机端 flex-wrap 自然换行，两排等宽对齐。 */
@@ -3036,8 +3039,6 @@ textarea.input.paper-textarea{
    → 反生成 = 从大纲提取（左列等宽）；自动分卷规划 = 导入（右列等宽）
    一键清空：手机端隐藏，保持两排规整对齐（桌面端仍显示）。*/
 @media (max-width:767px){
-  /* 标题行（工作流按钮组）往下调，与上方维度内容拉开间距 */
-  .bible-edit-header:has(.plot-workflow-row){margin-top:8px}
   .plot-workflow-row{display:grid;grid-template-columns:1fr 1fr 60px;grid-template-rows:auto auto;gap:4px;align-items:stretch}
   .plot-workflow-row .btn-plot-clear{display:none}
   .plot-workflow-row .btn-plot-reverse{grid-column:1;grid-row:1}

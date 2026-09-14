@@ -869,11 +869,15 @@ ${existingVols || '（暂无）'}
               {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
             </button>
           </>)}
-          {/* 折叠按钮始终渲染，确保折叠后仍可点击展开 */}
+          {/* 折叠按钮始终渲染：同时控制工作流按钮区 + 所有卷的分卷剧情大纲折叠/展开 */}
           <button
             className="btn-ghost-sm header-collapse-btn"
-            onClick={() => setWorkflowCollapsed(v => !v)}
-            title={workflowCollapsed ? '展开工作流' : '折叠工作流（手机友好）'}
+            onClick={() => {
+              const next = !workflowCollapsed;
+              setWorkflowCollapsed(next);
+              setCollapsedVols(next ? new Set(displayVolumes.map((_, idx) => idx)) : new Set());
+            }}
+            title={workflowCollapsed ? '展开工作流与全部分卷' : '折叠工作流与全部分卷'}
           >
             {workflowCollapsed ? '▾' : '▴'}
           </button>
