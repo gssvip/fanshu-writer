@@ -21,7 +21,7 @@ export function OutlineCombinedPanel(props: {
   onOpenAiCreate: (field: string) => void;
   totalVolumes: number;
 }) {
-  const { bookId, bible, onBibleUpdate, concept, hasChapters, dimAnalyzing, onAnalyzeDimension, showConfirm, totalVolumes } = props;
+  const { bookId, bible, onBibleUpdate, concept, hasChapters, dimAnalyzing, onAnalyzeDimension, totalVolumes } = props;
   const [subTab, setSubTab] = useState<'outline' | 'worldview'>('outline');
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -94,19 +94,6 @@ export function OutlineCombinedPanel(props: {
     setAiAssisting(false);
   }
 
-  function handleDelete() {
-    if (!bookId) return;
-    showConfirm(`确定清空「${labelMap[subTab]}」的所有内容？此操作不可撤销。`, async () => {
-      try {
-        const updated = await api.updateBible(bookId, { [currentField]: '' } as any);
-        onBibleUpdate(updated);
-        try { window.dispatchEvent(new CustomEvent('app:progress-needs-refresh', { detail: { field: currentField } })); } catch {}
-      } catch (e: any) {
-        alert('删除失败: ' + e.message);
-      }
-    });
-  }
-
   // ==== 滚动生成工作流状态 ====
   // outlineWorkflowLoading: '' | 'master' | 'volume' | 'all'
   const [outlineWorkflowLoading, setOutlineWorkflowLoading] = useState<'' | 'master' | 'volume' | 'all'>('');
@@ -165,6 +152,15 @@ export function OutlineCombinedPanel(props: {
       setOutlineWorkflowProgress('');
     }
     setOutlineWorkflowLoading('');
+  }
+
+  // AI创作：大纲 → 生成五幕式总纲；世界观 → 打开AI协同创作
+  function handleAiCreate() {
+    if (subTab === 'outline') {
+      generateOutlineMaster();
+    } else {
+      setAiMode(true);
+    }
   }
 
   // AI协同创作模式
@@ -239,7 +235,7 @@ export function OutlineCombinedPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      {/* 单行：大纲/世界观/AI识别(/删除) 按钮一排平铺；电脑端等长拉伸铺满整行、间距均匀 */}
+      {/* 单行：大纲/世界观/AI创作/AI识别 四按钮平铺（与设定维度一致）；电脑端等长拉伸、间距均匀 */}
       <div className="bible-edit-header dims-single-row outline-dims-row">
         <button className={`outline-sub-tab ${subTab === 'outline' ? 'active' : ''}`} onClick={() => { setSubTab('outline'); setEditing(false); }}>
           📋 大纲
@@ -249,40 +245,25 @@ export function OutlineCombinedPanel(props: {
         </button>
         {!editing ? (
           <>
+            <button className="btn-primary-sm" onClick={handleAiCreate} disabled={outlineWorkflowLoading !== ''} title={subTab === 'outline' ? '生成五幕式总纲（写入大纲）' : 'AI生成世界观内容'}>
+              {outlineWorkflowLoading === 'master' ? '⏳ 生成中...' : '✨ AI创作'}
+            </button>
             <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(subTab === 'outline' ? 'outline' : 'worldview')} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别' : '需要先创建章节才能AI识别'}>
               {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
             </button>
-            {currentContent && (
-              <button className="btn-ghost-sm" onClick={handleDelete} style={{color:'#e74c3c'}}>🗑️ 删除</button>
-            )}
           </>
         ) : (
           <>
             <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
             <button className="btn-primary-sm" onClick={saveEdit} disabled={saving}>
-              {saving ? '保存中...' : '保存'}
+              {saving ? '保存中...' : '💾 保存'}
             </button>
           </>
         )}
       </div>
 
-      {/* 五幕式总纲生成（仅大纲tab显示） */}
-      {subTab === 'outline' && (
-        <div className="volume-calc-section" style={{ marginBottom: 8 }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <button
-              className="btn-primary-sm"
-              onClick={generateOutlineMaster}
-              disabled={outlineWorkflowLoading !== ''}
-              title="生成五幕式总纲（写入大纲）"
-            >
-              {outlineWorkflowLoading === 'master' ? '⏳ 生成总纲中...' : '🎯 生成五幕式总纲'}
-            </button>
-          </div>
-          {outlineWorkflowProgress && (
-            <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 6 }}>{outlineWorkflowProgress}</div>
-          )}
-        </div>
+      {outlineWorkflowProgress && (
+        <div style={{ fontSize: 12, color: 'var(--accent)', margin: '2px 0 8px' }}>{outlineWorkflowProgress}</div>
       )}
 
       {editing ? (
