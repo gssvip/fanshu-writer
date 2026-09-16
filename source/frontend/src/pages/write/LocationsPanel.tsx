@@ -192,10 +192,6 @@ export function LocationsPanel(props: {
           )}
         </div>
       </div>
-      <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
-        记录地点、场景、地理信息。点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下。
-      </p>
-
       {/* 按卷地点识别 */}
       {displayVolumes.length > 0 && (
         <div className="plot-volume-list" style={{marginBottom:16}}>

@@ -280,10 +280,6 @@ export function InventoryPanel(props: {
           )}
         </div>
       </div>
-      <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
-        按卷记录主要势力和角色拥有的物品、功法、法宝、境界等。点击「🔍 AI识别」选择卷进行识别。
-      </p>
-
       {displayVolumes.length === 0 ? (
         <div className="bible-empty">
           <span className="bible-empty-icon">🎒</span>

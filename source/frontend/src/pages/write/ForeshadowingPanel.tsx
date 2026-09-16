@@ -460,10 +460,6 @@ export function ForeshadowingPanel(props: {
       </div>
       {!foreCollapsed && (
         <>
-          <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
-            记录伏笔的埋设时机、回收方式、关联角色。点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下。
-          </p>
-
           {/* ===== 防遗忘检查（原全局伏笔档案位置）===== */}
       <div className="bible-edit-section" style={{marginTop:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
