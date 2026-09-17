@@ -432,11 +432,7 @@ export function DynamicMemoryPanel(props: {
 
           {displayDynVolumes.length > 0 && (
         <div className="plot-volume-list" style={{marginBottom:16}}>
-          <div style={{marginBottom:8}}>
-            <p className="text-muted" style={{fontSize:12, margin:0}}>
-              📚 按卷查看：摘要（📝）→ 编辑（✏️）→ 删除（🗑️）；动态报告每满5章自动生成并显示在对应卷下方，无需手动触发。
-            </p>
-          </div>
+          
           {displayDynVolumes.map((vol, idx) => {
             const d = vol.data || {};
             const hasData = vol.data && (d.summary || d.characters || d.events);
