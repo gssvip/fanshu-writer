@@ -57,6 +57,7 @@ from blueprints.nd_helpers import (
     _nd_extract_save_plot_vols,
     _nd_load_state,
     _nd_merge_state_vols,
+    _nd_parse_readable_text_to_volume,
     _nd_save_state,
     _parse_last_chapter_from_text,
     _parse_volume_index_from_text,
@@ -652,6 +653,11 @@ def chat_general():
                 # 中断也要累计 vols（半截卡片里已完成的章节点别丢）
                 try:
                     _cur_vols = _nd_extract_save_plot_vols(parse_cards(partial))
+                    # 【优化】从可读流式文本解析节点（模型不再输出 SAVE_PLOT 卡片）
+                    _cpv_r = max(10, int(_nd_meta_for_closure.get('cpv') or 50))
+                    _parsed_vol = _nd_parse_readable_text_to_volume(partial, _vi, _cpv_r)
+                    if _parsed_vol:
+                        _cur_vols = _nd_merge_state_vols(_cur_vols, [_parsed_vol])
                     if _cur_vols:
                         _new_state['vols'] = _nd_merge_state_vols(_new_state.get('vols'), _cur_vols)
                 except Exception:
@@ -909,8 +915,15 @@ def chat_general():
                     # （历史消息里落盘的卡片 content 会被截断，续会合并全卷卡只能靠 state['vols']）
                     try:
                         _cur_vols = _nd_extract_save_plot_vols(parse_cards(complete))
+                        # 【优化】模型不再输出 SAVE_PLOT 卡片，改为从可读流式文本解析节点
+                        # 解析 complete 里的可读文本（按【第N章】分块、提取字段），转成 volume dict
+                        _parsed_vol = _nd_parse_readable_text_to_volume(complete, _vi, _cpv)
+                        if _parsed_vol:
+                            _cur_vols = _nd_merge_state_vols(_cur_vols, [_parsed_vol])
                         if _cur_vols:
                             _new_state['vols'] = _nd_merge_state_vols(_new_state.get('vols'), _cur_vols)
+                            # 同步更新闭包变量，供后续全卷卡片构建使用
+                            _nd_meta_for_closure['vols'] = _new_state.get('vols')
                     except Exception:
                         pass
                     _nd_save_state(session, db, _new_state)
@@ -943,7 +956,7 @@ def chat_general():
                             pass
                     if _is_full and (_existing_nodes_count < _cpv or not cards):
                         # 收集 state 累计 vols + 本次 complete 里的卡片 + 历史会话卡片 → 合并成全卷统一卡片
-                        all_vols, dvi, dcpv = _nd_collect_all_save_plot_volumes(history, complete, _nd_meta_for_closure.get('vols'))
+                        all_vols, dvi, dcpv = _nd_collect_all_save_plot_volumes(history, complete, _nd_meta_for_closure.get('vols'), vi=_vi, cpv=_cpv)
                         vi_for_build = dvi or _vi
                         cpv_for_build = dcpv or _cpv
                         if all_vols or _is_full:

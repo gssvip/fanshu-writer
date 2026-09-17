@@ -386,10 +386,11 @@ def _nd_merge_state_vols(prev_vols, new_vols) -> list[dict]:
     return [merged[vi] for vi in order]
 
 
-def _nd_collect_all_save_plot_volumes(session_history: list, current_text: str, state_vols: list | None = None) -> tuple[list[dict], int | None, int | None]:
+def _nd_collect_all_save_plot_volumes(session_history: list, current_text: str, state_vols: list | None = None, vi: int | None = None, cpv: int | None = None) -> tuple[list[dict], int | None, int | None]:
     """从 state 累计卡片 + 当前 AI 输出 complete + 历史会话里，搜集所有出现过的 SAVE_PLOT 卡片的 volume 对象。
     （历史会话里落盘的卡片 content 会被截断到 120 字，JSON 基本解析不出——
     真正可靠的数据源是 state['vols'] 累计和当前 complete 里的卡片。）
+    【优化】模型不再输出 SAVE_PLOT 卡片，新增：从 current_text 可读文本直接解析节点。
     返回 ([volume_dict,...], detected_vi, detected_cpv)。"""
     vols: list[dict] = []
     # 0) state 累计的 vols（优先：完整、未截断；排在最前，让后面的新卡片覆盖旧值）
@@ -408,6 +409,15 @@ def _nd_collect_all_save_plot_volumes(session_history: list, current_text: str, 
                         vols.extend(v for v in arr if isinstance(v, dict))
                 except Exception:
                     pass
+    except Exception:
+        pass
+    # 1.5) 【优化】从当前 complete 的可读流式文本解析节点（模型不再输出 SAVE_PLOT 卡片）
+    try:
+        _vi_for_parse = vi or _parse_volume_index_from_text(current_text) or 1
+        _cpv_for_parse = cpv or 50
+        _parsed = _nd_parse_readable_text_to_volume(current_text, _vi_for_parse, _cpv_for_parse)
+        if _parsed:
+            vols.append(_parsed)
     except Exception:
         pass
     # 2) 历史会话里所有 assistant.cards 里的 SAVE_PLOT
@@ -566,9 +576,9 @@ def _nd_build_continue_user_injection(state: dict) -> str:
             f"\n· 已输出完成：第{1}章~第{last_ch}章（共{last_ch}个情节子节点）"
             f"\n· 本轮只输出：第{next_ch}章~预计第{min(last_ch+30, total)}章左右（写不完没关系，下一轮作者发『继续』会从你写到的最后一章接着续）"
             f"\n· ❗门禁·中途段：本轮不会写到第{total}章（本卷最后一章），属于中途进度段："
-            f"\n   · ❌ 绝对禁止输出任何 [[CARD:SAVE_PLOT|...]] 落地卡片。任何半截卡片都不允许，违者生成不合格。"
             f"\n   · ✅ 本轮续写的所有节点写完后，只需要在末尾写一行中文进度快照："
-            f"\n     「✅ 中途进度快照：已完成第{next_ch}章~第<本轮实际写到的最后一章号>章，累计完成<N>/{total}。随时发『继续』接着生成，整卷{total}章全部设计完成后，会给出一张全卷合并版统一采纳卡片。」"
+            f"\n     「✅ 中途进度快照：已完成第{next_ch}章~第<本轮实际写到的最后一章号>章，累计完成<N>/{total}。随时发『继续』接着生成。」"
+            f"\n   · ❌ 绝对不要输出任何 [[CARD:SAVE_PLOT|...]] 落地卡片或 JSON 数组——后端会自动解析你的可读文本。"
             f"\n· ❗铁律：绝对不要重复写 第1章~第{last_ch}章 的任何内容、标题、字段、节点；任何形式的复述都不允许。"
             f"\n· 输出顺序仍然按：章节号递增 → 开场白可省略或只说一句「继续第{next_ch}章起节点」即可，不再啰嗦卷级设定。"
             f"\n· 爽点/五幕/节奏仍然按整卷规则对齐，但只写剩余章。"
@@ -581,12 +591,236 @@ def _nd_build_continue_user_injection(state: dict) -> str:
         f"\n· 已输出完成：第{1}章~第{last_ch}章（共{last_ch}个情节子节点）"
         f"\n· 本轮必须只输出：第{next_ch}章~第{total}章（剩余 {remaining} 个情节子节点）"
         f"\n· ❗门禁·收尾段：本轮会写到最后一章（第{total}章），请务必完整写到末尾；全卷写完后："
-        f"\n   · ❌ 不要输出只包含『第{next_ch}~第{total}章』的半截 SAVE_PLOT 卡片！"
-        f"\n   · ✅ 必须输出一张【全卷合并版统一采纳卡片】[[CARD:SAVE_PLOT|...]]："
-        f"\n     · nodes 字段必须包含第 1 章 ~ 第 {total} 章的全部 {total} 个情节子节点（把你前面所有续会段已经输出的第1~{last_ch}章节点，和这次新写的第{next_ch}~第{total}章节点，按章节号升序完整整理进这一张卡片）。"
-        f"\n     · 任何一个章号对应的节点缺失都不行；差一章=卡片不合格。后端也会从历史分段卡片自动做二次合并兜底，不怕你漏节点。"
-        f"\n     · volume_index={vi}、chapter_count={total}、start_chapter={1 + (vi-1)*total}、end_chapter={vi*total}。"
-        f"\n· ❗铁律：写第{next_ch}~第{total}章正文节点时，仍然不许复述前面已写章节；只是在最后输出卡片的 JSON 汇总时，把前面所有章节的节点完整合进去。"
+        f"\n   · ✅ 只输出一行总结：「✅ 完成：共{total}章，{total}个节点，单章单节点+资源滚动+人物关系门禁合格」即可。"
+        f"\n   · ❌ 不要输出任何 [[CARD:SAVE_PLOT|...]] 卡片或 JSON 数组——后端会自动从你输出的可读文本里解析出第1~{total}章全卷节点并入库。"
+        f"\n· ❗铁律：写第{next_ch}~第{total}章正文节点时，仍然不许复述前面已写章节。"
         f"\n· 爽点/五幕/节奏仍然按整卷规则对齐，但只写剩余章。"
         f"\n· 仍然遵守 A+C 铁律：单章单节点、无重叠无跳章、chapters 严格落在卷区间内。\n"
     )
+
+
+# ============================================================================
+# 可读流式文本 → 结构化节点 解析器
+# 背景：节点设计师原本要求模型在写完所有章节后，再把同样内容用 JSON SAVE_PLOT
+# 卡片输出一遍（双倍 token + 聊天界面 JSON 刷屏）。现在改为：模型只输出可读流式
+# 文本，由本解析器把文本转成结构化 nodes，后端自动组装 SAVE_PLOT 卡片写库。
+# ============================================================================
+
+# 章节块分隔：【第N章】 / 第N章 / 章节：第N章 等
+_ND_CHAPTER_SPLIT_RE = re.compile(
+    r'(?:^|\n)\s*(?:【)?\s*第\s*(\d+)\s*章\s*(?:】)?\s*(?:\n|$|（)'
+)
+
+# 字段标签正则（按优先级排序，长的在前避免短标签误匹配）
+_ND_FIELD_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ('chapter_beats', re.compile(r'chapter_beats\s*[:：]\s*', re.IGNORECASE)),
+    ('resources_gained', re.compile(r'【?\s*资源(?:\s*[·•]\s*)?(?:本章)?\s*获得(?:\s*resources_gained)?\s*】?\s*[:：]\s*', re.IGNORECASE)),
+    ('resources_used', re.compile(r'【?\s*资源(?:\s*[·•]\s*)?(?:本章)?\s*消耗(?:\s*resources_used)?\s*】?\s*[:：]\s*', re.IGNORECASE)),
+    ('total_resources_owned', re.compile(r'【?\s*总资源(?:\s*total_resources_owned)?\s*】?\s*[:：]\s*', re.IGNORECASE)),
+    ('main_event', re.compile(r'【?\s*所属大事件\s*】?\s*[:：]\s*|main_event\s*[:：]\s*', re.IGNORECASE)),
+    ('characters', re.compile(r'人物(?:characters)?\s*[:：]\s*', re.IGNORECASE)),
+    ('summary', re.compile(r'摘要(?:summary)?\s*[:：]\s*', re.IGNORECASE)),
+    ('conflict', re.compile(r'冲突(?:conflict)?\s*[:：]\s*', re.IGNORECASE)),
+    ('location', re.compile(r'地点(?:location)?\s*[:：]\s*', re.IGNORECASE)),
+    ('time', re.compile(r'时间(?:time)?\s*[:：]\s*', re.IGNORECASE)),
+    ('foreshadowing', re.compile(r'伏笔(?:\s*/\s*回收)?\s*[:：]\s*|foreshadowing\s*[:：]\s*', re.IGNORECASE)),
+    ('type', re.compile(r'类型\s*[:：]\s*|type\s*[:：]\s*', re.IGNORECASE)),
+    ('title', re.compile(r'标题\s*[:：]\s*|title\s*[:：]\s*', re.IGNORECASE)),
+    ('chapters_field', re.compile(r'章节\s*[:：]\s*|chapters?\s*[:：]\s*', re.IGNORECASE)),
+]
+
+
+def _nd_split_into_chapter_blocks(text: str) -> list[tuple[int, str]]:
+    """把可读文本按章节切分成 [(chapter_num, block_text), ...]。"""
+    if not text:
+        return []
+    blocks: list[tuple[int, str]] = []
+    # 找所有章节标记的位置
+    matches = list(_ND_CHAPTER_SPLIT_RE.finditer(text))
+    for i, m in enumerate(matches):
+        ch = int(m.group(1))
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        block = text[start:end].strip()
+        if block:
+            blocks.append((ch, block))
+    return blocks
+
+
+def _nd_extract_fields_from_block(block: str) -> dict:
+    """从单个章节块文本里提取各字段值。
+    策略：找到所有字段标签的位置，按位置排序，相邻标签之间的文本就是前一个字段的值。"""
+    # 收集所有 (field_name, start_pos, end_pos)
+    found: list[tuple[str, int, int]] = []
+    for name, pat in _ND_FIELD_PATTERNS:
+        for m in pat.finditer(block):
+            found.append((name, m.start(), m.end()))
+    if not found:
+        return {}
+    # 按起始位置排序，同位置取较长匹配（优先）
+    found.sort(key=lambda x: (x[1], -(x[2] - x[1])))
+    # 去重：同一位置只保留第一个
+    deduped: list[tuple[str, int, int]] = []
+    last_pos = -1
+    for name, s, e in found:
+        if s == last_pos:
+            continue
+        deduped.append((name, s, e))
+        last_pos = s
+    fields: dict[str, str] = {}
+    for i, (name, s, e) in enumerate(deduped):
+        next_s = deduped[i + 1][1] if i + 1 < len(deduped) else len(block)
+        val = block[e:next_s].strip()
+        if val:
+            fields[name] = val
+    return fields
+
+
+def _nd_normalize_chapter_beats(raw: str) -> list[str]:
+    """把 chapter_beats 文本规范成字符串数组。"""
+    if not raw:
+        return []
+    # 按换行、分号、斜杠、编号(1. 2. ①②③) 切分
+    parts = re.split(r'\n+|[；;]+|/+|\s*[①②③④⑤⑥⑦⑧⑨⑩]\s*|\s*\d+[.、)\]]\s*', raw)
+    beats = [p.strip(' 　\t-—·•\t') for p in parts if p.strip(' 　\t-—·•\t')]
+    return beats[:10]  # 最多10条
+
+
+def _nd_normalize_resource_list(raw: str) -> list[str]:
+    """把资源文本（获得/消耗）规范成带【类别】前缀的字符串数组。"""
+    if not raw or raw.strip() in ('无', '没有', 'none', 'None'):
+        return []
+    items: list[str] = []
+    for ln in re.split(r'\n+|[；;]+', raw):
+        s = ln.strip()
+        if not s or s in ('无', '没有'):
+            continue
+        # 已有【类别】前缀的直接保留
+        if s.startswith('【'):
+            items.append(s)
+        else:
+            items.append(s)
+    return items
+
+
+def _nd_parse_total_resources(raw: str) -> dict:
+    """把总资源文本解析成 {钱财:[], 物品:[], 武器法宝:[], 功法能力:[], 其它:[]}。"""
+    result = {'钱财': [], '物品': [], '武器法宝': [], '功法能力': [], '其它': []}
+    if not raw or raw.strip() in ('无', '没有', 'none', '{}'):
+        return result
+    # 尝试按类别标签切分
+    cat_keys = list(result.keys())
+    # 构建类别匹配：【钱财】/钱财：/钱财：
+    cat_pat = re.compile(r'【?\s*(钱财|物品|武器法宝|功法|功法能力|其它|其他)\s*】?\s*[:：]?\s*')
+    matches = list(cat_pat.finditer(raw))
+    if matches:
+        for i, m in enumerate(matches):
+            cat = m.group(1)
+            if cat in ('功法',):
+                cat = '功法能力'
+            elif cat in ('其他',):
+                cat = '其它'
+            start = m.end()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(raw)
+            seg = raw[start:end].strip()
+            for ln in re.split(r'[、，,\n]+', seg):
+                s = ln.strip().strip('；;')
+                if s and s not in ('无', '没有'):
+                    result.setdefault(cat, []).append(s)
+    else:
+        # 无类别标签，全部归到其它
+        for ln in re.split(r'[、，,\n]+', raw):
+            s = ln.strip()
+            if s and s not in ('无', '没有'):
+                result['其它'].append(s)
+    return result
+
+
+def _nd_parse_readable_text_to_volume(text: str, vi: int, cpv: int) -> dict | None:
+    """把节点设计师输出的可读流式文本解析成一个 volume dict（含 nodes 数组）。
+    返回 None 表示没解析到任何节点。"""
+    blocks = _nd_split_into_chapter_blocks(text or '')
+    if not blocks:
+        return None
+    nodes: list[dict] = []
+    # 卷级字段（从文本里尽量提取）
+    vol_title = f'第{vi}卷'
+    vol_summary = ''
+    main_plot = ''
+    core_conflict = ''
+    ending_hook = ''
+    key_events: list[str] = []
+    for ch, block in blocks:
+        fields = _nd_extract_fields_from_block(block)
+        # 标题可能在块的第一行（没带"标题："前缀时）
+        title = fields.get('title', '')
+        if not title:
+            # 取块第一行作为标题兜底
+            first_line = block.split('\n', 1)[0].strip()
+            if first_line and len(first_line) < 80:
+                title = first_line
+        node = {
+            'index': len(nodes) + 1,
+            'chapters': ch,
+            'type': (fields.get('type', 'M') or 'M').strip()[:3],
+            'title': title[:200],
+            'summary': (fields.get('summary', '') or '')[:2000],
+            'chapter_beats': _nd_normalize_chapter_beats(fields.get('chapter_beats', '')),
+            'conflict': (fields.get('conflict', '') or '')[:500],
+            'characters': _nd_parse_characters_field(fields.get('characters', '')),
+            'resources_gained': _nd_normalize_resource_list(fields.get('resources_gained', '')),
+            'resources_used': _nd_normalize_resource_list(fields.get('resources_used', '')),
+            'total_resources_owned': _nd_parse_total_resources(fields.get('total_resources_owned', '')),
+            'location': (fields.get('location', '') or '')[:200],
+            'time': (fields.get('time', '') or '')[:200],
+            'foreshadowing': (fields.get('foreshadowing', '') or '')[:500],
+            'main_event': (fields.get('main_event', '') or '')[:200],
+        }
+        # main_event 收集到 key_events
+        me = node.get('main_event', '')
+        if me and me not in key_events:
+            key_events.append(me)
+        nodes.append(node)
+    if not nodes:
+        return None
+    return {
+        'volume_index': vi,
+        'volume': vol_title,
+        'volume_id': str(vi),
+        'summary': vol_summary,
+        'main_plot': main_plot,
+        'core_conflict': core_conflict,
+        'ending_hook': ending_hook,
+        'key_events': key_events,
+        'chapter_count': cpv,
+        'start_chapter': 1 + (vi - 1) * cpv,
+        'end_chapter': vi * cpv,
+        'nodes': nodes,
+    }
+
+
+def _nd_parse_characters_field(raw: str) -> list[str]:
+    """把人物字段规范成 ['姓名|关系:关系类型', ...]。"""
+    if not raw:
+        return ['主角|关系:主角']
+    # 按顿号、逗号、分号切分
+    people = re.split(r'[、，,；;]+', raw)
+    result: list[str] = []
+    for p in people:
+        p = p.strip()
+        if not p:
+            continue
+        # 已有 |关系: 格式
+        if '|关系:' in p:
+            result.append(p)
+            continue
+        # 括号格式：姓名(关系:X) 或 姓名(关系类型)
+        m = re.match(r'^(.+?)[（(]\s*(?:关?系?\s*[:：]\s*)?([^()）]+)\s*[)）]$', p)
+        if m:
+            name = m.group(1).strip()
+            rel = m.group(2).strip()
+            result.append(f'{name}|关系:{rel}')
+        else:
+            # 纯名字
+            result.append(f'{p}|关系:主角')
+    return result or ['主角|关系:主角']
