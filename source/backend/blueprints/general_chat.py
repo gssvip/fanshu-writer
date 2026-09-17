@@ -56,6 +56,7 @@ from blueprints.nd_helpers import (
     _nd_clear_state,
     _nd_collect_all_save_plot_volumes,
     _nd_extract_save_plot_vols,
+    _nd_global_chapter_to_local,
     _nd_load_state,
     _nd_merge_state_vols,
     _nd_parse_readable_text_to_volume,
@@ -446,10 +447,20 @@ def chat_general():
             _nd_state = _nd_load_state(session)
             # state 缺失的兜底：从最近AI输出解析 last_ch/volume_index
             if not _nd_state:
-                _vi = _parse_volume_index_from_text(message + '\n' + last_assistant_text) or 1
-                _lc = _parse_last_chapter_from_text(last_assistant_text)
-                if _lc > 0:
-                    _nd_state = {'volume_index': _vi, 'cpv': 50, 'last_ch': _lc, 'volume_title': '',
+                _lc_global = _parse_last_chapter_from_text(last_assistant_text)
+                if _lc_global > 0:
+                    _cpv = 50
+                    try:
+                        _mcpv = re.search(r'(?:cpv|每卷章数|章节数|共)\s*[=:：为是]*\s*(\d{1,3})\s*章', last_assistant_text or '')
+                        if _mcpv and 10 <= int(_mcpv.group(1)) <= 200:
+                            _cpv = int(_mcpv.group(1))
+                    except Exception:
+                        pass
+                    # 优先用全书全局最大章号反推当前卷，避免 state 丢失后误判成第1卷/下一卷
+                    _vi = (_lc_global - 1) // _cpv + 1
+                    _last_local = _nd_global_chapter_to_local(_lc_global, _vi, _cpv)
+                    _nd_state = {'volume_index': _vi, 'cpv': _cpv,
+                                 'last_ch': _last_local or 1, 'volume_title': '',
                                  'updated_at': datetime.now(timezone.utc).isoformat()}
             if _nd_state:
                 # 往 enriched（最终给LLM的用户消息末尾）追加续会上下文
@@ -644,18 +655,21 @@ def chat_general():
                 return
             try:
                 partial = ''.join(full_text)
-                _lc = _parse_last_chapter_from_text(partial)
-                _vi = _parse_volume_index_from_text(partial) or int(_nd_meta_for_closure.get('volume_index') or 1)
+                # volume_index 只信闭包 meta（由用户指令/已加载 state 决定），绝不从模型输出文本反扫，
+                # 否则续会输出里若复述「第1卷已完成」会把正在做的第2卷覆盖成第1卷，导致下一轮继续重置。
+                _vi = int(_nd_meta_for_closure.get('volume_index') or 1)
+                _cpv_r = max(10, int(_nd_meta_for_closure.get('cpv') or 50))
+                # 文本里扫到的是全书全局章号，转成本卷卷内号再落 state
+                _lc = _nd_global_chapter_to_local(_parse_last_chapter_from_text(partial), _vi, _cpv_r)
                 _new_state = dict(_nd_meta_for_closure)
                 _new_state['volume_index'] = _vi
-                if isinstance(_lc, int) and _lc > int(_new_state.get('last_ch') or 0):
+                if isinstance(_lc, int) and _lc > 0 and _lc > int(_new_state.get('last_ch') or 0):
                     _new_state['last_ch'] = _lc
                 _new_state['updated_at'] = datetime.now(timezone.utc).isoformat()
                 # 中断也要累计 vols（半截卡片里已完成的章节点别丢）
                 try:
                     _cur_vols = _nd_extract_save_plot_vols(parse_cards(partial))
                     # 【优化】从可读流式文本解析节点（模型不再输出 SAVE_PLOT 卡片）
-                    _cpv_r = max(10, int(_nd_meta_for_closure.get('cpv') or 50))
                     _parsed_vol = _nd_parse_readable_text_to_volume(partial, _vi, _cpv_r)
                     if _parsed_vol:
                         _cur_vols = _nd_merge_state_vols(_cur_vols, [_parsed_vol])
@@ -894,13 +908,15 @@ def chat_general():
             # ======= 节点设计师：流正常结束（含中途截断/没生成完）→ 更新续会 last_ch/volume_index =======
             if _nd_is_node_role and session and _nd_meta_for_closure:
                 try:
-                    _lc = _parse_last_chapter_from_text(complete)
-                    _vi = _parse_volume_index_from_text(complete) or int(_nd_meta_for_closure.get('volume_index') or 1)
+                    # volume_index 只信 meta，绝不从模型输出文本反扫覆盖（防止续会复述历史卷号导致卷号漂移）
+                    _vi = int(_nd_meta_for_closure.get('volume_index') or 1)
                     _cpv = max(10, int(_nd_meta_for_closure.get('cpv') or 50))
+                    # 文本里扫到的是全书全局章号，转成本卷卷内号再落 state
+                    _lc = _nd_global_chapter_to_local(_parse_last_chapter_from_text(complete), _vi, _cpv)
                     _new_state = dict(_nd_meta_for_closure)
                     _new_state['volume_index'] = _vi
                     _new_state['cpv'] = _cpv
-                    if isinstance(_lc, int) and _lc > int(_new_state.get('last_ch') or 0):
+                    if isinstance(_lc, int) and _lc > 0 and _lc > int(_new_state.get('last_ch') or 0):
                         _new_state['last_ch'] = _lc
                     _new_state['updated_at'] = datetime.now(timezone.utc).isoformat()
                     # 若本次 AI 输出里发现 CPV 信息（例如卷标题里"第X卷（共N章）"）→ 同步升级
@@ -940,7 +956,9 @@ def chat_general():
                 try:
                     _vi = int(_nd_meta_for_closure.get('volume_index') or 1)
                     _cpv = max(10, int(_nd_meta_for_closure.get('cpv') or 50))
-                    _final_lc = int(_parse_last_chapter_from_text(complete) or _nd_meta_for_closure.get('last_ch') or 0)
+                    # complete 里扫到的是全书全局章号，必须转卷内再和 cpv 比，否则第2卷起全局号恒 >= cpv → 误判全卷完成
+                    _glc = _parse_last_chapter_from_text(complete)
+                    _final_lc = _nd_global_chapter_to_local(_glc, _vi, _cpv) or int(_nd_meta_for_closure.get('last_ch') or 0)
                     _is_full = _final_lc >= _cpv
                     # 若模型卡片的 nodes 不完整也同样兜底补齐：检查 cards 中 SAVE_PLOT 的总节点数
                     _existing_nodes_count = 0

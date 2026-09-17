@@ -157,6 +157,25 @@ def _parse_volume_index_from_text(text: str) -> int | None:
     return None
 
 
+def _nd_global_chapter_to_local(ch, vi, cpv) -> int:
+    """把全书全局连续章号转成本卷卷内章号（1..cpv）；不在本卷区间返回 0。
+
+    节点设计师的章号是全书全局连续的（第 vi 卷覆盖 [(vi-1)*cpv+1, vi*cpv]），
+    而续会 state 里的 last_ch 必须存卷内号（0=未开始，cpv=整卷完成），否则
+    第 2 卷起会把全局号混进 last_ch → 「继续」误判已完成整卷 / 跳下一卷。
+    """
+    try:
+        ch = int(ch)
+        vi = int(vi) if vi else 1
+        cpv = int(cpv) if cpv else 50
+    except (TypeError, ValueError):
+        return 0
+    if cpv < 1 or vi < 1:
+        return 0
+    local = ch - (vi - 1) * cpv
+    return local if 1 <= local <= cpv else 0
+
+
 def _nd_ind_connect():
     """复用圆桌的独立连接工厂（独立于请求 db.session，不受回滚/GeneratorExit 影响；运行时导入避免循环）。"""
     from blueprints.chat_collab_bp import _rt_ind_connect
@@ -626,16 +645,22 @@ def _nd_build_partial_volume_card(vols_list: list[dict], vi: int, cpv: int) -> d
 
 def _nd_build_continue_user_injection(state: dict) -> str:
     """命中续会时，拼一段『已完成第1~last_ch章，从last_ch+1开始不要重复』的用户消息补充上下文。
-    同时按区间判断：中途段→禁止吐SAVE_PLOT卡片；收尾段（next_ch+剩余<≈1.2*cpv 保守判断=大概率写得完尾）→ 要求吐全卷合并版卡片。"""
-    vi = int(state.get('volume_index') or 0)
+    同时按区间判断：中途段→禁止吐SAVE_PLOT卡片；收尾段（next_ch+剩余<≈1.2*cpv 保守判断=大概率写得完尾）→ 要求吐全卷合并版卡片。
+    state['last_ch'] 是卷内号，下面统一换算成全书全局连续章号，避免模型把「卷内第1章」与「全书全局章号」混用。"""
+    vi = int(state.get('volume_index') or 1)
     cpv = int(state.get('cpv') or 50)
     last_ch = int(state.get('last_ch') or 0)
-    next_ch = last_ch + 1
     total = cpv
+    # 全书全局连续章号（第 vi 卷覆盖 [(vi-1)*total+1, vi*total]）
+    g_start = 1 + (vi - 1) * total
+    g_end = vi * total
+    g_done = g_start + last_ch - 1   # 已写到的最后一章（全书全局号）
+    next_ch = last_ch + 1            # 卷内下一章
+    g_next = g_done + 1              # 全书全局下一章
     if next_ch > total:
         # 已完成整卷还继续 → 提示已完成，如需修改按章节号改
         return ("\n【系统续会上下文】作者说「继续」，但本卷进度记录显示："
-                f"第{vi}卷（共{total}章）已经完成到第{last_ch}章=整卷写完。"
+                f"第{vi}卷（共{total}章，全书第{g_start}~{g_end}章）已经完成到本卷第{last_ch}章=整卷写完。"
                 f"请直接告诉作者：「这一卷{total}章已经全部设计完成啦。需要改某一章直接对我说『第X章改XXX』；要开新卷直接说『第N卷 节点设计』。」"
                 "不要再重复输出已写完的章节节点，也不要再输出全卷卡片。\n")
     # 判定是不是收尾段：剩余章节数 ≤ 30（约占 cpv 60%以内），或 last_ch ≥ total*0.7
@@ -643,30 +668,31 @@ def _nd_build_continue_user_injection(state: dict) -> str:
     is_final_leg = (remaining <= 30) or (last_ch >= int(total * 0.7))
     if not is_final_leg:
         # 中途段门禁
+        g_est_end = min(g_done + 30, g_end)
         return (
             f"\n【系统续会上下文】作者说「继续」，这是节点设计续会。请严格按如下规则："
-            f"\n· 当前卷：第{vi}卷（共{total}章，章号 {1 + (vi-1)*total}~{vi*total}，卷内编号 {1}~{total}）"
-            f"\n· 已输出完成：第{1}章~第{last_ch}章（共{last_ch}个情节子节点）"
-            f"\n· 本轮只输出：第{next_ch}章~预计第{min(last_ch+30, total)}章左右（写不完没关系，下一轮作者发『继续』会从你写到的最后一章接着续）"
-            f"\n· ❗门禁·中途段：本轮不会写到第{total}章（本卷最后一章），属于中途进度段："
+            f"\n· 当前卷：第{vi}卷（共{total}章，全书章号 {g_start}~{g_end}）"
+            f"\n· 已输出完成：全书第{g_start}章~第{g_done}章（本卷内第{1}~{last_ch}章，共{last_ch}个情节子节点）"
+            f"\n· 本轮只输出：第{g_next}章~预计第{g_est_end}章左右（写不完没关系，下一轮作者发『继续』会从你写到的最后一章接着续）"
+            f"\n· ❗门禁·中途段：本轮不会写到本卷最后一章（全书第{g_end}章），属于中途进度段："
             f"\n   · ✅ 本轮续写的所有节点写完后，只需要在末尾写一行中文进度快照："
-            f"\n     「✅ 中途进度快照：已完成第{next_ch}章~第<本轮实际写到的最后一章号>章，累计完成<N>/{total}。随时发『继续』接着生成。」"
+            f"\n     「✅ 中途进度快照：已完成第{g_next}章~第<本轮实际写到的最后一章号>章，累计完成<N>/{total}。随时发『继续』接着生成。」"
             f"\n   · ❌ 绝对不要输出任何 [[CARD:SAVE_PLOT|...]] 落地卡片或 JSON 数组——后端会自动解析你的可读文本。"
-            f"\n· ❗铁律：绝对不要重复写 第1章~第{last_ch}章 的任何内容、标题、字段、节点；任何形式的复述都不允许。"
-            f"\n· 输出顺序仍然按：章节号递增 → 开场白可省略或只说一句「继续第{next_ch}章起节点」即可，不再啰嗦卷级设定。"
+            f"\n· ❗铁律：绝对不要重复写 第{g_start}章~第{g_done}章 的任何内容、标题、字段、节点；任何形式的复述都不允许。"
+            f"\n· 输出顺序仍然按：章节号递增 → 开场白可省略或只说一句「继续第{g_next}章起节点」即可，不再啰嗦卷级设定。"
             f"\n· 爽点/五幕/节奏仍然按整卷规则对齐，但只写剩余章。"
             f"\n· 仍然遵守 A+C 铁律：单章单节点、无重叠无跳章、chapters 严格落在卷区间内。\n"
         )
     # 收尾段门禁
     return (
         f"\n【系统续会上下文】作者说「继续」，这是节点设计续会。请严格按如下规则："
-        f"\n· 当前卷：第{vi}卷（共{total}章，章号 {1 + (vi-1)*total}~{vi*total}，卷内编号 {1}~{total}）"
-        f"\n· 已输出完成：第{1}章~第{last_ch}章（共{last_ch}个情节子节点）"
-        f"\n· 本轮必须只输出：第{next_ch}章~第{total}章（剩余 {remaining} 个情节子节点）"
-        f"\n· ❗门禁·收尾段：本轮会写到最后一章（第{total}章），请务必完整写到末尾；全卷写完后："
+        f"\n· 当前卷：第{vi}卷（共{total}章，全书章号 {g_start}~{g_end}）"
+        f"\n· 已输出完成：全书第{g_start}章~第{g_done}章（本卷内第{1}~{last_ch}章，共{last_ch}个情节子节点）"
+        f"\n· 本轮必须只输出：第{g_next}章~第{g_end}章（剩余 {remaining} 个情节子节点）"
+        f"\n· ❗门禁·收尾段：本轮会写到本卷最后一章（全书第{g_end}章），请务必完整写到末尾；全卷写完后："
         f"\n   · ✅ 只输出一行总结：「✅ 完成：共{total}章，{total}个节点，单章单节点+资源滚动+人物关系门禁合格」即可。"
-        f"\n   · ❌ 不要输出任何 [[CARD:SAVE_PLOT|...]] 卡片或 JSON 数组——后端会自动从你输出的可读文本里解析出第1~{total}章全卷节点并入库。"
-        f"\n· ❗铁律：写第{next_ch}~第{total}章正文节点时，仍然不许复述前面已写章节。"
+        f"\n   · ❌ 不要输出任何 [[CARD:SAVE_PLOT|...]] 卡片或 JSON 数组——后端会自动从你输出的可读文本里解析出第{g_start}~{g_end}章全卷节点并入库。"
+        f"\n· ❗铁律：写第{g_next}~第{g_end}章正文节点时，仍然不许复述前面已写章节。"
         f"\n· 爽点/五幕/节奏仍然按整卷规则对齐，但只写剩余章。"
         f"\n· 仍然遵守 A+C 铁律：单章单节点、无重叠无跳章、chapters 严格落在卷区间内。\n"
     )
