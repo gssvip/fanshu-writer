@@ -52,6 +52,7 @@ from blueprints.nd_helpers import (
     _is_nd_new_volume_request,
     _nd_build_continue_user_injection,
     _nd_build_full_volume_card,
+    _nd_build_partial_volume_card,
     _nd_clear_state,
     _nd_collect_all_save_plot_volumes,
     _nd_extract_save_plot_vols,
@@ -982,6 +983,23 @@ def chat_general():
                                         pass
                                 if not _already_full:
                                     cards.append(built)
+                    # 【优化】模型不再输出 SAVE_PLOT 卡片：即使未完成全卷(_is_full=False)，只要有解析到的节点，
+                    # 也构建一张 SAVE_PLOT 卡片，供前端显示「分批临时保存/采纳」按钮（之前模型会自己吐半截卡片）
+                    elif not cards and _nd_meta_for_closure.get('vols'):
+                        try:
+                            all_vols, dvi, dcpv = _nd_collect_all_save_plot_volumes(history, complete, _nd_meta_for_closure.get('vols'), vi=_vi, cpv=_cpv)
+                            vi_for_build = dvi or _vi
+                            cpv_for_build = dcpv or _cpv
+                            if all_vols:
+                                # 半截卡片：只含已生成节点，不补齐占位章 → 前端显示「分批临时保存」按钮
+                                built = _nd_build_partial_volume_card(all_vols, vi_for_build, cpv_for_build)
+                                if built:
+                                    built['content'] = _clean_text_to_plain(built.get('content', ''))
+                                    if built.get('title'):
+                                        built['title'] = _clean_text_to_plain(built['title'])
+                                    cards.append(built)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
             for card in cards:

@@ -551,6 +551,79 @@ def _nd_build_full_volume_card(vols_list: list[dict], vi: int, cpv: int) -> dict
         return None
 
 
+def _nd_build_partial_volume_card(vols_list: list[dict], vi: int, cpv: int) -> dict | None:
+    """构建半截 SAVE_PLOT 卡片（仅含已生成的节点，不补齐占位章）。
+    用于模型未输出卡片、且全卷未完成时，让前端显示「分批临时保存」按钮。
+    与 _nd_build_full_volume_card 的区别：不调用 _repair_nodes_to_one_ch_per_node
+    补齐缺失章，nodes 只包含实际解析到的节点，前端据此判定为半截卡片。"""
+    try:
+        from node_design_bp import _parse_chapters_field
+        ch_map: dict[int, dict] = {}
+        vol_title = f'第{vi}卷'
+        for v in vols_list:
+            if not isinstance(v, dict):
+                continue
+            _vvi = v.get('volume_index')
+            if not isinstance(_vvi, int) or not (1 <= _vvi <= 99):
+                try:
+                    _vvi = int(str(v.get('volume_id') or '0') or 0)
+                except Exception:
+                    _vvi = 0
+            if _vvi and _vvi != vi:
+                continue
+            if v.get('volume'):
+                vol_title = str(v['volume'])
+            nodes = v.get('nodes')
+            if not isinstance(nodes, list):
+                continue
+            for n in nodes:
+                if not isinstance(n, dict):
+                    continue
+                chs = _parse_chapters_field(n.get('chapters'))
+                if not chs:
+                    continue
+                a, b = chs
+                for ch in range(a, b + 1):
+                    cp = dict(n)
+                    cp['chapters'] = ch
+                    ch_map[ch] = cp
+        if not ch_map:
+            return None
+        # 全局号转卷内编号
+        start_global_guess = 1 + (vi - 1) * cpv
+        if all(k >= start_global_guess for k in ch_map.keys()):
+            new_map = {}
+            for g, nd in ch_map.items():
+                local = g - (start_global_guess - 1)
+                if 1 <= local <= cpv:
+                    nd['chapters'] = local
+                    new_map[local] = nd
+            ch_map = new_map
+        nodes_sorted = [ch_map[k] for k in sorted(ch_map.keys())]
+        final_vol = {
+            'volume_id': str(vi),
+            'volume': vol_title,
+            'volume_index': vi,
+            'volume_title': vol_title,
+            'summary': '',
+            'main_plot': '',
+            'core_conflict': '',
+            'key_events': [],
+            'ending_hook': '',
+            'chapter_count': cpv,
+            'start_chapter': 1 + (vi - 1) * cpv,
+            'end_chapter': vi * cpv,
+            'nodes': nodes_sorted,
+        }
+        content = json.dumps([final_vol], ensure_ascii=False)
+        done = len(nodes_sorted)
+        title = f'第{vi}卷情节节点（{done}/{cpv}）· 中途进度快照'
+        card_id = 'SAVE_PLOT_' + str(vi) + '_' + str(int(__import__('time').time()))
+        return {'id': card_id, 'type': 'SAVE_PLOT', 'title': title, 'content': content, 'target': 'plot'}
+    except Exception:
+        return None
+
+
 def _nd_build_continue_user_injection(state: dict) -> str:
     """命中续会时，拼一段『已完成第1~last_ch章，从last_ch+1开始不要重复』的用户消息补充上下文。
     同时按区间判断：中途段→禁止吐SAVE_PLOT卡片；收尾段（next_ch+剩余<≈1.2*cpv 保守判断=大概率写得完尾）→ 要求吐全卷合并版卡片。"""
