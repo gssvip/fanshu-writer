@@ -2876,13 +2876,17 @@ export default function ChatPanel() {
         }
       }
     }
-    // 如果 lastCh 明显是全局章号（>=100、没有卡片），就按 vi 推断：lastCh - (vi-1)*cpv
-    if (lastCh >= 100 && vi) {
-      const local = lastCh - (vi - 1) * cpv;
-      if (local >= 1 && local <= cpv) lastCh = local;
-    } else if (lastCh > cpv && !fromCard && !vi) {
-      // 解析可能偏严（比如 cpv=50 但 lastCh 是全局 55 章=第2卷第5章），这种情况没 vi 的话先模 50，保证进度条不超 100%
-      lastCh = Math.min(cpv, lastCh % cpv);
+    // 把「全书全局连续章号」归一化成「卷内号 1..cpv」：
+    // 节点设计师第2卷起输出的就是全书全局号（第2卷=51~100），卡片 nodes.chapters 也统一全局号。
+    // 已知 vi 时减去 (vi-1)*cpv 还原卷内号；未知 vi 时按 cpv 取模兜底。否则第2卷半截(51~75)会被
+    // 误判成 lastCh=75 → done=min(50,75)=50 → 进度条虚报「全卷完成」。
+    if (lastCh > cpv) {
+      if (vi && vi > 0) {
+        const local = lastCh - (vi - 1) * cpv;
+        lastCh = (local >= 1 && local <= cpv) ? local : Math.min(cpv, (lastCh % cpv) || cpv);
+      } else {
+        lastCh = Math.min(cpv, (lastCh % cpv) || cpv);
+      }
     }
     return { last_ch: lastCh, cpv, vi, from_card: fromCard };
   }, []);
@@ -3005,71 +3009,12 @@ export default function ChatPanel() {
       const ND_CONTINUE_RE = /^(继续|接着|续|往下|没写完|(?:继续|接着|继续吧|接着吧)(?:生成|节点|写|出)?|(?:节点|节点设计)\s*(?:继续|接着)|(?:往下\s*(?:生成|写)))$/;
       const isContinue = ND_CONTINUE_RE.test(tNorm) || (tNorm.length <= 12 && /^(继续|接着|往下)/.test(tNorm) && !/卷|章/.test(tNorm));
       if (isContinue) {
-        // 从历史消息里找最近一条 AI 消息（节点设计师产出的内容），解析 volume_index 和 last_chapter
-        let lastAiText = '';
-        for (let i = messages.length - 1; i >= 0; i--) {
-          const m = messages[i];
-          if (m.role === 'assistant' && typeof m.content === 'string' && m.content.trim()) {
-            lastAiText = m.content;
-            break;
-          }
-        }
-        const vols = lastAiText.match(/第\s*(\d+)\s*卷/g);
-        const viHint = vols && vols.length > 0 ? parseInt((vols[vols.length - 1].match(/\d+/) || ['0'])[0], 10) : 0;
-        const chapters = lastAiText.match(/第\s*(\d+)\s*章/g);
-        let maxCh = 0;
-        if (chapters && chapters.length > 0) {
-          for (const c of chapters) {
-            const n = parseInt((c.match(/\d+/) || ['0'])[0], 10);
-            if (n > maxCh) maxCh = n;
-          }
-        }
-        // 兜底再从最新 AI 挂载的 SAVE_PLOT 卡片 content 解析（更精准）
-        try {
-          for (let i = messages.length - 1; i >= 0 && maxCh === 0; i--) {
-            const m: any = messages[i];
-            if (m.role !== 'assistant') continue;
-            const cards: any[] = m.cards || [];
-            for (const c of cards) {
-              if (c.type !== 'SAVE_PLOT') continue;
-              const txt = String(c.content || '');
-              if (txt.startsWith('[')) {
-                const arr = JSON.parse(txt);
-                if (Array.isArray(arr)) {
-                  for (const v of arr) {
-                    if (v && Array.isArray(v.nodes)) {
-                      for (const n of v.nodes) {
-                        const chs = n.chapters;
-                        if (Array.isArray(chs) && chs.length > 0) {
-                          for (const x of chs) if (typeof x === 'number' && x > maxCh) maxCh = x;
-                        } else if (typeof chs === 'number' && chs > maxCh) {
-                          maxCh = chs;
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        } catch { /* ignore parse errors */ }
-        let promptText = text.trim();
-        if (maxCh > 0 || viHint > 0) {
-          const nextCh = Math.max(maxCh, 0) + 1;
-          promptText =
-            `继续节点设计。${viHint ? `当前卷：第${viHint}卷。` : ''}` +
-            (maxCh > 0
-              ? `已完成：第1章~第${maxCh}章。本轮请从第${nextCh}章开始继续输出后续章节点，**绝对不要重复写第1章~第${maxCh}章的任何内容**，`
-              : `本轮请继续从上次中断处往下输出，**绝对不要复述已写过的内容**，`) +
-            `最后给 SAVE_PLOT 卡片，cards 里的 nodes **只列出本次新续写的节点**（后端会按章节号自动增量合并到老卷）。`;
-        } else {
-          // 没有任何进度信息 → 退回提示用法
-          setMessages(prev => [...prev,
-            { role: 'user', content: text },
-            { role: 'assistant', content: '🎯 **节点设计师**：没找到当前卷的生成进度，无法直接续会。\n\n请直接告诉我卷号从头开始：如 `第1卷` `1`；\n如果是修改某章：直接说 `第25章增加反派压迫感` 即可。' },
-          ]);
-          return;
-        }
+        // 续会：直接把「继续/接着…」原文交给后端，由后端 node_designer_state 的权威进度
+        // （_nd_build_continue_user_injection）拼出「全书第g_next章起、严禁重复」的上下文。
+        // 前端绝不拼「第1章~第N章」——前端正则扫到的是全书全局连续章号（第2卷=51~100），
+        // 拼进 prompt 会把模型带偏（从第1卷/下一卷重生成），这正是「继续不能断点续写」的元凶。
+        // 后端哪怕 state 缺失，也会从历史 assistant 输出兜底解析进度，无需前端兜底拼章号。
+        const promptText = text.trim();
         const _cfgId = sessionModelMap[_sid] || undefined;
         appendUserAi(promptText);
         setStreaming(true);
@@ -3414,19 +3359,14 @@ export default function ChatPanel() {
   // 把 handleGeneral 暴露给（声明在它前面的）预设 auto-submit effect
   handleGeneralRef.current = handleGeneral;
 
-  // 一键继续（节点设计师用）：补进度上下文，直接走 handleGeneral 发送
+  // 一键继续（节点设计师用）：直接发「继续」交由后端注入正确的续会上下文。
+  // 注意：不要在这里拼「第X章/第N卷」进度细节——前端算的是卷内号、后端 state 用的是
+  // 全书全局连续章号，混用会把模型带偏（从第1卷/下一卷重生成）。后端 _nd_build_continue_user_injection
+  // 会以权威 state 拼出正确的「全书第g_next章起」提示，前端只需触发续会指令。
   const handleQuickContinue = useCallback(() => {
     if (streaming) return;
-    const prog = parseNodeDesignerProgress(messages, 50);
-    const { last_ch, vi } = prog;
-    const viLabel = vi ?? 1;
-    if (last_ch <= 0) {
-      handleGeneral({ text: '继续' });
-      return;
-    }
-    const promptText = `继续节点设计。当前卷：第${viLabel}卷。已完成：第1章~第${last_ch}章。本轮请从第${last_ch + 1}章开始继续输出后续章节点，**绝对不要重复写第1~${last_ch}章的任何内容**，收尾时 SAVE_PLOT 卡片 nodes 必须是全卷合并版 1~50 全章，中途段禁止吐卡片。`;
-    handleGeneral({ text: promptText });
-  }, [streaming, messages, parseNodeDesignerProgress, handleGeneral]);
+    handleGeneral({ text: '继续' });
+  }, [streaming, handleGeneral]);
 
   // 圆桌会议断点续会（点击rt-header右上角绿色"继续"按钮触发）
   // 关键行为：不新增用户气泡、不新建助手消息 → 追加发言到被点击的那条roundtable消息里
@@ -3798,73 +3738,38 @@ export default function ChatPanel() {
                         const prog = parseNodeDesignerProgress(messages, 50);
                         const { last_ch, cpv, vi, from_card } = prog;
                         const done = Math.max(0, Math.min(cpv, last_ch));
-                        const pct = cpv > 0 ? Math.max(0, Math.min(100, Math.round((done / cpv) * 100))) : 0;
                         // 只有 SAVE_PLOT 卡片证实的完整进度才算"完成"：
                         // 正则兜底会被模型开场白（"将设计第1章~第50章"）虚抬 → 意外终止后误判完成 → 继续按钮消失
                         const isDone = from_card && done >= cpv;
+                        const volNo = vi || 1;
                         return (
                           <div style={{
                             marginTop: 10,
-                            padding: '10px 14px',
+                            padding: '8px 12px',
                             borderRadius: 10,
                             background: isDone
                               ? 'linear-gradient(180deg,#ecfdf5 0%,#f0fdf4 100%)'
                               : 'linear-gradient(180deg,#eff6ff 0%,#f5f3ff 100%)',
                             border: `1px solid ${isDone ? '#a7f3d0' : '#bfdbfe'}`,
                           }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                              <strong style={{ color: isDone ? '#047857' : 'var(--text-primary)', fontSize: 13 }}>
-                                {isDone ? '✅ 节点设计全卷完成' : `🎯 节点设计进度（${vi ? `第${vi}卷` : '当前卷'}）`}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'nowrap', overflow: 'hidden' }}>
+                              <strong style={{ color: isDone ? '#047857' : 'var(--text-primary)', fontSize: 13, whiteSpace: 'nowrap' }}>
+                                {isDone ? '✅ 节点设计全卷完成' : `🎯 节点设计进度（第${volNo}卷）`}
                               </strong>
-                              <span style={{ fontSize: 12, color: '#374151' }}>
-                                {done} / {cpv} 章 · {pct}%
+                              <span style={{ fontSize: 12, color: '#374151', whiteSpace: 'nowrap' }}>
+                                {done}/{cpv}章
                               </span>
-                              <span style={{ flex: 1 }} />
-                              <div style={{ display: 'flex', gap: 6 }}>
-                                <button
-                                  className="chat-send primary"
-                                  style={{ padding: '4px 12px', minHeight: 26, fontSize: 13 }}
-                                  onClick={handleQuickContinue}
-                                  disabled={streaming || isDone}
-                                  title={isDone ? '整卷已完成，如需修改某章直接说「第X章改XXX」，或点「重来」重新生成整卷' : '一键从写到的最后一章继续生成（等同于发送「继续」）'}
-                                >
-                                  {isDone ? '全卷已完成' : '⏭️ 继续生成'}
-                                </button>
-                                <button
-                                  className="chat-send ghost"
-                                  style={{ padding: '4px 10px', minHeight: 26, fontSize: 12 }}
-                                  onClick={() => {
-                                    const n = vi || 1;
-                                    handleGeneral({ text: `第${n}卷 节点设计` });
-                                  }}
-                                  disabled={streaming}
-                                  title={`重新从第${vi || 1}卷第1章开始生成（覆盖当前进度）`}
-                                >
-                                  🔄 重来第{vi || 1}卷
-                                </button>
-                              </div>
+                              <span style={{ flex: 1, minWidth: 6 }} />
+                              <button
+                                className="chat-send primary"
+                                style={{ padding: '4px 12px', minHeight: 26, fontSize: 13, whiteSpace: 'nowrap' }}
+                                onClick={handleQuickContinue}
+                                disabled={streaming || isDone}
+                                title={isDone ? '整卷已完成，如需修改某章直接说「第X章改XXX」' : '从写到的最后一章继续生成（等同于发送「继续」）'}
+                              >
+                                {isDone ? '全卷已完成' : '继续'}
+                              </button>
                             </div>
-                            <div style={{
-                              height: 8,
-                              marginTop: 10,
-                              background: '#e5e7eb',
-                              borderRadius: 99,
-                              overflow: 'hidden',
-                            }}>
-                              <div style={{
-                                height: '100%',
-                                width: `${pct}%`,
-                                background: isDone
-                                  ? 'linear-gradient(90deg,#10b981 0%,#22c55e 100%)'
-                                  : 'linear-gradient(90deg,#3b82f6 0%,#8b5cf6 100%)',
-                                transition: 'width .5s ease',
-                              }} />
-                            </div>
-                            {!isDone && done === 0 && (
-                              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>
-                                💡 还没开始生成，可以直接发「第N卷 节点设计」或点节点设计按钮从剧情面板带卷号进入，AI 会流式直出整卷节点。
-                              </div>
-                            )}
                           </div>
                         );
                       })()}

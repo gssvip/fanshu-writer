@@ -737,6 +737,9 @@ _ND_CHAPTER_SPLIT_RE = re.compile(
     r'(?:^|\n)\s*(?:【)?\s*第\s*(\d+)\s*章\s*(?:】)?\s*(?:\n|$|（)'
 )
 
+# 行首项目符号（节点设计师可读输出为「- 字段：值」逐行列表）
+_ND_LINE_BULLET_RE = re.compile(r'^\s*(?:[-•*·▪◦]\s*)+')
+
 # 字段标签正则（按优先级排序，长的在前避免短标签误匹配）
 _ND_FIELD_PATTERNS: list[tuple[str, re.Pattern]] = [
     ('chapter_beats', re.compile(r'chapter_beats\s*[:：]\s*', re.IGNORECASE)),
@@ -744,7 +747,8 @@ _ND_FIELD_PATTERNS: list[tuple[str, re.Pattern]] = [
     ('resources_used', re.compile(r'【?\s*资源(?:\s*[·•]\s*)?(?:本章)?\s*消耗(?:\s*resources_used)?\s*】?\s*[:：]\s*', re.IGNORECASE)),
     ('total_resources_owned', re.compile(r'【?\s*总资源(?:\s*total_resources_owned)?\s*】?\s*[:：]\s*', re.IGNORECASE)),
     ('main_event', re.compile(r'【?\s*所属大事件\s*】?\s*[:：]\s*|main_event\s*[:：]\s*', re.IGNORECASE)),
-    ('characters', re.compile(r'人物(?:characters)?\s*[:：]\s*', re.IGNORECASE)),
+    # 人物：容忍标签里夹「（人物关系必写）」等括号注解，否则整个字段漏匹配 → 人物丢成默认「主角」，并污染 conflict
+    ('characters', re.compile(r'人物(?:characters)?(?:[（(][^）)]*[）)])?\s*[:：]\s*', re.IGNORECASE)),
     ('summary', re.compile(r'摘要(?:summary)?\s*[:：]\s*', re.IGNORECASE)),
     ('conflict', re.compile(r'冲突(?:conflict)?\s*[:：]\s*', re.IGNORECASE)),
     ('location', re.compile(r'地点(?:location)?\s*[:：]\s*', re.IGNORECASE)),
@@ -773,32 +777,54 @@ def _nd_split_into_chapter_blocks(text: str) -> list[tuple[int, str]]:
     return blocks
 
 
+def _nd_split_location_time_line(val: str) -> str:
+    """把「地点location / 时间time：X / Y」合并行里的取值部分拆成两行。"""
+    val = (val or '').strip()
+    parts = re.split(r'\s*/\s*', val, maxsplit=1)
+    loc = parts[0].strip() if parts else ''
+    tim = parts[1].strip() if len(parts) > 1 else ''
+    return f'地点location：{loc}\n时间time：{tim}'
+
+
 def _nd_extract_fields_from_block(block: str) -> dict:
-    """从单个章节块文本里提取各字段值。
-    策略：找到所有字段标签的位置，按位置排序，相邻标签之间的文本就是前一个字段的值。"""
-    # 收集所有 (field_name, start_pos, end_pos)
-    found: list[tuple[str, int, int]] = []
-    for name, pat in _ND_FIELD_PATTERNS:
-        for m in pat.finditer(block):
-            found.append((name, m.start(), m.end()))
-    if not found:
+    """从单个章节块文本里逐行提取各字段值。
+
+    节点设计师的可读输出是「- 字段：值」逐行列表（字段值可能跨行续写）。
+    旧实现用「相邻字段标签的位置差」截值，会把下一字段行的「- 」项目符号
+    吃进上一字段尾部（title 变成「初入宗门\\n-」、characters 被污染），导致
+    人物/主要事件/资源/伏笔等字段落地失真。改为逐行识别字段标签：
+      行首（去掉项目符号后）命中字段标签 → 新建字段；否则作为上一字段续行。
+    """
+    if not block:
         return {}
-    # 按起始位置排序，同位置取较长匹配（优先）
-    found.sort(key=lambda x: (x[1], -(x[2] - x[1])))
-    # 去重：同一位置只保留第一个
-    deduped: list[tuple[str, int, int]] = []
-    last_pos = -1
-    for name, s, e in found:
-        if s == last_pos:
-            continue
-        deduped.append((name, s, e))
-        last_pos = s
+    # 归一化：老格式「地点location / 时间time：X / Y」合并写在一行 → 拆成两行
+    block = re.sub(
+        r'地点(?:location)?\s*/\s*时间(?:time)?\s*[:：]\s*([^\n]+)',
+        lambda m: _nd_split_location_time_line(m.group(1)),
+        block,
+    )
     fields: dict[str, str] = {}
-    for i, (name, s, e) in enumerate(deduped):
-        next_s = deduped[i + 1][1] if i + 1 < len(deduped) else len(block)
-        val = block[e:next_s].strip()
-        if val:
-            fields[name] = val
+    current: str | None = None
+    for raw_line in block.split('\n'):
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = _ND_LINE_BULLET_RE.sub('', line)
+        if not line:
+            continue
+        matched = False
+        for name, pat in _ND_FIELD_PATTERNS:
+            m = pat.match(line)
+            if m:
+                fields[name] = line[m.end():].strip()
+                current = name
+                matched = True
+                break
+        if matched:
+            continue
+        # 命中不了标签 → 当作当前字段的续行（多行 value 拼接）
+        if current is not None and current in fields:
+            fields[current] = (fields[current] + '\n' + line).strip()
     return fields
 
 
