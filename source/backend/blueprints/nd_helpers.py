@@ -477,9 +477,53 @@ def _nd_collect_all_save_plot_volumes(session_history: list, current_text: str, 
     return vols, detected_vi, detected_cpv
 
 
+def _nd_normalize_chapters_to_global(ch_map: dict[int, dict], vi: int, cpv: int) -> dict[int, dict]:
+    """把 ch_map 里的章号统一规范化成【全书全局连续章号】。
+
+    背景：节点设计师原始输出 / node_design_bp 卡片 / apply_card 采纳链路
+    （_repair_volume_nodes_safe 用 start_ch=1+(vi-1)*cpv 推导区间）一律使用
+    全书全局章号。_nd_build_*_card 之前误把全局号转成卷内号(1..cpv)，导致第2卷
+    起采纳时节点全部落在修复区间外 → 被替换成占位符 → 落不到剧情分卷。
+    这里统一改回全局号。
+
+    判定：若 max(ch) <= cpv 视为卷内号 → 加 (vi-1)*cpv；若 min(ch) >= 全局起点
+    视为全局号 → 保持；混合情况按单章判定。"""
+    if not ch_map:
+        return ch_map
+    g_start = 1 + (vi - 1) * cpv
+    g_end = vi * cpv
+    keys = list(ch_map.keys())
+    mx = max(keys)
+    mn = min(keys)
+    # 全部卷内号（1..cpv）→ 转全局
+    if mx <= cpv:
+        offset = (vi - 1) * cpv
+        new_map = {}
+        for k, nd in ch_map.items():
+            g = k + offset
+            nd['chapters'] = g
+            new_map[g] = nd
+        return new_map
+    # 全部全局号 → 保持
+    if mn >= g_start:
+        return ch_map
+    # 混合：逐章判定
+    new_map = {}
+    for k, nd in ch_map.items():
+        if g_start <= k <= g_end:
+            g = k
+        elif 1 <= k <= cpv:
+            g = k + (vi - 1) * cpv
+        else:
+            g = k  # 越界，保持原值由后续修复器处理
+        nd['chapters'] = g
+        new_map[g] = nd
+    return new_map
+
+
 def _nd_build_full_volume_card(vols_list: list[dict], vi: int, cpv: int) -> dict | None:
     """把 vols_list 里的所有 volume（可能来自多张续会卡片）按章节号增量合并，构建一张完整的全卷卡片：
-      nodes 覆盖 [1, cpv]（按 volume_index=vi 的卷内章序 1..cpv），
+      nodes 覆盖全书全局章号 [1+(vi-1)*cpv, vi*cpv]，
       如果所有分段加起来仍然缺章，调用 node_design_bp._repair_nodes_to_one_ch_per_node 补齐。
     返回 SAVE_PLOT 卡片字典 {id, type:'SAVE_PLOT', title, content:JSON 字符串} 或 None。"""
     try:
@@ -533,20 +577,13 @@ def _nd_build_full_volume_card(vols_list: list[dict], vi: int, cpv: int) -> dict
                     cp = dict(n)
                     cp['chapters'] = ch
                     ch_map[ch] = cp
-        # 如果章节都在 vi 卷区间外（全局号），转换到卷内编号 1..cpv
-        # 尝试：若所有 ch >= 1+(vi-1)*50 → 按全局号减去偏移
-        start_global_guess = 1 + (vi - 1) * cpv
-        if ch_map and all(k >= start_global_guess for k in ch_map.keys()):
-            new_map = {}
-            for g, nd in ch_map.items():
-                local = g - (start_global_guess - 1)
-                if 1 <= local <= cpv:
-                    nd['chapters'] = local
-                    new_map[local] = nd
-            ch_map = new_map
-        # 补齐并修复 A+C
+        # 统一规范化为全书全局章号（与 node_design_bp / apply_card 采纳链路一致）
+        ch_map = _nd_normalize_chapters_to_global(ch_map, vi, cpv)
+        # 补齐并修复 A+C：用全书全局区间 [g_start, g_end]
+        g_start = 1 + (vi - 1) * cpv
+        g_end = vi * cpv
         nodes_flat = list(ch_map.values())
-        repaired, _ = _repair_nodes_to_one_ch_per_node(nodes_flat, 1, cpv, vi, 0)
+        repaired, _ = _repair_nodes_to_one_ch_per_node(nodes_flat, g_start, g_end, vi, 0)
         final_vol = {
             'volume_id': vol_id,
             'volume': vol_title,
@@ -558,8 +595,8 @@ def _nd_build_full_volume_card(vols_list: list[dict], vi: int, cpv: int) -> dict
             'key_events': key_events,
             'ending_hook': ending_hook,
             'chapter_count': cpv,
-            'start_chapter': 1 + (vi - 1) * cpv,
-            'end_chapter': vi * cpv,
+            'start_chapter': g_start,
+            'end_chapter': g_end,
             'nodes': repaired,
         }
         content = json.dumps([final_vol], ensure_ascii=False)
@@ -608,16 +645,8 @@ def _nd_build_partial_volume_card(vols_list: list[dict], vi: int, cpv: int) -> d
                     ch_map[ch] = cp
         if not ch_map:
             return None
-        # 全局号转卷内编号
-        start_global_guess = 1 + (vi - 1) * cpv
-        if all(k >= start_global_guess for k in ch_map.keys()):
-            new_map = {}
-            for g, nd in ch_map.items():
-                local = g - (start_global_guess - 1)
-                if 1 <= local <= cpv:
-                    nd['chapters'] = local
-                    new_map[local] = nd
-            ch_map = new_map
+        # 统一规范化为全书全局章号（与采纳链路一致，避免第2卷起节点全部越界被替换成占位符）
+        ch_map = _nd_normalize_chapters_to_global(ch_map, vi, cpv)
         nodes_sorted = [ch_map[k] for k in sorted(ch_map.keys())]
         final_vol = {
             'volume_id': str(vi),
