@@ -843,15 +843,16 @@ def _nd_normalize_resource_list(raw: str) -> list[str]:
     if not raw or raw.strip() in ('无', '没有', 'none', 'None'):
         return []
     items: list[str] = []
+    # 支持「、」分隔的多项资源（模型常把"下品灵石×300、洗髓丹×5"写在一行）
     for ln in re.split(r'\n+|[；;]+', raw):
         s = ln.strip()
         if not s or s in ('无', '没有'):
             continue
-        # 已有【类别】前缀的直接保留
-        if s.startswith('【'):
-            items.append(s)
-        else:
-            items.append(s)
+        for seg in re.split(r'[、,，]+', s):
+            seg = seg.strip()
+            if not seg or seg in ('无', '没有'):
+                continue
+            items.append(seg)
     return items
 
 

@@ -537,7 +537,6 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
   const halfwayBar = isHalfwaySavePlot && savePlotInfo ? (() => {
     const { nodes, cc, vi } = savePlotInfo;
     const done = Math.min(cc, nodes.length);
-    const pct = Math.max(0, Math.min(100, Math.round((done / cc) * 100)));
     return (
       <div style={{
         margin: '10px 2px 2px',
@@ -546,36 +545,25 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
         background: 'linear-gradient(180deg,#eff6ff 0%,#f5f3ff 100%)',
         border: '1px solid #bfdbfe',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-          <strong style={{ color: 'var(--text-primary)' }}>🎯 中途节点进度快照</strong>
-          <span style={{ fontSize: 13, color: '#374151' }}>
-            {vi ? `第${vi}卷 · ` : ''}共 <strong>{cc}</strong> 个节点，卡片含 <strong>{done}</strong> 个节点（{pct}%）
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'nowrap', overflow: 'hidden' }}>
+          <strong style={{ color: 'var(--text-primary)', fontSize: 13, whiteSpace: 'nowrap' }}>
+            🎯 中途进度（{vi ? `第${vi}卷` : '本卷'}）
+          </strong>
+          <span style={{ fontSize: 12, color: '#374151', whiteSpace: 'nowrap' }}>
+            {done}/{cc}章
           </span>
-          <span style={{ flex: 1 }} />
+          <span style={{ flex: 1, minWidth: 6 }} />
           <button
             className="chat-card-btn primary"
-            style={{ padding: '4px 12px', minHeight: 28 }}
+            style={{ padding: '4px 12px', minHeight: 26, fontSize: 13, whiteSpace: 'nowrap' }}
             onClick={() => onQuickContinue?.()}
             disabled={!onQuickContinue}
+            title="从写到的最后一章继续生成（等同于发送「继续」）"
           >
-            ⏭️ 继续生成
+            继续
           </button>
         </div>
-        <div style={{
-          height: 8,
-          background: '#e5e7eb',
-          borderRadius: 99,
-          overflow: 'hidden',
-          marginBottom: 10,
-        }}>
-          <div style={{
-            height: '100%',
-            width: `${pct}%`,
-            background: 'color-mix(in srgb, var(--accent) 38%, var(--bg-primary))',
-            transition: 'width .4s ease',
-          }} />
-        </div>
-        <div style={{ fontSize: 12, color: '#4b5563', lineHeight: 1.7 }}>
+        <div style={{ fontSize: 12, color: '#4b5563', lineHeight: 1.7, marginTop: 8 }}>
           💡 整卷 <strong>{cc} 章</strong> 全部设计完成后，会自动给出一张<strong style={{ color: '#16a34a' }}>全卷合并版统一采纳卡片</strong>，
           点一次即可完整落库。随时发送<strong>「继续」</strong>或点上面的按钮接着写。
           <br/>
