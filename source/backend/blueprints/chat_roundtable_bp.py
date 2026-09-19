@@ -11,6 +11,7 @@ import json
 import os
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 from flask import Response, jsonify, request, stream_with_context
@@ -18,6 +19,12 @@ from flask import Response, jsonify, request, stream_with_context
 from blueprints.persona_config import _MODERATOR_ROLE, _PERSONAS, _ROUNDTABLE_ORDER
 from session_persist import load_session_messages
 from sse_keepalive import SSE_HEARTBEAT_COMMENT
+
+
+# P1-5 圆桌并行：全新会议第一轮（6 位专家尚无前序发言可回应）并发破题的并发上限。
+# 上限 3 而非 6：既把"首轮 6 人串行"的总时长压到接近单次调用，又避免 6 路流式同时
+# 撞 TPM/RPM 限流；后续轮次仍需回应前序讨论，保持串行以保证交锋质量。
+_RT_PARALLEL_WORKERS = 3
 
 
 def init(**deps):
@@ -354,6 +361,69 @@ def chat_roundtable():
                 else:
                     full_parts.append(_pay)
                     yield f'data: {json.dumps({"type": "delta", "speaker": speaker_id, "content": _pay}, ensure_ascii=False)}\n\n'
+
+        def _build_sp_system(speaker_id, round_num):
+            """构建某专家某轮的完整 system prompt（rank 分析师专属增强已内联）。"""
+            sp_name, sp_system_prompt = _PERSONAS[speaker_id]
+            sp_system = sp_system_prompt + f"""
+
+【当前议题】
+{topic_final}
+
+【规则】
+现在是圆桌会议第{round_num}轮讨论，你是{sp_name}，请严格按你的专业身份发言。
+- {f'前面已有多位专家的发言，你必须先回应他们的观点，可以用不同意直接碰撞' if not (round_num == 1 and speaker_id == _ROUNDTABLE_ORDER[0]) else '第一轮开场，你第一个从你的专业视角破题'}
+- {f'这是第{round_num}轮，请收敛：抓住前面几轮别人没讲透的坑，或直接反驳前面错误的结论，给出你这一轮的主张' if round_num > 1 else '这是第一轮，请从你的专业视角给出清晰的第一轮见解'}
+- 不总结所有人，只说你自己的专业观点
+- 字数控制在300-800字，观点鲜明、可直接落地，拒绝空话套话
+"""
+            # ==============================================
+            # 【榜单分析师·专属增强】首位专家：把扫榜完整报告塞进他的 system prompt，
+            # 让他第一轮第一个发言就给全桌摊开「真实榜单风向」（TOP书/卖点/毒点/书名公式/钩子）
+            # ==============================================
+            if speaker_id == 'rank_analyst' and _rank_analyst_report.strip():
+                sp_system += (
+                    "\n\n================================\n"
+                    "【★★★ 圆桌前置·系统已自动扫榜成功（你是第一个发言者，必须先把这份情报展示给全桌）★★★】\n"
+                    "下面这份报告是刚从番茄/起点新书榜**真实抓下来的 TOP 书数据 + LLM 情报聚合**：\n\n"
+                    + _rank_analyst_report.strip() +
+                    "\n================================\n"
+                    "【你的第一轮发言要求（只在第一轮且你第一个说话时执行）】——必须按以下五步深挖榜单，最后落到给本书的爆款构思：\n"
+                    "1) 「📈 扫榜情报摘要」：平台+赛道+扫榜时间、TOP3 一句话钩子、共性卖点、共性毒点\n"
+                    "2) 「📖 榜单拆书·五个维度逐一分析」：①书名（TOP 书命名规律：题材词/身份词/反差词/数字词怎么组合，为什么3秒抓人）②简介（钩子句式：开篇冲突怎么抛、金手指怎么亮、悬念怎么留）③设定（同赛道爆款的核心设定卖点是什么，靠什么差异化）④金手指（上榜书的金手指类型盘点：签到/系统/重生/吞噬/模拟器…各自爽点结构与适用题材）⑤黄金三章（从简介反推：第1章怎么开困境、第2章金手指怎么落地、第3章第一个爽点怎么兑现+钩子怎么埋）\n"
+                    "3) 「✍️ 学习结论」：从以上五维拆解中提炼出可复用的爆款公式（书名公式/简介公式/金手指设计公式/黄金三章节奏公式），每条标注'学自榜上《XXX》'\n"
+                    "4) 「💡 我们的爆款构思」：基于学习结论+本次议题，给出本书的具体构思方向——推荐书名 2-3 个、一句话卖点、金手指建议、开篇钩子建议，明确说'为什么按榜单风向这样做能火'\n"
+                    "5) 「📢 给全桌的定调」：明确告诉毒舌读者/架构师/世界观策划/爆款编辑/润色编辑/采访——后续讨论应优先吸收风向的哪些点、避开哪些坑\n"
+                    "【铁律】不拍脑袋，每一条结论必须标注'参考榜上书XXX的套路'/'避开榜上书XXX的毒点'；拆解要具体到可执行，禁止'书名很重要'这种废话。\n"
+                )
+            if book_id and base_system:
+                sp_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + sp_system
+            sp_system = sp_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
+            if _rank_ctx_global:
+                sp_system = sp_system.rstrip() + '\n\n' + _rank_ctx_global
+            return sp_name, sp_system
+
+        def _speaker_messages(speaker_id, round_num, discussion_history):
+            """返回 (sp_name, sp_messages)——串行与并行两条路径共用同一套拼装逻辑。"""
+            sp_name, sp_system = _build_sp_system(speaker_id, round_num)
+            sp_messages = [{'role': 'system', 'content': _var_replace(sp_system)}]
+            sp_messages.append({'role': 'user', 'content': (discussion_history + f"\n【轮次】第{round_num}轮 → 轮到【{sp_name}】发言，请开始：\n")[:12000]})
+            return sp_name, sp_messages
+
+        def _collect_speaker_content(speaker_id, round_num, discussion_history):
+            """P1-5 并行 worker：跑一次完整发言，只取正文全文；失败返回空串，不打断整场。"""
+            try:
+                sp_name, sp_messages = _speaker_messages(speaker_id, round_num, discussion_history)
+                _gw = LLMGateway(_bg, _kg, _mg)
+                _content = ''
+                for _tag, _pay in _rt_stream_turn(_gw, sp_messages, 0.7, None):
+                    if _tag == '__done__':
+                        _content = _pay
+                return sp_name, _content
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                return (_PERSONAS.get(speaker_id, (speaker_id, ''))[0], '')
 
         try:
             N = len(_ROUNDTABLE_ORDER)
@@ -816,48 +886,38 @@ def chat_roundtable():
                 seq_abs = done_count
                 round_num = 1 + seq_abs // len(_ROUNDTABLE_ORDER)
                 speaker_id = _ROUNDTABLE_ORDER[seq_abs % len(_ROUNDTABLE_ORDER)]
-                sp_name, sp_system_prompt = _PERSONAS[speaker_id]
+
+                # ===== P1-5 并行首轮：全新会议第一轮（done 为空）且非调整/追加模式时，
+                # 6 位专家尚无任何前序发言可回应，可并行破题。全部生成完再按固定顺序回放，
+                # 把"首轮 6 人串行"的总时长压到接近单次调用；后续轮次仍串行以保交锋质量。=====
+                if done_count == 0 and not adjust_mode and not append_mode:
+                    _first_round = list(_ROUNDTABLE_ORDER[:N])
+                    _results: dict = {}
+                    with ThreadPoolExecutor(max_workers=_RT_PARALLEL_WORKERS) as _pool:
+                        _futs = {_pool.submit(_collect_speaker_content, _sid, 1, discussion_history): _sid for _sid in _first_round}
+                        for _fut in as_completed(_futs):
+                            _sid = _futs[_fut]
+                            _results[_sid] = _fut.result()
+                    for _sid in _first_round:
+                        _sp_name, _sp_content = _results.get(_sid, (_PERSONAS.get(_sid, (_sid, ''))[0], ''))
+                        yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": _sid, "speaker_name": _sp_name, "round": 1}}, ensure_ascii=False)}\n\n'
+                        if _sp_content:
+                            yield f'data: {json.dumps({"type": "delta", "speaker": _sid, "content": _sp_content}, ensure_ascii=False)}\n\n'
+                        done = done + [{'round': 1, 'speaker': _sid, 'name': _sp_name, 'content': _sp_content}]
+                        discussion_history += f"\n【第1轮 · {_sp_name}】\n{_sp_content}\n\n"
+                        all_messages.append({'role': 'assistant', 'content': f'【{_sp_name}】\n{_sp_content}'})
+                        yield f'data: {json.dumps({"type": "speaker_done", "speaker": _sid, "round": 1}, ensure_ascii=False)}\n\n'
+                        _mod_open = state.get('moderator_open', '') if isinstance(state, dict) else ''
+                        state = {'active': True, 'completed': False, 'phase': 'discussion',
+                                 'topic': topic_final, 'moderator_open': _mod_open,
+                                 'done': done, 'discussion_history': discussion_history}
+                        _rt_save_state(session, db, state)
+                        _rt_persist_messages(session, history, topic_final, _mod_open, done, '')
+                        done_count += 1
+                    continue
+
+                sp_name, sp_messages = _speaker_messages(speaker_id, round_num, discussion_history)
                 yield f'data: {json.dumps({"type": "meta", "kind": "roundtable_speaker", "info": {"speaker_id": speaker_id, "speaker_name": sp_name, "round": round_num}}, ensure_ascii=False)}\n\n'
-
-                sp_system = sp_system_prompt + f"""
-
-【当前议题】
-{topic_final}
-
-【规则】
-现在是圆桌会议第{round_num}轮讨论，你是{sp_name}，请严格按你的专业身份发言。
-- {f'前面已有多位专家的发言，你必须先回应他们的观点，可以用不同意直接碰撞' if not (round_num == 1 and speaker_id == _ROUNDTABLE_ORDER[0]) else '第一轮开场，你第一个从你的专业视角破题'}
-- {f'这是第{round_num}轮，请收敛：抓住前面几轮别人没讲透的坑，或直接反驳前面错误的结论，给出你这一轮的主张' if round_num > 1 else '这是第一轮，请从你的专业视角给出清晰的第一轮见解'}
-- 不总结所有人，只说你自己的专业观点
-- 字数控制在300-800字，观点鲜明、可直接落地，拒绝空话套话
-"""
-                # ==============================================
-                # 【榜单分析师·专属增强】首位专家：把扫榜完整报告塞进他的 system prompt，
-                # 让他第一轮第一个发言就给全桌摊开「真实榜单风向」（TOP书/卖点/毒点/书名公式/钩子）
-                # ==============================================
-                if speaker_id == 'rank_analyst' and _rank_analyst_report.strip():
-                    sp_system += (
-                        "\n\n================================\n"
-                        "【★★★ 圆桌前置·系统已自动扫榜成功（你是第一个发言者，必须先把这份情报展示给全桌）★★★】\n"
-                        "下面这份报告是刚从番茄/起点新书榜**真实抓下来的 TOP 书数据 + LLM 情报聚合**：\n\n"
-                        + _rank_analyst_report.strip() +
-                        "\n================================\n"
-                        "【你的第一轮发言要求（只在第一轮且你第一个说话时执行）】——必须按以下五步深挖榜单，最后落到给本书的爆款构思：\n"
-                        "1) 「📈 扫榜情报摘要」：平台+赛道+扫榜时间、TOP3 一句话钩子、共性卖点、共性毒点\n"
-                        "2) 「📖 榜单拆书·五个维度逐一分析」：①书名（TOP 书命名规律：题材词/身份词/反差词/数字词怎么组合，为什么3秒抓人）②简介（钩子句式：开篇冲突怎么抛、金手指怎么亮、悬念怎么留）③设定（同赛道爆款的核心设定卖点是什么，靠什么差异化）④金手指（上榜书的金手指类型盘点：签到/系统/重生/吞噬/模拟器…各自爽点结构与适用题材）⑤黄金三章（从简介反推：第1章怎么开困境、第2章金手指怎么落地、第3章第一个爽点怎么兑现+钩子怎么埋）\n"
-                        "3) 「✍️ 学习结论」：从以上五维拆解中提炼出可复用的爆款公式（书名公式/简介公式/金手指设计公式/黄金三章节奏公式），每条标注'学自榜上《XXX》'\n"
-                        "4) 「💡 我们的爆款构思」：基于学习结论+本次议题，给出本书的具体构思方向——推荐书名 2-3 个、一句话卖点、金手指建议、开篇钩子建议，明确说'为什么按榜单风向这样做能火'\n"
-                        "5) 「📢 给全桌的定调」：明确告诉毒舌读者/架构师/世界观策划/爆款编辑/润色编辑/采访——后续讨论应优先吸收风向的哪些点、避开哪些坑\n"
-                        "【铁律】不拍脑袋，每一条结论必须标注'参考榜上书XXX的套路'/'避开榜上书XXX的毒点'；拆解要具体到可执行，禁止'书名很重要'这种废话。\n"
-                    )
-                if book_id and base_system:
-                    sp_system = base_system.rstrip() + f"\n\n当前绑定作品《{book_title}》，已填充维度：{bb_summary}。讨论请以落地资料为准。\n\n" + sp_system
-                sp_system = sp_system.rstrip() + f"\n\n【运行时上下文变量】\n- 今日日期：{_var_ctx['date']}\n- 当前时间：{_var_ctx['time']}\n- 当前绑定作品：{_var_ctx['current_book']}\n- 当前模型：{_var_ctx['model_name']}\n"
-                if _rank_ctx_global:
-                    sp_system = sp_system.rstrip() + '\n\n' + _rank_ctx_global
-
-                sp_messages = [{'role': 'system', 'content': _var_replace(sp_system)}]
-                sp_messages.append({'role': 'user', 'content': (discussion_history + f"\n【轮次】第{round_num}轮 → 轮到【{sp_name}】发言，请开始：\n")[:12000]})
 
                 full_parts = []
                 for f in _emit(_rt_stream_turn(gw_sp0, sp_messages, 0.7, None), speaker_id):

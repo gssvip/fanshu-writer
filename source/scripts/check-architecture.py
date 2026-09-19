@@ -234,7 +234,13 @@ CHATPANEL_BASELINE = 5295
 #   → 1375 → 1582（+207 行，用户明确要求：布局适应项目、手机端使用方便）
 # 2026-09-05 重校准（v1.0 备份冻结）：基线同步到备份点实际行数（1582 → 1953）。
 #   下轮拆分目标：榜单风向/AI账本/拆书分析各 Tab 抽独立组件文件。
-TOOLSPAGE_BASELINE = 1953
+# 2026-09-19 拆分落地（P2-7 工具面板按 Tab 拆分）：1953 → 90（净 -1863 行）：
+#   - src/pages/tools/ReviewTab.tsx（AI 责编审稿）
+#   - src/pages/tools/SkillsTab.tsx（技能包市场 + 编辑器 + 智能解析）
+#   - src/pages/tools/AnalyzeTab.tsx（拆书分析 + 同步到作品）
+#   - src/pages/tools/RankingsTab.tsx（榜单风向 V2 钻取）
+#   ToolsPage.tsx 只保留 Tab 骨架 + 作品选择器，各 Tab 状态/逻辑内聚到独立组件。
+TOOLSPAGE_BASELINE = 90
 
 # chat_collab_bp.py 基线行数：只能减不能增（智驾协作 Blueprint 巨石）
 # 2026-08-18 重校准6（NETWORK ERROR瘦身补丁：重复禁令3合1，纯减tokens防TTFT超时）：
@@ -398,7 +404,13 @@ TOOLSPAGE_BASELINE = 1953
 # 2026-09-10 重校准（CI 解阻塞，与 app.py 基线同轮，原因见 APP_PY_BASELINE 注释）：
 #   - v1.0 后智驾功能迭代净增 274 行（7787 → 8061），仅校准放行，功能代码不动。
 #   - 下轮拆分目标不变：smart_generate/smart_suggest 系列路由继续外迁。
-CHAT_COLLAB_BP_BASELINE = 8061
+# 2026-09-19 拆分落地（P1-6 智能生成/编辑校审域外迁）：8061 → 5284（净 -2777 行）：
+#   - blueprints/chat_smart_gen_bp.py（1781 行，3 路由）：smart_general/smart_suggest/smart_generate
+#   - blueprints/chat_smart_edit_bp.py（1122 行，10 路由）：smart_dim_edit/smart_batch/smart_deai/
+#     smart_review/smart_volumes/smart_chapters 等
+#   - 域模块不反向 import chat_collab_bp：共享符号由 _register_split_domains() 调用 init() 注入，
+#     路由经 register() 经 add_url_rule 挂到同一 Blueprint（URL/endpoint 与拆分前完全一致，前端零感知）。
+CHAT_COLLAB_BP_BASELINE = 5284
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
