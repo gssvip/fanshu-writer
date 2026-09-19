@@ -115,7 +115,22 @@ MAX_ROUTES_PER_FILE = 30
 #     banner 不再重复抓书（书籍列表由 /api/rank/list V2 接口承载）。
 #   - 旧版重复抓取器从 app.py 整段删除。
 #   → app.py 12001 → 11728（净 -273 行）。属重复代码去重，不属业务膨胀。
-APP_PY_BASELINE = 11728
+# 2026-09-19 拆分第7批（dynamic-reports 域外迁）：
+#   - 动态报告 API（11 路由）+ 辅助函数（_generate_dynamic_report_content /
+#     _check_and_auto_generate_report / _revise_dimensions_from_chapters[async] /
+#     _auto_backfill_dynamic_reports_async / _create_state_snapshot）整体迁入
+#     blueprints/dynamic_reports_bp.py，app.py 仅保留命名空间向后兼容 re-export
+#     （books_bp.py / export_bp.py 请求期 `from app import ...` 延迟导入不受影响）。
+#   → app.py 11728 → 11121（净 -607 行）。属业务域外迁，不属业务膨胀。
+# 2026-09-19 拆分第8批（ai-continue 续写域外迁）：
+#   - 正文滚动创作 API（5 路由：ai-continue/spot-fix/stream/batch/batch-stream）+ 辅助函数
+#     （_generate_chapter_plan / _build_ai_continue_context / _consistency_check /
+#      _build_continue_fingerprint_deps / _build_deai_rules_block / SSE 心跳 / 章节解析评分等）
+#     整体迁入 blueprints/ai_continue_bp.py，app.py 仅保留命名空间向后兼容 re-export。
+#   - ai_continue_bp.py 首次落地 2356 行超单文件上限，随即二拆：11 个纯辅助函数外迁
+#     blueprints/ai_continue_helpers.py（1030 行），蓝图仅留路由（1367 行）。
+#   → app.py 11121 → 8836（净 -2285 行）。属业务域外迁，不属业务膨胀。
+APP_PY_BASELINE = 8836
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -214,7 +229,13 @@ WRITEPAGE_BASELINE = 2016
 #     深度绑定，无法独立抽组件而不破坏现有数据流。下一步：拆 ActionCardView 到独立文件。）
 # 2026-09-05 重校准（v1.0 备份冻结）：基线同步到备份点实际行数（4664 → 5295）。
 #   下轮拆分目标：ActionCardView / NodeDesignerChat 抽独立组件文件。
-CHATPANEL_BASELINE = 5295
+# 2026-09-19 拆分落地（P2-7 智驾面板巨石拆分）：
+#   - 卡片/消息渲染与工具栏前序已拆出 ChatPanelCards.tsx（MessageBubble/RankScanCard/ProgressMapView/
+#     CardApplyMode）与 ChatPanelToolbars.tsx（SkillPackSelector/GeneralAssistantSelector）→ 5295 → 3799
+#   - 本轮拆出 NodeDesigner 独立组件 ChatPanelNodeDesigner.tsx（parseNodeDesignerProgress 进度解析纯函数
+#     + NodeDesignerProgress 进度条工具栏，原在 handleGeneral/工具栏内嵌，属于"零逻辑搬运"）
+#     → 3799 → 3656
+CHATPANEL_BASELINE = 3656
 
 # ToolsPage.tsx 基线行数：只能减不能增（技能包/审稿/人设分析工具面板巨石）
 # 2026-08-18 重校准2（M8 题材对齐）：
@@ -410,7 +431,12 @@ TOOLSPAGE_BASELINE = 90
 #     smart_review/smart_volumes/smart_chapters 等
 #   - 域模块不反向 import chat_collab_bp：共享符号由 _register_split_domains() 调用 init() 注入，
 #     路由经 register() 经 add_url_rule 挂到同一 Blueprint（URL/endpoint 与拆分前完全一致，前端零感知）。
-CHAT_COLLAB_BP_BASELINE = 5284
+# 2026-09-19 拆分落地（P1-7 apply_card 节点门禁外迁）：5284 → 5039（净 -245 行）：
+#   - blueprints/nd_apply_card.py（267 行，5 纯函数）：_extract_volume_index_safe /
+#     _volume_field_nonempty / _merge_volume / _repair_volume_nodes_safe（节点 A+C 门禁）/
+#     _merge_volume_nodes_incremental（续会节点增量合并），自 apply_card 内嵌提升为模块级；
+#   - 仅懒依赖 node_design_bp / app，无循环 import，chat_collab_bp 顶层 import 复用。
+CHAT_COLLAB_BP_BASELINE = 5039
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由

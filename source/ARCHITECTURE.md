@@ -33,6 +33,8 @@ backend/
     ├── export_bp.py        # 导入导出域（9 路由）
     ├── books_bp.py         # 书籍/章节域
     ├── ai_analyze_bp.py    # 竞品拆书分析域
+    ├── ai_continue_bp.py   # 正文滚动创作域（5 路由：续写/定点修订/批写/SSE）
+    ├── ai_continue_helpers.py # 正文滚动创作域·纯辅助函数（章节计划/一致性/指纹/去AI/解析评分）
     ├── ai_config_bp.py     # AI 配置域
     ├── health_bp.py        # 健康检查
     ├── general_chat.py     # 通用对话蓝图
@@ -45,6 +47,7 @@ backend/
     ├── novel_rank_bp.py    # 榜单风向路由（含 /api/rank/* 与 /api/rankings banner）
     ├── novel_rank_crawlers.py # 榜单抓取套件（健康度/熔断/结构校验/种子数据）
     ├── nd_helpers.py       # 节点续会工具 + 卡片聚合门禁
+    ├── nd_apply_card.py    # SAVE_PLOT 采纳：卷级合并 + 节点 A+C 门禁 + 续会增量合并
     └── persona_config.py   # 人设配置（纯数据）
 ```
 
@@ -79,6 +82,7 @@ frontend/src/
 │   ├── ChatPanel.tsx       # 智驾面板（历史巨石，只减不增）
 │   ├── ChatPanelCards.tsx  # 卡片/消息气泡子组件（ActionCardView / MessageBubble 等）
 │   ├── ChatPanelToolbars.tsx # 工具栏子组件（SkillPackSelector / GeneralAssistantSelector）
+│   ├── ChatPanelNodeDesigner.tsx # 节点设计师子组件（parseNodeDesignerProgress + NodeDesignerProgress 进度条）
 │   └── NodeDesignView.tsx
 ├── pages/
 │   ├── WritePage.tsx       # 写作主页面（已拆到 write/ 子面板）
@@ -101,7 +105,7 @@ frontend/src/
 
 | 目标 | 现状 | 方向 |
 |---|---|---|
-| `chat_collab_bp.py` | 5284 行 | `smart_generate`/`smart_suggest` 已外迁到 `chat_smart_gen_bp`/`chat_smart_edit_bp`；剩余：`apply_card` 节点门禁等继续按需外迁 |
-| `app.py` | 11728 行 | `ai-continue` 续写域、`dynamic-reports` 域按域外迁 |
-| `ChatPanel.tsx` | 3799 行 | `ActionCardView`/`MessageBubble` 已抽到 `ChatPanelCards.tsx`；剩余：`NodeDesignerChat` 进一步独立 |
+| `chat_collab_bp.py` | 5039 行 | `smart_generate`/`smart_suggest` 已外迁到 `chat_smart_gen_bp`/`chat_smart_edit_bp`；`apply_card` 节点门禁已外迁到 `nd_apply_card.py` |
+| `app.py` | 8836 行 | `ai-continue` 续写域、`dynamic-reports` 域已完成外迁（`ai_continue_bp`/`ai_continue_helpers` 与 `dynamic_reports_bp`） |
+| `ChatPanel.tsx` | 3656 行 | `ActionCardView`/`MessageBubble` 已抽到 `ChatPanelCards.tsx`；`NodeDesignerChat` 已独立到 `ChatPanelNodeDesigner.tsx` |
 | `ToolsPage.tsx` | 89 行 | 已拆到 `tools/` 4 个 Tab 子组件（review/skills/analyze/rankings） |

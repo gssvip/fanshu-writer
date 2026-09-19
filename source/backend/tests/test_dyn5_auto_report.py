@@ -8,6 +8,11 @@
 - P2 逆向通道在无 LLM 配置时静默跳过、不抛异常。
 
 不测真实 LLM 调用（_generate_dynamic_report_content 会被 monkeypatch 打桩）。
+
+注意：动态报告域自 app.py 外迁至 blueprints/dynamic_reports_bp.py（架构门禁），
+故 `_check_and_auto_generate_report` 等从该模块导入，monkeypatch 也打在该模块上
+（`_check_and_auto_generate_report` 内部对 `_generate_dynamic_report_content` 的
+调用按模块全局解析，patch app 层不会生效）。
 """
 from __future__ import annotations
 
@@ -40,7 +45,8 @@ def _mk_chapters(book_id, n):
 
 def test_backfill_all_intervals_in_order(client, ctx, monkeypatch):
     """导入场景：12 章应有 1-5、6-10 两份报告，max_intervals=None 全量按顺序补齐。"""
-    from app import DynamicReport, _check_and_auto_generate_report
+    from app import DynamicReport
+    from blueprints.dynamic_reports_bp import _check_and_auto_generate_report
     headers = _auth_client(client)
     book = _create_book(client, headers, title="导入小说")
     _mk_chapters(book['id'], 12)
@@ -51,8 +57,8 @@ def test_backfill_all_intervals_in_order(client, ctx, monkeypatch):
         calls.append((cs, ce))
         return f'第{cs}-{ce}章摘要', None
 
-    monkeypatch.setattr('app._generate_dynamic_report_content', fake_gen)
-    monkeypatch.setattr('app._revise_dimensions_from_chapters', lambda *a, **k: None)
+    monkeypatch.setattr('blueprints.dynamic_reports_bp._generate_dynamic_report_content', fake_gen)
+    monkeypatch.setattr('blueprints.dynamic_reports_bp._revise_dimensions_from_chapters', lambda *a, **k: None)
 
     result = _check_and_auto_generate_report(book['id'], max_intervals=None)
 
@@ -66,7 +72,7 @@ def test_backfill_all_intervals_in_order(client, ctx, monkeypatch):
 
 def test_incremental_fills_earliest_gap(client, ctx, monkeypatch):
     """增量场景：缺两个区间时每次只补最早的那个（按顺序追平）。"""
-    from app import _check_and_auto_generate_report
+    from blueprints.dynamic_reports_bp import _check_and_auto_generate_report
     headers = _auth_client(client)
     book = _create_book(client, headers, title="增量追平")
     _mk_chapters(book['id'], 12)
@@ -77,8 +83,8 @@ def test_incremental_fills_earliest_gap(client, ctx, monkeypatch):
         calls.append((cs, ce))
         return f'第{cs}-{ce}章摘要', None
 
-    monkeypatch.setattr('app._generate_dynamic_report_content', fake_gen)
-    monkeypatch.setattr('app._revise_dimensions_from_chapters', lambda *a, **k: None)
+    monkeypatch.setattr('blueprints.dynamic_reports_bp._generate_dynamic_report_content', fake_gen)
+    monkeypatch.setattr('blueprints.dynamic_reports_bp._revise_dimensions_from_chapters', lambda *a, **k: None)
 
     # 第一次保存：只补 1-5
     _check_and_auto_generate_report(book['id'])
@@ -92,7 +98,8 @@ def test_incremental_fills_earliest_gap(client, ctx, monkeypatch):
 
 def test_no_intervals_below_five(client, ctx, monkeypatch):
     """不足5章不生成。"""
-    from app import DynamicReport, _check_and_auto_generate_report
+    from app import DynamicReport
+    from blueprints.dynamic_reports_bp import _check_and_auto_generate_report
     headers = _auth_client(client)
     book = _create_book(client, headers, title="四章书")
     _mk_chapters(book['id'], 4)
@@ -100,14 +107,15 @@ def test_no_intervals_below_five(client, ctx, monkeypatch):
     def fail_gen(*a, **k):
         raise AssertionError('不应触发生成')
 
-    monkeypatch.setattr('app._generate_dynamic_report_content', fail_gen)
+    monkeypatch.setattr('blueprints.dynamic_reports_bp._generate_dynamic_report_content', fail_gen)
     assert _check_and_auto_generate_report(book['id']) is None
     assert DynamicReport.query.filter_by(book_id=book['id']).count() == 0
 
 
 def test_existing_reports_not_duplicated(client, ctx, monkeypatch):
     """已有区间的报告不重复生成（幂等）。"""
-    from app import db, DynamicReport, _check_and_auto_generate_report
+    from app import db, DynamicReport
+    from blueprints.dynamic_reports_bp import _check_and_auto_generate_report
     headers = _auth_client(client)
     book = _create_book(client, headers, title="幂等书")
     _mk_chapters(book['id'], 5)
@@ -120,7 +128,7 @@ def test_existing_reports_not_duplicated(client, ctx, monkeypatch):
     def fail_gen(*a, **k):
         raise AssertionError('不应重复生成')
 
-    monkeypatch.setattr('app._generate_dynamic_report_content', fail_gen)
+    monkeypatch.setattr('blueprints.dynamic_reports_bp._generate_dynamic_report_content', fail_gen)
     assert _check_and_auto_generate_report(book['id'], max_intervals=None) is None
 
 
@@ -130,9 +138,9 @@ def test_create_chapter_triggers_auto_report(client, ctx, monkeypatch):
     headers = _auth_client(client)
     book = _create_book(client, headers, title="平台写作")
 
-    monkeypatch.setattr('app._generate_dynamic_report_content', lambda bid, cs, ce, skill_pack_ids=None: (f'第{cs}-{ce}章摘要', None))
+    monkeypatch.setattr('blueprints.dynamic_reports_bp._generate_dynamic_report_content', lambda bid, cs, ce, skill_pack_ids=None: (f'第{cs}-{ce}章摘要', None))
     # P2 修订线程在测试里直接短路（避免起线程访问测试回滚的会话）
-    monkeypatch.setattr('app._revise_dimensions_from_chapters_async', lambda *a, **k: None)
+    monkeypatch.setattr('blueprints.dynamic_reports_bp._revise_dimensions_from_chapters_async', lambda *a, **k: None)
     # 防遗忘检查同样短路（其内部会起线程调 LLM；路由内 from app import 在调用时取属性，patch app 层即可）
     monkeypatch.setattr('app._maybe_auto_trigger_anti_forget_check', lambda *a, **k: None)
 
@@ -157,7 +165,7 @@ def test_create_chapter_triggers_auto_report(client, ctx, monkeypatch):
 
 def test_revise_dimensions_no_llm_config(client, ctx):
     """P2 逆向通道：未配置 AI Key 时静默返回 None，不抛异常。"""
-    from app import _revise_dimensions_from_chapters
+    from blueprints.dynamic_reports_bp import _revise_dimensions_from_chapters
     headers = _auth_client(client)
     book = _create_book(client, headers, title="无AI配置")
     _mk_chapters(book['id'], 5)
