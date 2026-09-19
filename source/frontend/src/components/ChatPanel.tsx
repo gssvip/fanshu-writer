@@ -2822,6 +2822,10 @@ export default function ChatPanel() {
       }
       return null;
     };
+    // 从文本里识别「第N卷」（阿拉伯数字 + 中文数字），用于流式输出阶段（尚无 SAVE_PLOT 卡片时）
+    // 兜底卷号，否则中途进度条永远显示「第1卷」。
+    const volumeRE = /第\s*([零一二三四五六七八九十百千万\d〇两]{1,8})\s*卷/g;
+    let volFromText: number | null = null;
     for (const m of msgs) {
       // 跳过系统通知类消息（❌失败提示/⚠️/【连接中断·抢救】里含「第8章改XXX」等示例文案，会虚抬进度）
       const c0 = (m.content || '').trim();
@@ -2833,6 +2837,16 @@ export default function ChatPanel() {
           if (!head) continue;
           const n = toNumber(head);
           if (typeof n === 'number' && n <= 1000 && n > lastCh) lastCh = n;
+        }
+        // 识别「第N卷」：取本消息中出现过的最大卷号（开场白「这是第7卷情节节点设计」最可靠）
+        const volMatches = m.content.match(volumeRE) || [];
+        for (const raw of volMatches) {
+          const head = raw.replace(/[卷]/g, '').replace(/^第/, '').trim();
+          if (!head) continue;
+          const n = toNumber(head);
+          if (typeof n === 'number' && n >= 1 && n <= 99) {
+            if (volFromText === null || n > volFromText) volFromText = n;
+          }
         }
       }
       // SAVE_PLOT 卡片里的 nodes 章号汇总（更精准）
@@ -2868,15 +2882,18 @@ export default function ChatPanel() {
     // 节点设计师第2卷起输出的就是全书全局号（第2卷=51~100），卡片 nodes.chapters 也统一全局号。
     // 已知 vi 时减去 (vi-1)*cpv 还原卷内号；未知 vi 时按 cpv 取模兜底。否则第2卷半截(51~75)会被
     // 误判成 lastCh=75 → done=min(50,75)=50 → 进度条虚报「全卷完成」。
+    // 卷号优先用 SAVE_PLOT 卡片的 volume_index（最权威）；卡片尚无（流式中途）则回退到从开场白
+    // 「这是第N卷情节节点设计」里扫描到的卷号，避免进度条永远显示「第1卷」。
+    const viFinal = (vi && vi > 0) ? vi : volFromText;
     if (lastCh > cpv) {
-      if (vi && vi > 0) {
-        const local = lastCh - (vi - 1) * cpv;
+      if (viFinal && viFinal > 0) {
+        const local = lastCh - (viFinal - 1) * cpv;
         lastCh = (local >= 1 && local <= cpv) ? local : Math.min(cpv, (lastCh % cpv) || cpv);
       } else {
         lastCh = Math.min(cpv, (lastCh % cpv) || cpv);
       }
     }
-    return { last_ch: lastCh, cpv, vi, from_card: fromCard };
+    return { last_ch: lastCh, cpv, vi: viFinal, from_card: fromCard };
   }, []);
 
   // ========== 历史会话 ==========
