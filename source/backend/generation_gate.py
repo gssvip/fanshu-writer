@@ -58,38 +58,54 @@ def gate_protocol_check(content: str) -> Dict:
 
 
 def gate_reference_check(content: str, bb) -> Dict:
-    """门禁2：引用校验。
-    检查正文中提到的人物/地点是否在 bible 中定义（防 LLM 编造实体）。
-    简化版：提取正文中的"姓名说/姓名道"模式，校验是否在 character_profiles 中。"""
+    """门禁2：引用校验（P1-4：从正则升级为实体注册表对照）。
+
+    检查正文中提到的人物/地点/势力是否在实体注册表（EntityHub）中定义，防 LLM 编造实体。
+    首选 bb.entity_registry_json（覆盖人物/势力/地点/物品/技能全维度）；
+    registry 为空的老书再回退 Character 表 + character_profiles 正则。
+    """
     issues = []
     if not bb or not content:
         return {'passed': True, 'issues': issues}
 
-    # 提取"XX说""XX道""XX笑"等人物引用
-    ref_pattern = re.findall(r'([\u4e00-\u9fa5]{2,4})(?:说|道|笑|怒|惊|叹|问|答|喝)', content)
-    refs = set(ref_pattern) if ref_pattern else set()
-
+    # 1) 提取人物引用（"XX说/道/笑…"，多字动词放前面+名字非贪婪，避免"林墨冷哼道"误吞"冷哼"）
+    person_refs = set(re.findall(r'([\u4e00-\u9fa5]{2,4}?)(?:冷哼|低喝|喊道|说道|说|道|笑|怒|惊|叹|问|答|喝|劝|喊)', content))
+    location_refs = set(re.findall(r'(?:在|于|前往|抵达|回到|进入|离开|踏足)([\u4e00-\u9fa5]{2,6})(?:中|里|外|前|后|附近|方向|深处)', content))
+    refs = person_refs | location_refs
     if not refs:
         return {'passed': True, 'issues': issues}
 
-    # 从 character_profiles 提取已定义角色名
-    defined_chars = set()
-    if bb.character_profiles:
-        for m in re.finditer(r'##\s*角色[：:]\s*([^\n]+)', bb.character_profiles):
-            name = m.group(1).strip().split('（')[0].split('(')[0].strip()
-            if name:
-                defined_chars.add(name)
+    # 2) 已定义实体：优先实体注册表（多桶对照）
+    from entity_registry import _load_registry, _is_valid_entity_name
+    registry = _load_registry(bb)
+    defined = set()
+    for bucket in ('characters', 'locations', 'factions'):
+        defined |= set((registry.get(bucket) or {}).keys())
 
-    # 检查未定义的引用（只在有定义角色时才校验，避免空 bible 误报）
-    if defined_chars:
-        undefined = refs - defined_chars
-        # 过滤掉常见非人名（如"他们""众人"等）
-        stop_words = {'他们', '她们', '众人', '大家', '对方', '自己', '我们', '有人', '那人', '此人', '一人'}
-        undefined = {u for u in undefined if u not in stop_words}
-        if undefined and len(undefined) <= 5:  # 超过5个可能是误判
-            issues.append({'gate': 'reference', 'severity': 'warning',
-                           'message': f'可能引用了未定义角色：{", ".join(list(undefined)[:3])}',
-                           'undefined': list(undefined)})
+    # 回退：老书 registry 为空时，用 Character 表 + character_profiles regex 兜底（避免误报）
+    if not defined:
+        try:
+            for ch in bb.book.characters:
+                if ch and ch.name:
+                    defined.add(ch.name)
+        except Exception:
+            pass
+        if bb.character_profiles:
+            for m in re.finditer(r'##\s*角色[：:]\s*([^\n]+)', bb.character_profiles):
+                name = m.group(1).strip().split('（')[0].split('(')[0].strip()
+                if name:
+                    defined.add(name)
+
+    # 只在有已定义实体时才校验，避免空 bible/无注册表误报
+    if not defined:
+        return {'passed': True, 'issues': issues}
+
+    # 3) 对照：未在注册表中的引用才提示；用强噪声过滤替代硬编码停用词
+    undefined = {r for r in refs if r not in defined and _is_valid_entity_name(r)}
+    if undefined and len(undefined) <= 5:  # 超过5个可能是误判
+        issues.append({'gate': 'reference', 'severity': 'warning',
+                       'message': f'可能引用了未定义实体：{", ".join(sorted(undefined)[:3])}',
+                       'undefined': sorted(undefined)})
 
     return {'passed': len([i for i in issues if i['severity'] == 'critical']) == 0, 'issues': issues}
 

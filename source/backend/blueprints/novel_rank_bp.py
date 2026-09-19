@@ -318,6 +318,11 @@ def api_rank_list():
         'fetchAt': data.get('fetchAt'),
         'sourceKind': data.get('sourceKind', 'live'),
         'fetchError': data.get('fetchError'),
+        'circuitOpen': data.get('circuitOpen', False),
+        'circuitRetryAfter': data.get('circuitRetryAfter'),
+        'droppedCount': data.get('droppedCount', 0),
+        'structureProblems': data.get('structureProblems') or [],
+        'health': data.get('health'),
         'page': page,
         'pageSize': page_size,
         'total': total,
@@ -788,3 +793,66 @@ def api_rank_scan_for_concept():
     if not result.get('ok'):
         return jsonify({'error': result.get('error') or '扫榜失败'}), 400
     return jsonify({'ok': True, **{k: v for k, v in result.items() if k != 'ok'}})
+
+
+# =============================================================================
+# 榜单风向 banner 兼容接口：/api/rankings
+#   - 前端 ToolsPage「榜单风向」Tab 顶部的热词 banner（hot_tags / rising_keywords）
+#   - 只返回静态度风向数据；书籍列表已由 /api/rank/list V2 接口承载
+#   - 原 app.py 中的 legacy 抓取器（_crawl_fanqie/_crawl_qimao/_get_rank_books 等）
+#     已被 novel_rank_crawlers.py 的套件完整取代，此处不再重复抓取（去重/降臃肿）
+# =============================================================================
+_RANKING_DATA = {
+    'qidian': {
+        'platform': '起点中文网', 'icon': '🏯', 'note': '男频传统市场风向',
+        'trend_marker': {'label': '稳中求变', 'tone': '新梗融合 · 情怀翻新'},
+        'hot_tags': ['都市异能', '玄幻女婿', '重生商战', '无限流', '轻悬疑'],
+        'rising_keywords': ['国运', '规则怪谈', '位面穿梭', '投资博弈', '反派逆袭'],
+        'hot_genres': ['都市', '玄幻', '游戏', '科幻', '历史'],
+        'examples': [
+            {'title': '都市：从投资开始解惑', 'tag': '都市 · 投资博弈', 'point': '金融博弈+草根翻身'},
+            {'title': '我靠反派身份躺平', 'tag': '玄幻 · 反套路', 'point': '反套路人设红利'},
+            {'title': '规则怪谈：我在规则里求生', 'tag': '悬疑 · 规则流', 'point': '规则怪谈持续高热'},
+        ],
+        'advice': '起点读者偏爱"强逻辑+长线布局"。建议把流行元素做"融合创新"而非跟风复制，聚焦在一个扎实的爽点上持续放大。'
+    },
+    'fanqie': {
+        'platform': '番茄小说', 'icon': '🍅', 'note': '免费流量 · 快节奏爽点',
+        'trend_marker': {'label': '轻快迭代', 'tone': '开局即高潮 · 短平快'},
+        'hot_tags': ['赘婿', '战神', '神豪', '神医', '末世复苏'],
+        'rising_keywords': ['奶爸', '千亿首富', '觉醒系统', '直播', '打脸'],
+        'hot_genres': ['都市', '玄幻', '军婚', '豪门', '星际'],
+        'examples': [
+            {'title': '开局觉醒神级签到', 'tag': '系统 · 签到流', 'point': '开局金手指马上爽'},
+            {'title': '神医奶爸：下山救美', 'tag': '都市 · 神医奶爸', 'point': '反差人设+日常爽点'},
+            {'title': '末世：我能无限进化', 'tag': '末世 · 进化流', 'point': '末世题材复活热'},
+        ],
+        'advice': '番茄读者耐心有限，前3000字必须给出第一个爽点。标题直给、章节留钩子，用高频"打脸"节奏驱动追更。'
+    },
+    'qimao': {
+        'platform': '七猫中文网', 'icon': '🐱', 'note': '下沉+免费 · 强情绪强冲突',
+        'trend_marker': {'label': '情绪出口', 'tone': '复仇/逆袭/家人羁绊'},
+        'hot_tags': ['豪门', '复仇', '满级大佬', '女频爽文', '马甲文'],
+        'rising_keywords': ['认亲', '隐藏身份', '打脸绿茶', '一家顶配', '黑马逆袭'],
+        'hot_genres': ['女频豪门', '都市', '穿越', '玄幻', '宫斗'],
+        'examples': [
+            {'title': '满级大佬穿成农家妇', 'tag': '女频 · 满级大佬', 'point': '满级人设+身份反差'},
+            {'title': '豪门隐婚：首富妻子掉马甲', 'tag': '女频 · 马甲流', 'point': '马甲掉马情绪拉满'},
+            {'title': '重生之复仇千金', 'tag': '女频 · 复仇', 'point': '复仇爽感+家人羁绊'},
+        ],
+        'advice': '七猫读者看重情绪引爆点，家庭/身份冲突最能引发共鸣和评论互动。开篇快速抛出强冲突，用"掉马甲/被低估"制造持续爽感。'
+    },
+}
+
+
+@novel_rank_bp.route('/api/rankings', methods=['GET'])
+def api_rankings_banner():
+    """榜单风向 banner（旧结构兼容）：只返回静态风向数据，书籍列表走 /api/rank/list。"""
+    platform = request.args.get('platform', 'fanqie')
+    data = dict(_RANKING_DATA.get(platform))
+    if not data:
+        return jsonify({'error': '未知平台'}), 400
+    data['books'] = []
+    data['fetch_ok'] = False
+    data['source'] = '内置精选'
+    return jsonify(data)

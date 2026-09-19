@@ -100,7 +100,22 @@ MAX_ROUTES_PER_FILE = 30
 #     Render/GitHub 前端停更（手机端按钮布局等改动无法上线）。
 #   - 本轮仅校准基线放行部署，功能代码不动；下轮拆分目标不变：
 #     ai-continue 续写域、dynamic-reports 域按域外迁，严禁在此基础上继续增长。
-APP_PY_BASELINE = 12626
+# 2026-09-19 拆分第5批（数据层外迁：models.py + extensions.py）：
+#   - extensions.py：db = SQLAlchemy()（未绑定 app，由 app.py 统一 init_app）
+#   - models.py：21 个模型类（User/AuthToken/PasswordResetToken/Book/Chapter/
+#     ChapterVersion/Character/Outline/DailyStats/Template/AISession/AIConfig/
+#     AIUsageLog/AppPreference/StageContent/BookBible/SkillPack/DynamicMemory/
+#     DynamicReport/PromptTemplate/AppMeta），app.py 以 `from models import (...)` 向上兼容导出
+#   → app.py 12626 → 12001（净 -625 行）。属数据层结构性外迁，不属业务膨胀。
+#   后续仍优先：ai-continue 续写域、dynamic-reports 域按域外迁。
+# 2026-09-19 拆分第6批（榜单 legacy 抓取器去重清理）：
+#   - app.py 内/榜单风向/段仍保留一份旧版抓取器（_crawl_fanqie/_crawl_qimao/_get_rank_books/
+#     _RANKING_DATA 等 ~270 行），与 blueprints/novel_rank_crawlers.py 完整重复。
+#   - _RANKING_DATA 静态风向 + /api/rankings banner 兼容接口迁入 novel_rank_bp.py，
+#     banner 不再重复抓书（书籍列表由 /api/rank/list V2 接口承载）。
+#   - 旧版重复抓取器从 app.py 整段删除。
+#   → app.py 12001 → 11728（净 -273 行）。属重复代码去重，不属业务膨胀。
+APP_PY_BASELINE = 11728
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限

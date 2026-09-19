@@ -25,6 +25,7 @@ def register(bp):
     bp.add_url_rule('/api/ai/smart/optimization-report', view_func=optimization_report, methods=['GET'])
     bp.add_url_rule('/api/ai/smart/adopt-optimization-suggestion', view_func=adopt_optimization_suggestion, methods=['POST'])
     bp.add_url_rule('/api/ai/smart/dismiss-optimization-suggestion', view_func=dismiss_optimization_suggestion, methods=['POST'])
+    bp.add_url_rule('/api/ai/smart/rollback-optimization-suggestion', view_func=rollback_optimization_suggestion, methods=['POST'])
     bp.add_url_rule('/api/ai/smart/preview-impact', view_func=preview_impact, methods=['POST'])
 
 
@@ -267,6 +268,32 @@ def dismiss_optimization_suggestion():
         add_ignored_bucket(bb, bucket_key)
         db.session.commit()
         return jsonify({'ok': True, 'bucket_key': bucket_key})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+def rollback_optimization_suggestion():
+    """M4d（P2-10）：回滚一条已采纳的补丁（含系统自动采纳的）。
+
+    body: { book_id, patch_id }
+    """
+    from app import BookBible, db
+    data = request.json or {}
+    book_id = data.get('book_id')
+    patch_id = (data.get('patch_id') or '').strip()
+    if not book_id or not patch_id:
+        return jsonify({'error': '缺少 book_id / patch_id'}), 400
+    bb = BookBible.query.filter_by(book_id=book_id).first()
+    if not bb:
+        return jsonify({'error': 'BookBible 不存在'}), 404
+    try:
+        from meta_optimizer import remove_prompt_patch
+        ok = remove_prompt_patch(bb, patch_id)
+        db.session.commit()
+        if not ok:
+            return jsonify({'ok': False, 'error': '未找到该补丁或已删除'}), 404
+        return jsonify({'ok': True, 'patch_id': patch_id})
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500

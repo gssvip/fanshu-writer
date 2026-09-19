@@ -1321,6 +1321,128 @@ _cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _lock = threading.Lock()
 
 
+# ---------------------------------------------------------------------------
+# P2-8 榜单抓取韧性：健康度评分 + 结构校验 + 熔断
+#   健康度记录每个榜单源的连续成功/失败次数、平均响应时间、熔断到期时间。
+#   连续失败达阈值后触发熔断（circuit break），冷却期内不再发起网络请求，
+#   直接返回友好提示；抓取结果经结构校验剔除缺关键字段的残条。
+# ---------------------------------------------------------------------------
+_HEALTH_SUCCESS_BONUS = 10              # 每次成功加分，上限 100
+_HEALTH_FAILURE_PENALTY = 20            # 每次失败扣分，下限 0
+_CIRCUIT_FAILURE_THRESHOLD = 5          # 连续失败达到该阈值触发熔断
+_CIRCUIT_COOLDOWN_SECONDS = 600         # 熔断基础冷却时长（秒）
+_CIRCUIT_MAX_COOLDOWN_SECONDS = 3600    # 熔断退避时长上限（秒）
+_REQUIRED_ITEM_FIELD = 'bookTitle'      # 统一条目结构的必填字段
+
+_health: dict[str, dict[str, Any]] = {}
+
+
+def _health_key(source_id) -> str:
+    return f"src:{source_id}"
+
+
+def _new_health(source_id) -> dict[str, Any]:
+    return {
+        'sourceId': int(source_id),
+        'score': 100,
+        'consecFailures': 0,
+        'consecSuccesses': 0,
+        'totalAttempts': 0,
+        'lastAttemptAt': 0.0,
+        'lastResponseMs': 0.0,
+        'avgResponseMs': 0.0,
+        'circuitOpenUntil': 0.0,
+        'lastError': '',
+    }
+
+
+def get_rank_health(source_id) -> dict[str, Any]:
+    """返回某榜单源的健康度快照（供可观测性 / 前端展示）。"""
+    return _get_health(source_id)
+
+
+def _get_health(source_id) -> dict[str, Any]:
+    key = _health_key(source_id)
+    with _lock:
+        return dict(_health.setdefault(key, _new_health(source_id)))
+
+
+def _record_health(source_id, ok: bool, response_ms: float, error: str = ''):
+    key = _health_key(source_id)
+    with _lock:
+        h = _health.setdefault(key, _new_health(source_id))
+        h['lastAttemptAt'] = time.time()
+        h['lastResponseMs'] = round(response_ms, 1)
+        prev_avg = h.get('avgResponseMs') or 0.0
+        n = h.get('totalAttempts', 0)
+        h['totalAttempts'] = n + 1
+        h['avgResponseMs'] = round((prev_avg * n + response_ms) / (n + 1), 1)
+        if ok:
+            h['consecFailures'] = 0
+            h['consecSuccesses'] = h.get('consecSuccesses', 0) + 1
+            h['score'] = min(100, h['score'] + _HEALTH_SUCCESS_BONUS)
+            h['lastError'] = ''
+            h['circuitOpenUntil'] = 0.0
+        else:
+            h['consecSuccesses'] = 0
+            h['consecFailures'] = h.get('consecFailures', 0) + 1
+            h['score'] = max(0, h['score'] - _HEALTH_FAILURE_PENALTY)
+            h['lastError'] = (error or '')[:200]
+            # 达到阈值触发熔断，退避时长随连续失败指数增长（上限 _CIRCUIT_MAX_COOLDOWN_SECONDS）
+            if h['consecFailures'] >= _CIRCUIT_FAILURE_THRESHOLD:
+                base = _CIRCUIT_COOLDOWN_SECONDS * (2 ** (h['consecFailures'] - _CIRCUIT_FAILURE_THRESHOLD))
+                h['circuitOpenUntil'] = time.time() + min(base, _CIRCUIT_MAX_COOLDOWN_SECONDS)
+
+
+def _circuit_remaining(source_id) -> float:
+    """熔断剩余冷却秒数；0 表示未熔断。"""
+    with _lock:
+        h = _health.get(_health_key(source_id))
+        if not h:
+            return 0.0
+        return max(0.0, h['circuitOpenUntil'] - time.time())
+
+
+def _build_circuit_result(src, remaining_seconds: float) -> dict[str, Any]:
+    return {
+        'sourceId': src['legacyId'],
+        'siteCode': src['siteCode'],
+        'rankType': src['rankType'],
+        'rankTitle': src.get('title'),
+        'pageTitle': '',
+        'cutoffText': '',
+        'fetchAt': int(time.time()),
+        'items': [],
+        'itemCount': 0,
+        'circuitOpen': True,
+        'circuitRetryAfter': int(remaining_seconds) + 1,
+        'health': _get_health(src['legacyId']),
+        'fetchError': f'榜单源已熔断（连续失败过多），约 {int(remaining_seconds) + 1} 秒后自动恢复',
+    }
+
+
+def _validate_items(items) -> tuple[list[dict[str, Any]], int, list[str]]:
+    """结构校验：剔除缺关键字段（bookTitle 为空）或非对象的残条。
+
+    返回 (clean_items, dropped_count, problems)。problems 最多保留前 20 条供可观测性。
+    """
+    clean: list[dict[str, Any]] = []
+    dropped = 0
+    problems: list[str] = []
+    for i, it in enumerate(items or []):
+        if not isinstance(it, dict):
+            dropped += 1
+            problems.append(f'item[{i}] 非对象')
+            continue
+        title = str(it.get(_REQUIRED_ITEM_FIELD) or '').strip()
+        if not title:
+            dropped += 1
+            problems.append(f'item[{i}] 缺少 {_REQUIRED_ITEM_FIELD}')
+            continue
+        clean.append(it)
+    return clean, dropped, problems[:20]
+
+
 def _find_category(legacy_id: Any):
     legacy_id = int(legacy_id) if legacy_id else None
     for c in RANK_CATEGORIES:
@@ -1338,7 +1460,11 @@ def _find_source(legacy_id: Any):
 
 
 def crawl_rank_source(source_id: int, force: bool = False, limit: int = 20) -> dict[str, Any]:
-    """按榜单源 id 抓取并返回统一结构。默认 limit=20，与参考站「单榜20本」一致。"""
+    """按榜单源 id 抓取并返回统一结构。默认 limit=20，与参考站「单榜20本」一致。
+
+    P2-8：内置熔断（连续失败达到阈值后在冷却期内直接返回友好提示，不再发网络请求）、
+    健康度评分（连续成功/失败、平均响应时间）、结构校验（剔除缺 bookTitle 的残条）。
+    """
     src = _find_source(source_id)
     if not src:
         raise ValueError('榜单源不存在')
@@ -1346,11 +1472,18 @@ def crawl_rank_source(source_id: int, force: bool = False, limit: int = 20) -> d
         raise ValueError('当前榜单源已禁用')
     cache_key = f"src:{source_id}"
     now = time.time()
+
+    # 1) 熔断检查：冷却期内直接返回，避免对已故障榜单源反复发起无效请求
+    circuit_remaining = _circuit_remaining(source_id)
+    if circuit_remaining > 0:
+        return _build_circuit_result(src, circuit_remaining)
+
     with _lock:
         cached = _cache.get(cache_key)
         if (not force) and cached and (now - cached[0]) < _CACHE_TTL:
             payload = dict(cached[1])
             payload['items'] = list(payload.get('items', []))[:limit]
+            payload['health'] = _get_health(source_id)
             return payload
     site = src['siteCode']
     meta = src.get('meta') or {}
@@ -1367,6 +1500,8 @@ def crawl_rank_source(source_id: int, force: bool = False, limit: int = 20) -> d
         'fetchAt': int(now),
         'items': [],
     }
+    _start = time.time()
+    fetch_error = ''
     try:
         if site == 'fanqie':
             cat = _find_category(src.get('categoryLegacyId'))
@@ -1397,9 +1532,22 @@ def crawl_rank_source(source_id: int, force: bool = False, limit: int = 20) -> d
         else:
             raise ValueError(f'不支持的站点：{site}')
     except Exception as exc:
-        result['fetchError'] = str(exc)
+        fetch_error = str(exc)
+        result['fetchError'] = fetch_error
         # 返回空列表 + 错误提示
-    result['itemCount'] = len(result.get('items', []))
+
+    # 2) 结构校验：剔除缺关键字段的残条，并统计丢弃量（可观测）
+    clean_items, dropped, problems = _validate_items(result.get('items', []))
+    result['items'] = clean_items
+    result['droppedCount'] = dropped
+    if problems:
+        result['structureProblems'] = problems
+    result['itemCount'] = len(clean_items)
+
+    # 3) 健康度记录：无异常即视为健康（榜单空 ≠ 故障，避免误熔断）
+    _record_health(source_id, ok=(not fetch_error), response_ms=(time.time() - _start) * 1000, error=fetch_error)
+    result['health'] = _get_health(source_id)
+
     with _lock:
         _cache[cache_key] = (time.time(), dict(result))
     # 返回切片

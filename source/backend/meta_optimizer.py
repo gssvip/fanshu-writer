@@ -25,6 +25,13 @@ from datetime import datetime, timezone
 
 FAILURE_CATEGORIES = ['format', 'structure', 'content', 'mission', 'conflict', 'entity']
 
+# 自动采纳通道（P2-10）：只能对低风险、高确定性的问题自动打补丁。
+# - 同类失败达到 AUTO_ADOPT_MIN_COUNT 条才触发；
+# - 仅 AUTO_ADOPT_CATEGORIES（format/entity，属格式与实体类，不碰创作意图）可自动，
+#   content/mission/conflict/silver 仍必须人工采纳。
+AUTO_ADOPT_MIN_COUNT = 5
+AUTO_ADOPT_CATEGORIES = {'format', 'entity'}
+
 FAILURE_CN_LABEL = {
     'format': '格式错',
     'structure': '结构错',
@@ -113,8 +120,11 @@ def get_prompt_patches(bb) -> List[Dict[str, Any]]:
 
 
 def add_prompt_patch(bb, category: str, dim_key: str, patch_text: str,
-                     bucket_key: str = '') -> Dict[str, Any]:
-    """保存一条新补丁。返回补丁对象。"""
+                     bucket_key: str = '', adopted_auto: bool = False) -> Dict[str, Any]:
+    """保存一条新补丁。返回补丁对象。
+
+    adopted_auto=True 表示系统自动采纳（低风险高置信），前端据此展示"系统已自动修复"。
+    """
     patches = get_prompt_patches(bb)
     pid = f'p{len(patches)+1:03d}_{int(datetime.now(timezone.utc).timestamp())}'
     obj = {
@@ -124,6 +134,7 @@ def add_prompt_patch(bb, category: str, dim_key: str, patch_text: str,
         'bucket_key': bucket_key or f'{category}::{dim_key or ""}',
         'patch_text': (patch_text or '').strip(),
         'applied_at': datetime.now(timezone.utc).isoformat(),
+        'adopted_auto': bool(adopted_auto),
     }
     patches.append(obj)
     bb.prompt_patches_json = json.dumps(patches, ensure_ascii=False)
@@ -131,6 +142,63 @@ def add_prompt_patch(bb, category: str, dim_key: str, patch_text: str,
     if bucket_key:
         add_ignored_bucket(bb, bucket_key)
     return obj
+
+
+def remove_prompt_patch(bb, patch_id: str) -> bool:
+    """回滚：按 patch id 删除一条已采纳补丁。返回是否删除成功。"""
+    if not bb or not patch_id:
+        return False
+    patches = get_prompt_patches(bb)
+    before = len(patches)
+    kept = [p for p in patches if p.get('id') != patch_id]
+    if len(kept) == before:
+        return False
+    bb.prompt_patches_json = json.dumps(kept, ensure_ascii=False)
+    return True
+
+
+def maybe_auto_adopt(bb) -> List[Dict[str, Any]]:
+    """自动采纳通道：扫描 FailureDB，对满足条件的低风险 bucket 自动生成并采纳补丁。
+
+    触发条件（缺一不可）：
+      1. category ∈ AUTO_ADOPT_CATEGORIES（format/entity）；
+      2. 同类失败 count ≥ AUTO_ADOPT_MIN_COUNT；
+      3. 该 bucket 未被忽略、且尚未采纳过（避免重复打补丁）。
+    返回本次实际自动采纳的补丁列表（供展示"系统已自动修复 N 条"）。
+    """
+    if not bb:
+        return []
+    records = FailureDB.load(bb)
+    if len(records) < AUTO_ADOPT_MIN_COUNT:
+        return []
+    ignored = set(get_ignored_buckets(bb))
+    applied_buckets = {p.get('bucket_key', '') for p in get_prompt_patches(bb)}
+
+    # 按 category::dim_key 聚合计数
+    buckets: Dict[str, List[FailureRecord]] = {}
+    for r in records:
+        if r.category not in AUTO_ADOPT_CATEGORIES:
+            continue
+        key = f'{r.category}::{r.dim_key}'
+        buckets.setdefault(key, []).append(r)
+
+    adopted = []
+    for key, items in buckets.items():
+        if len(items) < AUTO_ADOPT_MIN_COUNT:
+            continue
+        if key in ignored or key in applied_buckets:
+            continue
+        cat = key.split('::', 1)[0]
+        dim_key = key.split('::', 1)[1] if '::' in key else ''
+        recent = sorted(items, key=lambda x: x.ts, reverse=True)[0]
+        patch_text = recent.fix_hint or MetaPromptOptimizer._default_fix_hint(cat)
+        if patch_text and not patch_text.startswith('在') and '：' not in patch_text[:5]:
+            patch_text = f'【{FAILURE_CN_LABEL.get(cat, cat)}补丁】{patch_text}'
+        obj = add_prompt_patch(bb, category=cat, dim_key=dim_key,
+                               patch_text=patch_text, bucket_key=key,
+                               adopted_auto=True)
+        adopted.append(obj)
+    return adopted
 
 
 def build_active_patch_text(bb) -> str:
@@ -290,6 +358,8 @@ def get_optimization_report(bb) -> Dict:
     """
     records = FailureDB.load(bb)
     ignored = get_ignored_buckets(bb)
+    # 自动采纳通道：先跑一次，把满足条件的低风险 bucket 自动打成补丁
+    auto_adopted = maybe_auto_adopt(bb)
     analysis = MetaPromptOptimizer.analyze(records, min_count=3, ignored_buckets=ignored)
     applied = get_prompt_patches(bb)
     result = {
@@ -304,6 +374,9 @@ def get_optimization_report(bb) -> Dict:
             'step3': '✅ 采纳 → 补丁追加到系统 prompt 末尾，以后生成本书任何维度都会带上',
             'step4': '❌ 忽略 → 不再提示；📝 自定义 → 编辑补丁文字后再采纳',
         },
+        # 自动采纳（P2-10）：低风险类型（format/entity）达到阈值后系统自动修复，仍可一键回滚
+        'auto_adopted_count': len([p for p in applied if p.get('adopted_auto')]),
+        'auto_adopted_this_round': [p.get('id') for p in auto_adopted],
         'applied_patches': [
             {
                 'id': p.get('id'),
@@ -311,6 +384,7 @@ def get_optimization_report(bb) -> Dict:
                 'category_cn': FAILURE_CN_LABEL.get(p.get('category', ''), p.get('category', '')),
                 'patch_text': p.get('patch_text', ''),
                 'applied_at': p.get('applied_at', ''),
+                'adopted_auto': bool(p.get('adopted_auto')),
             } for p in applied
         ],
         'applied_patch_count': len(applied),
