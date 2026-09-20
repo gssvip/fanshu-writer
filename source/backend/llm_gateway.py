@@ -1038,19 +1038,25 @@ def get_llm_config(app_module=None):
 
     返回 (base_url, api_key, model)。
     可传入 app_module 避免循环 import；不传则延迟 import。
+    多用户隔离：在请求上下文中自动取当前登录用户的激活配置，
+    否则回退共享兜底配置（user_id IS NULL）。
     """
     import os
     if app_module is None:
         import app as app_module
 
     with app_module.app.app_context():
-        # 必须取激活配置，否则多配置场景下 query.first() 会取到旧配置导致 api_key 为空
-        config = app_module.AIConfig.get_active()
+        uid = None
+        try:
+            from flask import request as _req
+            if _req:
+                uid = getattr(_req, 'current_user_id', None)
+        except Exception:
+            uid = None
+        config = app_module.AIConfig.get_active(user_id=uid)
         api_key = config.api_key if config and config.api_key else os.environ.get("USER_LLM_API_KEY", "")
         base_url = config.base_url if config else os.environ.get("USER_LLM_BASE_URL", "https://api.deepseek.com/v1")
         model = config.model if config else os.environ.get("USER_LLM_MODEL", "deepseek-chat")
-        # 【智谱 GLM 404 修复】不再无条件补 /v1，走 provider 感知的归一化：
-        # 智谱→导向v4不补/v1；其他OpenAI兼容→确保/v1但已有其他版本段不强行补。
         base_url = _normalize_llm_base_url(base_url, model)
         return base_url, api_key, model
 

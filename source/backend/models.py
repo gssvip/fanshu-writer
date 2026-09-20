@@ -235,6 +235,7 @@ class AISession(db.Model):
     __tablename__ = 'ai_sessions'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     book_id = db.Column(db.String(36), db.ForeignKey('books.id'), nullable=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True, index=True)  # 多用户隔离：会话归属用户
     scope = db.Column(db.String(50), default='general')  # general, character, plot, chapter
     scope_id = db.Column(db.String(36), default='')
     title = db.Column(db.String(200), default='')
@@ -260,6 +261,7 @@ class AIConfig(db.Model):
     """
     __tablename__ = 'ai_config'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True, index=True)  # 多用户隔离：配置归属用户（None=共享兜底）
     name = db.Column(db.String(50), default='默认配置')  # 提供商展示名（如 DeepSeek）
     is_active = db.Column(db.Boolean, default=True, index=True)  # 是否激活（同时仅一个）
     provider = db.Column(db.String(50), default='deepseek')
@@ -306,16 +308,21 @@ class AIConfig(db.Model):
         return models[0] if models else ''
 
     @classmethod
-    def get_active(cls):
-        cfg = cls.query.filter_by(is_active=True).first()
+    def get_active(cls, user_id=None):
+        """返回激活配置。user_id 非空时优先取该用户的激活配置；
+        无用户上下文（后台任务）时回退到共享配置（user_id IS NULL），保证兼容。"""
+        q = cls.query
+        if user_id:
+            q = q.filter((cls.user_id == user_id) | (cls.user_id.is_(None)))
+        cfg = q.filter_by(is_active=True).order_by(cls.user_id.is_(None).asc()).first()
         if cfg:
             return cfg
-        cfg = cls.query.order_by(cls.id.asc()).first()
+        cfg = q.order_by(cls.user_id.is_(None).asc(), cls.id.asc()).first()
         if cfg:
             cfg.is_active = True
             db.session.commit()
             return cfg
-        cfg = cls(name='默认配置', is_active=True, models='["deepseek-chat"]')
+        cfg = cls(name='默认配置', is_active=True, models='["deepseek-chat"]', user_id=user_id)
         db.session.add(cfg)
         db.session.commit()
         return cfg

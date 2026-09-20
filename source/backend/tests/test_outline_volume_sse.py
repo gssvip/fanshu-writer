@@ -97,8 +97,8 @@ class TestOutlineVolumeJob:
         r = client.post(f'/api/books/{bid}/ai-outline-volume',
                         json={'volume_index': 1},
                         headers={'Authorization': f'Bearer {tok}'})
-        assert r.status_code == 403
-        assert '无权' in (r.get_json() or {}).get('error', '')
+        # 多用户隔离：越权访问他人作品统一返回 404（不泄露作品是否存在）
+        assert r.status_code == 404
 
     def test_post_not_found_404(self, app, client, _seed_auth):
         tok = _seed_auth['token']

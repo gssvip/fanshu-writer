@@ -15,9 +15,9 @@ def test_health_check_ok(client):
     assert "time" in body
 
 
-def test_unknown_api_route_handled(client):
+def test_unknown_api_route_handled(auth_client):
     """未知 API 路由应被妥善处理（404 或 SPA fallback 200），不应 500。"""
-    resp = client.get("/api/__not_exist__")
+    resp = auth_client.get("/api/__not_exist__")
     assert resp.status_code in (404, 200)
 
 

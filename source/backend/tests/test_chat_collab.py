@@ -417,7 +417,7 @@ class TestGeneralChatDisconnectRescue:
     内容（含结构化卡片）同步写进会话历史，并同步节点设计师续会 state。
     """
 
-    def test_disconnect_mid_stream_rescues_partial(self, app, monkeypatch, tmp_path):
+    def test_disconnect_mid_stream_rescues_partial(self, app, monkeypatch, tmp_path, auth_user):
         import io
         import json as _json
         import sys as _sys
@@ -443,11 +443,13 @@ class TestGeneralChatDisconnectRescue:
 
         monkeypatch.setattr(gc, 'gw_stream_with_hb', fake_gw)
 
+        _, token = auth_user
         payload = _json.dumps({'message': '第1卷节点设计', 'role_id': 'node_designer'}).encode()
         environ = {
             'REQUEST_METHOD': 'POST', 'PATH_INFO': '/api/ai/chat/general',
             'SERVER_NAME': 't', 'SERVER_PORT': '80', 'wsgi.url_scheme': 'http',
             'CONTENT_TYPE': 'application/json', 'CONTENT_LENGTH': str(len(payload)),
+            'HTTP_AUTHORIZATION': f'Bearer {token}',
             'wsgi.input': io.BytesIO(payload), 'wsgi.errors': _sys.stderr,
             'wsgi.version': (1, 0), 'wsgi.multithread': True,
             'wsgi.multiprocess': True, 'wsgi.run_once': False,
@@ -490,12 +492,14 @@ class TestTimelineAdoptPreservesOtherVolumes:
     upsert 增量合并，永不整条清空。
     """
 
-    def test_adopt_volume1_overwrite_keeps_volume2(self, app, client):
+    def test_adopt_volume1_overwrite_keeps_volume2(self, app, client, auth_user, auth_client):
         import json as _json
-        from app import db, Book, BookBible
+        from app import db, Book, BookBible, User
 
+        username, token = auth_user
         with app.app_context():
-            book = Book(title='测试书')
+            user = User.query.filter_by(username=username).first()
+            book = Book(title='测试书', user_id=user.id)
             db.session.add(book)
             db.session.flush()
 
@@ -517,7 +521,7 @@ class TestTimelineAdoptPreservesOtherVolumes:
              'nodes': [{'index': 1, 'chapters': 3, 'title': '新节点'}]},
         ], ensure_ascii=False)
 
-        resp = client.post('/api/ai/chat/smart/apply-card', json={
+        resp = auth_client.post('/api/ai/chat/smart/apply-card', json={
             'book_id': book_id,
             'mode': 'overwrite',
             'card': {'type': 'SAVE_PLOT', 'title': '第1卷情节节点', 'content': card_content},

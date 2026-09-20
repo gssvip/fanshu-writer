@@ -130,8 +130,10 @@ def chat_general():
     next_chapter_num: int | None = None
     toc_block = ''
     if book_id:
-        book = Book.query.get(book_id)
-        if not book:
+        # 多用户隔离：绑定作品的通用聊天只能用当前用户自己的作品
+        from auth_utils import get_owned_book
+        book = get_owned_book(book_id)
+        if book is None:
             return jsonify({'error': '书籍不存在'}), 404
         book_title = book.title or ''
         bb = BookBible.query.filter_by(book_id=book_id).first()
@@ -184,16 +186,18 @@ def chat_general():
     # 命中维度检测（零LLM快路径）
     hit_suggestions = detect_dimension_hits(message) if detect_dimension_hits else []
 
-    # 会话（global闲聊：不绑book，通用唯一会话key）
+    # 会话（global闲聊：不绑book，通用唯一会话key；按用户隔离避免串台）
     if not book_id:
-        # 纯闲聊会话：用固定scope+uuid，book_id写入None
+        uid = getattr(request, 'current_user_id', None)
+        # 纯闲聊会话：用固定scope+uuid，book_id写入None，按 user_id 隔离
         session = AISession.query.filter(
             AISession.scope == 'general_global',
             AISession.title == '通用闲聊',
+            AISession.user_id == uid,
         ).order_by(AISession.updated_at.desc()).first()
         if not session:
             session = AISession(id=str(uuid.uuid4()), scope='general_global',
-                                title='通用闲聊', book_id=None,
+                                title='通用闲聊', book_id=None, user_id=uid,
                                 messages_json='[]', created_at=datetime.now(timezone.utc),
                                 updated_at=datetime.now(timezone.utc))
             db.session.add(session); db.session.commit()

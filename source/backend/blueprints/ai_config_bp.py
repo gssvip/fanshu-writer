@@ -29,9 +29,11 @@ MAX_CONFIGS = 10
 
 @ai_config_bp.route('/api/ai/config', methods=['GET'])
 def get_ai_config():
-    """返回当前激活配置（兼容旧接口）。"""
+    """返回当前用户的激活配置（兼容旧接口）。"""
     from app import AIConfig
-    return jsonify(AIConfig.get_active().to_dict())
+    from flask import request
+    uid = getattr(request, 'current_user_id', None)
+    return jsonify(AIConfig.get_active(user_id=uid).to_dict())
 
 
 def _merge_models(base: list, add: list) -> list:
@@ -42,6 +44,14 @@ def _merge_models(base: list, add: list) -> list:
         if m and m not in out:
             out.append(m)
     return out
+
+
+def _cfg_owned(cfg, uid) -> bool:
+    """配置归属校验：只有 user_id 等于当前用户的配置可被修改/删除；
+    共享配置（user_id IS NULL）仅供读取，禁止普通用户改写，避免跨用户污染 API Key。"""
+    if cfg is None:
+        return False
+    return uid is not None and str(cfg.user_id or '') == str(uid)
 
 
 def _apply_config_fields(cfg, data):
@@ -76,9 +86,12 @@ def _apply_config_fields(cfg, data):
 
 @ai_config_bp.route('/api/ai/config', methods=['PUT'])
 def update_ai_config():
-    """更新当前激活配置（兼容旧接口）。"""
+    """更新当前用户的激活配置（兼容旧接口）。共享配置禁止改写。"""
     from app import db, AIConfig
-    cfg = AIConfig.get_active()
+    uid = getattr(request, 'current_user_id', None)
+    cfg = AIConfig.get_active(user_id=uid)
+    if not _cfg_owned(cfg, uid):
+        return jsonify({'error': '请先在「AI 配置」中新建你自己的配置，再修改'}), 403
     _apply_config_fields(cfg, request.json or {})
     db.session.commit()
     return jsonify(cfg.to_dict())
@@ -86,10 +99,13 @@ def update_ai_config():
 
 @ai_config_bp.route('/api/ai/configs', methods=['GET'])
 def list_ai_configs():
-    """列出全部配置（每个提供商一条），激活的排第一。"""
+    """列出当前用户可见的配置（自己的 + 共享兜底），激活的排第一。"""
     from app import db, AIConfig
-    all_cfgs = AIConfig.query.order_by(AIConfig.is_active.desc(), AIConfig.id.asc()).all()
-    # 兼容旧库：没有任何 active 标记时，自动激活首条
+    uid = getattr(request, 'current_user_id', None)
+    q = AIConfig.query
+    if uid:
+        q = q.filter((AIConfig.user_id == uid) | (AIConfig.user_id.is_(None)))
+    all_cfgs = q.order_by(AIConfig.is_active.desc(), AIConfig.id.asc()).all()
     if all_cfgs and not any(c.is_active for c in all_cfgs):
         all_cfgs[0].is_active = True
         db.session.commit()
@@ -107,7 +123,9 @@ def create_ai_config():
     from app import db, AIConfig
     from llm_gateway import _normalize_llm_base_url
     data = request.json or {}
-    if AIConfig.query.count() >= MAX_CONFIGS:
+    uid = getattr(request, 'current_user_id', None)
+    # 数量限制只统计当前用户自己的配置（共享兜底不计入）
+    if AIConfig.query.filter_by(user_id=uid).count() >= MAX_CONFIGS:
         return jsonify({'error': f'最多 {MAX_CONFIGS} 个配置，请先删除一个'}), 400
     provider = str(data.get('provider') or 'custom')
     new_models = data.get('models') if isinstance(data.get('models'), list) else []
@@ -127,8 +145,10 @@ def create_ai_config():
         temperature=data.get('temperature', 0.7),
         max_tokens=data.get('max_tokens', 4096),
         is_active=True,
+        user_id=uid,
     )
-    AIConfig.query.filter_by(is_active=True).update({'is_active': False})
+    # 仅取消当前用户自己配置的激活态（不影响共享兜底配置）
+    AIConfig.query.filter_by(is_active=True, user_id=uid).update({'is_active': False})
     db.session.add(cfg)
     db.session.commit()
     return jsonify(cfg.to_dict()), 201
@@ -145,6 +165,9 @@ def update_ai_config_by_id(cfg_id):
     cfg = AIConfig.query.get(cfg_id)
     if not cfg:
         return jsonify({'error': '配置不存在'}), 404
+    uid = getattr(request, 'current_user_id', None)
+    if not _cfg_owned(cfg, uid):
+        return jsonify({'error': '无权修改该配置'}), 403
     _apply_config_fields(cfg, request.json or {})
     db.session.commit()
     return jsonify(cfg.to_dict())
@@ -152,23 +175,21 @@ def update_ai_config_by_id(cfg_id):
 
 @ai_config_bp.route('/api/ai/configs/<cfg_id>/select-model', methods=['POST'])
 def select_ai_config_model(cfg_id):
-    """智驾通用切换模型：把某提供商下的某个模型设为当前，并全局激活该提供商。
-
-    body: { "model": "deepseek-chat" }
-    效果：该 provider 成为激活配置，其 model = 所选模型 → 智驾设定/正文/去AI/校审全部跟随。
-    """
+    """智驾通用切换模型：把某提供商下的某个模型设为当前，并激活该配置（仅当前用户）。"""
     from app import db, AIConfig
     cfg = AIConfig.query.get(cfg_id)
     if not cfg:
         return jsonify({'error': '配置不存在'}), 404
+    uid = getattr(request, 'current_user_id', None)
+    if not _cfg_owned(cfg, uid):
+        return jsonify({'error': '无权修改该配置'}), 403
     data = request.json or {}
     model = str(data.get('model') or '').strip()
     if not model:
         return jsonify({'error': '模型不能为空'}), 400
-    # 把所选模型补进选定列表，并设为当前使用模型
     cfg.models = json.dumps(_merge_models(cfg.get_models(), [model]))
     cfg.model = model
-    AIConfig.query.filter_by(is_active=True).update({'is_active': False})
+    AIConfig.query.filter_by(is_active=True, user_id=uid).update({'is_active': False})
     cfg.is_active = True
     db.session.commit()
     return jsonify(cfg.to_dict())
@@ -176,12 +197,15 @@ def select_ai_config_model(cfg_id):
 
 @ai_config_bp.route('/api/ai/configs/<cfg_id>/activate', methods=['PUT'])
 def activate_ai_config(cfg_id):
-    """切换激活配置。"""
+    """切换激活配置（仅当前用户自己的配置）。"""
     from app import db, AIConfig
     cfg = AIConfig.query.get(cfg_id)
     if not cfg:
         return jsonify({'error': '配置不存在'}), 404
-    AIConfig.query.filter_by(is_active=True).update({'is_active': False})
+    uid = getattr(request, 'current_user_id', None)
+    if not _cfg_owned(cfg, uid):
+        return jsonify({'error': '无权激活该配置'}), 403
+    AIConfig.query.filter_by(is_active=True, user_id=uid).update({'is_active': False})
     cfg.is_active = True
     db.session.commit()
     return jsonify(cfg.to_dict())
@@ -189,16 +213,19 @@ def activate_ai_config(cfg_id):
 
 @ai_config_bp.route('/api/ai/configs/<cfg_id>', methods=['DELETE'])
 def delete_ai_config(cfg_id):
-    """删除配置。若删除的是激活配置，自动激活剩下的首条。"""
+    """删除配置（仅当前用户自己的配置）。若删的是激活配置，自动激活剩下首条。"""
     from app import db, AIConfig
     cfg = AIConfig.query.get(cfg_id)
     if not cfg:
         return jsonify({'error': '配置不存在'}), 404
+    uid = getattr(request, 'current_user_id', None)
+    if not _cfg_owned(cfg, uid):
+        return jsonify({'error': '无权删除该配置'}), 403
     was_active = cfg.is_active
     db.session.delete(cfg)
     db.session.commit()
     if was_active:
-        first = AIConfig.query.order_by(AIConfig.id.asc()).first()
+        first = AIConfig.query.filter_by(user_id=uid).order_by(AIConfig.id.asc()).first()
         if first:
             first.is_active = True
             db.session.commit()

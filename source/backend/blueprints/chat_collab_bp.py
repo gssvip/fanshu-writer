@@ -28,6 +28,9 @@ from typing import Any, Dict, List, Optional  # 顶层显式导入，兼容CI高
 
 from flask import Blueprint, jsonify, request, Response, stream_with_context
 
+# 多用户信息隔离：作品所有权校验（请求体 book_id 路由用，URL book_id 已由全局 before_request 兜底）
+from auth_utils import get_owned_book, owned_book_or_404
+
 chat_collab_bp = Blueprint('chat_collab', __name__)
 
 
@@ -793,16 +796,25 @@ def _run_blocking_with_heartbeat(blocking_fn, sse_fn, extra_frames=None):
 # - 策略：不匹配就丢弃旧 session，静默创建新 session 并清空历史（历史对话绝不跨书迁移）
 # ----------------------------------------------------------------------------
 def _get_or_create_session_for_book(session_id, book_id, scope='general', title='新会话'):
-    """session 安全获取器：book_id 不匹配时创建新 session。永不跨书迁移历史。"""
+    """session 安全获取器：book_id 不匹配、或不属于当前用户时创建新 session。永不跨书/跨用户迁移历史。"""
     from app import db, AISession
+    uid = getattr(request, 'current_user_id', None)
     session = None
     if session_id:
         session = AISession.query.get(session_id)
         # ===== 隔离铁律：session.book_id != 当前请求 book_id → 坚决丢弃（防串书）=====
         if session is not None and str(getattr(session, 'book_id', None)) != str(book_id):
             session = None
+        # ===== 多用户隔离：会话必须属于当前用户（user_id 匹配 或 绑定其作品）=====
+        if session is not None:
+            owned = bool(session.user_id and str(session.user_id) == str(uid)) or (
+                session.book_id and get_owned_book(session.book_id) is not None
+            )
+            if not owned:
+                session = None
     if not session:
-        session = AISession(book_id=book_id, scope=scope, title=title[:30], messages_json='[]')
+        session = AISession(book_id=book_id, scope=scope, title=title[:30],
+                            messages_json='[]', user_id=uid)
         db.session.add(session)
         db.session.commit()
     return session
@@ -2030,8 +2042,9 @@ def chat_smart():
     if not book_id or not message:
         return jsonify({'error': '缺少 book_id 或 message'}), 400
 
-    book = Book.query.get(book_id)
-    if not book:
+    # 多用户隔离：请求体 book_id 必须属于当前登录用户（URL 无 book_id，全局守卫不拦截）
+    book = get_owned_book(book_id)
+    if book is None:
         return jsonify({'error': '书籍不存在'}), 404
     bb = BookBible.query.filter_by(book_id=book_id).first()
 
@@ -2269,6 +2282,9 @@ def apply_card():
     from app import db, BookBible, Character, Chapter, parse_chapter_number, resort_chapters_by_title, AISession
     data = request.json or {}
     book_id = data.get('book_id')
+    # 多用户隔离：采纳卡片必须落在当前用户自己的作品上
+    if not book_id or get_owned_book(book_id) is None:
+        return jsonify({'error': 'Book not found'}), 404
     card = data.get('card', {})
     ctype = card.get('type', '')
     content = (card.get('content') or '').strip()
@@ -2940,6 +2956,11 @@ def update_card_status():
         return jsonify({'error': '缺少 session_id 或 card_id'}), 400
     if new_status not in ('ignored', 'adopted', 'appended', 'edited'):
         return jsonify({'error': '无效的 status'}), 400
+    # 多用户隔离：只能改自己作品下的会话卡片状态
+    from app import AISession
+    sess = AISession.query.get(session_id)
+    if sess is None or (sess.book_id and get_owned_book(sess.book_id) is None):
+        return jsonify({'error': '会话不存在'}), 404
     _persist_card_status(session_id, card_id, new_status)
     return jsonify({'ok': True})
 
@@ -2980,6 +3001,15 @@ def get_session_messages(session_id):
     from app import AISession
     session = AISession.query.get(session_id)
     if not session:
+        return jsonify({'error': '会话不存在'}), 404
+    # 多用户隔离：会话必须归属当前用户（user_id 匹配）或绑定其作品
+    uid = request.current_user_id
+    owned = False
+    if session.user_id and str(session.user_id) == str(uid):
+        owned = True
+    elif session.book_id and get_owned_book(session.book_id) is not None:
+        owned = True
+    if not owned:
         return jsonify({'error': '会话不存在'}), 404
     archived = _archive_load_full(session_id)
     if archived is None:
@@ -3055,8 +3085,9 @@ def chat_smart_action():
     if not book_id or action not in ('master_create', 'continue', 'polish'):
         return jsonify({'error': '参数无效，action 必须为 master_create/continue/polish'}), 400
 
-    book = Book.query.get(book_id)
-    if not book:
+    # 多用户隔离：请求体 book_id 必须属于当前登录用户
+    book = get_owned_book(book_id)
+    if book is None:
         return jsonify({'error': '书籍不存在'}), 404
 
     # 复用或创建会话（【会话隔离铁律】：session.book_id != book_id 就丢弃，不让旧书历史污染新书）

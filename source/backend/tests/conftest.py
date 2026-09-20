@@ -86,6 +86,28 @@ def client(app):
 
 
 @pytest.fixture()
+def auth_user(app, client):
+    """注册一个测试用户并返回 (username, token)。"""
+    import uuid
+    username = f"authtest_{uuid.uuid4().hex[:8]}"
+    email = f"{username}@test.local"
+    resp = client.post("/api/auth/register", json={
+        "username": username, "password": "test1234", "email": email,
+    })
+    body = resp.get_json()
+    return username, body["token"]
+
+
+@pytest.fixture()
+def auth_client(app, client, auth_user):
+    """带默认 Authorization 头的 test client（已登录用户）。"""
+    _, token = auth_user
+    tc = app.test_client()
+    tc.environ_base["HTTP_AUTHORIZATION"] = f"Bearer {token}"
+    return tc
+
+
+@pytest.fixture()
 def db_session(app):
     """直接拿 db.session 做模型层断言。"""
     from app import db

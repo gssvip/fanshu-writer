@@ -984,10 +984,17 @@ def ai_chat_stream():
 
 @app.route('/api/ai/sessions', methods=['GET'])
 def list_ai_sessions():
+    from auth_utils import get_user_book_ids
+    uid = request.current_user_id
+    ubids = get_user_book_ids(uid)
     book_id = request.args.get('book_id')
     scope = request.args.get('scope')
-    query = AISession.query
+    # 多用户隔离：只返回当前用户的会话（user_id 匹配 或 绑定其作品）
+    query = AISession.query.filter(
+        (AISession.user_id == uid) | AISession.book_id.in_(ubids) if ubids else (AISession.user_id == uid)
+    )
     if book_id:
+        if book_id not in ubids: return jsonify({'error': 'Book not found'}), 404
         query = query.filter_by(book_id=book_id)
     if scope:
         query = query.filter_by(scope=scope)
@@ -996,34 +1003,40 @@ def list_ai_sessions():
 
 @app.route('/api/ai/sessions', methods=['POST'])
 def create_ai_session():
+    from auth_utils import get_owned_book
     data = request.json
+    uid = request.current_user_id
     book_id = data.get('book_id', '')
     scope = data.get('scope', 'general')
     scope_id = data.get('scope_id', '')
-    # upsert：同 book+scope+scope_id 的会话复用，避免维度Modal重复创建孤儿会话
+    if book_id and get_owned_book(book_id) is None:
+        return jsonify({'error': 'Book not found'}), 404
     existing = AISession.query.filter_by(
-        book_id=book_id, scope=scope, scope_id=scope_id
+        book_id=book_id, scope=scope, scope_id=scope_id, user_id=uid
     ).order_by(AISession.updated_at.desc()).first() if (book_id and scope and scope_id) else None
     if existing:
         return jsonify(existing.to_dict()), 200
-    session = AISession(
-        book_id=book_id,
-        scope=scope,
-        scope_id=scope_id,
-        title=data.get('title', '新对话')
-    )
+    session = AISession(book_id=book_id or None, scope=scope, scope_id=scope_id,
+                        user_id=uid, title=data.get('title', '新对话'))
     db.session.add(session)
     db.session.commit()
     return jsonify(session.to_dict()), 201
 
+def _session_owned(s, uid):
+    if s is None: return False
+    if s.user_id and str(s.user_id) == str(uid): return True
+    if s.book_id:
+        from auth_utils import get_owned_book
+        return get_owned_book(s.book_id) is not None
+    return False  # 无主无作品的会话不允许跨用户访问
+
 @app.route('/api/ai/sessions/<session_id>', methods=['PUT'])
 def update_ai_session(session_id):
     session = AISession.query.get(session_id)
-    if not session:
+    if not session or not _session_owned(session, request.current_user_id):
         return jsonify({'error': 'Session not found'}), 404
     data = request.json
     if 'messages' in data and isinstance(data['messages'], list):
-        # 全量覆盖消息：先重建全量存档（会给消息打 _seq，messages_json 同步带上保持对齐）
         from session_persist import _archive_replace_all
         msgs = [m for m in data['messages'] if isinstance(m, dict)]
         _archive_replace_all(session_id, msgs)
@@ -1037,11 +1050,10 @@ def update_ai_session(session_id):
 @app.route('/api/ai/sessions/<session_id>', methods=['DELETE'])
 def delete_ai_session(session_id):
     session = AISession.query.get(session_id)
-    if not session:
+    if not session or not _session_owned(session, request.current_user_id):
         return jsonify({'error': 'Session not found'}), 404
     db.session.delete(session)
     db.session.commit()
-    # 清理全量存档行（独立连接，不受上面事务影响）
     try:
         from session_persist import _archive_delete_session
         _archive_delete_session(session_id)
@@ -1125,20 +1137,25 @@ def merge_entities_api(book_id):
 
 @app.route('/api/preferences', methods=['GET'])
 def get_preferences():
+    # 多用户隔离：用户偏好按 user:{uid}: 前缀存储，互不串台
+    uid = request.current_user_id
+    prefix = f'user:{uid}:'
     keys = request.args.get('keys', '')
     if keys:
         result = {}
         for k in keys.split(','):
-            result[k] = AppPreference.get(k, '')
+            result[k] = AppPreference.get(prefix + k, '')
         return jsonify(result)
-    prefs = AppPreference.query.all()
-    return jsonify({p.key: p.value for p in prefs})
+    prefs = AppPreference.query.filter(AppPreference.key.like(prefix + '%')).all()
+    return jsonify({p.key[len(prefix):]: p.value for p in prefs})
 
 @app.route('/api/preferences', methods=['PUT'])
 def set_preferences():
+    uid = request.current_user_id
+    prefix = f'user:{uid}:'
     data = request.json
     for k, v in data.items():
-        AppPreference.set(k, str(v))
+        AppPreference.set(prefix + k, str(v))
     return jsonify({'success': True})
 
 @app.route('/api/books/<book_id>/ai-import-recognize', methods=['POST'])
@@ -8458,11 +8475,12 @@ def upload_analyze():
 # ============================================================
 @app.route('/api/ai/usage', methods=['GET'])
 def ai_usage_list():
-    """返回最近 N 条 AI 调用记录（可按时间范围 range=today/7d/30d 或旧 days=N；scene/book_id过滤）。"""
+    """返回最近 N 条 AI 调用记录（仅当前用户自己作品的，按时间范围/scene/book_id过滤）。"""
+    from auth_utils import get_user_book_ids
+    ubids = get_user_book_ids(request.current_user_id)
     limit = min(int(request.args.get('limit', 50)), 200)
-    q = AIUsageLog.query
+    q = AIUsageLog.query.filter(AIUsageLog.book_id.in_(ubids)) if ubids else AIUsageLog.query.filter(False)
 
-    # ============= 时间范围过滤（today/7d/30d 优先级 > 旧 days 参数） =============
     since = _ai_usage_since_from_request()
     if since is not None:
         q = q.filter(AIUsageLog.created_at >= since)
@@ -8477,6 +8495,7 @@ def ai_usage_list():
     if scene:
         q = q.filter(AIUsageLog.scene == scene)
     if book_id:
+        if book_id not in ubids: return jsonify({'items': [], 'total': 0})
         q = q.filter(AIUsageLog.book_id == book_id)
     if only_fail:
         q = q.filter(AIUsageLog.success.is_(False))
@@ -8506,9 +8525,9 @@ def _ai_usage_since_from_request():
 
 @app.route('/api/ai/usage/stats', methods=['GET'])
 def ai_usage_stats():
-    """AI 调用账本汇总：总调用、成功率、输出字数、耗时、按场景/模型分组。
-    优先 range=today/7d/30d；兼容旧 days=N（默认 7 天）。"""
-    # 优先按 range；否则按旧 days 回退
+    """AI 调用账本汇总：仅统计当前用户自己作品的调用（总调用、成功率、输出字数、按场景/模型分组）。"""
+    from auth_utils import get_user_book_ids
+    ubids = get_user_book_ids(request.current_user_id)
     since = _ai_usage_since_from_request()
     range_key = (request.args.get('range') or '').strip() or ''
     days_used: int
@@ -8522,21 +8541,22 @@ def ai_usage_stats():
         since = datetime.now(timezone.utc) - timedelta(days=days_used)
         range_key = f'{days_used}d'
 
-    base = AIUsageLog.query.filter(AIUsageLog.created_at >= since)
+    # 多用户隔离：仅统计当前用户作品的调用记录
+    _book_filter = AIUsageLog.book_id.in_(ubids)
+    base = AIUsageLog.query.filter(_book_filter, AIUsageLog.created_at >= since)
     total = base.count()
     success = base.filter(AIUsageLog.success.is_(True)).count()
     total_output = db.session.query(db.func.coalesce(db.func.sum(AIUsageLog.output_chars), 0)).filter(
-        AIUsageLog.created_at >= since).scalar() or 0
+        _book_filter, AIUsageLog.created_at >= since).scalar() or 0
     total_prompt = db.session.query(db.func.coalesce(db.func.sum(AIUsageLog.prompt_chars), 0)).filter(
-        AIUsageLog.created_at >= since).scalar() or 0
+        _book_filter, AIUsageLog.created_at >= since).scalar() or 0
     total_ms = db.session.query(db.func.coalesce(db.func.sum(AIUsageLog.duration_ms), 0)).filter(
-        AIUsageLog.created_at >= since).scalar() or 0
-    # ===== 2026-09-03 新增 Token 汇总（老库缺列时用 getattr+异常兜底）=====
+        _book_filter, AIUsageLog.created_at >= since).scalar() or 0
     def _safe_sum(col_name: str) -> int:
         try:
             col = getattr(AIUsageLog, col_name)
             return int(db.session.query(db.func.coalesce(db.func.sum(col), 0)).filter(
-                AIUsageLog.created_at >= since).scalar() or 0)
+                _book_filter, AIUsageLog.created_at >= since).scalar() or 0)
         except Exception:
             return 0
     total_input_tokens = _safe_sum('input_tokens')
@@ -8545,9 +8565,9 @@ def ai_usage_stats():
 
     scene_rows = db.session.query(AIUsageLog.scene, db.func.count(AIUsageLog.id),
                                   db.func.sum(AIUsageLog.output_chars)).filter(
-        AIUsageLog.created_at >= since).group_by(AIUsageLog.scene).order_by(db.func.count(AIUsageLog.id).desc()).limit(20).all()
+        _book_filter, AIUsageLog.created_at >= since).group_by(AIUsageLog.scene).order_by(db.func.count(AIUsageLog.id).desc()).limit(20).all()
     model_rows = db.session.query(AIUsageLog.model, db.func.count(AIUsageLog.id)).filter(
-        AIUsageLog.created_at >= since).group_by(AIUsageLog.model).order_by(db.func.count(AIUsageLog.id).desc()).limit(20).all()
+        _book_filter, AIUsageLog.created_at >= since).group_by(AIUsageLog.model).order_by(db.func.count(AIUsageLog.id).desc()).limit(20).all()
 
     return jsonify({
         'range': range_key,                # today / 7d / 30d
@@ -8572,7 +8592,7 @@ def ai_usage_stats():
 
 # 【冷启动提速·2026-08-20】schema+seed 版本号：改动数据库结构（新表/新列/迁移）
 # 或种子数据（SEED_SKILL_PACKS / 内置模板）时必须递增此版本，老库才会重新走全量初始化。
-SCHEMA_SEED_VERSION = '2026-09-05.1'  # ai_config 补 models 列 + 同 provider 重复行合并（修复保存500）
+SCHEMA_SEED_VERSION = '2026-09-20.1'  # 多用户信息隔离：ai_config / ai_sessions 新增 user_id 列
 
 
 def init_db():
@@ -8638,17 +8658,21 @@ def init_db():
         # Migration: AI配置改为提供商级——一行一提供商，models 存用户勾选的多模型
         # （修复老库缺列导致保存/选择模型 HTTP 500：no such column ai_config.models）
         _add_column('ai_config', "models TEXT DEFAULT '[]'")
+        # Migration 2026-09-20.1: 多用户信息隔离——AI 配置与会话归属用户（None=共享兜底，防 API Key/聊天记录跨用户泄露）
+        _add_column('ai_config', "user_id VARCHAR(36)")
+        _add_column('ai_sessions', "user_id VARCHAR(36)")
         # Migration: 合并旧版"每模型一条"产生的同 provider 重复行 → 一行一提供商
-        # （合并规则：保留一行（优先激活行），models 取并集，model 取保留行的当前模型；
-        #   其余重复行删除。幂等：无重复时不做任何事。）
+        # （合并规则：按 (provider, user_id) 分组，仅合并同一用户/共享兜底内的重复行，
+        #   避免多用户场景下把 A 用户与 B 用户的同 provider 配置误合并导致数据丢失/串台）
         try:
             import json as _json
             _rows = AIConfig.query.order_by(AIConfig.is_active.desc(), AIConfig.id.asc()).all()
             _by_provider: dict = {}
             for _r in _rows:
-                _by_provider.setdefault(_r.provider or 'custom', []).append(_r)
+                _key = ((_r.provider or 'custom'), str(_r.user_id) if _r.user_id else None)
+                _by_provider.setdefault(_key, []).append(_r)
             _merged_any = False
-            for _prov, _rs in _by_provider.items():
+            for _key, _rs in _by_provider.items():
                 if len(_rs) < 2:
                     continue
                 _keep = _rs[0]
@@ -8825,7 +8849,7 @@ def serve_frontend(path):
 # （db/Book/Chapter/各 helper/app.logger…）。此处在所有模型与 helper 定义完成后，
 # 把本模块全局命名空间整体注入该蓝图模块，函数体引用在请求期即可解析（与拆分前一致）。
 from blueprints.ai_continue_bp import init as _ai_continue_init
-_ai_continue_init(app_module=sys.modules[__name__])
+_ai_continue_init(app_module=sys.modules[__name__]); from auth_utils import register_auth_guards as _rag; _rag(app)  # 全局鉴权+作品所有权守卫（多用户信息隔离），注册于所有蓝图之后
 
 if __name__ == '__main__':
     init_db()
