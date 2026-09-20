@@ -66,6 +66,19 @@ function _parseTimelineVols(content: string): any[] {
   return [];
 }
 
+// 字段可能是字符串或数组（后端把 characters 等规范成了数组），统一渲染为顿号连接文本，
+// 避免数组直接渲染导致的人名粘连 + React key 告警。
+function _fmt(v: any): string {
+  if (v == null) return '';
+  if (Array.isArray(v)) return v.map(x => (x && typeof x === 'object' ? `${x.name || ''}${x.relation ? `(${x.relation})` : ''}` : String(x ?? ''))).filter(Boolean).join('、');
+  if (typeof v === 'object') {
+    const name = (v as any).name;
+    const rel = (v as any).relation;
+    return name ? `${name}${rel ? `(${rel})` : ''}` : '';
+  }
+  return String(v);
+}
+
 // 剧情维度卡片 body：按卷可折叠、每卷显示概要/主要事件/节点，并提供「节点设计」按钮
 const TimelineCardBody = memo(function TimelineCardBody({
   content, bookId, bible: _bible, onBibleUpdate, selectedSkillPackIds, chaptersPerVolume,
@@ -82,6 +95,9 @@ const TimelineCardBody = memo(function TimelineCardBody({
 }) {
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
   const [designing, setDesigning] = useState<number | null>(null);
+  // 节点级折叠：默认折叠，只渲染标题行 + 关键短字段，降低首屏 DOM（50+ 节点场景）
+  const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
+  const toggleNode = (k: string) => setCollapsedNodes(prev => ({ ...prev, [k]: !prev[k] }));
   const vols = useMemo(() => _parseTimelineVols(content), [content]);
   const toggleVol = (idx: number) => setCollapsed(prev => ({ ...prev, [idx]: !prev[idx] }));
 
@@ -199,7 +215,7 @@ const TimelineCardBody = memo(function TimelineCardBody({
                   }}>
                     <div style={{ fontWeight: 600, color: '#5b21b6', marginBottom: 6 }}>📘 本卷 6 要素（节点阶段以这个为锚）</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px', fontSize: 12, color: '#4b5563' }}>
-                      {v.characters && <div><b>人物：</b>{v.characters}</div>}
+                      {v.characters && <div><b>人物：</b>{_fmt(v.characters)}</div>}
                       {v.timeline_anchor && <div><b>时间：</b>{v.timeline_anchor}</div>}
                       {v.location && <div><b>地点：</b>{v.location}</div>}
                       {v.realm_change && <div><b>境界变化：</b>{v.realm_change}</div>}
@@ -264,7 +280,7 @@ const TimelineCardBody = memo(function TimelineCardBody({
                               gap: '4px 10px',
                               color: '#78350f',
                             }}>
-                              {ev.characters && <div><b>人物：</b>{ev.characters}</div>}
+                              {ev.characters && <div><b>人物：</b>{_fmt(ev.characters)}</div>}
                               {ev.events && <div><b>事件：</b>{ev.events}</div>}
                               {ev.time && <div><b>时间：</b>{ev.time}</div>}
                               {ev.location && <div><b>地点：</b>{ev.location}</div>}
@@ -305,85 +321,96 @@ const TimelineCardBody = memo(function TimelineCardBody({
                           }}>
                             {mei ? <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600, marginBottom: 4 }}>归属：主要剧情事件 E{mei}</div> : null}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              {list.map((n: any, ni: number) => (
-                                <div key={ni} style={{
-                                  padding: 8,
-                                  background: '#ffffff',
-                                  border: '1px solid #e5e7eb',
-                                  borderRadius: 5,
-                                  fontSize: 12,
-                                }}>
-                                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
-                                    <span style={{ fontWeight: 600, color: '#111827' }}>
-                                      N{n.index || (ni + 1)} {n.title}
-                                    </span>
-                                    {n.chapters && <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>📖 {n.chapters}</span>}
-                                    {n.type && <span style={{ color: '#059669' }}>类型 {n.type}</span>}
-                                    {n.cool_type && <span style={{ color: '#c2410c' }}>爽点 {n.cool_type}</span>}
-                                    {n.cool_level && <span style={{ color: '#7c3aed' }}>{n.cool_level}</span>}
-                                  </div>
-                                  {/* 节点 6 要素 */}
-                                  {(n.characters || n.events || n.time || n.location || n.realm_change || n.age_change) && (
-                                    <div style={{
-                                      marginTop: 4,
-                                      padding: 6,
-                                      background: '#ecfeff',
-                                      border: '1px solid #a5f3fc',
-                                      borderRadius: 4,
-                                      fontSize: 12,
-                                      color: 'var(--text-primary)',
-                                      display: 'grid',
-                                      gridTemplateColumns: 'repeat(2, minmax(0,1fr))',
-                                      gap: '4px 10px',
-                                    }}>
-                                      {n.characters && <div><b>人物：</b>{n.characters}</div>}
-                                      {n.events && <div><b>事件：</b>{n.events}</div>}
-                                      {n.time && <div><b>时间：</b>{n.time}</div>}
-                                      {n.location && <div><b>地点：</b>{n.location}</div>}
-                                      {n.realm_change && <div><b>境界：</b>{n.realm_change}</div>}
-                                      {n.age_change && <div><b>年龄/时程：</b>{n.age_change}</div>}
+                              {list.map((n: any, ni: number) => {
+                                const nodeKey = `${mei}-${n.chapters ?? n.index ?? ni}`;
+                                const nodeOpen = !!collapsedNodes[nodeKey];
+                                return (
+                                  <div key={`${mei}-${ni}`} style={{
+                                    padding: 8,
+                                    background: '#ffffff',
+                                    border: '1px solid #e5e7eb',
+                                    borderRadius: 5,
+                                    fontSize: 12,
+                                  }}>
+                                    {/* 标题行常显：标题 + 章号 + 类型 + 爽点 + 钩子（截断），详情默认折叠 */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', cursor: 'pointer' }} onClick={() => toggleNode(nodeKey)}>
+                                      <span style={{ fontWeight: 600, color: '#111827' }}>
+                                        N{n.index || (ni + 1)} {n.title}
+                                      </span>
+                                      {n.chapters && <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>📖 {n.chapters}</span>}
+                                      {n.type && <span style={{ color: '#059669' }}>类型 {n.type}</span>}
+                                      {n.cool_type && <span style={{ color: '#c2410c' }}>爽点 {n.cool_type}</span>}
+                                      {n.cool_level && <span style={{ color: '#7c3aed' }}>{n.cool_level}</span>}
+                                      {!nodeOpen && n.hook && <span style={{ color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>🪝 {n.hook}</span>}
+                                      <span style={{ marginLeft: 'auto', color: '#999', fontSize: 11, minWidth: 40, textAlign: 'right' }}>{nodeOpen ? '收起 ▲' : '展开 ▼'}</span>
                                     </div>
-                                  )}
-                                  {/* 资源获得/消耗 */}
-                                  {((n.resources_gained && n.resources_gained.length) || (n.resources_used && n.resources_used.length) || (n.total_resources_owned && Object.keys(n.total_resources_owned).some(k => (n.total_resources_owned[k] || []).length))) && (
-                                    <div style={{
-                                      marginTop: 4,
-                                      padding: 6,
-                                      background: '#f0fdf4',
-                                      border: '1px solid #bbf7d0',
-                                      borderRadius: 4,
-                                      fontSize: 12,
-                                      color: '#14532d',
-                                    }}>
-                                      {n.resources_gained && n.resources_gained.length > 0 && (
-                                        <div><b>资源获得：</b>{Array.isArray(n.resources_gained) ? n.resources_gained.join('、') : n.resources_gained}</div>
-                                      )}
-                                      {n.resources_used && n.resources_used.length > 0 && (
-                                        <div><b>资源消耗：</b>{Array.isArray(n.resources_used) ? n.resources_used.join('、') : n.resources_used}</div>
-                                      )}
-                                      {n.total_resources_owned && Object.keys(n.total_resources_owned).some(k => (n.total_resources_owned[k] || []).length) && (
-                                        <div style={{ marginTop: 2 }}>
-                                          <b>总资源：</b>
-                                          {Object.entries(n.total_resources_owned).filter(([, v]: any) => v && v.length).map(([k, v]: any) => `${k}:${v.join('、')}`).join('；')}
+                                    {nodeOpen && (
+                                      <>
+                                        {/* 节点 6 要素 */}
+                                        {(n.characters || n.events || n.time || n.location || n.realm_change || n.age_change) && (
+                                          <div style={{
+                                            marginTop: 4,
+                                            padding: 6,
+                                            background: '#ecfeff',
+                                            border: '1px solid #a5f3fc',
+                                            borderRadius: 4,
+                                            fontSize: 12,
+                                            color: 'var(--text-primary)',
+                                            display: 'grid',
+                                            gridTemplateColumns: 'repeat(2, minmax(0,1fr))',
+                                            gap: '4px 10px',
+                                          }}>
+                                            {n.characters && <div><b>人物：</b>{_fmt(n.characters)}</div>}
+                                            {n.events && <div><b>事件：</b>{n.events}</div>}
+                                            {n.time && <div><b>时间：</b>{n.time}</div>}
+                                            {n.location && <div><b>地点：</b>{n.location}</div>}
+                                            {n.realm_change && <div><b>境界：</b>{n.realm_change}</div>}
+                                            {n.age_change && <div><b>年龄/时程：</b>{n.age_change}</div>}
+                                          </div>
+                                        )}
+                                        {/* 资源获得/消耗 */}
+                                        {((n.resources_gained && n.resources_gained.length) || (n.resources_used && n.resources_used.length) || (n.total_resources_owned && Object.keys(n.total_resources_owned).some(k => (n.total_resources_owned[k] || []).length))) && (
+                                          <div style={{
+                                            marginTop: 4,
+                                            padding: 6,
+                                            background: '#f0fdf4',
+                                            border: '1px solid #bbf7d0',
+                                            borderRadius: 4,
+                                            fontSize: 12,
+                                            color: '#14532d',
+                                          }}>
+                                            {n.resources_gained && n.resources_gained.length > 0 && (
+                                              <div><b>资源获得：</b>{Array.isArray(n.resources_gained) ? n.resources_gained.join('、') : n.resources_gained}</div>
+                                            )}
+                                            {n.resources_used && n.resources_used.length > 0 && (
+                                              <div><b>资源消耗：</b>{Array.isArray(n.resources_used) ? n.resources_used.join('、') : n.resources_used}</div>
+                                            )}
+                                            {n.total_resources_owned && Object.keys(n.total_resources_owned).some(k => (n.total_resources_owned[k] || []).length) && (
+                                              <div style={{ marginTop: 2 }}>
+                                                <b>总资源：</b>
+                                                {Object.entries(n.total_resources_owned).filter(([, v]: any) => v && v.length).map(([k, v]: any) => `${k}:${v.join('、')}`).join('；')}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                        {/* 爽点结构/衬托 */}
+                                        {(n.cool_structure || n.cool_contrast) && (
+                                          <div style={{ marginTop: 4, fontSize: 12, color: '#6b21a8' }}>
+                                            {n.cool_structure && <span><b>爽点结构：</b>{n.cool_structure}</span>}
+                                            {n.cool_contrast && <span style={{ marginLeft: 8 }}><b>衬托：</b>{n.cool_contrast}</span>}
+                                          </div>
+                                        )}
+                                        {n.summary && <div style={{ color: '#374151', marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{n.summary}</div>}
+                                        <div style={{ marginTop: 6, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                          {n.bury && <span style={{ color: '#c2410c' }} title="伏笔埋设（精确到章）">🔸 埋：{n.bury}</span>}
+                                          {n.payoff && <span style={{ color: 'var(--text-primary)' }} title="伏笔回收（精确到章）">🔹 收：{n.payoff}</span>}
+                                          {n.hook && <span>🪝 钩子：{n.hook}</span>}
                                         </div>
-                                      )}
-                                    </div>
-                                  )}
-                                  {/* 爽点结构/衬托 */}
-                                  {(n.cool_structure || n.cool_contrast) && (
-                                    <div style={{ marginTop: 4, fontSize: 12, color: '#6b21a8' }}>
-                                      {n.cool_structure && <span><b>爽点结构：</b>{n.cool_structure}</span>}
-                                      {n.cool_contrast && <span style={{ marginLeft: 8 }}><b>衬托：</b>{n.cool_contrast}</span>}
-                                    </div>
-                                  )}
-                                  {n.summary && <div style={{ color: '#374151', marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{n.summary}</div>}
-                                  <div style={{ marginTop: 6, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                                    {n.bury && <span style={{ color: '#c2410c' }} title="伏笔埋设（精确到章）">🔸 埋：{n.bury}</span>}
-                                    {n.payoff && <span style={{ color: 'var(--text-primary)' }} title="伏笔回收（精确到章）">🔹 收：{n.payoff}</span>}
-                                    {n.hook && <span>🪝 钩子：{n.hook}</span>}
+                                      </>
+                                    )}
                                   </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         ))}
