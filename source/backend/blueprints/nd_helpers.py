@@ -347,11 +347,20 @@ def _nd_extract_save_plot_vols(cards: list) -> list[dict]:
 def _nd_merge_state_vols(prev_vols, new_vols) -> list[dict]:
     """把两批 volume dict 按 volume_index 合并（nodes 按章号 ch_map 合并、新覆盖旧），
     作为 state['vols'] 持久化——历史消息里的卡片 content 落盘时会被截断（PG 安全线），
-    续会合并兜底必须靠这份累计数据，不能依赖会话历史里的卡片。"""
+    续会合并兜底必须靠这份累计数据，不能依赖会话历史里的卡片。
+
+    【卷级字段全保留】源卷所有非 nodes 字段一律保留（非空覆盖、空值不擦除已有值），
+    避免 main_events/characters/foreshadowing/resources 等在累计时丢失。"""
     try:
         from node_design_bp import _parse_chapters_field
     except Exception:
         return [v for v in (prev_vols or []) if isinstance(v, dict)]
+    def _nonempty(v):
+        if v is None: return False
+        if isinstance(v, str): return bool(v.strip())
+        if isinstance(v, (list, tuple, set, dict)): return len(v) > 0
+        if isinstance(v, bool): return v
+        return True
     merged: dict[int, dict] = {}
     order: list[int] = []
     for v in list(prev_vols or []) + list(new_vols or []):
@@ -373,15 +382,14 @@ def _nd_merge_state_vols(prev_vols, new_vols) -> list[dict]:
             cur = {'volume_index': vi}
             merged[vi] = cur
             order.append(vi)
-        # 卷级字段：非空才覆盖（新值优先）
-        for k in ('volume', 'volume_id', 'volume_title', 'summary', 'main_plot', 'core_conflict', 'ending_hook'):
-            nv = v.get(k)
-            if isinstance(nv, str) and nv.strip():
-                cur[k] = nv
-        if isinstance(v.get('key_events'), list) and v['key_events']:
-            cur['key_events'] = list(v['key_events'])
-        if isinstance(v.get('chapter_count'), int) and v.get('chapter_count'):
-            cur['chapter_count'] = v['chapter_count']
+        # 卷级字段：所有非 nodes 字段一律保留（非空覆盖、空值不擦除已有）
+        for k, val in v.items():
+            if k == 'nodes':
+                continue
+            if _nonempty(val):
+                cur[k] = val
+            elif k not in cur:
+                cur[k] = val
         # nodes 按章号合并（新覆盖旧；区间展开成单章，去重粒度=章）
         nodes = v.get('nodes')
         if isinstance(nodes, list) and nodes:
@@ -525,16 +533,23 @@ def _nd_build_full_volume_card(vols_list: list[dict], vi: int, cpv: int) -> dict
     """把 vols_list 里的所有 volume（可能来自多张续会卡片）按章节号增量合并，构建一张完整的全卷卡片：
       nodes 覆盖全书全局章号 [1+(vi-1)*cpv, vi*cpv]，
       如果所有分段加起来仍然缺章，调用 node_design_bp._repair_nodes_to_one_ch_per_node 补齐。
-    返回 SAVE_PLOT 卡片字典 {id, type:'SAVE_PLOT', title, content:JSON 字符串} 或 None。"""
+    返回 SAVE_PLOT 卡片字典 {id, type:'SAVE_PLOT', title, content:JSON 字符串} 或 None。
+
+    【卷级字段全保留】除 nodes 外，源卷里所有字段（main_events/characters/resources/
+    foreshadowing/events/location/...）一律按"非空即保留"合并进 final_vol，避免节点设计
+    生成的主要事件/人物/资源/伏笔等卷级信息在采纳时被丢弃。"""
     try:
         from node_design_bp import _repair_nodes_to_one_ch_per_node, _parse_chapters_field
+        def _nonempty(v):
+            if v is None: return False
+            if isinstance(v, str): return bool(v.strip())
+            if isinstance(v, (list, tuple, set, dict)): return len(v) > 0
+            if isinstance(v, bool): return v
+            return True
         # 汇总所有 nodes，按章节号做 {ch: node} 合并（后者覆盖前者）
         ch_map: dict[int, dict] = {}
-        summary_holder: dict = {}
-        main_plot = core_conflict = ending_hook = ''
-        key_events = []
-        vol_title = f'第{vi}卷'
-        vol_id = str(vi)
+        # 卷级字段合并池：除 nodes 外所有 key 都收集，非空即保留（后者覆盖前者同 key）
+        vol_fields: dict = {}
         for v in vols_list:
             if not isinstance(v, dict):
                 continue
@@ -547,22 +562,14 @@ def _nd_build_full_volume_card(vols_list: list[dict], vi: int, cpv: int) -> dict
                     _vvi = 0
             if _vvi and _vvi != vi:
                 continue
-            # 取卷级字段（非空才覆盖）
-            if v.get('volume'):
-                vol_title = str(v['volume'])
-            if v.get('volume_id'):
-                vol_id = str(v['volume_id'])
-            s = v.get('summary')
-            if isinstance(s, str) and len(s) > len(summary_holder.get('summary', '')):
-                summary_holder['summary'] = s
-            if v.get('main_plot'):
-                main_plot = v['main_plot'] or main_plot
-            if v.get('core_conflict'):
-                core_conflict = v['core_conflict'] or core_conflict
-            if v.get('ending_hook'):
-                ending_hook = v['ending_hook'] or ending_hook
-            if isinstance(v.get('key_events'), list) and len(v['key_events']) >= len(key_events):
-                key_events = list(v['key_events'])
+            # 收集卷级字段（nodes 单独处理）：非空覆盖，空值不覆盖已有
+            for k, val in v.items():
+                if k == 'nodes':
+                    continue
+                if _nonempty(val):
+                    vol_fields[k] = val
+                elif k not in vol_fields:
+                    vol_fields[k] = val
             nodes = v.get('nodes')
             if not isinstance(nodes, list):
                 continue
@@ -584,21 +591,19 @@ def _nd_build_full_volume_card(vols_list: list[dict], vi: int, cpv: int) -> dict
         g_end = vi * cpv
         nodes_flat = list(ch_map.values())
         repaired, _ = _repair_nodes_to_one_ch_per_node(nodes_flat, g_start, g_end, vi, 0)
-        final_vol = {
-            'volume_id': vol_id,
-            'volume': vol_title,
+        # final_vol 以卷级字段池为底，再覆盖计算字段，保证 main_events/characters/
+        # resources/foreshadowing 等全部随卡片采纳落地
+        final_vol = dict(vol_fields)
+        final_vol.update({
+            'volume_id': vol_fields.get('volume_id') or str(vi),
+            'volume': vol_fields.get('volume') or f'第{vi}卷',
             'volume_index': vi,
-            'volume_title': vol_title,
-            'summary': summary_holder.get('summary', ''),
-            'main_plot': main_plot,
-            'core_conflict': core_conflict,
-            'key_events': key_events,
-            'ending_hook': ending_hook,
+            'volume_title': vol_fields.get('volume_title') or vol_fields.get('volume') or f'第{vi}卷',
             'chapter_count': cpv,
             'start_chapter': g_start,
             'end_chapter': g_end,
             'nodes': repaired,
-        }
+        })
         content = json.dumps([final_vol], ensure_ascii=False)
         title = f'第{vi}卷情节节点（{cpv}个）· 全卷合并版统一采纳卡片'
         card_id = 'SAVE_PLOT_' + str(vi) + '_' + str(int(__import__('time').time()))
@@ -611,11 +616,19 @@ def _nd_build_partial_volume_card(vols_list: list[dict], vi: int, cpv: int) -> d
     """构建半截 SAVE_PLOT 卡片（仅含已生成的节点，不补齐占位章）。
     用于模型未输出卡片、且全卷未完成时，让前端显示「分批临时保存」按钮。
     与 _nd_build_full_volume_card 的区别：不调用 _repair_nodes_to_one_ch_per_node
-    补齐缺失章，nodes 只包含实际解析到的节点，前端据此判定为半截卡片。"""
+    补齐缺失章，nodes 只包含实际解析到的节点，前端据此判定为半截卡片。
+
+    【卷级字段全保留】同全卷卡片：源卷所有非 nodes 字段一律保留。"""
     try:
         from node_design_bp import _parse_chapters_field
+        def _nonempty(v):
+            if v is None: return False
+            if isinstance(v, str): return bool(v.strip())
+            if isinstance(v, (list, tuple, set, dict)): return len(v) > 0
+            if isinstance(v, bool): return v
+            return True
         ch_map: dict[int, dict] = {}
-        vol_title = f'第{vi}卷'
+        vol_fields: dict = {}
         for v in vols_list:
             if not isinstance(v, dict):
                 continue
@@ -627,8 +640,13 @@ def _nd_build_partial_volume_card(vols_list: list[dict], vi: int, cpv: int) -> d
                     _vvi = 0
             if _vvi and _vvi != vi:
                 continue
-            if v.get('volume'):
-                vol_title = str(v['volume'])
+            for k, val in v.items():
+                if k == 'nodes':
+                    continue
+                if _nonempty(val):
+                    vol_fields[k] = val
+                elif k not in vol_fields:
+                    vol_fields[k] = val
             nodes = v.get('nodes')
             if not isinstance(nodes, list):
                 continue
@@ -648,21 +666,17 @@ def _nd_build_partial_volume_card(vols_list: list[dict], vi: int, cpv: int) -> d
         # 统一规范化为全书全局章号（与采纳链路一致，避免第2卷起节点全部越界被替换成占位符）
         ch_map = _nd_normalize_chapters_to_global(ch_map, vi, cpv)
         nodes_sorted = [ch_map[k] for k in sorted(ch_map.keys())]
-        final_vol = {
-            'volume_id': str(vi),
-            'volume': vol_title,
+        final_vol = dict(vol_fields)
+        final_vol.update({
+            'volume_id': vol_fields.get('volume_id') or str(vi),
+            'volume': vol_fields.get('volume') or f'第{vi}卷',
             'volume_index': vi,
-            'volume_title': vol_title,
-            'summary': '',
-            'main_plot': '',
-            'core_conflict': '',
-            'key_events': [],
-            'ending_hook': '',
+            'volume_title': vol_fields.get('volume_title') or vol_fields.get('volume') or f'第{vi}卷',
             'chapter_count': cpv,
             'start_chapter': 1 + (vi - 1) * cpv,
             'end_chapter': vi * cpv,
             'nodes': nodes_sorted,
-        }
+        })
         content = json.dumps([final_vol], ensure_ascii=False)
         done = len(nodes_sorted)
         title = f'第{vi}卷情节节点（{done}/{cpv}）· 中途进度快照'
@@ -747,6 +761,19 @@ _ND_FIELD_PATTERNS: list[tuple[str, re.Pattern]] = [
     ('resources_used', re.compile(r'【?\s*资源(?:\s*[·•]\s*)?(?:本章)?\s*消耗(?:\s*resources_used)?\s*】?\s*[:：]\s*', re.IGNORECASE)),
     ('total_resources_owned', re.compile(r'【?\s*总资源(?:\s*total_resources_owned)?\s*】?\s*[:：]\s*', re.IGNORECASE)),
     ('main_event', re.compile(r'【?\s*所属大事件\s*】?\s*[:：]\s*|main_event\s*[:：]\s*', re.IGNORECASE)),
+    ('main_event_index', re.compile(r'【?\s*(?:所属大事件)?\s*序号\s*】?\s*[:：]\s*|main_event_index\s*[:：]\s*', re.IGNORECASE)),
+    # 爽点四要素（必须在"爽点"短标签之前，避免被截断）
+    ('cool_structure', re.compile(r'爽点结构(?:cool_structure)?\s*[:：]\s*', re.IGNORECASE)),
+    ('cool_contrast', re.compile(r'衬托方式(?:cool_contrast)?\s*[:：]\s*', re.IGNORECASE)),
+    ('cool_type', re.compile(r'爽点类型(?:cool_type)?\s*[:：]\s*', re.IGNORECASE)),
+    ('cool_level', re.compile(r'爽点(?:层级|等级)(?:cool_level)?\s*[:：]\s*', re.IGNORECASE)),
+    # 伏笔埋/收 单独字段（必须在通用"伏笔"之前，否则被 foreshadowing 吃掉）
+    ('bury', re.compile(r'伏笔埋设(?:bury)?\s*[:：]\s*|^埋\s*[:：]\s*', re.IGNORECASE)),
+    ('payoff', re.compile(r'伏笔回收(?:payoff)?\s*[:：]\s*|^收\s*[:：]\s*', re.IGNORECASE)),
+    ('realm_change', re.compile(r'境界变化(?:realm_change)?\s*[:：]\s*', re.IGNORECASE)),
+    ('age_change', re.compile(r'年龄变化(?:age_change)?\s*[:：]\s*', re.IGNORECASE)),
+    ('events', re.compile(r'(?:本节点)?事件(?:events)?\s*[:：]\s*', re.IGNORECASE)),
+    ('hook', re.compile(r'(?:章尾)?钩子(?:hook)?\s*[:：]\s*', re.IGNORECASE)),
     # 人物：容忍标签里夹「（人物关系必写）」等括号注解，否则整个字段漏匹配 → 人物丢成默认「主角」，并污染 conflict
     ('characters', re.compile(r'人物(?:characters)?(?:[（(][^）)]*[）)])?\s*[:：]\s*', re.IGNORECASE)),
     ('summary', re.compile(r'摘要(?:summary)?\s*[:：]\s*', re.IGNORECASE)),
@@ -920,14 +947,25 @@ def _nd_parse_readable_text_to_volume(text: str, vi: int, cpv: int) -> dict | No
             'summary': (fields.get('summary', '') or '')[:2000],
             'chapter_beats': _nd_normalize_chapter_beats(fields.get('chapter_beats', '')),
             'conflict': (fields.get('conflict', '') or '')[:500],
+            'events': (fields.get('events', '') or '')[:300],
             'characters': _nd_parse_characters_field(fields.get('characters', '')),
             'resources_gained': _nd_normalize_resource_list(fields.get('resources_gained', '')),
             'resources_used': _nd_normalize_resource_list(fields.get('resources_used', '')),
             'total_resources_owned': _nd_parse_total_resources(fields.get('total_resources_owned', '')),
             'location': (fields.get('location', '') or '')[:200],
             'time': (fields.get('time', '') or '')[:200],
+            'realm_change': (fields.get('realm_change', '') or '')[:200],
+            'age_change': (fields.get('age_change', '') or '')[:200],
             'foreshadowing': (fields.get('foreshadowing', '') or '')[:500],
+            'bury': (fields.get('bury', '') or '')[:300],
+            'payoff': (fields.get('payoff', '') or '')[:300],
+            'hook': (fields.get('hook', '') or '')[:300],
+            'cool_type': (fields.get('cool_type', '') or '')[:50],
+            'cool_structure': (fields.get('cool_structure', '') or '')[:200],
+            'cool_contrast': (fields.get('cool_contrast', '') or '')[:200],
+            'cool_level': (fields.get('cool_level', '') or '')[:50],
             'main_event': (fields.get('main_event', '') or '')[:200],
+            'main_event_index': (lambda v: (int(v) if str(v).strip().lstrip('-').isdigit() else None))(fields.get('main_event_index', '')),
         }
         # main_event 收集到 key_events
         me = node.get('main_event', '')

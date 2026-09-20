@@ -344,6 +344,38 @@ const TimelineCardBody = memo(function TimelineCardBody({
                                       {n.age_change && <div><b>年龄/时程：</b>{n.age_change}</div>}
                                     </div>
                                   )}
+                                  {/* 资源获得/消耗 */}
+                                  {((n.resources_gained && n.resources_gained.length) || (n.resources_used && n.resources_used.length) || (n.total_resources_owned && Object.keys(n.total_resources_owned).some(k => (n.total_resources_owned[k] || []).length))) && (
+                                    <div style={{
+                                      marginTop: 4,
+                                      padding: 6,
+                                      background: '#f0fdf4',
+                                      border: '1px solid #bbf7d0',
+                                      borderRadius: 4,
+                                      fontSize: 12,
+                                      color: '#14532d',
+                                    }}>
+                                      {n.resources_gained && n.resources_gained.length > 0 && (
+                                        <div><b>资源获得：</b>{Array.isArray(n.resources_gained) ? n.resources_gained.join('、') : n.resources_gained}</div>
+                                      )}
+                                      {n.resources_used && n.resources_used.length > 0 && (
+                                        <div><b>资源消耗：</b>{Array.isArray(n.resources_used) ? n.resources_used.join('、') : n.resources_used}</div>
+                                      )}
+                                      {n.total_resources_owned && Object.keys(n.total_resources_owned).some(k => (n.total_resources_owned[k] || []).length) && (
+                                        <div style={{ marginTop: 2 }}>
+                                          <b>总资源：</b>
+                                          {Object.entries(n.total_resources_owned).filter(([, v]: any) => v && v.length).map(([k, v]: any) => `${k}:${v.join('、')}`).join('；')}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {/* 爽点结构/衬托 */}
+                                  {(n.cool_structure || n.cool_contrast) && (
+                                    <div style={{ marginTop: 4, fontSize: 12, color: '#6b21a8' }}>
+                                      {n.cool_structure && <span><b>爽点结构：</b>{n.cool_structure}</span>}
+                                      {n.cool_contrast && <span style={{ marginLeft: 8 }}><b>衬托：</b>{n.cool_contrast}</span>}
+                                    </div>
+                                  )}
                                   {n.summary && <div style={{ color: '#374151', marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{n.summary}</div>}
                                   <div style={{ marginTop: 6, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                                     {n.bury && <span style={{ color: '#c2410c' }} title="伏笔埋设（精确到章）">🔸 埋：{n.bury}</span>}
