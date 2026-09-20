@@ -255,7 +255,7 @@ from blueprints.ai_continue_bp import (
 )
 
 def _merge_unique(base: list, add: list) -> list:
-    """合并两个列表并保序去重（AI配置迁移：合并同提供商的 models 用）。"""
+    """合并两个列表并保序去重（保留给其它潜在用途；勿用于 ai_config 同提供商合并，见 init_db 注释）。"""
     out: list = []
     for x in list(base or []) + list(add or []):
         x = str(x).strip()
@@ -8661,37 +8661,9 @@ def init_db():
         # Migration 2026-09-20.1: 多用户信息隔离——AI 配置与会话归属用户（None=共享兜底，防 API Key/聊天记录跨用户泄露）
         _add_column('ai_config', "user_id VARCHAR(36)")
         _add_column('ai_sessions', "user_id VARCHAR(36)")
-        # Migration: 合并旧版"每模型一条"产生的同 provider 重复行 → 一行一提供商
-        # （合并规则：按 (provider, user_id) 分组，仅合并同一用户/共享兜底内的重复行，
-        #   避免多用户场景下把 A 用户与 B 用户的同 provider 配置误合并导致数据丢失/串台）
-        try:
-            import json as _json
-            _rows = AIConfig.query.order_by(AIConfig.is_active.desc(), AIConfig.id.asc()).all()
-            _by_provider: dict = {}
-            for _r in _rows:
-                _key = ((_r.provider or 'custom'), str(_r.user_id) if _r.user_id else None)
-                _by_provider.setdefault(_key, []).append(_r)
-            _merged_any = False
-            for _key, _rs in _by_provider.items():
-                if len(_rs) < 2:
-                    continue
-                _keep = _rs[0]
-                _models: list = _keep.get_models()
-                for _other in _rs[1:]:
-                    _models = _merge_unique(_models, _other.get_models())
-                    if not _keep.model and _other.model:
-                        _keep.model = _other.model
-                    if _other.api_key and not _keep.api_key:
-                        _keep.api_key = _other.api_key
-                    if _other.base_url and not _keep.base_url:
-                        _keep.base_url = _other.base_url
-                    db.session.delete(_other)
-                _keep.models = _json.dumps(_models)
-                _merged_any = True
-            if _merged_any:
-                db.session.commit()
-        except Exception:
-            db.session.rollback()
+        # 【注意】此处绝不再做"同 provider 合并去重"：用户可能在同一 provider 下
+        # 有意保存多条独立配置（主号/备用各一条 api_key），合并会物理删除多余行并
+        # 丢失密钥。历史上的合并迁移曾导致用户配置丢失，已移除。
         # Migration: skill_packs 添加 github_source 和 github_synced_at 字段
         _add_column('skill_packs', "github_source VARCHAR(500) DEFAULT ''")
         _add_column('skill_packs', 'github_synced_at TIMESTAMP')
