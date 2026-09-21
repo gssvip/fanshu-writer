@@ -165,3 +165,32 @@ def test_update_config_by_id_404(auth_client):
     """PUT 不存在的配置返回 404。"""
     resp = auth_client.put("/api/ai/configs/not-exist-id", json={"model": "x"})
     assert resp.status_code == 404
+
+
+def test_update_legacy_null_user_config_claims_owner(app, client, auth_user, auth_client, db_session):
+    """回归：加 user_id 列前的历史配置（user_id IS NULL）可被登录用户编辑保存，
+    并自动认领归属到该用户，避免"看得见却改不了"的 403。"""
+    from app import AIConfig, User
+    username, _token = auth_user
+    user = User.query.filter_by(username=username).first()
+
+    # 模拟迁移前遗留：直接在库中插入一条 user_id=NULL 的配置
+    cfg = AIConfig(
+        name='历史遗留配置', provider='deepseek',
+        model='deepseek-chat', models='["deepseek-chat"]',
+        api_key='sk-legacy', base_url='https://api.deepseek.com',
+        is_active=True, user_id=None,
+    )
+    db_session.add(cfg)
+    db_session.commit()
+    cfg_id = cfg.id
+
+    # 登录用户编辑它（改模型）→ 应成功而非 403
+    resp = auth_client.put(f'/api/ai/configs/{cfg_id}', json={'model': 'deepseek-reasoner'})
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()['model'] == 'deepseek-reasoner'
+
+    # 认领：user_id 被回填到当前登录用户
+    claimed = AIConfig.query.get(cfg_id)
+    assert claimed.user_id == user.id
+    assert claimed.model == 'deepseek-reasoner'

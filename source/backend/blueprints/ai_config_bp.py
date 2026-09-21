@@ -47,11 +47,16 @@ def _merge_models(base: list, add: list) -> list:
 
 
 def _cfg_owned(cfg, uid) -> bool:
-    """配置归属校验：只有 user_id 等于当前用户的配置可被修改/删除；
-    共享配置（user_id IS NULL）仅供读取，禁止普通用户改写，避免跨用户污染 API Key。"""
+    """配置归属校验：user_id 等于当前用户的配置可被修改/删除。
+
+    - user_id == uid：本人配置，可改。
+    - user_id IS NULL：历史遗留（加 user_id 列前的旧数据）或共享兜底。为兼容迁移前的
+      旧用户配置、避免老用户"看得见却改不了"，允许当前登录用户"认领"后操作——首次
+      编辑/激活/选模型时由各接口把 user_id 回填到该用户（认领后即专属，他人不可再改）。
+    """
     if cfg is None:
         return False
-    return uid is not None and str(cfg.user_id or '') == str(uid)
+    return uid is not None and (cfg.user_id is None or str(cfg.user_id) == str(uid))
 
 
 def _apply_config_fields(cfg, data):
@@ -63,6 +68,10 @@ def _apply_config_fields(cfg, data):
     - api_key 为 '***' 或空时保留原值，避免掩码覆盖真实密钥
     """
     from llm_gateway import _normalize_llm_base_url
+    # 历史遗留配置（user_id IS NULL）首次被编辑：回填归属到当前用户（认领）
+    _uid = getattr(request, 'current_user_id', None)
+    if cfg.user_id is None and _uid:
+        cfg.user_id = _uid
     for field in ['name', 'provider', 'recognition_model',
                   'temperature', 'max_tokens']:
         if field in data:
@@ -187,6 +196,8 @@ def select_ai_config_model(cfg_id):
     model = str(data.get('model') or '').strip()
     if not model:
         return jsonify({'error': '模型不能为空'}), 400
+    if cfg.user_id is None:
+        cfg.user_id = uid  # 历史遗留配置首次选模型：认领归属
     cfg.models = json.dumps(_merge_models(cfg.get_models(), [model]))
     cfg.model = model
     AIConfig.query.filter_by(is_active=True, user_id=uid).update({'is_active': False})
@@ -205,6 +216,8 @@ def activate_ai_config(cfg_id):
     uid = getattr(request, 'current_user_id', None)
     if not _cfg_owned(cfg, uid):
         return jsonify({'error': '无权激活该配置'}), 403
+    if cfg.user_id is None:
+        cfg.user_id = uid  # 历史遗留配置首次激活：认领归属
     AIConfig.query.filter_by(is_active=True, user_id=uid).update({'is_active': False})
     cfg.is_active = True
     db.session.commit()
