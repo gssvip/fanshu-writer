@@ -189,6 +189,14 @@ export const api = {
 
   // Books
   listBooks: () => request<Book[]>('/books'),
+  // 首页聚合：一次返回作品列表 + 今日统计（冷启动减少一次建连/唤醒往返）
+  bootstrap: () => {
+    const now = new Date();
+    const tz = -now.getTimezoneOffset();
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    return request<{ books: Book[]; today_stats: { today_words: number; today_chapters: number; streak: number } }>(
+      `/bootstrap?date=${date}&tz=${tz}`, { cache: 'no-store' });
+  },
   getBook: (id: string) => request<Book>(`/books/${id}`),
   createBook: (data: Partial<Book>) => request<Book>('/books', { method: 'POST', body: JSON.stringify(data) }),
   updateBook: (id: string, data: Partial<Book>) => request<Book>(`/books/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

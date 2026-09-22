@@ -269,6 +269,22 @@ def _merge_unique(base: list, add: list) -> list:
 def _ensure_db():
     if app not in db._app_engines: app.extensions.pop('sqlalchemy', None); db.init_app(app)
 
+# ==== 启动预热门禁（冷启动提速：先监听端口 + 后台预热 init_db）====
+# init_db 放到后台线程后，进程会先 app.run 监听端口并响应 /api/health（Render 不再报
+# "No open ports detected"）。预热完成前除 health 外的业务请求返回 503，前端
+# fetchWithRetry 对 5xx 自动重试（3s/8s/15s），避免"迁移未完成却收到查询"导致的 500。
+_BOOT_READY = False
+
+
+@app.before_request
+def _gate_until_boot():
+    if _BOOT_READY:
+        return None
+    from flask import request as _req, jsonify as _jsonify
+    if _req.path.startswith('/api/') and not _req.path.startswith('/api/health'):
+        return _jsonify({'error': '服务预热中，请稍候', 'warming': True}), 503
+    return None
+
 EXPORTS_DIR = DATA_DIR / 'exports'
 EXPORTS_DIR.mkdir(exist_ok=True)
 COVERS_DIR = DATA_DIR / 'covers'
@@ -8824,9 +8840,31 @@ from blueprints.ai_continue_bp import init as _ai_continue_init
 _ai_continue_init(app_module=sys.modules[__name__]); from auth_utils import register_auth_guards as _rag; _rag(app)  # 全局鉴权+作品所有权守卫（多用户信息隔离），注册于所有蓝图之后
 
 if __name__ == '__main__':
-    init_db()
     # Render 等云平台通过 PORT 环境变量指定端口，本地默认 5000
     port = int(os.environ.get('PORT', 5000))
+    # 冷启动提速：init_db 挪后台线程预热，主线程立即监听端口。预热期间 /api 请求由
+    # _gate_until_boot 返回 503（前端自动重试），/api/health 始终 200 供 Render 探活，
+    # 让"冷启动全黑"变成"转圈 1~2 秒"，且不再触发 "No open ports detected"。
+    import threading
+
+    def _boot():
+        global _BOOT_READY
+        try:
+            init_db()
+            _BOOT_READY = True
+            print('[INIT] ✅ 后台预热完成，业务接口已放行', flush=True)
+        except SystemExit as e:
+            # 数据铁律：DB 不可达应拒绝启动。后台线程的 SystemExit 不会终止进程，
+            # 用 os._exit 强制退出，让 Render 保留旧实例/重建新实例（与旧同步路径一致）。
+            print(f'[INIT][FATAL] 后台预热失败（SystemExit）：{e}', flush=True)
+            import os as _os
+            _os._exit(1)
+        except Exception as e:
+            print(f'[INIT][FATAL] 后台预热异常：{type(e).__name__}: {e}', flush=True)
+            import os as _os
+            _os._exit(1)
+
+    threading.Thread(target=_boot, name='db-warmup', daemon=True).start()
     # threaded=True 必须：SSE 流式端点（ai_continue_batch_stream / ai_continue_stream）会长时间占用
     # 工作线程。单线程模式下（默认），SSE 连接期间所有其他请求（health/列表/保存等）会被阻塞。
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)

@@ -6,12 +6,9 @@
 import { useState, useEffect, useRef, memo, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
 import rehypeHighlight from 'rehype-highlight';
-// P1-2 Markdown 增强：KaTeX / highlight.js CSS 从 node_modules 静态导入（Vite 打包到本地 assets），
+// P1-2 Markdown 增强：highlight.js CSS 从 node_modules 静态导入（Vite 打包到本地 assets），
 // 彻底避免跨站 CDN 被 Edge/Safari Tracking Prevention 阻止或内网不可达导致样式白屏。
-import 'katex/dist/katex.min.css';
 import 'highlight.js/styles/github.min.css';
 import CarLogo from './CarLogo';
 import { api } from '../api';
@@ -1078,8 +1075,8 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
                     <div className="rt-bubble">
                       {seg.content ? (
                         <ReactMarkdown
-                          remarkPlugins={[remarkGfm, remarkMath]}
-                          rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+                          remarkPlugins={[remarkGfm]}
+                          rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
                           components={{ a: (p: any) => <a {...p} target="_blank" rel="noopener noreferrer" /> }}
                         >{seg.content}</ReactMarkdown>
                       ) : streaming && (message.roundtable as any).currentSpeaker === seg.name ? (
@@ -1115,8 +1112,8 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
             onClick={() => { if (isLong && !streaming) setCollapsed(c => !c); }}
           >
             <ReactMarkdown
-              remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
               components={{
                 a: (p: any) => <a {...p} target="_blank" rel="noopener noreferrer" />,
                 img: (p: any) => <img {...p} loading="lazy" style={{ maxWidth: '100%', borderRadius: 8 }} />,
@@ -1150,7 +1147,7 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
             {showReasoning && (
               <div className="chat-msg-reasoning-content">
                 <ReactMarkdown
-                  remarkPlugins={[remarkGfm, remarkMath]}
+                  remarkPlugins={[remarkGfm]}
                   rehypePlugins={[rehypeKatex]}
                 >{message.reasoning}</ReactMarkdown>
               </div>

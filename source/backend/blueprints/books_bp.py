@@ -683,34 +683,24 @@ def delete_outline(book_id, outline_id):
 
 # ==== Stats API ====
 
-@books_bp.route('/api/stats/today', methods=['GET'])
-@login_required
-def get_today_stats():
-    """跨作品今日写作统计：今日字数 / 今日章节 / 连续写作天数。
-
-    【2026-09-06 修复"实时统计不了"】原前端方案是 localStorage 手打卡（useWritingStats
-    hook），但该 hook 无任何组件调用 + AI 生成章节不经过手打计数 → 统计恒为 0。
-    改为后端基于 Chapter 真实数据实时聚合：任何写入口（AI 采纳落地/编辑器保存/批量续写）
-    都会更新 chapter.updated_at → 天然实时、多端一致。
-
-    参数（GET query）：
-      date: 前端本地日期 YYYY-MM-DD（默认按 tz 推算服务器当前本地日）
-      tz:   本地时区分钟偏移（如中国 +480，默认 480；纽约 -300）
+def _compute_today_stats(user_id, tz=480, date_str=None):
+    """跨作品今日写作统计聚合：返回 {today_words, today_chapters, streak}。
 
     口径（与前端工作台横幅一致）：
       今日字数 = 本地"今天"有更新过的章节（非卷）word_count 之和（每章计一次）
       今日章节 = 本地"今天"有更新过的章节数
       连续天数 = 从今天（今天未写则从昨天）往前，连续每天都有章节更新的最大天数
+    供 /api/stats/today 与 /api/bootstrap（首页聚合）复用，避免两处重复聚合逻辑。
     """
     from app import Book, Chapter
     from datetime import timedelta
 
     try:
-        tz = int(request.args.get('tz', '480'))
-    except ValueError:
+        tz = int(tz)
+    except (ValueError, TypeError):
         tz = 480
     local_now = datetime.now(timezone.utc) + timedelta(minutes=tz)
-    date_str = request.args.get('date') or local_now.date().isoformat()
+    date_str = date_str or local_now.date().isoformat()
     try:
         local_today = datetime.strptime(date_str, '%Y-%m-%d').date()
     except ValueError:
@@ -721,10 +711,10 @@ def get_today_stats():
     # 连续天数回看窗口：400 天足够（streak > 400 不现实）
     lookback_start_utc = day_start_utc - timedelta(days=399)
 
-    user_books = Book.query.filter_by(user_id=request.current_user_id).with_entities(Book.id).all()
+    user_books = Book.query.filter_by(user_id=user_id).with_entities(Book.id).all()
     book_ids = [b[0] for b in user_books]
     if not book_ids:
-        return jsonify({'today_words': 0, 'today_chapters': 0, 'streak': 0})
+        return {'today_words': 0, 'today_chapters': 0, 'streak': 0}
 
     rows = (Chapter.query
             .filter(Chapter.book_id.in_(book_ids), Chapter.is_volume == False,  # noqa: E712
@@ -751,10 +741,46 @@ def get_today_stats():
         streak += 1
         d -= timedelta(days=1)
 
-    return jsonify({
+    return {
         'today_words': words_by_day.get(local_today, 0),
         'today_chapters': chapters_by_day.get(local_today, 0),
         'streak': streak,
+    }
+
+
+@books_bp.route('/api/stats/today', methods=['GET'])
+@login_required
+def get_today_stats():
+    """跨作品今日写作统计：今日字数 / 今日章节 / 连续写作天数。
+
+    参数（GET query）：
+      date: 前端本地日期 YYYY-MM-DD（默认按 tz 推算服务器当前本地日）
+      tz:   本地时区分钟偏移（如中国 +480，默认 480；纽约 -300）
+    """
+    try:
+        tz = int(request.args.get('tz', '480'))
+    except ValueError:
+        tz = 480
+    return jsonify(_compute_today_stats(request.current_user_id, tz, request.args.get('date')))
+
+
+@books_bp.route('/api/bootstrap', methods=['GET'])
+@login_required
+def bootstrap():
+    """首页聚合接口：一次返回作品列表 + 今日写作统计。
+
+    冷启动提速：把首页挂载时原本并发的 listBooks / getTodayStats 两次请求合并为
+    一次往返——免费 PG 冷唤醒 + 建连开销只付一次，冷启动白屏时间减半。
+    """
+    from app import Book  # 请求期延迟导入，避免循环依赖
+    books = Book.query.filter_by(user_id=request.current_user_id).order_by(Book.updated_at.desc()).all()
+    try:
+        tz = int(request.args.get('tz', '480'))
+    except ValueError:
+        tz = 480
+    return jsonify({
+        'books': [b.to_dict() for b in books],
+        'today_stats': _compute_today_stats(request.current_user_id, tz, request.args.get('date')),
     })
 
 @books_bp.route('/api/books/<book_id>/stats', methods=['GET'])

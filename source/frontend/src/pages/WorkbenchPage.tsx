@@ -161,22 +161,18 @@ export default function WorkbenchPage() {
   }
 
   useEffect(() => {
-    api.listBooks().then(b => {
-      setBooks(b);
+    // 首页聚合：单次请求同时拿作品列表 + 今日统计（冷启动减少一次建连/唤醒往返）
+    api.bootstrap().then(({ books, today_stats }) => {
+      setBooks(books);
       setLoading(false);
       // 找最近编辑的作品（按 updated_at 排序）
-      if (b.length > 0) {
-        const sorted = [...b].sort((a, b2) => new Date(b2.updated_at).getTime() - new Date(a.updated_at).getTime());
+      if (books.length > 0) {
+        const sorted = [...books].sort((a, b2) => new Date(b2.updated_at).getTime() - new Date(a.updated_at).getTime());
         setRecentBook(sorted[0]);
       }
+      setTodayStats({ words: today_stats.today_words || 0, chapters: today_stats.today_chapters || 0 });
+      setStreak(today_stats.streak || 0);
     }).catch(() => setLoading(false));
-
-    // 读取今日统计（后端实时聚合：AI 采纳/手动保存都会更新章节 updated_at → 统计即时生效；
-    // 旧 localStorage 方案的写入 hook 无组件调用，统计恒为 0，已弃用）
-    api.getTodayStats().then(s => {
-      setTodayStats({ words: s.today_words || 0, chapters: s.today_chapters || 0 });
-      setStreak(s.streak || 0);
-    }).catch(() => { /* 未登录/网络失败：保持 0 显示 */ });
   }, []);
 
   async function handleCreateBook() {
