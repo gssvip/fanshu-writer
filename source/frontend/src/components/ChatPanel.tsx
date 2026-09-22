@@ -4,7 +4,7 @@ import { api } from '../api';
 import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible, AIConfig } from '../types';
 import CarLogo from './CarLogo';
 // AI 提供商预设（icon/label）：通用Tab模型选择器按提供商分组展示多模型
-import { AI_PROVIDERS } from '../pages/MinePage';
+import { AI_PROVIDERS } from '../aiProviders';
 // Q1：直接复用现有实体管理弹窗（跨维度重命名/合并），不再在 ChatPanel 里重复造"动作影响预览"轮子
 import EntityRegistryModal from '../pages/EntityRegistryModal';
 import NodeDesignView from './NodeDesignView';

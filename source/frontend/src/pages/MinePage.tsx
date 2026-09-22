@@ -4,6 +4,7 @@ import { api, getApiBaseUrl, setApiBaseUrl, legacyKey } from '../api';
 import { AuthContext } from '../App';
 import type { AIConfig } from '../types';
 import type { Book, AIUsageStats, AIUsageLogItem } from '../types';
+import { AI_PROVIDERS } from '../aiProviders';
 
 export default function MinePage() {
   const { currentUser, theme, customColors, setTheme, setCustomColors, setCurrentUser, logout } = useStore() as any;
@@ -1305,17 +1306,4 @@ export default function MinePage() {
   );
 }
 
-/** 国产 AI 提供商预设（均兼容 OpenAI 接口格式） */
-export const AI_PROVIDERS = [
-  { value: 'deepseek', label: 'DeepSeek 深度求索', icon: '🔵', base_url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-  { value: 'qwen', label: '通义千问 阿里', icon: '🟠', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-  { value: 'glm', label: '智谱GLM', icon: '🟢', base_url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
-  { value: 'kimi', label: 'Kimi 月之暗面', icon: '🌙', base_url: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
-  { value: 'ernie', label: '文心一言 百度', icon: '🔴', base_url: 'https://qianfan.baidubce.com/v2', model: 'ernie-4.0-8k-latest' },
-  { value: 'spark', label: '讯飞星火', icon: '⭐', base_url: 'https://spark-api-open.xf-yun.com/v1', model: 'generalv3.5' },
-  { value: 'yi', label: '零一万物', icon: '🟣', base_url: 'https://api.lingyiwanwu.com/v1', model: 'yi-large' },
-  { value: 'minimax', label: 'MiniMax', icon: '⚫', base_url: 'https://api.minimax.chat/v1', model: 'abab6.5s-chat' },
-  { value: 'hunyuan', label: '腾讯混元', icon: '🔷', base_url: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-pro' },
-  { value: 'openai', label: 'OpenAI', icon: '🤖', base_url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  { value: 'opencode', label: 'OpenCode Zen 免费', icon: '⚡', base_url: 'https://opencode.ai/zen/v1', model: 'deepseek-v4-flash-free' },
-];
+
