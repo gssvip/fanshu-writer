@@ -14,6 +14,16 @@ import CarLogo from './CarLogo';
 import { api } from '../api';
 import type { ActionCard, ProgressMap, AIMessage } from '../types';
 
+// highlight.js 按需语言注册：默认 rehype-highlight 会注册全部 ~190 种语言的语法高亮器，
+// 主 chunk 体积显著膨胀。此处只注册 AI 创作/技能配置实际会出现的语言，其余代码块按
+// 纯文本渲染（ignoreMissing），既保住可读性又砍掉大部分高亮器体积。
+const CODE_LANGS: string[] = [
+  'json', 'yaml', 'python', 'javascript', 'typescript', 'bash',
+  'markdown', 'xml', 'html', 'css', 'sql', 'java', 'go', 'rust', 'cpp',
+  'diff', 'ini', 'toml',
+];
+const REHYPE_HIGHLIGHT_OPTS = { detect: true, ignoreMissing: true, subset: CODE_LANGS };
+
 // ============================================================================
 // Action Card 单卡渲染（采纳(覆盖) / 追加 / 编辑 / 忽略 四按钮）
 // ============================================================================
@@ -1076,7 +1086,7 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
                       {seg.content ? (
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
-                          rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+                          rehypePlugins={[[rehypeHighlight, REHYPE_HIGHLIGHT_OPTS]]}
                           components={{ a: (p: any) => <a {...p} target="_blank" rel="noopener noreferrer" /> }}
                         >{seg.content}</ReactMarkdown>
                       ) : streaming && (message.roundtable as any).currentSpeaker === seg.name ? (
@@ -1113,7 +1123,7 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
           >
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
-              rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+              rehypePlugins={[[rehypeHighlight, REHYPE_HIGHLIGHT_OPTS]]}
               components={{
                 a: (p: any) => <a {...p} target="_blank" rel="noopener noreferrer" />,
                 img: (p: any) => <img {...p} loading="lazy" style={{ maxWidth: '100%', borderRadius: 8 }} />,
@@ -1148,7 +1158,6 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
               <div className="chat-msg-reasoning-content">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeKatex]}
                 >{message.reasoning}</ReactMarkdown>
               </div>
             )}

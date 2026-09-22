@@ -270,20 +270,48 @@ def _ensure_db():
     if app not in db._app_engines: app.extensions.pop('sqlalchemy', None); db.init_app(app)
 
 # ==== 启动预热门禁（冷启动提速：先监听端口 + 后台预热 init_db）====
-# init_db 放到后台线程后，进程会先 app.run 监听端口并响应 /api/health（Render 不再报
+# init_db 放到后台线程后，进程会先监听端口并响应 /api/health（Render 不再报
 # "No open ports detected"）。预热完成前除 health 外的业务请求返回 503，前端
 # fetchWithRetry 对 5xx 自动重试（3s/8s/15s），避免"迁移未完成却收到查询"导致的 500。
+# gunicorn prefork 下各 worker 内存独立（_BOOT_READY 不共享），靠 DATA_DIR 下的
+# 文件标记在 master/worker 之间同步就绪状态。
 _BOOT_READY = False
+_BOOT_READY_MARKER = DATA_DIR / '.boot_ready'
+
+
+def _set_boot_ready():
+    global _BOOT_READY
+    _BOOT_READY = True
+    try:
+        _BOOT_READY_MARKER.write_text('ready', encoding='utf-8')
+    except Exception:
+        pass
+
+
+def _clear_boot_ready():
+    global _BOOT_READY
+    _BOOT_READY = False
+    try:
+        if _BOOT_READY_MARKER.exists():
+            _BOOT_READY_MARKER.unlink()
+    except Exception:
+        pass
 
 
 @app.before_request
 def _gate_until_boot():
+    global _BOOT_READY
     if _BOOT_READY:
         return None
     from flask import request as _req, jsonify as _jsonify
-    if _req.path.startswith('/api/') and not _req.path.startswith('/api/health'):
-        return _jsonify({'error': '服务预热中，请稍候', 'warming': True}), 503
-    return None
+    if not _req.path.startswith('/api/') or _req.path.startswith('/api/health'):
+        return None
+    # gunicorn prefork：worker 内存 _BOOT_READY 恒 False，靠 master 写入的文件标记同步；
+    # 命中后进程内缓存，避免后续每请求都 stat 文件。
+    if _BOOT_READY_MARKER.exists():
+        _BOOT_READY = True
+        return None
+    return _jsonify({'error': '服务预热中，请稍候', 'warming': True}), 503
 
 EXPORTS_DIR = DATA_DIR / 'exports'
 EXPORTS_DIR.mkdir(exist_ok=True)
@@ -8851,7 +8879,10 @@ if __name__ == '__main__':
         global _BOOT_READY
         try:
             init_db()
-            _BOOT_READY = True
+            # 统一走 _set_boot_ready：既置进程内 _BOOT_READY，又写 .boot_ready 标记文件。
+            # 这样 gunicorn 模式下即使 master 同步预热（wsgi.py 里 init_db + _set_boot_ready），
+            # 两者就绪口径一致，worker 靠文件标记放行，不会因内存标志不共享而 503 卡死。
+            _set_boot_ready()
             print('[INIT] ✅ 后台预热完成，业务接口已放行', flush=True)
         except SystemExit as e:
             # 数据铁律：DB 不可达应拒绝启动。后台线程的 SystemExit 不会终止进程，
