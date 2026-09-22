@@ -11,6 +11,11 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      # gunicorn 多进程：Render free 512MB 内存下 2 worker 易 OOM，锁 1×8（见 gunicorn.conf.py 注释）
+      - key: GUNICORN_WORKERS
+        value: "1"
+      - key: GUNICORN_THREADS
+        value: "8"
       # 铁律：用户数据存 PostgreSQL；未配置 DATABASE_URL 时应用会拒绝启动
       # 推荐使用 Neon / Supabase Postgres，然后在 Render Environment 手动添加：
       #   DATABASE_URL=postgresql://user:password@host/dbname?sslmode=require
