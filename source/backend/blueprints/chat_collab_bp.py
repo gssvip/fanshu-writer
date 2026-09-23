@@ -4643,6 +4643,12 @@ def _detect_mentions(user_text, book_id, bb):
             n = _cn_to_int(m.group(1))
             if n is not None and n not in nums_found:
                 nums_found.append(n)
+        # 裸章号（无"第"前缀）："修改254章" / "润色第三章"这类省略"第"的表述
+        # 负向断言避免把"第254章"里的 254 重复扫描、也避免数字串中间截断
+        for m in re.finditer(r'(?<![0-9零一二三四五六七八九十百千万亿两〇第])([0-9零一二三四五六七八九十百千万亿两〇]+)\s*([' + suffix + r'])', user_text):
+            n = _cn_to_int(m.group(1))
+            if n is not None and n not in nums_found:
+                nums_found.append(n)
         for m in re.finditer(r'(?:chapter|ch|episode|ep)\.?\s*(\d+)', user_text, re.IGNORECASE):
             n = int(m.group(1))
             if n not in nums_found:
