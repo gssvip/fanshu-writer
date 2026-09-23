@@ -13,6 +13,10 @@ export function getApiBaseUrl(): string {
       return url;
     }
   } catch { /* fallback */ }
+  // 运行时注入：静态托管（GitHub Pages/Vercel/Netlify 等）由 public/config.js
+  // 写入 window.__APP_ENV__.VITE_API_URL 指向后端；否则 /api 会打到静态主机返回 405。
+  const runtime = (window as any).__APP_ENV__?.VITE_API_URL;
+  if (runtime && runtime.trim()) return runtime.trim().replace(/\/+$/, '');
   const env = (import.meta as any).env?.VITE_API_URL;
   if (env && env.trim()) return env.trim().replace(/\/+$/, '');
   return '/api';

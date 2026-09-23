@@ -85,7 +85,7 @@ function buildAlignPlugin() {
           if (stale.length) console.log(`   [align] 清理过期构建产物 ${stale.length} 个（差集：static 有 / dist 无的 js/css）`)
         }
       } catch { /* noop */ }
-      const entries = ['index.html', 'assets', 'version.json']
+      const entries = ['index.html', 'assets', 'version.json', 'config.js']
       for (const name of entries) {
         const src = join(distDir, name)
         const dst = join(BACKEND_STATIC, name)
