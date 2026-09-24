@@ -226,6 +226,12 @@ export default function MinePage() {
     if (!ok) return;
     if (!aiConfig.provider) { alert('请选择提供商'); setSaving(false); return; }
     if (!aiConfig.base_url.trim()) { alert('请先填写 API 地址'); setSaving(false); return; }
+    // 无 Key 的配置无法调用 LLM（OpenRouter 等「免费模型」仍需 Key 鉴权）
+    if (!aiConfig.api_key.trim() && !aiConfig.has_key) {
+      alert('请先填写 API Key（OpenRouter 免费模型也需要 Key：openrouter.ai → Settings → Keys 生成）');
+      setSaving(false);
+      return;
+    }
     setSaving(true);
     setTestResult(null);
     try {
@@ -620,10 +626,12 @@ export default function MinePage() {
                 <select className="input" value={aiConfig.provider} onChange={e => {
                   const val = e.target.value;
                   if (val === 'custom') {
-                    setAIConfig((prev: AIConfig) => ({ ...prev, provider: 'custom', base_url: '', model: '' }));
+                    setAIConfig((prev: AIConfig) => ({ ...prev, provider: 'custom', base_url: '', model: '', api_key: '', has_key: false }));
                   } else {
                     const p = AI_PROVIDERS.find(x => x.value === val);
-                    if (p) setAIConfig((prev: AIConfig) => ({ ...prev, provider: p.value, base_url: p.base_url, model: p.model }));
+                    // 切换供应商必须清空 api_key/has_key：不同供应商需要各自的 Key，
+                    // 否则旧 Key（或 '***' 掩码）会被误当成新供应商已配好，导致 401 Missing Authentication header
+                    if (p) setAIConfig((prev: AIConfig) => ({ ...prev, provider: p.value, base_url: p.base_url, model: p.model, api_key: '', has_key: false }));
                   }
                 }}>
                   {AI_PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
@@ -713,9 +721,10 @@ export default function MinePage() {
             <div className="form-field">
               <label>API Key <span className={`key-status ${aiConfig.has_key ? 'set' : 'unset'}`}>{aiConfig.has_key ? '(已设置)' : '(未设置)'}</span></label>
               <div className="input-row">
-                <input className="input" type={showApiKey ? 'text' : 'password'} value={aiConfig.api_key}
+                <input className="input" type={showApiKey ? 'text' : 'password'}
+                  value={aiConfig.api_key === '***' ? '' : aiConfig.api_key}
                   onChange={e => setAIConfig((p: AIConfig) => ({ ...p, api_key: e.target.value }))}
-                  placeholder="输入你的API Key" />
+                  placeholder={aiConfig.has_key ? '已保存（留空则保持不变，输入新 Key 才会替换）' : '输入你的API Key（OpenRouter 免费模型也需要 Key）'} />
                 <button className="btn-ghost-sm" onClick={() => setShowApiKey(!showApiKey)}>{showApiKey ? '隐藏' : '显示'}</button>
               </div>
             </div>
