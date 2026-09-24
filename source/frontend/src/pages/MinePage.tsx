@@ -719,7 +719,7 @@ export default function MinePage() {
               )}
             </div>
             <div className="form-field">
-              <label>API Key <span className={`key-status ${aiConfig.has_key ? 'set' : 'unset'}`}>{aiConfig.has_key ? '(已设置)' : '(未设置)'}</span></label>
+              <label>API Key <span className={`key-status ${(aiConfig.has_key || (aiConfig.api_key && aiConfig.api_key !== '***' && aiConfig.api_key.trim())) ? 'set' : 'unset'}`}>{aiConfig.has_key ? '(已设置)' : (aiConfig.api_key && aiConfig.api_key !== '***' && aiConfig.api_key.trim() ? '(已填写，保存后生效)' : '(未设置)')}</span></label>
               <div className="input-row">
                 <input className="input" type={showApiKey ? 'text' : 'password'}
                   value={aiConfig.api_key === '***' ? '' : aiConfig.api_key}

@@ -3184,7 +3184,7 @@ export default function ChatPanel() {
                           <button
                             className="gt-4cell"
                             data-gt-model-chip
-                            onClick={(e) => { e.stopPropagation(); setShowModelPicker(s => !s); setModelPickerProvider(''); }}
+                            onClick={(e) => { e.stopPropagation(); setShowModelPicker(s => !s); setModelPickerProvider(''); if (!showModelPicker) { api.listAIConfigs().then((res) => { if (res && Array.isArray(res.configs)) setAiConfigList(res.configs); }).catch(() => {}); } }}
                             title={`切换模型（当前：${_chosen?.name || '默认模型'} · ${_chosen?.model || ''}）· 点选后智驾全局生效`}
                             style={{
                               ..._chipBase,
