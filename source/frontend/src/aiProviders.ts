@@ -25,4 +25,5 @@ export const AI_PROVIDERS: AIProvider[] = [
   { value: 'hunyuan', label: '腾讯混元', icon: '🔷', base_url: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-pro' },
   { value: 'openai', label: 'OpenAI', icon: '🤖', base_url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   { value: 'opencode', label: 'OpenCode Zen 免费', icon: '⚡', base_url: 'https://opencode.ai/zen/v1', model: 'deepseek-v4-flash-free' },
+  { value: 'openrouter-free', label: 'OpenRouter 免费', icon: '🧪', base_url: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-chat-v3-0324:free' },
 ];

@@ -793,14 +793,32 @@ def _do_fetch_models(base_url, api_key, model=None):
     if resp.status_code != 200:
         return None, f'请求失败 (HTTP {resp.status_code})：{resp.text[:200]}', 400
     result = resp.json()
+    # OpenRouter：专门只显示免费模型（pricing.prompt/completion 均为 0），收费模型一律隐藏
+    is_openrouter = 'openrouter.ai' in (base or '').lower()
+
+    def _is_free_price(v) -> bool:
+        """价格是否为 0（兼容字符串/数字/科学计数法，OpenRouter pricing 为字符串数值）。"""
+        try:
+            return float(v) == 0.0
+        except (TypeError, ValueError):
+            return str(v).strip() == '0'
+
     models = []
     for m in result.get('data', []):
         mid = m.get('id', '')
-        if mid:
-            models.append({
-                'id': mid,
-                'owned_by': m.get('owned_by', ''),
-            })
+        if not mid:
+            continue
+        if is_openrouter:
+            pricing = m.get('pricing') or {}
+            is_free = mid.endswith(':free') or (
+                _is_free_price(pricing.get('prompt')) and _is_free_price(pricing.get('completion'))
+            )
+            if not is_free:
+                continue
+        models.append({
+            'id': mid,
+            'owned_by': m.get('owned_by', ''),
+        })
     models.sort(key=lambda x: x['id'])
     return models, None, 200
 
