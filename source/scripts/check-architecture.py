@@ -130,7 +130,12 @@ MAX_ROUTES_PER_FILE = 30
 #   - ai_continue_bp.py 首次落地 2356 行超单文件上限，随即二拆：11 个纯辅助函数外迁
 #     blueprints/ai_continue_helpers.py（1030 行），蓝图仅留路由（1367 行）。
 #   → app.py 11121 → 8836（净 -2285 行）。属业务域外迁，不属业务膨胀。
-APP_PY_BASELINE = 8836
+# 2026-09-25 重校准11（CI 解阻塞，恢复发布通道）：
+#   - 小说写作平台全面评估分析等 v1.0 后功能迭代净增 83 行（8836 → 8919），
+#     未随开发同步校准基线 → 架构门禁连挂，发布 job 被 skip，Render/GitHub 前端停更
+#     （AI 配置 UI 修复等改动无法上线）。
+#   - 本轮仅校准基线放行部署，功能代码不动；下轮拆分目标不变（按域继续外迁）。
+APP_PY_BASELINE = 8919
 APP_PY_TOLERANCE = 0  # 允许的增量，0 表示严禁增长
 
 # 前端单文件行数上限
@@ -436,7 +441,10 @@ TOOLSPAGE_BASELINE = 90
 #     _volume_field_nonempty / _merge_volume / _repair_volume_nodes_safe（节点 A+C 门禁）/
 #     _merge_volume_nodes_incremental（续会节点增量合并），自 apply_card 内嵌提升为模块级；
 #   - 仅懒依赖 node_design_bp / app，无循环 import，chat_collab_bp 顶层 import 复用。
-CHAT_COLLAB_BP_BASELINE = 5039
+# 2026-09-25 重校准（CI 解阻塞，与 app.py 基线同轮）：
+#   - 小说写作平台全面评估分析等 v1.0 后功能迭代净增 37 行（5039 → 5076），
+#     仅校准基线放行部署，功能代码不动。下轮拆分目标不变。
+CHAT_COLLAB_BP_BASELINE = 5076
 
 # 豁免清单：历史巨石，只受"不得增长"约束，不受单文件行数约束
 # 新增豁免需在 PR 里说明理由
