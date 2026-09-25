@@ -532,7 +532,7 @@ export default function MinePage() {
             <p className="text-muted">配置国产大模型 API，让AI帮你写作和审稿。所有提供商均兼容 OpenAI 接口格式。</p>
 
             {/* 多配置管理：新建永不覆盖旧配置；查看/编辑某条 ≠ 启用它，启用需显式操作 */}
-            <div className="config-switcher" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: formMode === 'create' ? 0 : 12, padding: '8px 10px', background: 'var(--bg-soft, #f7f7f8)', borderRadius: 8, flexWrap: 'wrap' }}>
+            <div className="config-switcher" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 10px', background: 'var(--bg-soft, #f7f7f8)', borderRadius: 8, flexWrap: 'wrap' }}>
               <label style={{ fontSize: 13, color: 'var(--text-muted, #888)', marginRight: 4 }}>配置：</label>
               <select
                 className="input"
@@ -558,6 +558,9 @@ export default function MinePage() {
                   ⭐ 设为当前使用
                 </button>
               )}
+              {formMode === 'create' && (
+                <button className="btn-ghost-sm" onClick={handleCancelCreate} title="放弃草稿，回到编辑模式">取消新建</button>
+              )}
               <button
                 className="btn-primary"
                 onClick={handleNewConfig}
@@ -582,13 +585,6 @@ export default function MinePage() {
                 {configList.length} / {maxConfigs}
               </span>
             </div>
-            {formMode === 'create' && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, padding: '8px 12px', border: '1px dashed var(--accent, #4B3FE3)', borderRadius: 8, background: 'var(--accent-light, rgba(75,63,227,0.06))', fontSize: 13, color: 'var(--text, inherit)' }}>
-                <span style={{ flex: 1 }}>✏️ 正在新建独立配置——保存后将成为新的一条并自动启用，已有配置不受任何影响。</span>
-                <button className="btn-ghost-sm" onClick={handleCancelCreate} title="放弃草稿，回到编辑模式">取消新建</button>
-              </div>
-            )}
-
             {/* 配置名称编辑 */}
             <div className="form-row" style={{ marginBottom: 12 }}>
               <label>配置名称</label>
