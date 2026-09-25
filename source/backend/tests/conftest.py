@@ -54,6 +54,10 @@ def app(_data_dir):
         # init_db 建表（app.py 在 __main__ 里调，测试需手动调一次）
         if hasattr(app_module, "init_db"):
             app_module.init_db()
+        # 标记启动就绪：生产走后台预热线程（init_db 后 _set_boot_ready），测试无该线程，
+        # 需手动放行 _gate_until_boot，否则所有 /api 请求被 503「服务预热中」挡掉。
+        if hasattr(app_module, "_set_boot_ready"):
+            app_module._set_boot_ready()
         yield app_module.app
     finally:
         # 恢复环境变量
