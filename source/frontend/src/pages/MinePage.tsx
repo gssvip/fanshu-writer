@@ -165,22 +165,19 @@ export default function MinePage() {
     setUsageLoading(false);
   }
 
-  // 切换"正在查看/编辑"的配置：只加载进表单，不改变全局激活
-  function handleSwitchConfig(id: string) {
+  // 切换配置：下拉选中即激活——该配置成为全局当前使用（所有AI调用改用它）
+  async function handleSwitchConfig(id: string) {
     if (formMode === 'create') setFormMode('edit');
     const cfg = configList.find(c => c.id === id);
     if (cfg) setAIConfig(cfg);
-  }
-
-  // 把当前查看的配置设为全局激活（所有 AI 调用改用它）
-  async function handleActivateConfig() {
-    if (!aiConfig.id) return;
-    try {
-      const cfg = await api.activateAIConfig(aiConfig.id);
-      setAIConfig(cfg);
-      await refreshConfigs();
-    } catch (e: any) {
-      alert('切换失败: ' + e.message);
+    if (cfg && !cfg.is_active) {
+      try {
+        const activated = await api.activateAIConfig(id);
+        setAIConfig(activated);
+        await refreshConfigs();
+      } catch (e: any) {
+        alert('切换失败: ' + e.message);
+      }
     }
   }
 
@@ -535,59 +532,55 @@ export default function MinePage() {
             <h3>AI 配置</h3>
             <p className="text-muted">配置国产大模型 API，让AI帮你写作和审稿。所有提供商均兼容 OpenAI 接口格式。</p>
 
-            {/* 多配置管理：新建永不覆盖旧配置；查看/编辑某条 ≠ 启用它，启用需显式操作 */}
-            <div className="config-switcher" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 10px', background: 'var(--bg-soft, #f7f7f8)', borderRadius: 8, flexWrap: 'wrap' }}>
-              <label style={{ fontSize: 13, color: 'var(--text-muted, #888)', marginRight: 4 }}>配置：</label>
-              <select
-                className="input"
-                value={formMode === 'create' ? '' : aiConfig.id}
-                disabled={formMode === 'create'}
-                onChange={e => handleSwitchConfig(e.target.value)}
-                style={{ flex: 1, minWidth: 160, maxWidth: 280 }}
-                title={formMode === 'create' ? '正在新建配置，保存后自动回到列表' : '选择要查看/编辑的配置'}
-              >
-                {configList.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}{c.is_active ? '（当前使用）' : ''} {c.has_key ? '🔑' : '🚫'}
-                  </option>
-                ))}
-              </select>
-              {formMode === 'edit' && !aiConfig.is_active && aiConfig.id && (
+            {/* 多配置管理：新建永不覆盖旧配置；下拉选中即激活（该条成为全局当前使用） */}
+            <div className="config-switcher" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12, padding: '8px 10px', background: 'var(--bg-soft, #f7f7f8)', borderRadius: 8 }}>
+              {/* 第一行：配置下拉（独占一行，避免挤压按钮行） */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ fontSize: 13, color: 'var(--text-muted, #888)', marginRight: 4, flexShrink: 0 }}>配置：</label>
+                <select
+                  className="input"
+                  value={formMode === 'create' ? '' : aiConfig.id}
+                  disabled={formMode === 'create'}
+                  onChange={e => handleSwitchConfig(e.target.value)}
+                  style={{ flex: 1, minWidth: 0 }}
+                  title={formMode === 'create' ? '正在新建配置，保存后自动回到列表' : '选择配置，选中即启用该提供商的模型'}
+                >
+                  {configList.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}{c.is_active ? '（当前使用）' : ''} {c.has_key ? '🔑' : '🚫'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {/* 第二行：操作按钮同一排并齐（新建配置 / 取消新建 / 删除），数量统计靠右 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {formMode === 'create' && (
+                  <button className="btn-ghost-sm" onClick={handleCancelCreate} style={_cfgBtn} title="放弃草稿，回到编辑模式">取消新建</button>
+                )}
                 <button
                   className="btn-ghost-sm"
-                  onClick={handleActivateConfig}
+                  onClick={handleNewConfig}
+                  disabled={configList.length >= maxConfigs || formMode === 'create'}
                   style={_cfgBtn}
-                  title="把这条配置设为全局当前使用（所有AI调用改用它）"
+                  title={configList.length >= maxConfigs ? `最多 ${maxConfigs} 个配置` : '新建一条独立配置，不影响已保存的配置'}
                 >
-                  ⭐ 设为当前使用
+                  ＋ 新建配置
                 </button>
-              )}
-              {formMode === 'create' && (
-                <button className="btn-ghost-sm" onClick={handleCancelCreate} style={_cfgBtn} title="放弃草稿，回到编辑模式">取消新建</button>
-              )}
-              <button
-                className="btn-ghost-sm"
-                onClick={handleNewConfig}
-                disabled={configList.length >= maxConfigs || formMode === 'create'}
-                style={_cfgBtn}
-                title={configList.length >= maxConfigs ? `最多 ${maxConfigs} 个配置` : '新建一条独立配置，不影响已保存的配置'}
-              >
-                ＋ 新建配置
-              </button>
-              {formMode === 'edit' && (
-                <button
-                  className="btn-ghost-sm"
-                  onClick={() => handleDeleteConfig(aiConfig.id)}
-                  disabled={configList.length <= 1}
-                  style={_cfgBtn}
-                  title={configList.length <= 1 ? '至少保留 1 个配置' : '删除当前编辑的配置'}
-                >
-                  🗑️ 删除
-                </button>
-              )}
-              <span style={{ fontSize: 12, color: 'var(--text-muted, #888)' }}>
-                {configList.length} / {maxConfigs}
-              </span>
+                {formMode === 'edit' && (
+                  <button
+                    className="btn-ghost-sm"
+                    onClick={() => handleDeleteConfig(aiConfig.id)}
+                    disabled={configList.length <= 1}
+                    style={_cfgBtn}
+                    title={configList.length <= 1 ? '至少保留 1 个配置' : '删除当前编辑的配置'}
+                  >
+                    🗑️ 删除
+                  </button>
+                )}
+                <span style={{ fontSize: 12, color: 'var(--text-muted, #888)', marginLeft: 'auto' }}>
+                  {configList.length} / {maxConfigs}
+                </span>
+              </div>
             </div>
             {/* 配置名称编辑 */}
             <div className="form-row" style={{ marginBottom: 12 }}>
