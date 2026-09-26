@@ -1059,7 +1059,7 @@
 [data-theme="dark"] .home-page .page-header{ background: transparent; border-bottom: none; }
 [data-theme="dark"] .home-page .page-header h1{ color: var(--accent); } /* 石青 */
 [data-theme="dark"] .home-section-header h2{ color: var(--accent); letter-spacing: 0.6px; }
-[data-theme="dark"] .home-topbar-title{ color: var(--accent); letter-spacing: 7px; } /* 石青，字距收1点更精致 */
+[data-theme="dark"] .home-topbar-title{ color: var(--accent); letter-spacing: 6.65px; } /* 石青，字距收1点更精致 */
 [data-theme="dark"] .home-topbar-sub{ color: var(--text-muted); }
 [data-theme="dark"] .status-tag.completed{ background: var(--accent-light); color: var(--accent); }
 [data-theme="dark"] .status-tag.writing{ background: rgba(87,100,115,0.08); color: var(--accent); }
@@ -1177,7 +1177,7 @@
 /* ② 全局翠绿残留（home-page/workbench）→ 石青 !important 强覆盖 */
 [data-theme="dark"] .home-page{ background: transparent !important; }
 [data-theme="dark"] .home-page .page-header h1{ color: var(--accent) !important; }
-[data-theme="dark"] .home-topbar-title{ color: var(--accent) !important; letter-spacing: 7px !important; }
+[data-theme="dark"] .home-topbar-title{ color: var(--accent) !important; letter-spacing: 6.65px !important; }
 [data-theme="dark"] .home-topbar-sub{ color: var(--text-muted) !important; }
 [data-theme="dark"] .home-section-header h2{ color: var(--accent) !important; letter-spacing: 0.6px; }
 /* stats-banner 的 ::before/::after 在淡石青卷轴新版 L152-164 强制 display:block（木质轴头），默认翠绿的圆球装饰用 .home-stats-banner::before + position 50%圆形区分，此处无需额外处理 */
@@ -1379,18 +1379,19 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 /* 手机端顶部：左 wangbiao logo + 右文字（仅移动端显示） */
 .home-topbar-mobile{display:flex;align-items:center;justify-content:center;gap:20px;padding:12px 16px 6px;margin:0 0 4px}
 .home-topbar-text{display:flex;flex-direction:column;align-items:flex-end;gap:5px;min-width:0}
-.home-topbar-title{font-size:29px;font-weight:700;color:#4a7a5a;letter-spacing:9px;line-height:1.2;text-align:right;white-space:nowrap}
-.home-topbar-sub{font-size:17px;color:#7a9a8a;letter-spacing:0.5px;line-height:1.2;white-space:nowrap;text-align:right}
+.home-topbar-title{font-size:29px;font-weight:700;color:#4a7a5a;letter-spacing:8.55px;line-height:1.2;text-align:right;white-space:nowrap}
+/* 副标题与主标题上下齐边：justify 把行内词间距撑满容器宽（容器宽=主标题宽），两行左右边缘齐平 */
+.home-topbar-sub{font-size:17px;color:#7a9a8a;letter-spacing:0.5px;line-height:1.2;white-space:nowrap;text-align:justify;text-align-last:justify}
 .home-topbar-logo{flex:0 0 auto;display:flex;align-items:center}
 .home-topbar-logo img{width:auto;height:77px;max-width:144px;object-fit:contain}
 
 /* 浅色主题·首页：去掉全局默认绿底/黛绿字，改为冷灰蓝+纯白带的科技风 */
 [data-theme="light"] .home-page{background:linear-gradient(180deg,rgba(95,126,163,0.08) 0%,rgba(233,237,243,0.9) 200px,var(--bg-primary) 400px)}
 [data-theme="light"] .home-page .page-header h1{color:#5f7ea3}
-[data-theme="light"] .home-topbar-title{color:var(--accent);letter-spacing:7px} /* 深墨近黑，去蓝统一主题字色 */
+[data-theme="light"] .home-topbar-title{color:var(--accent);letter-spacing:6.65px} /* 深墨近黑，去蓝统一主题字色 */
 [data-theme="light"] .home-topbar-sub{color:#57606a}
 /* 护眼绿：标题字距与国风(dark)对齐（base为9px偏大，参照国风收至7px更协调） */
-[data-theme="green"] .home-topbar-title{color:#4a7a5a;letter-spacing:7px}
+[data-theme="green"] .home-topbar-title{color:#4a7a5a;letter-spacing:6.65px}
 [data-theme="green"] .home-topbar-sub{color:#70907c}
 
 /* Import File Zone */
@@ -1772,7 +1773,8 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .mine-avatar{width:64px;height:64px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:28px;margin-bottom:10px}
 .mine-name{font-size:20px;font-weight:700}
 .mine-email{font-size:13px;color:var(--text-muted);margin-top:4px}
-.mine-stats{display:flex;justify-content:center;gap:32px;padding:16px 0;border-top:1px solid var(--border-color);border-bottom:1px solid var(--border-color);margin:0 16px}
+/* 作品/总字数/章节：三项同行平齐、间距均匀分布（space-around），整片加卡片底色 */
+.mine-stats{display:flex;justify-content:space-around;align-items:center;gap:16px;padding:16px 12px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-md,12px);margin:12px 16px}
 .stat-item{text-align:center}.stat-value{font-size:22px;font-weight:700;color:var(--accent)}.stat-label{font-size:12px;color:var(--text-muted);margin-top:2px}
 .mine-nav{margin:12px 16px;display:flex;flex-direction:column;gap:2px}
 .mine-nav-item{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-sm);font-size:14px;width:100%}
@@ -2523,7 +2525,7 @@ textarea.input.paper-textarea{
   .tool-card{padding:12px}
   .tool-card-desc{display:none}
   .review-total-score{font-size:36px}
-  .mine-stats{gap:20px}
+  .mine-stats{gap:12px}
   .skill-apply-bar{position:sticky;bottom:0;backdrop-filter:blur(8px)}
   .page-header h1{font-size:17px}
   .book-grid{gap:10px;padding:12px}
