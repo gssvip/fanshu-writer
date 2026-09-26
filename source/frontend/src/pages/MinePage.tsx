@@ -19,7 +19,6 @@ export default function MinePage() {
   const [saving, setSaving] = useState(false);
   const [activeSection, setActiveSection] = useState('');
   const [stats, setStats] = useState({ totalBooks: 0, totalWords: 0, totalChapters: 0 });
-  const [writingHist, setWritingHist] = useState({ todayWords: 0, streak: 0 });
 
   // AI 调用账本：range = today（今天） / 7d（近 7 天） / 30d（近 30 天）
   const [usageStats, setUsageStats] = useState<AIUsageStats | null>(null);
@@ -109,13 +108,6 @@ export default function MinePage() {
       setUseSeparateRecognition(true);
     }
   }, [aiConfig.recognition_model]);
-
-  useEffect(() => {
-    // 写作打卡：后端实时聚合（同工作台横幅，旧 localStorage 方案统计恒为 0 已弃用）
-    api.getTodayStats().then(s => {
-      setWritingHist({ todayWords: s.today_words || 0, streak: s.streak || 0 });
-    }).catch(() => { /* 未登录/网络失败：保持 0 显示 */ });
-  }, []);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -493,26 +485,6 @@ export default function MinePage() {
               <div className="stat-label">章节</div>
             </div>
           </div>
-
-          {/* 写作打卡统计 */}
-          <div className="stats-card">
-            <div className="stats-row">
-              <div className="stats-item">
-                <div className="stats-value">{writingHist.todayWords}</div>
-                <div className="stats-label">今日字数</div>
-              </div>
-              <div className="stats-item">
-                <div className="stats-streak">
-                  <span className="stats-streak-badge">{writingHist.streak}天</span>
-                </div>
-                <div className="stats-label">连续打卡</div>
-              </div>
-              <div className="stats-item">
-                <div className="stats-value">{stats.totalWords > 0 ? Math.round(stats.totalWords / Math.max(1, stats.totalBooks)) : 0}</div>
-                <div className="stats-label">篇均字数</div>
-              </div>
-            </div>
-          </div>
         </>
       )}
 
@@ -577,7 +549,12 @@ export default function MinePage() {
                     🗑️ 删除
                   </button>
                 )}
-                <span style={{ fontSize: 12, color: 'var(--text-muted, #888)', marginLeft: 'auto' }}>
+                {/* 计数徽标：与按钮同 class 同 _cfgBtn 样式（一样大、一样的 UI），同排并齐 */}
+                <span
+                  className="btn-ghost-sm"
+                  style={{ ..._cfgBtn, marginLeft: 'auto' }}
+                  title={`已配置 ${configList.length} 个，上限 ${maxConfigs} 个`}
+                >
                   {configList.length} / {maxConfigs}
                 </span>
               </div>
