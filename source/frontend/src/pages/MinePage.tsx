@@ -1246,11 +1246,6 @@ export default function MinePage() {
                   </button>
                   <button className="btn-ghost-sm" onClick={() => { setPwdForm({ old: '', new: '', confirm: '' }); setPwdMsg(null); }}>清空</button>
                 </div>
-
-                <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-                  <b>💡 找回密码</b><br />
-                  忘记密码时，可在登录页点击「忘记密码？」通过注册邮箱接收重置链接，重置邮件将通过 <code>xiyiji@88.com</code> 发送。
-                </div>
               </>
             ) : (
               <div className="empty-state" style={{padding:30}}>
