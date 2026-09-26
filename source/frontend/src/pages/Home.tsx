@@ -199,7 +199,7 @@ export default function Home() {
             className="btn-primary btn-ai-entry-home"
             onClick={() => setShowAiPicker(true)}
             disabled={books.length === 0}
-            title={books.length === 0 ? '请先创建作品' : 'AI 智驾：选择作品进入设定/正文/去AI/校审四Tab协作'}
+            title={books.length === 0 ? '请先创建作品' : ''}
           >
             <CarLogo size={22} />
           </button>

@@ -460,7 +460,7 @@ export default function WorkbenchPage() {
           <div className="master-create-entry-icon"><CarLogo size={48} /></div>
           <div className="master-create-entry-content">
             <div className="master-create-entry-label">AI 智驾</div>
-            <div className="master-create-entry-desc">{books.length > 0 ? '选择作品，进入设定/正文/去AI/校审四Tab协作' : '请先创建作品'}</div>
+            {books.length === 0 && <div className="master-create-entry-desc">请先创建作品</div>}
           </div>
           <div className="master-create-entry-arrow">{books.length > 0 ? '→' : ''}</div>
         </button>

@@ -495,9 +495,6 @@ export function ForeshadowingPanel(props: {
                 style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='dimensions'?'var(--accent)':'var(--border)'}`,background:afScope==='dimensions'?'var(--accent-light)':'transparent',color:afScope==='dimensions'?'var(--accent)':'var(--text)',fontWeight:afScope==='dimensions'?600:400}}
               >📐 仅维度</button>
             </div>
-            <p className="text-muted" style={{fontSize:12,marginBottom:10}}>
-              选择范围后点击「开始检查」生成报告；AI 会在章节数达到 10 的倍数时自动检查。
-            </p>
 
             {/* 自动检查草稿提示 */}
             {afReports.some((r: any) => r.status === 'pending' && r.auto_generated && r.fix_draft?.length > 0) && (
@@ -651,9 +648,6 @@ export function ForeshadowingPanel(props: {
             <p className="text-muted" style={{fontSize:12,marginBottom:6}}>
               当前检查资料：<b>{afScope === 'dimensions' ? '📐 仅维度（除构思、章节外所有维度）' : '📄 动态文件（所有动态报告）'}</b>
             </p>
-            <p className="text-muted" style={{fontSize:12,marginBottom:10}}>
-              勾选要检查的分卷（可多选）；不勾选任何卷则检查全部章节。
-            </p>
             <div style={{maxHeight:320,overflowY:'auto',border:'1px solid var(--border)',borderRadius:8,padding:6}}>
               {displayVolumes.length === 0 ? (
                 <p className="text-muted" style={{fontSize:13,padding:8}}>暂无分卷，将检查全部章节。</p>
@@ -700,9 +694,6 @@ export function ForeshadowingPanel(props: {
               <h3 style={{margin:0}}>{fixVolPicker.mode === 'setting' ? '🔧 AI修正' : '📝 修正正文'} · 选择卷</h3>
               <button className="btn-ghost-sm" onClick={() => setFixVolPicker(null)}>✕</button>
             </div>
-            <p className="text-muted" style={{fontSize:12,marginBottom:10}}>
-              选择要修正的卷范围；选「全部」则修正报告中所有违规项。
-            </p>
             <div style={{maxHeight:300,overflowY:'auto',border:'1px solid var(--border)',borderRadius:8,padding:6}}>
               {volumes.length === 0 ? (
                 <p className="text-muted" style={{fontSize:13,padding:8}}>本书暂无分卷，将修正全部违规项。</p>

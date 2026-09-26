@@ -895,7 +895,6 @@ ${existingVols || '（暂无）'}
               <button className="btn-primary-sm" onClick={generateVolumeBreakdown}>生成分卷框架</button>
               <button className="btn-ghost-sm" onClick={() => setShowVolumeCalc(false)}>收起</button>
             </div>
-            <p className="text-muted" style={{fontSize:11,marginTop:4}}>按金番作者体系：每卷50章×2400字≈12万字，五幕弧线自动分配。生成框架后逐卷点击 🤖 补全详情，再点击 🎯 节点设计。</p>
             {targetVolumeCount > 0 && (
               <div className="volume-calc-preview">
                 预计 {targetVolumeCount}卷 · {targetVolumeCount * 50}章 · {((targetVolumeCount * 50 * 2400) / 10000).toFixed(1)}万字

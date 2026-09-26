@@ -84,9 +84,6 @@ export default function AnalyzeTab({ books }: { books: Book[] }) {
             onClick={() => setAnalyzeMode('competitor')}
             title="站在竞品对标角度，输出市场定位、核心优势、差异弱点与可复刻方案"
           >⚔️ 竞品拆书</button>
-          {analyzeMode === 'competitor' && (
-            <span className="text-muted" style={{fontSize:11}}>分析竞品爆款，输出对标定位 · 核心优势 · 差异化机会 · 复刻方案</span>
-          )}
         </div>
         <div className="form-row" style={{marginBottom:10}}>
           <input ref={fileInputRef} type="file" accept=".txt,.md,.docx,.zip,.json" onChange={handleUploadFile} style={{display:'none'}} id="analyze-file-input" />
@@ -152,7 +149,6 @@ export default function AnalyzeTab({ books }: { books: Book[] }) {
         <div className="modal-overlay" onClick={() => setShowSyncModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h2>📋 同步分析结果到作品</h2>
-            <p className="text-muted" style={{marginBottom:12}}>将拆书分析的文风、结构、人设等方法论同步到作品资料，用于仿写或同人文创作。</p>
 
             <div className="form-field">
               <label>选择目标作品</label>

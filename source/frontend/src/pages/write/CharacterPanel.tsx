@@ -566,9 +566,6 @@ export function CharacterPanel(props: {
       {/* 按卷人物识别 */}
       {displayCharVolumes.length > 0 && (
         <div className="plot-volume-list" style={{marginBottom:16}}>
-          <p className="text-muted" style={{fontSize:12, marginBottom:8}}>
-            📚 按卷识别人物：点击「🔍 AI识别」选择卷，识别结果自动归类到对应卷下，可合并到下方全局人物档案。
-          </p>
           {displayCharVolumes.map((vol, idx) => (
             <div key={idx} className="plot-volume-card">
               <div className="plot-volume-header" onClick={() => toggleVolChar(idx)} style={{cursor:'pointer'}}>
