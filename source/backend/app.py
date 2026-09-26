@@ -205,9 +205,9 @@ if DATABASE_URL:
         'pool_size': 5,
         'max_overflow': 5,
     }
-    # psycopg2 专属：keepalives 防止中间代理（Render/Cloudflare/PGBouncer）在大事务时静默断连
-    # 典型触发：UPDATE ai_sessions SET messages_json 写 100KB+ 大包，SSL 管道被掐
-    if 'psycopg2' in DATABASE_URL or DATABASE_URL.startswith('postgresql://') or DATABASE_URL.startswith('postgres://'):
+    # psycopg2/psycopg3 专属 keepalives：防中间代理（Render/Cloudflare/PGBouncer）在大事务时静默断连
+    # （tcp_user_timeout/keepalives* 均为 libpq 标准 conninfo 参数，两驱动通用）
+    if 'psycopg2' in DATABASE_URL or 'psycopg://' in DATABASE_URL or DATABASE_URL.startswith(('postgresql://', 'postgres://')):
         _engine_opts['connect_args'] = {
             'connect_timeout': 15,          # 建连超时 15s
             'keepalives': 1,                # 启用 TCP keepalive

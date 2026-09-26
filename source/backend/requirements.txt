@@ -9,4 +9,8 @@ requests==2.32.3
 beautifulsoup4==4.12.3
 werkzeug==3.1.3
 psycopg2-binary==2.9.12
+# psycopg3（SQLAlchemy 方言 postgresql+psycopg://，Render 的 DATABASE_URL 即此格式）：
+# 缺它 → db.init_app 阶段 import psycopg 失败，gunicorn 启动即崩，Render 回滚旧容器，
+# 表现为"代码推了但线上永远是旧版"。两驱动并存，两种方言都能跑。
+psycopg[binary]>=3.2,<4
 gunicorn==23.0.0
