@@ -444,6 +444,10 @@ export default function MinePage() {
     setExporting(false);
   }
 
+  // 配置切换行操作按钮统一样式：同类(class)+同尺寸(padding/fontSize)+不换行不压缩，
+  // 保证「新建配置 / 取消新建 / 删除 / 设为当前使用」同一排并齐、一样大、一样的 UI
+  const _cfgBtn = { padding: '6px 12px', fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0 } as const;
+
   return (
     <div className="page mine-page">
       <header className="page-header">
@@ -550,32 +554,32 @@ export default function MinePage() {
               </select>
               {formMode === 'edit' && !aiConfig.is_active && aiConfig.id && (
                 <button
-                  className="btn-primary"
+                  className="btn-ghost-sm"
                   onClick={handleActivateConfig}
-                  style={{ padding: '6px 12px', fontSize: 13 }}
+                  style={_cfgBtn}
                   title="把这条配置设为全局当前使用（所有AI调用改用它）"
                 >
                   ⭐ 设为当前使用
                 </button>
               )}
               {formMode === 'create' && (
-                <button className="btn-ghost-sm" onClick={handleCancelCreate} title="放弃草稿，回到编辑模式">取消新建</button>
+                <button className="btn-ghost-sm" onClick={handleCancelCreate} style={_cfgBtn} title="放弃草稿，回到编辑模式">取消新建</button>
               )}
               <button
-                className="btn-primary"
+                className="btn-ghost-sm"
                 onClick={handleNewConfig}
                 disabled={configList.length >= maxConfigs || formMode === 'create'}
-                style={{ padding: '6px 12px', fontSize: 13 }}
+                style={_cfgBtn}
                 title={configList.length >= maxConfigs ? `最多 ${maxConfigs} 个配置` : '新建一条独立配置，不影响已保存的配置'}
               >
                 ＋ 新建配置
               </button>
               {formMode === 'edit' && (
                 <button
-                  className="btn-icon"
+                  className="btn-ghost-sm"
                   onClick={() => handleDeleteConfig(aiConfig.id)}
                   disabled={configList.length <= 1}
-                  style={{ fontSize: 13, padding: '6px 10px' }}
+                  style={_cfgBtn}
                   title={configList.length <= 1 ? '至少保留 1 个配置' : '删除当前编辑的配置'}
                 >
                   🗑️ 删除
