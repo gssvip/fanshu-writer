@@ -164,7 +164,6 @@ export function ConceptPanel(props: {
             )}
           </div>
         )}
-        <p className="text-muted" style={{marginBottom:8}}>告诉AI你想生成什么构思内容，AI会结合故事设定和已勾选的技能包来创作</p>
         <div className="ai-prompt-section ai-prompt-vertical">
           <textarea
             className="input bible-ai-prompt-input"

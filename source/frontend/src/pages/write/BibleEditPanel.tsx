@@ -100,7 +100,6 @@ export function BibleEditPanel(props: {
           <button className="btn-ghost-sm" onClick={onCancelAi} disabled={aiAssisting}>取消</button>
         </div>
         {skillSelector}
-        <p className="text-muted" style={{marginBottom:8}}>告诉AI你想生成什么内容，AI会结合故事设定和已勾选的技能包来创作</p>
         <div className="ai-prompt-section ai-prompt-vertical">
           <textarea
             className="input bible-ai-prompt-input"

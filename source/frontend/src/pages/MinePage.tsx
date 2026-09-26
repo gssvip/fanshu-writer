@@ -502,7 +502,6 @@ export default function MinePage() {
         {activeSection === 'ai' && (
           <div className="tool-panel">
             <h3>AI 配置</h3>
-            <p className="text-muted">配置国产大模型 API，让AI帮你写作和审稿。所有提供商均兼容 OpenAI 接口格式。</p>
 
             {/* 多配置管理：新建永不覆盖旧配置；下拉选中即激活（该条成为全局当前使用） */}
             <div className="config-switcher" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12, padding: '8px 10px', background: 'var(--bg-soft, #f7f7f8)', borderRadius: 8 }}>
@@ -783,7 +782,6 @@ export default function MinePage() {
         {activeSection === 'ledger' && (
           <div className="tool-panel">
             <h3>🧾 AI 调用账本</h3>
-            <p className="text-muted">记录每一次AI调用的场景、模型、字数、耗时与成败，便于审计和成本掌控</p>
 
             {/* 时间范围：今天 / 近 7 天 / 近 30 天 — 三枚胶囊按钮（桌面端一排，手机端等分换行） */}
             <div className="ledger-range-row nr-filter-section" style={{
@@ -1020,7 +1018,6 @@ export default function MinePage() {
         {activeSection === 'storage' && (
           <div className="tool-panel">
             <h3>本地存储设置</h3>
-            <p className="text-muted">将所有作品数据保存到手机本地，无需服务器即可离线使用</p>
 
             <div className="form-field">
               <label>存储模式</label>
@@ -1102,7 +1099,6 @@ export default function MinePage() {
                 <span>自定义</span>
               </button>
             </div>
-            <p className="text-muted" style={{ marginTop: 10 }}>水墨国风为默认淡色品质主题（冷白+石青，高端雅致）；护眼绿适合长时间码字；自定义可自由调配配色</p>
 
             {theme === 'custom' && customColors && (
               <div className="custom-theme-editor">

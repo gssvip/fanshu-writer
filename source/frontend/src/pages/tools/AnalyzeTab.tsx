@@ -72,7 +72,6 @@ export default function AnalyzeTab({ books }: { books: Book[] }) {
     <>
       <div className="tool-panel">
         <h3>📊 AI 拆书分析</h3>
-        <p className="text-muted">导入作品文件或粘贴文本，分析文风/结构/节奏/人设，提炼可学习的创作方法论</p>
         <div className="form-row" style={{alignItems:'center',gap:8,marginBottom:10}}>
           <button
             className={analyzeMode === 'normal' ? 'btn-primary' : 'btn-secondary'}

@@ -569,7 +569,6 @@ export default function WorkbenchPage() {
         <div className="modal-overlay" onClick={() => { setShowImport(false); setImportError(''); setImportFiles([]); }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h2>📥 导入作品</h2>
-            <p className="text-muted" style={{marginBottom:12}}>支持导入 txt/md/docx/zip 文件，或选择整个文件夹批量导入。系统会自动识别章节并创建作品。</p>
             <div style={{background:'#f6f8fa',borderRadius:6,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#555',lineHeight:1.7}}>
               <b style={{color:'#5b8def'}}>导入模式（自动识别）</b><br/>
               · <b>多文件/文件夹</b>：每个文件 = 一个章节，<b>文件名作为章节标题</b>，按文件名排序（如 第1章.txt、第2章.txt…）<br/>
@@ -589,7 +588,6 @@ export default function WorkbenchPage() {
                   <span>选择文件夹</span>
                 </label>
               </div>
-              <p className="text-muted" style={{fontSize:11,textAlign:'center',marginTop:6}}>多选/文件夹：每文件=一章（文件名作标题）；单文件：自动拆分章节</p>
             </div>
 
             {importFiles.length > 0 && (
@@ -698,9 +696,6 @@ export default function WorkbenchPage() {
         <div className="modal-overlay" onClick={() => !exporting && setShowExport(false)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
             <h2>📤 导出作品</h2>
-            <p className="text-muted" style={{ fontSize: 13, marginBottom: 16 }}>
-              选择要导出的作品与格式，系统会把作品内容打包为文件下载到本地。
-            </p>
             <div className="form-field">
               <label>选择作品</label>
               <select
@@ -825,9 +820,6 @@ export default function WorkbenchPage() {
               <h2 style={{display:'flex', alignItems:'center', gap:8}}><CarLogo size={33} /> AI 智驾</h2>
               <button className="btn-ghost" onClick={() => setShowMasterCreateModal(false)}>✕</button>
             </div>
-            <p className="text-muted" style={{ fontSize: 13, marginBottom: 16 }}>
-              选择要创作的作品，进入后可使用设定/正文/去AI/校审四Tab协作（与创作界面入口为同一功能）
-            </p>
             {books.length === 0 ? (
               <div className="empty-state" style={{ padding: 24 }}>
                 <p>还没有作品，请先新建</p>

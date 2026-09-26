@@ -30,7 +30,6 @@ export default function ReviewTab({ selectedBookId }: { selectedBookId: string }
   return (
     <div className="tool-panel">
       <h3>🔍 AI 责编审稿</h3>
-      <p className="text-muted">从番茄/起点等平台审稿视角，对作品进行7维度打分和商业评估</p>
       <button className="btn-primary" onClick={handleReview} disabled={!selectedBookId || loading}>
         {loading ? '审稿中...' : '开始审稿'}
       </button>

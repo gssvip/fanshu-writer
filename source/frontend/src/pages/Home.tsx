@@ -323,7 +323,6 @@ export default function Home() {
         <div className="modal-overlay" onClick={()=>setShowAiPicker(false)}>
           <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:480}}>
             <h2 style={{marginBottom:4, display:'flex', alignItems:'center', gap:8}}><CarLogo size={22} /> AI 智驾</h2>
-            <p className="text-muted" style={{fontSize:13,marginBottom:16}}>选择要创作的作品，进入后可使用设定/正文/去AI/校审四Tab协作</p>
             {books.length === 0 ? (
               <div className="empty-state" style={{padding:24}}>
                 <p>还没有作品，请先新建</p>

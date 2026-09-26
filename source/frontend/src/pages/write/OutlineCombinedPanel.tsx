@@ -204,7 +204,6 @@ export function OutlineCombinedPanel(props: {
             )}
           </div>
         )}
-        <p className="text-muted" style={{marginBottom:8}}>告诉AI你想生成什么内容</p>
         <div className="ai-prompt-section ai-prompt-vertical">
           <textarea
             className="input bible-ai-prompt-input"

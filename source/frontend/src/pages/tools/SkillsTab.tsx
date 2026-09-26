@@ -471,7 +471,6 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
       <div className="skills-header">
         <div>
           <h3>📦 技能包市场</h3>
-          <p className="text-muted">一键安装专业写作提示词和工作流，包含完整创作链路</p>
         </div>
         <div className="skills-header-actions">
           <input ref={skillImportRef} type="file" accept=".json,.md,.yaml,.yml" onChange={handleImportSkill} style={{display:'none'}} id="skill-import-input" />

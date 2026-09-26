@@ -423,7 +423,6 @@ export function ChapterPanel(props: {
             <div className="ai-create-empty">
               <span className="ai-create-empty-icon">✨</span>
               <p>告诉AI你想写什么，AI将根据你的要求和故事设定创作章节正文</p>
-              <p className="text-muted">自动识别当前写到哪一章，历史记录会一直保留，可连续创作多章</p>
             </div>
           )}
 

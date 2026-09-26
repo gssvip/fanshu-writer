@@ -132,7 +132,6 @@ export function SettingsCombinedPanel(props: {
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillSelector}
-        <p className="text-muted" style={{marginBottom:8}}>告诉AI你想生成的{labelMap[subTab]}内容，AI会结合故事设定和已勾选的技能包来创作</p>
         <div className="ai-prompt-section ai-prompt-vertical">
           <textarea className="input bible-ai-prompt-input" rows={6} value={aiPrompt}
             onChange={e => setAiPrompt(e.target.value)} onKeyDown={handlePromptKeyDown}
