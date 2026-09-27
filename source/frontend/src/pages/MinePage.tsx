@@ -433,9 +433,9 @@ export default function MinePage() {
     setExporting(false);
   }
 
-  // 配置切换行操作按钮统一样式：同类(class)+同尺寸(padding/fontSize)+不换行不压缩，
-  // 保证「新建配置 / 取消新建 / 删除 / 设为当前使用」同一排并齐、一样大、一样的 UI
-  const _cfgBtn = { padding: '6px 12px', fontSize: 13, whiteSpace: 'nowrap', flexShrink: 0 } as const;
+  // 配置切换行操作按钮统一样式：同类(class)+等宽(flex:1)+同尺寸(padding/fontSize)+居中，
+  // 保证「新建配置 / 取消新建 / 删除 / 计数」三个一组、一样大、一样的 UI、间距均匀
+  const _cfgBtn = { flex: 1, minWidth: 0, padding: '6px 10px', fontSize: 13, whiteSpace: 'nowrap', textAlign: 'center' } as const;
 
   return (
     <div className="page mine-page">
@@ -523,7 +523,7 @@ export default function MinePage() {
                   ))}
                 </select>
               </div>
-              {/* 第二行：操作按钮同一排并齐（新建配置 / 取消新建 / 删除），数量统计靠右 */}
+              {/* 第二行：三个操作一组等宽均分（新建配置/取消新建、删除、计数），一样大、间距均匀 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 {formMode === 'create' && (
                   <button className="btn-ghost-sm" onClick={handleCancelCreate} style={_cfgBtn} title="放弃草稿，回到编辑模式">取消新建</button>
@@ -548,10 +548,10 @@ export default function MinePage() {
                     🗑️ 删除
                   </button>
                 )}
-                {/* 计数徽标：与按钮同 class 同 _cfgBtn 样式（一样大、一样的 UI），同排并齐 */}
+                {/* 计数徽标：与按钮同 class 同 _cfgBtn 样式（等宽、居中，与前两个按钮均匀排布） */}
                 <span
                   className="btn-ghost-sm"
-                  style={{ ..._cfgBtn, marginLeft: 'auto' }}
+                  style={_cfgBtn}
                   title={`已配置 ${configList.length} 个，上限 ${maxConfigs} 个`}
                 >
                   {configList.length} / {maxConfigs}
