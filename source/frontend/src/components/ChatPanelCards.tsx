@@ -11,6 +11,7 @@ import rehypeHighlight from 'rehype-highlight';
 // 彻底避免跨站 CDN 被 Edge/Safari Tracking Prevention 阻止或内网不可达导致样式白屏。
 import 'highlight.js/styles/github.min.css';
 import CarLogo from './CarLogo';
+import Icon from './Icon';
 import { api } from '../api';
 import type { ActionCard, ProgressMap, AIMessage } from '../types';
 
@@ -48,9 +49,9 @@ interface CardViewProps {
 }
 
 const CARD_ICON: Record<string, string> = {
-  SAVE_WORLDSETTING: '🌍', SAVE_CHARACTER: '👤', SAVE_FORESHADOW: '🔮',
-  SAVE_OUTLINE_NODE: '📋', SAVE_PLOT: '📖', SAVE_LOCATION: '🗺️',
-  SAVE_RULE: '⚙️', APPLY_STYLE: '✍️', SAVE_CONCEPT: '💡', SAVE_CHAPTER: '📚',
+  SAVE_WORLDSETTING: 'globe', SAVE_CHARACTER: 'user', SAVE_FORESHADOW: 'crystal',
+  SAVE_OUTLINE_NODE: 'clipboard', SAVE_PLOT: 'book', SAVE_LOCATION: 'map',
+  SAVE_RULE: 'settings', APPLY_STYLE: 'edit', SAVE_CONCEPT: 'bulb', SAVE_CHAPTER: 'book-open',
 };
 
 // 解析 timeline 文本为卷数组（容错：markdown 代码块、包装对象）
@@ -189,7 +190,7 @@ const TimelineCardBody = memo(function TimelineCardBody({
                   title="基于本卷主要剧情事件，AI 逐事件展开成 5-10 个详细情节子节点"
                   style={{ fontSize: 12 }}
                 >
-                  {designingThis ? '⏳ 节点设计中…' : '🎯 节点设计'}
+                  {designingThis ? <><Icon name="hourglass" size={14} /> 节点设计中…</> : <><Icon name="target" size={14} /> 节点设计</>}
                 </button>
                 <span style={{ fontSize: 12, color: '#999', minWidth: 48, textAlign: 'right' }}>
                   {isCollapsed ? '展开 ▼' : '收起 ▲'}
@@ -220,7 +221,7 @@ const TimelineCardBody = memo(function TimelineCardBody({
                     background: 'linear-gradient(90deg,#f5f3ff,#faf5ff)',
                     border: '1px solid #ede9fe',
                   }}>
-                    <div style={{ fontWeight: 600, color: '#5b21b6', marginBottom: 6 }}>📘 本卷 6 要素（节点阶段以这个为锚）</div>
+                    <div style={{ fontWeight: 600, color: '#5b21b6', marginBottom: 6, display:'inline-flex', alignItems:'center', gap:6 }}><Icon name="book-open" size={16} /> 本卷 6 要素（节点阶段以这个为锚）</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px', fontSize: 12, color: '#4b5563' }}>
                       {v.characters && <div><b>人物：</b>{_fmt(v.characters)}</div>}
                       {v.timeline_anchor && <div><b>时间：</b>{v.timeline_anchor}</div>}
@@ -296,8 +297,8 @@ const TimelineCardBody = memo(function TimelineCardBody({
                             </div>
                           )}
                           <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                            {ev.bury && <span title="伏笔埋设（当前层按事件描述，精确章号在节点里）" style={{ color: '#c2410c' }}>🔸 埋：{ev.bury}</span>}
-                            {ev.payoff && <span title="伏笔回收（当前层按事件描述，精确章号在节点里）" style={{ color: 'var(--text-primary)' }}>🔹 收：{ev.payoff}</span>}
+                            {ev.bury && <span title="伏笔埋设（当前层按事件描述，精确章号在节点里）" style={{ color: '#c2410c' }}>埋：{ev.bury}</span>}
+                            {ev.payoff && <span title="伏笔回收（当前层按事件描述，精确章号在节点里）" style={{ color: 'var(--text-primary)' }}>收：{ev.payoff}</span>}
                           </div>
                         </li>
                       ))}
@@ -344,11 +345,11 @@ const TimelineCardBody = memo(function TimelineCardBody({
                                       <span style={{ fontWeight: 600, color: '#111827' }}>
                                         N{n.index || (ni + 1)} {n.title}
                                       </span>
-                                      {n.chapters && <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>📖 {n.chapters}</span>}
+                                      {n.chapters && <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}><Icon name="book" size={13} /> {n.chapters}</span>}
                                       {n.type && <span style={{ color: '#059669' }}>类型 {n.type}</span>}
                                       {n.cool_type && <span style={{ color: '#c2410c' }}>爽点 {n.cool_type}</span>}
                                       {n.cool_level && <span style={{ color: '#7c3aed' }}>{n.cool_level}</span>}
-                                      {!nodeOpen && n.hook && <span style={{ color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>🪝 {n.hook}</span>}
+                                      {!nodeOpen && n.hook && <span style={{ color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>钩子：{n.hook}</span>}
                                       <span style={{ marginLeft: 'auto', color: '#999', fontSize: 11, minWidth: 40, textAlign: 'right' }}>{nodeOpen ? '收起 ▲' : '展开 ▼'}</span>
                                     </div>
                                     {nodeOpen && (
@@ -409,9 +410,9 @@ const TimelineCardBody = memo(function TimelineCardBody({
                                         )}
                                         {n.summary && <div style={{ color: '#374151', marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{n.summary}</div>}
                                         <div style={{ marginTop: 6, color: '#6b7280', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                                          {n.bury && <span style={{ color: '#c2410c' }} title="伏笔埋设（精确到章）">🔸 埋：{n.bury}</span>}
-                                          {n.payoff && <span style={{ color: 'var(--text-primary)' }} title="伏笔回收（精确到章）">🔹 收：{n.payoff}</span>}
-                                          {n.hook && <span>🪝 钩子：{n.hook}</span>}
+                                          {n.bury && <span style={{ color: '#c2410c' }} title="伏笔埋设（精确到章）">埋：{n.bury}</span>}
+                                          {n.payoff && <span style={{ color: 'var(--text-primary)' }} title="伏笔回收（精确到章）">收：{n.payoff}</span>}
+                                          {n.hook && <span>钩子：{n.hook}</span>}
                                         </div>
                                       </>
                                     )}
@@ -428,7 +429,7 @@ const TimelineCardBody = memo(function TimelineCardBody({
 
                 {nodes.length === 0 && (
                   <div style={{ color: '#9ca3af', fontSize: 12, padding: 6 }}>
-                    尚未生成详细情节子节点事件。点击右上角「🎯 节点设计」，按每个主要剧情事件展开成 5-10 个子节点事件，子节点会补全所涉章节 + 精确到章的伏笔埋收 + 节点 6 要素。
+                    尚未生成详细情节子节点事件。点击右上角「节点设计」，按每个主要剧情事件展开成 5-10 个子节点事件，子节点会补全所涉章节 + 精确到章的伏笔埋收 + 节点 6 要素。
                   </div>
                 )}
               </div>
@@ -451,14 +452,14 @@ const AdoptedCardCollapsed = memo(function AdoptedCardCollapsed({ card }: { card
         onClick={() => setExpanded(e => !e)}
         style={{ cursor: 'pointer', flexWrap: 'wrap' }}
       >
-        <span className="chat-card-icon">{CARD_ICON[card.type] || '📌'}</span>
+        <span className="chat-card-icon"><Icon name={(CARD_ICON[card.type] || 'pin') as any} size={20} /></span>
         <span className="chat-card-title">{card.title}</span>
         {card.rankSourceLabel && (
           <span className="chat-card-rank-label" title="智驾已结合榜单风向生成" style={{ fontSize: 11, padding: '1px 7px', borderRadius: 999, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', marginLeft: 2 }}>
-            📈 {card.rankSourceLabel}
+            <Icon name="trending-up" size={12} /> {card.rankSourceLabel}
           </span>
         )}
-        <span className="chat-card-status">✓ {card.status === 'appended' ? '已追加落地' : '已采纳落地'} · {card.target}{wc > 0 ? ` · ${wc}字` : ''}</span>
+        <span className="chat-card-status"><Icon name="check" size={13} /> {card.status === 'appended' ? '已追加落地' : '已采纳落地'} · {card.target}{wc > 0 ? ` · ${wc}字` : ''}</span>
         <span className="chat-card-toggle" style={{ marginLeft: 'auto', fontSize: 12, color: '#999' }}>
           {expanded ? '收起 ▲' : '展开 ▼'}
         </span>
@@ -527,11 +528,11 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
     return (
       <div className="chat-card chat-card-ignored">
         <div className="chat-card-head" style={{ flexWrap: 'wrap' }}>
-          <span className="chat-card-icon">{CARD_ICON[card.type] || '📌'}</span>
+          <span className="chat-card-icon"><Icon name={(CARD_ICON[card.type] || 'pin') as any} size={20} /></span>
           <span className="chat-card-title">{card.title}</span>
           {card.rankSourceLabel && (
             <span style={{ fontSize: 11, padding: '1px 7px', borderRadius: 999, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d', marginLeft: 2 }}>
-              📈 {card.rankSourceLabel}
+              <Icon name="trending-up" size={12} /> {card.rankSourceLabel}
             </span>
           )}
           <span className="chat-card-status">已忽略</span>
@@ -576,7 +577,7 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'nowrap', overflow: 'hidden' }}>
           <strong style={{ color: 'var(--text-primary)', fontSize: 13, whiteSpace: 'nowrap' }}>
-            🎯 中途进度（{vi ? `第${vi}卷` : '本卷'}）
+            <Icon name="target" size={15} /> 中途进度（{vi ? `第${vi}卷` : '本卷'}）
           </strong>
           <span style={{ fontSize: 12, color: '#374151', whiteSpace: 'nowrap' }}>
             {done}/{cc}章
@@ -593,10 +594,10 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
           </button>
         </div>
         <div style={{ fontSize: 12, color: '#4b5563', lineHeight: 1.7, marginTop: 8 }}>
-          💡 整卷 <strong>{cc} 章</strong> 全部设计完成后，会自动给出一张<strong style={{ color: '#16a34a' }}>全卷合并版统一采纳卡片</strong>，
+          <Icon name="bulb" size={14} /> 整卷 <strong>{cc} 章</strong> 全部设计完成后，会自动给出一张<strong style={{ color: '#16a34a' }}>全卷合并版统一采纳卡片</strong>，
           点一次即可完整落库。随时发送<strong>「继续」</strong>或点上面的按钮接着写。
           <br/>
-          <span style={{ color: '#9ca3af' }}>如果想先把这 {done} 个节点临时存库（不推荐，后续还需再合并），可点下方「💾 分批临时保存」——后端会自动按章节号增量合并到已有节点，不会覆盖已存在章节。</span>
+          <span style={{ color: '#9ca3af' }}>如果想先把这 {done} 个节点临时存库（不推荐，后续还需再合并），可点下方「分批临时保存」——后端会自动按章节号增量合并到已有节点，不会覆盖已存在章节。</span>
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           {isReplaceMode ? null : (
@@ -607,7 +608,7 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
               disabled={applying}
               title="把当前半截卡片的节点按章节号增量合并到卷里（不会覆盖已存在章节的节点）。推荐整卷写完后再统一采纳。"
             >
-              💾 分批临时保存（不推荐）
+              <Icon name="save" size={14} /> 分批临时保存（不推荐）
             </button>
           )}
           <button className="chat-card-btn ghost" onClick={() => setEditing(true)} disabled={applying}>
@@ -624,14 +625,17 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
   return (
     <div className="chat-card">
       <div className="chat-card-head" style={{ flexWrap: 'wrap' }}>
-        <span className="chat-card-icon">{CARD_ICON[card.type] || '📌'}</span>
+        <span className="chat-card-icon"><Icon name={(CARD_ICON[card.type] || 'pin') as any} size={20} /></span>
         <span className="chat-card-title">{card.title}</span>
         {card.rankSourceLabel && (
           <span title="智驾已结合榜单风向生成" style={{ fontSize: 11, padding: '1px 7px', borderRadius: 999, background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }}>
-            📈 {card.rankSourceLabel}
+            <Icon name="trending-up" size={12} /> {card.rankSourceLabel}
           </span>
         )}
-        <span className="chat-card-target">→ {card.target}</span>
+        <span className="chat-card-status"><Icon name="check" size={13} /> 已采纳落地 · {card.target}</span>
+        <span className="chat-card-toggle" style={{ marginLeft: 'auto', fontSize: 12, color: '#999' }}>
+          {expanded ? '收起 ▲' : '展开 ▼'}
+        </span>
       </div>
       {card.subtitle && (
         <div style={{ padding: '2px 14px 4px', fontSize: 12, color: '#6b7280', marginTop: -2 }}>{card.subtitle}</div>
@@ -646,7 +650,7 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
           border: `1px solid ${hasError ? '#fecaca' : '#fde68a'}`,
           color: hasError ? '#b91c1c' : '#92400e',
         }}>
-          {hasError && <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ 自检未通过（已自动重试）</div>}
+          {hasError && <div style={{ fontWeight: 600, marginBottom: 4, display:'inline-flex', alignItems:'center', gap:4 }}><Icon name="warning" size={15} /> 自检未通过（已自动重试）</div>}
           {validation.map((v, i) => (
             <div key={i} style={{ marginTop: 2 }}>
               <span style={{ opacity: 0.7 }}>[{v.severity}]</span>{' '}
@@ -771,7 +775,7 @@ interface RankScanCardProps {
 export const RankScanCard = memo(function RankScanCard({ rankScan, platform, concept, onRescan, rescanning }: RankScanCardProps) {
   const [expanded, setExpanded] = useState(true);
   const curPlatform: 'fanqie' | 'qidian' = (rankScan?.platform || platform || 'fanqie') as any;
-  const platLabel = curPlatform === 'qidian' ? '📚 起点新书榜' : '🍅 番茄新书榜';
+  const platLabel = curPlatform === 'qidian' ? '起点新书榜' : '番茄新书榜';
   const platColor = curPlatform === 'qidian'
     ? { from: '#1e40af', to: '#0369a1', soft: '#eff6ff', border: '#93c5fd' }
     : { from: '#dc2626', to: '#ea580c', soft: '#fef2f2', border: '#fca5a5' };
@@ -789,7 +793,7 @@ export const RankScanCard = memo(function RankScanCard({ rankScan, platform, con
     return (
       <div style={{ marginTop: 10 }}>
         <div style={{ fontSize: 12.5, fontWeight: 600, color, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span>{icon}</span><span>{title}</span>
+          <Icon name={icon as any} size={15} /><span>{title}</span>
           <span style={{ flex: 1 }} />
           <span style={{ fontSize: 11, fontWeight: 400, color: '#9ca3af' }}>共{items.length}项</span>
         </div>
@@ -831,11 +835,11 @@ export const RankScanCard = memo(function RankScanCard({ rankScan, platform, con
           padding: '3px 10px', borderRadius: 999,
           background: `linear-gradient(90deg, ${platColor.from}, ${platColor.to})`,
           color: '#fff', fontSize: 12.5, fontWeight: 600, letterSpacing: 0.2,
-        }}>📈 榜单风向</span>
+        }}><Icon name="trending-up" size={15} /> 榜单风向</span>
         <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{platLabel}</span>
         {topCat && (
           <span style={{ fontSize: 12, color: '#4b5563', background: '#fff', padding: '2px 8px', borderRadius: 999, border: '1px solid #e5e7eb' }}>
-            🎯 匹配分类：{topCat.name}{topCat.score ? `（置信 ${Math.round(topCat.score * 100)}%）` : ''}
+            <Icon name="target" size={13} /> 匹配分类：{topCat.name}{topCat.score ? `（置信 ${Math.round(topCat.score * 100)}%）` : ''}
           </span>
         )}
         <span style={{ flex: 1 }} />
@@ -858,7 +862,7 @@ export const RankScanCard = memo(function RankScanCard({ rankScan, platform, con
                   fontWeight: active ? 600 : 400,
                 }}
               >
-                {p === 'fanqie' ? '🍅番茄' : '📚起点'}
+                {p === 'fanqie' ? '番茄' : '起点'}
               </button>
             );
           })}
@@ -874,7 +878,7 @@ export const RankScanCard = memo(function RankScanCard({ rankScan, platform, con
               display: 'inline-flex', alignItems: 'center', gap: 3,
             }}
           >
-            {rescanning ? <><span className="loading-spinner-sm" />扫描中…</> : <>🔄 重扫</>}
+            {rescanning ? <><span className="loading-spinner-sm" />扫描中…</> : <><Icon name="refresh" size={13} /> 重扫</>}
           </button>
           <button
             onClick={() => setExpanded(e => !e)}
@@ -891,12 +895,12 @@ export const RankScanCard = memo(function RankScanCard({ rankScan, platform, con
       {/* 数据来源 & 错误条 */}
       {!ok && rankScan.error && (
         <div style={{ marginTop: 8, fontSize: 12, color: '#b91c1c', padding: '6px 10px', borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca' }}>
-          ⚠️ {rankScan.error}
+          <Icon name="warning" size={14} /> {rankScan.error}
         </div>
       )}
       <div style={{ marginTop: 6, fontSize: 11.5, color: '#6b7280' }}>
         {sourcesLabel}{concept ? ` · 基于构思「${concept.length > 28 ? concept.slice(0, 28) + '…' : concept}」匹配` : ''}
-        {rankScan.cached && <span style={{ color: '#059669', marginLeft: 4 }}>🗄️ 命中缓存</span>}
+        {rankScan.cached && <span style={{ color: '#059669', marginLeft: 4 }}><Icon name="archive" size={12} /> 命中缓存</span>}
       </div>
 
       {/* 展开内容：四项市场情报 */}
@@ -908,18 +912,18 @@ export const RankScanCard = memo(function RankScanCard({ rankScan, platform, con
               fontSize: 13, lineHeight: 1.7, color: '#1f2937',
               background: '#fff', border: '1px solid #f3f4f6',
             }}>
-              <strong style={{ color: platColor.from }}>📊 风向速览：</strong>
+              <strong style={{ color: platColor.from }}><Icon name="bar-chart" size={15} /> 风向速览：</strong>
               <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{rankScan.report}</div>
             </div>
           )}
-          <ItemList title="开篇钩子套路" icon="🎣" items={intel.opening_patterns || []} color={platColor.from} />
-          <ItemList title="热门元素·爽点" icon="🔥" items={intel.popular_elements || []} color="#b45309" />
-          <ItemList title="雷区·毒点要素" icon="💣" items={intel.landmine_elements || []} color="#b91c1c" />
-          <ItemList title="书名公式参考" icon="📘" items={intel.title_formulas || []} color="#0369a1" />
-          <ItemList title="金手指类型拆解" icon="⚡" items={intel.golden_finger_types || []} color="#7c3aed" />
-          <ItemList title="简介写法套路" icon="✍️" items={intel.intro_formulas || []} color="#0d9488" />
-          <ItemList title="核心设定卖点" icon="🏗️" items={intel.setting_selling_points || []} color="#c2410c" />
-          <ItemList title="黄金三章套路" icon="📖" items={intel.golden_three_patterns || []} color="#4338ca" />
+          <ItemList title="开篇钩子套路" icon="hook" items={intel.opening_patterns || []} color={platColor.from} />
+          <ItemList title="热门元素·爽点" icon="flame" items={intel.popular_elements || []} color="#b45309" />
+          <ItemList title="雷区·毒点要素" icon="bomb" items={intel.landmine_elements || []} color="#b91c1c" />
+          <ItemList title="书名公式参考" icon="book" items={intel.title_formulas || []} color="#0369a1" />
+          <ItemList title="金手指类型拆解" icon="sparkles" items={intel.golden_finger_types || []} color="#7c3aed" />
+          <ItemList title="简介写法套路" icon="edit" items={intel.intro_formulas || []} color="#0d9488" />
+          <ItemList title="核心设定卖点" icon="building" items={intel.setting_selling_points || []} color="#c2410c" />
+          <ItemList title="黄金三章套路" icon="book" items={intel.golden_three_patterns || []} color="#4338ca" />
         </div>
       )}
     </div>
@@ -1051,9 +1055,9 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
           <div className="rt-box">
             <div className="rt-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className="rt-title">🪑 圆桌会议</span>
+                <span className="rt-title"><Icon name="chair" size={16} /> 圆桌会议</span>
                 {message.roundtable?.status === 'open' && <span className="rt-live">● 进行中</span>}
-                {message.roundtable?.status === 'done' && <span className="rt-done">✓ 已结束</span>}
+                {message.roundtable?.status === 'done' && <span className="rt-done"><Icon name="check" size={13} /> 已结束</span>}
               </div>
               {/* 断点续会"继续"按钮：对齐节点设计师卡片右侧的继续按钮，点击后不新增用户气泡 */}
               {onRoundtableResume && message.roundtable?.status !== 'done' && !streaming && (
@@ -1095,10 +1099,10 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
                     </div>
                   </div>
                 ))}
-                {streaming && <div className="rt-waiting">🔊 {message.roundtable?.currentSpeaker || '某位'} 正在发言…</div>}
+                {streaming && <div className="rt-waiting"><Icon name="mic" size={14} /> {message.roundtable?.currentSpeaker || '某位'} 正在发言…</div>}
               </div>
             ) : streaming ? (
-              <div className="rt-waiting">🪑 会议即将开始，各位专家正在入座…</div>
+              <div className="rt-waiting"><Icon name="chair" size={16} /> 会议即将开始，各位专家正在入座…</div>
             ) : null}
           </div>
         )}
@@ -1171,13 +1175,13 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
               className="chat-msg-action-btn"
               onClick={handleCopy}
               title="复制"
-            >{copied ? '✓ 已复制' : '📋 复制'}</button>
+            >{copied ? <><Icon name="check" size={13} /> 已复制</> : <><Icon name="clipboard" size={13} /> 复制</>}</button>
             {onRegenerate && (
               <button
                 className="chat-msg-action-btn"
                 onClick={() => onRegenerate(index)}
                 title="重新生成"
-              >🔄 重新生成</button>
+              ><Icon name="refresh" size={13} /> 重新生成</button>
             )}
             {onDeleteMessage && (
               <button
@@ -1186,7 +1190,7 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
                   if (window.confirm('确定删除这条消息？')) onDeleteMessage(index);
                 }}
                 title="删除"
-              >🗑️ 删除</button>
+              ><Icon name="trash" size={13} /> 删除</button>
             )}
           </div>
         )}
@@ -1214,9 +1218,9 @@ export const MessageBubble = memo(function MessageBubble({ message, index, onAdo
       </div>
       {showMenu && (
         <div className="chat-msg-menu" ref={menuRef}>
-          <button className="chat-msg-menu-item" onClick={() => { handleCopy(); setShowMenu(false); }}>📋 复制</button>
-          {onRegenerate && <button className="chat-msg-menu-item" onClick={() => { onRegenerate(index); setShowMenu(false); }}>🔄 重新生成</button>}
-          {onDeleteMessage && <button className="chat-msg-menu-item danger" onClick={() => { if (window.confirm('确定删除这条消息？')) onDeleteMessage(index); setShowMenu(false); }}>🗑️ 删除</button>}
+          <button className="chat-msg-menu-item" onClick={() => { handleCopy(); setShowMenu(false); }}><Icon name="clipboard" size={14} /> 复制</button>
+          {onRegenerate && <button className="chat-msg-menu-item" onClick={() => { onRegenerate(index); setShowMenu(false); }}><Icon name="refresh" size={14} /> 重新生成</button>}
+          {onDeleteMessage && <button className="chat-msg-menu-item danger" onClick={() => { if (window.confirm('确定删除这条消息？')) onDeleteMessage(index); setShowMenu(false); }}><Icon name="trash" size={14} /> 删除</button>}
         </div>
       )}
     </div>

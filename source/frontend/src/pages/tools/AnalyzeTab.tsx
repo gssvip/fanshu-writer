@@ -2,6 +2,7 @@ import { useState, useContext, useRef } from 'react';
 import { api } from '../../api';
 import { AuthContext } from '../../App';
 import type { Book, AnalysisResult } from '../../types';
+import Icon from '../../components/Icon';
 
 const SYNC_FIELD_LABELS: Record<string, string> = {
   style_guide: '风格指南', plot_design: '大纲设计', character_profiles: '人物档案',
@@ -71,24 +72,24 @@ export default function AnalyzeTab({ books }: { books: Book[] }) {
   return (
     <>
       <div className="tool-panel">
-        <h3>📊 AI 拆书分析</h3>
+        <h3><Icon name="bar-chart" size={16} /> AI 拆书分析</h3>
         <div className="form-row" style={{alignItems:'center',gap:8,marginBottom:10}}>
           <button
             className={analyzeMode === 'normal' ? 'btn-primary' : 'btn-secondary'}
             style={{fontSize:12,padding:'6px 14px'}}
             onClick={() => setAnalyzeMode('normal')}
-          >📖 普通拆书</button>
+          ><Icon name="book" size={14} /> 普通拆书</button>
           <button
             className={analyzeMode === 'competitor' ? 'btn-primary' : 'btn-secondary'}
             style={{fontSize:12,padding:'6px 14px'}}
             onClick={() => setAnalyzeMode('competitor')}
             title="站在竞品对标角度，输出市场定位、核心优势、差异弱点与可复刻方案"
-          >⚔️ 竞品拆书</button>
+          ><Icon name="sword" size={14} /> 竞品拆书</button>
         </div>
         <div className="form-row" style={{marginBottom:10}}>
           <input ref={fileInputRef} type="file" accept=".txt,.md,.docx,.zip,.json" onChange={handleUploadFile} style={{display:'none'}} id="analyze-file-input" />
           <label htmlFor="analyze-file-input" className="btn-secondary" style={{cursor:'pointer',padding:'8px 16px',borderRadius:'var(--radius-sm)',display:'inline-block'}}>
-            📁 导入文件
+            <Icon name="folder" size={14} /> 导入文件
           </label>
           {uploadFilename && <span className="text-muted" style={{alignSelf:'center'}}>已导入: {uploadFilename}</span>}
           <span className="text-muted" style={{alignSelf:'center',fontSize:11}}>支持 txt/md/docx/zip</span>
@@ -101,9 +102,9 @@ export default function AnalyzeTab({ books }: { books: Book[] }) {
           </button>
           {analyzeResult && (
             <>
-              <button className="btn-secondary" onClick={handleExportAnalysis}>📥 导出结果</button>
+              <button className="btn-secondary" onClick={handleExportAnalysis}><Icon name="inbox" size={14} /> 导出结果</button>
               <button className="btn-secondary" onClick={() => setShowSyncModal(true)} style={{borderColor:'var(--accent)',color:'var(--accent)'}}>
-                📋 同步到作品
+                <Icon name="clipboard" size={14} /> 同步到作品
               </button>
             </>
           )}
@@ -123,20 +124,20 @@ export default function AnalyzeTab({ books }: { books: Book[] }) {
             <div className="review-section"><h4>钩子技巧</h4><ul>{analyzeResult.hook_techniques?.map((h, i) => <li key={i}>{h}</li>)}</ul></div>
             <div className="review-section"><h4>可学习的方法</h4><ul>{analyzeResult.learnable_points?.map((p, i) => <li key={i}>{p}</li>)}</ul></div>
             {analyzeMode === 'competitor' && analyzeResult.market_position && (
-              <div className="review-section competitor-pos"><h4>🎯 市场定位</h4><p>{analyzeResult.market_position}</p></div>
+              <div className="review-section competitor-pos"><h4><Icon name="target" size={15} /> 市场定位</h4><p>{analyzeResult.market_position}</p></div>
             )}
             {analyzeMode === 'competitor' && (analyzeResult.strengths?.length || analyzeResult.weaknesses?.length) && (
               <div className="analyze-grid">
                 {analyzeResult.strengths && analyzeResult.strengths.length > 0 && (
-                  <div className="analyze-item"><h4>💪 核心优势</h4><ul className="compact-list">{(analyzeResult.strengths as string[]).map((s, i) => <li key={i}>{s}</li>)}</ul></div>
+                  <div className="analyze-item"><h4><Icon name="flame" size={15} /> 核心优势</h4><ul className="compact-list">{(analyzeResult.strengths as string[]).map((s, i) => <li key={i}>{s}</li>)}</ul></div>
                 )}
                 {analyzeResult.weaknesses && analyzeResult.weaknesses.length > 0 && (
-                  <div className="analyze-item"><h4>🕳 差异化机会（弱点切入）</h4><ul className="compact-list">{(analyzeResult.weaknesses as string[]).map((w, i) => <li key={i}>{w}</li>)}</ul></div>
+                  <div className="analyze-item"><h4><Icon name="zap" size={15} /> 差异化机会（弱点切入）</h4><ul className="compact-list">{(analyzeResult.weaknesses as string[]).map((w, i) => <li key={i}>{w}</li>)}</ul></div>
                 )}
               </div>
             )}
             {analyzeMode === 'competitor' && analyzeResult.copy_plan && (
-              <div className="review-section"><h4>📝 复刻方案（借鉴爆点 + 规避同质化）</h4><p>{analyzeResult.copy_plan}</p></div>
+              <div className="review-section"><h4><Icon name="edit" size={15} /> 复刻方案（借鉴爆点 + 规避同质化）</h4><p>{analyzeResult.copy_plan}</p></div>
             )}
             {analyzeResult.golden_lines?.length > 0 && (
               <div className="review-section"><h4>金句摘录</h4><ul>{analyzeResult.golden_lines.map((l, i) => <li key={i} className="golden-line">{l}</li>)}</ul></div>
@@ -148,7 +149,7 @@ export default function AnalyzeTab({ books }: { books: Book[] }) {
       {showSyncModal && (
         <div className="modal-overlay" onClick={() => setShowSyncModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
-            <h2>📋 同步分析结果到作品</h2>
+            <h2><Icon name="clipboard" size={16} /> 同步分析结果到作品</h2>
 
             <div className="form-field">
               <label>选择目标作品</label>
@@ -164,21 +165,21 @@ export default function AnalyzeTab({ books }: { books: Book[] }) {
                 <label className={`sync-mode-card ${syncMode === 'imitate' ? 'active' : ''}`}>
                   <input type="radio" name="syncMode" value="imitate" checked={syncMode === 'imitate'} onChange={e => setSyncMode(e.target.value)} />
                   <div className="sync-mode-info">
-                    <div className="sync-mode-name">✍️ 仿写模式</div>
+                    <div className="sync-mode-name"><Icon name="edit" size={14} /> 仿写模式</div>
                     <div className="sync-mode-desc">提取原文风格、结构、节奏，作为创作参考填充到作品设定中</div>
                   </div>
                 </label>
                 <label className={`sync-mode-card ${syncMode === 'fanfic' ? 'active' : ''}`}>
                   <input type="radio" name="syncMode" value="fanfic" checked={syncMode === 'fanfic'} onChange={e => setSyncMode(e.target.value)} />
                   <div className="sync-mode-info">
-                    <div className="sync-mode-name">📚 同人文模式</div>
+                    <div className="sync-mode-name"><Icon name="book-open" size={14} /> 同人文模式</div>
                     <div className="sync-mode-desc">提取原文世界观、人物设定，作为同人文创作的基础资料</div>
                   </div>
                 </label>
                 <label className={`sync-mode-card ${syncMode === 'reference' ? 'active' : ''}`}>
                   <input type="radio" name="syncMode" value="reference" checked={syncMode === 'reference'} onChange={e => setSyncMode(e.target.value)} />
                   <div className="sync-mode-info">
-                    <div className="sync-mode-name">💡 参考模式</div>
+                    <div className="sync-mode-name"><Icon name="lightbulb" size={14} /> 参考模式</div>
                     <div className="sync-mode-desc">仅提取可学习方法论，追加到作品风格指南中</div>
                   </div>
                 </label>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../../api';
+import Icon from '../../components/Icon';
 import type { RankingData, NRPlatform, NRFilters, NRRankType, NRCategory, NRListResult, NRItem } from '../../types';
 
 export default function RankingsTab() {
@@ -120,14 +121,14 @@ export default function RankingsTab() {
 
   return (
     <div className="tool-panel nr-root">
-      {/* #4 #5 标题行：📈 榜单风向 左侧；🔍 搜索框+按钮 紧接其右侧（桌面端 inline，移动端换行） */}
+      {/* #4 #5 标题行：榜单风向 左侧；搜索框+按钮 紧接其右侧（桌面端 inline，移动端换行） */}
       <div className="nr-title-row" style={{
         display:'flex',flexWrap:'wrap',gap:10,alignItems:'center',
         marginBottom:10, width:'100%', boxSizing:'border-box', minWidth:0,
       }}>
         <h3 style={{margin:0,fontSize:17,fontWeight:800,color:'var(--text-primary)',
                     display:'inline-flex',alignItems:'center',gap:6,flex:'0 0 auto'}}>
-          <span>📈</span><span>榜单风向</span>
+          <Icon name="trending-up" size={20} /><span>榜单风向</span>
         </h3>
         <div className="nr-title-search" style={{
           display:'flex', gap:8, alignItems:'center',
@@ -155,7 +156,7 @@ export default function RankingsTab() {
               background:'var(--accent-light)',
               color:'var(--accent)',border:'1px solid #d0d5dd',
             }}
-          >🔍 搜索</button>
+          ><Icon name="search" size={14} /> 搜索</button>
         </div>
       </div>
 
@@ -189,7 +190,7 @@ export default function RankingsTab() {
                     : '1px solid var(--border-color)',
                 }}
               >
-                <span style={{fontSize:15}}>{p.code==='fanqie'?'🍅':p.code==='qidian'?'🏯':'📚'}</span>
+                <Icon name={p.code==='fanqie'?'tomato':p.code==='qidian'?'castle':'book'} size={16} />
                 <span style={{fontSize:13,marginLeft:4,whiteSpace:'nowrap'}}>{p.name}</span>
               </button>
             ))}
@@ -209,7 +210,7 @@ export default function RankingsTab() {
               disabled={nrCrawling || nrListLoading}
               title="按当前筛选条件重新抓取/刷新本榜单（#6：点击才抓，不自动触发）"
             >
-              {nrCrawling ? '⏳ 抓取中…' : nrList?.sourceKind==='curated' ? '🔄 刷新精选' : '☁️ 抓取本榜'}
+              {nrCrawling ? <><Icon name="hourglass" size={14} /> 抓取中…</> : nrList?.sourceKind==='curated' ? <><Icon name="refresh" size={14} /> 刷新精选</> : <><Icon name="cloud" size={14} /> 抓取本榜</>}
             </button>
             {/* #4 抓取时间：抓取按钮右侧 inline；只展示一个（下面不要了） */}
             <span className="nr-crawl-time" style={{
@@ -218,7 +219,7 @@ export default function RankingsTab() {
               padding:'6px 10px',borderRadius:999,
               background:'var(--bg-tertiary)',border:'1px solid var(--border-color)',
             }}>
-              <span style={{opacity:.7}}>🕒</span>
+              <Icon name="clock" size={12} />
               <span>
                 {nrList?.fetchAt
                   ? new Date(nrList.fetchAt * 1000).toLocaleDateString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).replace(/\//g,'-')
@@ -230,8 +231,8 @@ export default function RankingsTab() {
 
         {/* curate 提示 banner */}
         {nrList?.sourceKind==='curated' && (
-          <div className="crawl-status crawl-tip" style={{fontSize:12,marginTop:8,padding:'6px 10px',borderRadius:8,background:'color-mix(in srgb, #f39c12 10%, transparent)',color:'#c87f10'}}>
-            ℹ️ 当前榜单受目标站反爬限制，为平台精选快照
+          <div className="crawl-status crawl-tip" style={{fontSize:12,marginTop:8,padding:'6px 10px',borderRadius:8,background:'color-mix(in srgb, #f39c12 10%, transparent)',color:'#c87f10',display:'inline-flex',alignItems:'center',gap:4}}>
+            <Icon name="info" size={13} /> 当前榜单受目标站反爬限制，为平台精选快照
           </div>
         )}
 
@@ -447,7 +448,7 @@ export default function RankingsTab() {
                style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
             <div className="rank-block nr-banner-hot nr-banner-row" style={{margin:0}}>
               <h4 style={{fontSize:13,margin:'0 0 8px',display:'flex',alignItems:'center',gap:6,color:'var(--text-secondary)'}}>
-                🔥 热门标签
+                <Icon name="flame" size={15} /> 热门标签
               </h4>
               <div className="nr-tags-line"
                    style={{display:'flex',flexWrap:'wrap',gap:6}}>
@@ -464,7 +465,7 @@ export default function RankingsTab() {
             </div>
             <div className="rank-block nr-banner-rising nr-banner-row" style={{margin:0}}>
               <h4 style={{fontSize:13,margin:'0 0 8px',display:'flex',alignItems:'center',gap:6,color:'var(--text-secondary)'}}>
-                🚀 上升关键词
+                <Icon name="rocket" size={15} /> 上升关键词
               </h4>
               <div className="nr-tags-line"
                    style={{display:'flex',flexWrap:'wrap',gap:6}}>
@@ -485,18 +486,18 @@ export default function RankingsTab() {
 
       {/* 提示/错误/加载 */}
       {nrList?.fetchError && (
-        <div style={{margin:'0 0 10px',padding:'8px 10px',background:'#fdecec',borderRadius:6,fontSize:12,color:'#c0392b'}}>
-          ⚠️ 抓取失败：{nrList.fetchError}
+        <div style={{margin:'0 0 10px',padding:'8px 10px',background:'#fdecec',borderRadius:6,fontSize:12,color:'#c0392b',display:'flex',alignItems:'center',gap:4}}>
+          <Icon name="warning" size={13} /> 抓取失败：{nrList.fetchError}
           {nrList.sourceKind === 'curated' && !nrList.items.length ? '。已尝试平台精选兜底。' : ''}
         </div>
       )}
       {nrListError && !nrList?.fetchError && (
-        <div style={{margin:'0 0 10px',padding:'8px 10px',background:'#fdecec',borderRadius:6,fontSize:12,color:'#c0392b'}}>
-          ⚠️ {nrListError}
+        <div style={{margin:'0 0 10px',padding:'8px 10px',background:'#fdecec',borderRadius:6,fontSize:12,color:'#c0392b',display:'flex',alignItems:'center',gap:4}}>
+          <Icon name="warning" size={13} /> {nrListError}
         </div>
       )}
       {nrListLoading && (
-        <div style={{textAlign:'center',padding:30,color:'var(--text-muted)',fontSize:13}}>⏳ 加载榜单书籍…</div>
+        <div style={{textAlign:'center',padding:30,color:'var(--text-muted)',fontSize:13,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}><Icon name="hourglass" size={15} /> 加载榜单书籍…</div>
       )}
 
       {/* 书籍列表：双套布局（移动端卡片 + 桌面端表格）互斥显示 */}
@@ -558,7 +559,7 @@ export default function RankingsTab() {
                         width:52,height:70,borderRadius:8,flexShrink:0,
                         background:'linear-gradient(135deg,var(--accent-light),var(--bg-tertiary))',
                         display:'flex',alignItems:'center',justifyContent:'center',fontSize:24,color:'var(--accent)',
-                      }}>📚</div>
+                      }}><Icon name="book" size={28} /></div>
                     )}
                     <div className="rank-book-info" style={{flex:'1 1 0',minWidth:0,display:'flex',flexDirection:'column',gap:4,maxWidth:'calc(100% - 62px)'}}>
                       <div className="rank-card-title" style={{
@@ -577,7 +578,7 @@ export default function RankingsTab() {
                           width:'100%',minWidth:0,maxWidth:'100%',
                           overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
                           wordBreak:'break-all',
-                        }}>📝 {b.lastChapterTitle}{b.lastUpdateTimeText ? ` · ${b.lastUpdateTimeText}` : ''}</div>
+                        }}><Icon name="file-text" size={12} /> {b.lastChapterTitle}{b.lastUpdateTimeText ? ` · ${b.lastUpdateTimeText}` : ''}</div>
                       )}
                     </div>
                   </div>
@@ -660,7 +661,7 @@ export default function RankingsTab() {
                           <div style={{width:40,height:54,borderRadius:6,
                                       background:'linear-gradient(135deg,var(--accent-light),var(--bg-tertiary))',
                                       display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,color:'var(--accent)',
-                                      boxShadow:'0 2px 6px rgba(0,0,0,.04)'}}>📚</div>
+                                      boxShadow:'0 2px 6px rgba(0,0,0,.04)'}}><Icon name="book" size={22} /></div>
                         )}
                       </td>
                       <td style={{padding:'10px 12px',verticalAlign:'top',minWidth:0,overflow:'hidden'}}>
@@ -686,7 +687,7 @@ export default function RankingsTab() {
                             fontSize:12,color:'var(--text-secondary)',
                             width:'100%',minWidth:0,
                             overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
-                          }}>📝 {b.lastChapterTitle}{b.lastUpdateTimeText ? ` · ${b.lastUpdateTimeText}` : ''}</div>}
+                          }}><Icon name="file-text" size={12} /> {b.lastChapterTitle}{b.lastUpdateTimeText ? ` · ${b.lastUpdateTimeText}` : ''}</div>}
                         </div>
                       </td>
                       <td style={{padding:'10px 12px',verticalAlign:'top',
@@ -724,8 +725,8 @@ export default function RankingsTab() {
             borderRadius:10,
             width:'100%',boxSizing:'border-box',minWidth:0,
           }}>
-            <span style={{fontSize:12.5,color:'var(--text-muted)',minWidth:0,flex:'1 1 auto',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-              📖 第 <b style={{color:'var(--accent)'}}>{nrList.page}</b> 页 · 共 <b style={{color:'var(--accent)'}}>{nrList.total}</b> 条线索
+            <span style={{fontSize:12.5,color:'var(--text-muted)',minWidth:0,flex:'1 1 auto',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'inline-flex',alignItems:'center',gap:4}}>
+              <Icon name="book-open" size={13} /> 第 <b style={{color:'var(--accent)'}}>{nrList.page}</b> 页 · 共 <b style={{color:'var(--accent)'}}>{nrList.total}</b> 条线索
             </span>
             <div style={{display:'flex',gap:6,flex:'0 0 auto',flexWrap:'wrap'}}>
               <button
@@ -754,7 +755,7 @@ export default function RankingsTab() {
 
       {!nrListLoading && nrList && (nrList.total ?? 0) === 0 && (
         <div style={{textAlign:'center',padding:30,color:'var(--text-muted)',fontSize:13,background:'var(--bg-secondary)',border:'1px dashed var(--border-color)',borderRadius:8}}>
-          暂无线索 {nrKeyword ? `（关键词「${nrKeyword}」无匹配）` : '——请切换分类或手动点击☁️ 抓取本榜重试'}
+          暂无线索 {nrKeyword ? `（关键词「${nrKeyword}」无匹配）` : '——请切换分类或手动点击抓取本榜重试'}
         </div>
       )}
     </div>

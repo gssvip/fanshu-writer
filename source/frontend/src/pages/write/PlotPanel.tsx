@@ -4,6 +4,7 @@ import { api } from '../../api';
 import { useStore } from '../../store';
 import type { BookBible, Chapter, SkillPack } from '../../types';
 import { SkillPackGroupedList, extractSkillPrompt, safeText } from './write-shared';
+import Icon from '../../components/Icon';
 
 export function PlotPanel(props: {
   bookId: string;
@@ -703,14 +704,14 @@ ${existingVols || '（暂无）'}
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3>📖 AI协同创作 · 剧情</h3>
+          <h3><Icon name="book" size={16} /> AI协同创作 · 剧情</h3>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillPacks.length > 0 && (
           <div className="skill-pack-collapsible">
             <button className="skill-pack-toggle" onClick={() => setSkillExpanded(v => !v)} disabled={aiAssisting}>
-              <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-              <span>📦 协同技能包</span>
+              <span className="skill-pack-toggle-icon"><Icon name={skillExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+              <span><Icon name="package" size={16} /> 协同技能包</span>
               {selectedSkillPackIds.length > 0 && <span className="skill-pack-toggle-badge">{selectedSkillPackIds.length}</span>}
             </button>
             {skillExpanded && (
@@ -726,7 +727,7 @@ ${existingVols || '（暂无）'}
         <div className="ai-prompt-vertical">
           <textarea className="input bible-ai-prompt-input" rows={6} value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} onKeyDown={handlePromptKeyDown} placeholder="例如：生成三卷的剧情大纲，每卷包含主线和关键事件..." disabled={aiAssisting} autoFocus />
           <div className="ai-prompt-bottom-row">
-            <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? '⏳ 创作中...' : '🚀 发送'}</button>
+            <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? <><Icon name="hourglass" size={14} /> 创作中...</> : <><Icon name="rocket" size={14} /> 发送</>}</button>
           </div>
         </div>
         {aiError && <div className="error-msg" style={{marginTop:8}}>{aiError}</div>}
@@ -741,7 +742,7 @@ ${existingVols || '（暂无）'}
       {editingNode && (
         <div style={{position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.5)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:16}} onClick={() => setEditingNode(null)}>
           <div style={{background:'#fff', borderRadius:8, padding:16, maxWidth:560, width:'100%', maxHeight:'90vh', overflowY:'auto'}} onClick={e => e.stopPropagation()}>
-            <h4 style={{margin:'0 0 12px', color:'#5b8def'}}>✏️ 编辑情节节点</h4>
+            <h4 style={{margin:'0 0 12px', color:'#5b8def'}}><Icon name="edit" size={16} /> 编辑情节节点</h4>
             <div style={{display:'flex', flexDirection:'column', gap:10}}>
               <div>
                 <label style={{fontSize:13, color:'#5b8def', fontWeight:600}}>节点标题</label>
@@ -809,9 +810,9 @@ ${existingVols || '（暂无）'}
                 <input className="input" value={editNodeForm.hook || ''} onChange={e => setEditNodeForm({...editNodeForm, hook: e.target.value})} placeholder="如：身份揭露/新危机/能力突破..." />
               </div>
               <div style={{display:'flex', gap:8, marginTop:4}}>
-                <button className="btn-primary-sm" onClick={saveEditNode}>💾 保存</button>
+                <button className="btn-primary-sm" onClick={saveEditNode}><Icon name="save" size={14} /> 保存</button>
                 <button className="btn-ghost-sm" onClick={() => setEditingNode(null)}>取消</button>
-                <button className="btn-ghost-sm" style={{color:'#e74c3c', marginLeft:'auto'}} onClick={deleteEditNode}>🗑️ 删除节点</button>
+                <button className="btn-ghost-sm" style={{color:'#e74c3c', marginLeft:'auto'}} onClick={deleteEditNode}><Icon name="trash" size={14} /> 删除节点</button>
               </div>
             </div>
           </div>
@@ -830,7 +831,7 @@ ${existingVols || '（暂无）'}
               title="一键清空全部分卷大纲（不影响章节表和大纲总纲）"
               style={{ color: '#e74c3c' }}
             >
-              {clearing ? '⏳ 清空中...' : '🗑️ 一键清空'}
+              {clearing ? <><Icon name="hourglass" size={14} /> 清空中...</> : <><Icon name="trash" size={14} /> 一键清空</>}
             </button>
           )}
           {!workflowCollapsed && (<>
@@ -841,7 +842,7 @@ ${existingVols || '（暂无）'}
               title="从已导入/提取的各卷剧情，反向提炼五幕式总纲，填入大纲维度"
               style={{ color: 'var(--accent)' }}
             >
-              {reverseLoading ? '⏳ 反生成中...' : '🔄 反生成五幕式总纲'}
+              {reverseLoading ? <><Icon name="hourglass" size={14} /> 反生成中...</> : <><Icon name="refresh" size={14} /> 反生成五幕式总纲</>}
             </button>
             <button
               className="btn-ghost-sm btn-plot-import"
@@ -849,7 +850,7 @@ ${existingVols || '（暂无）'}
               disabled={importLoading}
               title="导入剧情大纲文本，自动识别拆分到各卷"
             >
-              📥 导入剧情大纲
+              <Icon name="inbox" size={14} /> 导入剧情大纲
             </button>
             <button
               className="btn-ghost-sm btn-plot-calc"
@@ -858,7 +859,7 @@ ${existingVols || '（暂无）'}
               title="输入卷数，按每卷50章×2400字自动生成分卷框架"
               style={showVolumeCalc ? { background: 'var(--accent-light)', color: 'var(--accent)', fontWeight: 700 } : {}}
             >
-              📊 自动分卷规划
+              <Icon name="bar-chart" size={14} /> 自动分卷规划
             </button>
             <button
               className="btn-ghost-sm btn-plot-extract"
@@ -866,7 +867,7 @@ ${existingVols || '（暂无）'}
               disabled={extractLoading || outlineWorkflowLoading !== ''}
               title="从大纲总纲（五幕式/AI创作/AI识别/手编均可）一次性提取各卷剧情"
             >
-              {extractLoading ? '⏳ 提取中...' : '📋 从大纲提取各卷'}
+              {extractLoading ? <><Icon name="hourglass" size={14} /> 提取中...</> : <><Icon name="clipboard" size={14} /> 从大纲提取各卷</>}
             </button>
           </>)}
           {/* 折叠按钮始终渲染：同时控制工作流按钮区 + 所有卷的分卷剧情大纲折叠/展开 */}
@@ -919,7 +920,7 @@ ${existingVols || '（暂无）'}
             />
             <div className="volume-calc-input-row" style={{ marginTop: 8 }}>
               <button className="btn-primary-sm" onClick={handleImportPlotOutline} disabled={importLoading || !importText.trim()}>
-                {importLoading ? '⏳ 导入中...' : '📥 提交导入'}
+                {importLoading ? <><Icon name="hourglass" size={14} /> 导入中...</> : <><Icon name="inbox" size={14} /> 提交导入</>}
               </button>
               <button className="btn-ghost-sm" onClick={() => { setImportModalOpen(false); setImportText(''); }} disabled={importLoading}>取消</button>
             </div>
@@ -931,9 +932,9 @@ ${existingVols || '（暂无）'}
       {volumeData.length > 0 && (
         <div className="volume-plan-display">
           <div className="volume-plan-header">
-            <h4>📚 分卷规划（{volumeData.length}卷 · 每卷50章约12万字）</h4>
+            <h4><Icon name="bar-chart" size={16} /> 分卷规划（{volumeData.length}卷 · 每卷50章约12万字）</h4>
             <div style={{display:'flex',gap:6}}>
-              <button className="btn-ghost-sm" onClick={exportVolumePlan}>📝 导出到大纲</button>
+              <button className="btn-ghost-sm" onClick={exportVolumePlan}><Icon name="file-text" size={14} /> 导出到大纲</button>
             </div>
           </div>
 
@@ -944,7 +945,7 @@ ${existingVols || '（暂无）'}
                   <div className="volume-plan-card-header" onClick={() => {
                     setExpandedVol(prev => { const n = new Set(prev); if (n.has(idx)) n.delete(idx); else n.add(idx); return n; });
                   }} style={{cursor:'pointer'}}>
-                    <span className="volume-plan-arrow">{expanded ? '▼' : '▶'}</span>
+                    <span className="volume-plan-arrow"><Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
                     <span className="volume-plan-vol-label">
                       第{safeText(vol.index)}卷{vol.title ? `·${safeText(vol.title)}` : ''}
                     </span>
@@ -952,7 +953,7 @@ ${existingVols || '（暂无）'}
                     <span className="volume-plan-badge">{safeText(vol.chRange)}章</span>
                     <span className="volume-plan-badge">{(Number(vol.words) / 10000).toFixed(1)}万字</span>
                     <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); aiGenerateVolumeOutline(idx); }} disabled={volumeGeneratingIdx !== null} title="AI补全此卷详情（逐卷补全，读取五幕式总纲等各维度资料）" style={{marginLeft:'auto'}}>
-                      {volumeGeneratingIdx === idx ? '⏳ 补全中' : '🤖 补全'}
+                      {volumeGeneratingIdx === idx ? <><Icon name="hourglass" size={13} /> 补全中</> : <><Icon name="bot" size={13} /> 补全</>}
                     </button>
                   </div>
                   {expanded && (
@@ -986,7 +987,7 @@ ${existingVols || '（暂无）'}
                       {/* 情节节点 */}
                       {vol.nodes?.length > 0 && (
                         <div className="volume-plan-nodes">
-                          <h5>🎯 情节节点（{vol.nodes.length}个）</h5>
+                          <h5><Icon name="target" size={15} /> 情节节点（{vol.nodes.length}个）</h5>
                           <div className="node-list">
                             {vol.nodes.map((n: any, ni: number) => (
                               <div key={ni} className={`node-card node-type-${safeText(n.type)}`}>
@@ -1004,7 +1005,7 @@ ${existingVols || '（暂无）'}
                                     </span>
                                   ))}
                                 </div>
-                                {n.hook && <div className="node-hook">🪝 {safeText(n.hook)}</div>}
+                                {n.hook && <div className="node-hook" style={{display:'inline-flex',alignItems:'center',gap:4}}><Icon name="hook" size={13} /> {safeText(n.hook)}</div>}
                               </div>
                             ))}
                           </div>
@@ -1020,13 +1021,13 @@ ${existingVols || '（暂无）'}
 
       {displayVolumes.length === 0 ? (
         <div className="bible-empty">
-          <span className="bible-empty-icon">📖</span>
+          <span className="bible-empty-icon"><Icon name="book" size={40} /></span>
           <p>暂无剧情信息</p>
           <p className="text-muted">点击「添加卷大纲」手动添加，或用AI识别自动提取</p>
           <div className="bible-empty-actions">
             <button className="btn-primary-sm" onClick={addVolumeOutline}>＋ 添加卷大纲</button>
             <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume('', '全部章节')} disabled={!hasChapters} title={hasChapters ? 'AI识别全部章节剧情' : '需要先创建章节才能AI识别'}>
-              🔍 AI识别全部
+              <Icon name="search" size={14} /> AI识别全部
             </button>
           </div>
         </div>
@@ -1035,7 +1036,7 @@ ${existingVols || '（暂无）'}
           {displayVolumes.map((vol, idx) => (
             <div key={idx} className="plot-volume-card">
               <div className="plot-volume-header" onClick={() => toggleVol(idx)} style={{cursor:'pointer'}}>
-                <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVols.has(idx) ? '▶' : '▼'}</span>
+                <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={collapsedVols.has(idx) ? 'chevron-right' : 'chevron-down'} size={12} /></span>
                 {editingVolName === vol.volume ? (
                   <input
                     className="input"
@@ -1059,13 +1060,13 @@ ${existingVols || '（暂无）'}
                 {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                 <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
                   <button className="btn-ghost-sm" onClick={() => handleDesignNodes(vol.volume_id || '', vol.volume || `第${idx + 1}卷`, vol.volume_index || (idx + 1))} title="在智驾助手中分段流式设计此卷情节节点">
-                    🎯 节点设计
+                    <Icon name="target" size={14} /> 节点设计
                   </button>
                   <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={analyzingVol === (vol.volume_id || vol.volume) || !hasChapters} title={hasChapters ? 'AI识别此卷剧情' : '需要先创建章节才能AI识别'}>
-                    {analyzingVol === (vol.volume_id || vol.volume) ? '🤖 识别中...' : '🔍 识别'}
+                    {analyzingVol === (vol.volume_id || vol.volume) ? <><Icon name="bot" size={13} /> 识别中...</> : <><Icon name="search" size={13} /> 识别</>}
                   </button>
-                  <button className="btn-ghost-sm" onClick={() => startEditVol(vol.volume_id || vol.volume, vol)}>✏️ 编辑</button>
-                  <button className="btn-ghost-sm" onClick={() => deleteVolume(idx)} style={{color:'#e74c3c'}}>🗑️</button>
+                  <button className="btn-ghost-sm" onClick={() => startEditVol(vol.volume_id || vol.volume, vol)}><Icon name="edit" size={14} /> 编辑</button>
+                  <button className="btn-ghost-sm" onClick={() => deleteVolume(idx)} style={{color:'#e74c3c'}}><Icon name="trash" size={16} /></button>
                 </div>
               </div>
               {!collapsedVols.has(idx) && (editingVol === (vol.volume_id || vol.volume) ? (
@@ -1107,7 +1108,7 @@ ${existingVols || '（暂无）'}
                     <textarea className="input" rows={2} value={editForm.foreshadow_recycle || ''} onChange={e => setEditForm({...editForm, foreshadow_recycle: e.target.value})} placeholder="每行一个回收伏笔..." />
                   </div>
                   <div style={{display:'flex',gap:8}}>
-                    <button className="btn-primary-sm" onClick={() => saveEditVol(vol.volume_id || vol.volume)}>💾 保存</button>
+                    <button className="btn-primary-sm" onClick={() => saveEditVol(vol.volume_id || vol.volume)}><Icon name="save" size={14} /> 保存</button>
                     <button className="btn-ghost-sm" onClick={() => setEditingVol(null)}>取消</button>
                   </div>
                 </div>
@@ -1156,8 +1157,8 @@ ${existingVols || '（暂无）'}
                             {n.cool_contrast && <span style={{color:'#9b59b6'}}> · 衬托:{safeText(n.cool_contrast)}</span>}
                             {n.cool_level && <span style={{color:'#e74c3c'}}> · {safeText(n.cool_level)}</span>}
                             {n.summary && <span style={{color:'#666', display:'block', marginTop:2}}> — {safeText(n.summary)}</span>}
-                            {n.hook && <span style={{color:'#27ae60', display:'block'}}> 🪝 钩子:{safeText(n.hook)}</span>}
-                            <button className="btn-ghost-sm" style={{marginLeft:6, padding:'0 6px', fontSize:11}} onClick={() => startEditNode(vol.volume_id || vol.volume, i, n)} title="编辑此节点">✏️</button>
+                            {n.hook && <span style={{color:'#27ae60', display:'inline-flex',alignItems:'center',gap:4}}> <Icon name="hook" size={13} /> 钩子:{safeText(n.hook)}</span>}
+                            <button className="btn-ghost-sm" style={{marginLeft:6, padding:'0 6px', fontSize:11}} onClick={() => startEditNode(vol.volume_id || vol.volume, i, n)} title="编辑此节点"><Icon name="edit" size={13} /></button>
                           </li>
                         ))}
                       </ul>

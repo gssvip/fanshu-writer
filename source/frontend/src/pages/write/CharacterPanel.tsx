@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import type { BookBible, Chapter, SkillPack } from '../../types';
 import { SkillPackGroupedList, extractSkillPrompt } from './write-shared';
+import Icon from '../../components/Icon';
 
 /* ===== 人物及关系面板 ===== */
 export interface CharacterData {
@@ -489,14 +490,14 @@ export function CharacterPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3>👤 AI协同创作 · 人物</h3>
+          <h3><Icon name="user" size={16} /> AI协同创作 · 人物</h3>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillPacks.length > 0 && (
           <div className="skill-pack-collapsible">
             <button className="skill-pack-toggle" onClick={() => setSkillExpanded(v => !v)} disabled={aiAssisting}>
-              <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-              <span>📦 协同技能包</span>
+              <span className="skill-pack-toggle-icon"><Icon name={skillExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+              <span><Icon name="package" size={16} /> 协同技能包</span>
               {selectedSkillPackIds.length > 0 && <span className="skill-pack-toggle-badge">{selectedSkillPackIds.length}</span>}
               <span className="skill-pack-toggle-hint">{skillExpanded ? '收起' : '展开'}</span>
             </button>
@@ -523,7 +524,7 @@ export function CharacterPanel(props: {
           />
           <div className="ai-prompt-bottom-row">
             <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>
-              {aiAssisting ? '⏳ 创作中...' : '🚀 发送'}
+              {aiAssisting ? <><Icon name="hourglass" size={14} /> 创作中...</> : <><Icon name="rocket" size={14} /> 发送</>}
             </button>
           </div>
         </div>
@@ -545,14 +546,14 @@ export function CharacterPanel(props: {
           {(
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
-                {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
+                {analyzingVol ? <><Icon name="bot" size={14} /> 识别中...</> : <><Icon name="search" size={14} /> AI识别</>}
               </button>
               {volSelectorOpen && (
                 <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
                   <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
-                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeCharVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
+                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeCharVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}><Icon name="book-open" size={14} /> 全部章节</button>
                   {displayCharVolumes.map((vol, idx) => (
-                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeCharVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
+                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeCharVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}><Icon name="book" size={14} /> {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
                   ))}
                   <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
                 </div>
@@ -569,17 +570,17 @@ export function CharacterPanel(props: {
           {displayCharVolumes.map((vol, idx) => (
             <div key={idx} className="plot-volume-card">
               <div className="plot-volume-header" onClick={() => toggleVolChar(idx)} style={{cursor:'pointer'}}>
-                <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVolChars.has(idx) ? '▶' : '▼'}</span>
+                <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={collapsedVolChars.has(idx) ? 'chevron-right' : 'chevron-down'} size={12} /></span>
                 <h4>{vol.volume || `第${idx + 1}卷`}</h4>
                 {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                 <span className="text-muted" style={{fontSize:12}}>{(vol.characters || []).length}人</span>
                 <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                  {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
-                  <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolCharacters(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷人物数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
+                  {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12,display:'inline-flex',alignItems:'center',gap:4}}><Icon name="bot" size={13} /> 识别中...</span>}
+                  <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolCharacters(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷人物数据（JSON）'}>{editingVolIdx === idx ? '取消' : <Icon name="edit" size={14} />}</button>
                   {(vol.characters || []).length > 0 && (
                     <>
                       <button className="btn-ghost-sm" onClick={() => mergeVolumeToGlobal(idx)} title="与全局人物档案相互验证更新（同名补充，新角色追加）" style={{color:'#27ae60'}}>⇅ 验证更新</button>
-                      <button className="btn-ghost-sm" onClick={() => deleteVolumeCharacters(idx)} style={{color:'#e74c3c'}} title="删除此卷人物数据">🗑️</button>
+                      <button className="btn-ghost-sm" onClick={() => deleteVolumeCharacters(idx)} style={{color:'#e74c3c'}} title="删除此卷人物数据"><Icon name="trash" size={16} /></button>
                     </>
                   )}
                 </div>
@@ -591,12 +592,12 @@ export function CharacterPanel(props: {
                       <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑本卷人物数据（JSON 格式），可直接修改 characters 数组中各角色的字段。</p>
                       <textarea className="input" value={editVolJson} onChange={e => setEditVolJson(e.target.value)} rows={16} style={{fontFamily:'monospace',fontSize:12}} />
                       <div style={{display:'flex',gap:6,marginTop:8}}>
-                        <button className="btn-primary-sm" onClick={() => saveEditVolCharacters(idx)}>💾 保存</button>
+                        <button className="btn-primary-sm" onClick={() => saveEditVolCharacters(idx)}><Icon name="save" size={14} /> 保存</button>
                         <button className="btn-ghost-sm" onClick={() => { setEditingVolIdx(null); setEditVolJson(''); }}>取消</button>
                       </div>
                     </div>
                   ) : (!vol.characters || vol.characters.length === 0) ? (
-                    <p className="text-muted" style={{fontSize:13}}>暂无人物识别数据，点击「🔍 AI识别」选择此卷进行识别</p>
+                    <p className="text-muted" style={{fontSize:13}}>暂无人物识别数据，点击「AI识别」选择此卷进行识别</p>
                   ) : (
                     <div className="character-cards-grid">
                       {vol.characters.map((char: any, ci: number) => (
@@ -674,7 +675,7 @@ export function CharacterPanel(props: {
             <textarea className="input" rows={3} value={editForm.background || ''} onChange={e => setEditForm({...editForm, background: e.target.value})} placeholder="角色的过往经历..." />
           </div>
           <div style={{display:'flex',gap:8,marginTop:12}}>
-            <button className="btn-primary-sm" onClick={saveEdit}>💾 保存</button>
+            <button className="btn-primary-sm" onClick={saveEdit}><Icon name="save" size={14} /> 保存</button>
             <button className="btn-ghost-sm" onClick={() => { setEditingIdx(null); setAddingNew(false); }}>取消</button>
           </div>
         </div>
@@ -683,29 +684,29 @@ export function CharacterPanel(props: {
       {/* 全局人物档案 */}
       {characters.length === 0 ? (
         <div className="bible-empty">
-          <span className="bible-empty-icon">👤</span>
+          <span className="bible-empty-icon"><Icon name="user" size={40} /></span>
           <p>暂无角色信息</p>
-          <p className="text-muted">点击顶部「＋ 添加角色」或「✨ AI创作」生成人物档案</p>
+          <p className="text-muted">点击顶部「＋ 添加角色」或「AI创作」生成人物档案</p>
         </div>
       ) : (
         <div className="plot-volume-list">
           <div className="plot-volume-card">
             <div className="plot-volume-header" onClick={() => setGlobalCharCollapsed(v => !v)} style={{cursor:'pointer'}}>
-              <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{globalCharCollapsed ? '▶' : '▼'}</span>
-              <h4>🌍 全局人物档案</h4>
+              <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={globalCharCollapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
+              <h4><Icon name="globe" size={16} /> 全局人物档案</h4>
               <span className="text-muted" style={{fontSize:12}}>{characters.length}人</span>
               <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
                 {charBatchMode ? (
                   <>
-                    <button className="btn-ghost-sm" onClick={() => { setCharCheckedIds(new Set()); setCharBatchMode(false); }}>✕ 取消</button>
-                    <button className="btn-ghost-sm" onClick={deleteCheckedChars} disabled={charCheckedIds.size === 0} style={{color:'#e74c3c'}} title="删除选中角色">🗑️ 删除选中({charCheckedIds.size})</button>
+                    <button className="btn-ghost-sm" onClick={() => { setCharCheckedIds(new Set()); setCharBatchMode(false); }}><Icon name="x" size={14} /> 取消</button>
+                    <button className="btn-ghost-sm" onClick={deleteCheckedChars} disabled={charCheckedIds.size === 0} style={{color:'#e74c3c'}} title="删除选中角色"><Icon name="trash" size={14} /> 删除选中({charCheckedIds.size})</button>
                   </>
                 ) : (
                   <>
                     {charVolumes.length > 0 && (
                       <button className="btn-ghost-sm" onClick={syncGlobalToVolumes} title="将全局人物同步到所有分卷（同名补充，新角色追加）" style={{color:'#27ae60'}}>⇅ 同步到分卷</button>
                     )}
-                    <button className="btn-ghost-sm" onClick={() => setCharBatchMode(true)} title="批量选择并删除角色">☑ 批量管理</button>
+                    <button className="btn-ghost-sm" onClick={() => setCharBatchMode(true)} title="批量选择并删除角色"><Icon name="check-square" size={14} /> 批量管理</button>
                   </>
                 )}
               </div>
@@ -719,7 +720,7 @@ export function CharacterPanel(props: {
                         {charBatchMode && (
                           <input type="checkbox" checked={charCheckedIds.has(idx)} onChange={() => toggleCharCheck(idx)} style={{marginRight:6}} onClick={e => e.stopPropagation()} />
                         )}
-                        {!charBatchMode && <span className="map-toggle" style={{fontSize:10,marginRight:4}}>{collapsedChars.has(idx) ? '▶' : '▼'}</span>}
+                        {!charBatchMode && <span className="map-toggle" style={{marginRight:4,display:'inline-flex'}}><Icon name={collapsedChars.has(idx) ? 'chevron-right' : 'chevron-down'} size={12} /></span>}
                         <span className="character-card-name">{char.name}</span>
                         {char.role && <span className="character-card-role">{char.role}</span>}
                         {char.abilities && <span className="text-muted" style={{fontSize:10,marginLeft:4}}>{(char.abilities || '').slice(0, 12)}</span>}
@@ -738,10 +739,10 @@ export function CharacterPanel(props: {
                       {!charBatchMode && !collapsedChars.has(idx) && (
                       <div className="character-card-actions">
                         <button className="btn-ghost-sm" onClick={() => handleAnalyzeOne(char.name)} disabled={analyzingName === char.name || !hasChapters} title={hasChapters ? 'AI识别此角色信息' : '需要先创建章节才能AI识别'}>
-                          {analyzingName === char.name ? '🤖 识别中...' : '🔍 识别'}
+                          {analyzingName === char.name ? <><Icon name="bot" size={13} /> 识别中...</> : <><Icon name="search" size={13} /> 识别</>}
                         </button>
-                        <button className="btn-ghost-sm" onClick={() => startEdit(idx)}>✏️ 编辑</button>
-                        <button className="btn-ghost-sm" onClick={() => deleteChar(idx)} style={{color:'#e74c3c'}}>🗑️</button>
+                        <button className="btn-ghost-sm" onClick={() => startEdit(idx)}><Icon name="edit" size={14} /> 编辑</button>
+                        <button className="btn-ghost-sm" onClick={() => deleteChar(idx)} style={{color:'#e74c3c'}}><Icon name="trash" size={16} /></button>
                       </div>
                       )}
                     </div>
@@ -757,8 +758,8 @@ export function CharacterPanel(props: {
       <div className="plot-volume-list" style={{marginTop:16}}>
         <div className="plot-volume-card">
           <div className="plot-volume-header" onClick={() => setRelGraphCollapsed(v => !v)} style={{cursor:'pointer'}}>
-            <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{relGraphCollapsed ? '▶' : '▼'}</span>
-            <h4>🔗 人物关系图谱</h4>
+            <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={relGraphCollapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
+            <h4><Icon name="link" size={16} /> 人物关系图谱</h4>
             <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
               {relGraphEditing ? (
                 <>
@@ -766,11 +767,11 @@ export function CharacterPanel(props: {
                     const updated = await api.updateBible(bookId, { relation_graph: relGraphValue } as any);
                     onBibleUpdate(updated);
                     setRelGraphEditing(false);
-                  }}>💾 保存</button>
+                  }}><Icon name="save" size={14} /> 保存</button>
                   <button className="btn-ghost-sm" onClick={() => { setRelGraphEditing(false); setRelGraphValue(bible?.relation_graph || ''); }}>取消</button>
                 </>
               ) : (
-                <button className="btn-ghost-sm" onClick={() => { setRelGraphEditing(true); setRelGraphValue(bible?.relation_graph || ''); }} title="编辑人物关系图谱">✏️ 编辑</button>
+                <button className="btn-ghost-sm" onClick={() => { setRelGraphEditing(true); setRelGraphValue(bible?.relation_graph || ''); }} title="编辑人物关系图谱"><Icon name="edit" size={14} /> 编辑</button>
               )}
             </div>
           </div>

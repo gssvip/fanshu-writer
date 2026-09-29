@@ -5,6 +5,7 @@ import { AuthContext } from '../App';
 import type { AIConfig } from '../types';
 import type { Book, AIUsageStats, AIUsageLogItem } from '../types';
 import { AI_PROVIDERS } from '../aiProviders';
+import Icon from '../components/Icon';
 
 export default function MinePage() {
   const { currentUser, theme, customColors, setTheme, setCustomColors, setCurrentUser, logout } = useStore() as any;
@@ -358,13 +359,13 @@ export default function MinePage() {
   }
 
   const SECTIONS = [
-    { key: 'server', label: '服务器', icon: '🌐' },
-    { key: 'ai', label: 'AI 配置', icon: '🤖' },
-    { key: 'ledger', label: 'AI调用账本', icon: '🧾' },
-    { key: 'storage', label: '本地存储', icon: '💾' },
-    { key: 'theme', label: '主题', icon: '🎨' },
-    { key: 'account', label: '账户安全', icon: '🔐' },
-    { key: 'about', label: '关于', icon: 'ℹ️' },
+    { key: 'server', label: '服务器', icon: 'globe' },
+    { key: 'ai', label: 'AI 配置', icon: 'bot' },
+    { key: 'ledger', label: 'AI调用账本', icon: 'receipt' },
+    { key: 'storage', label: '本地存储', icon: 'save' },
+    { key: 'theme', label: '主题', icon: 'palette' },
+    { key: 'account', label: '账户安全', icon: 'lock' },
+    { key: 'about', label: '关于', icon: 'info' },
   ];
 
   function toggleSection(key: string) {
@@ -456,10 +457,10 @@ export default function MinePage() {
                 title="点击修改密码"
                 style={{ fontWeight: 600, color: 'var(--accent)' }}
               >
-                👤 {currentUser.username}
+                <Icon name="user" size={14} /> {currentUser.username}
               </button>
               <button className="btn-primary-sm" onClick={() => setActiveSection('account')} title="修改密码">
-                🔐 修改密码
+                <Icon name="lock" size={14} /> 修改密码
               </button>
               <button className="btn-ghost-sm" onClick={handleLogout}>退出</button>
             </>
@@ -491,7 +492,7 @@ export default function MinePage() {
       <nav className="mine-nav">
         {SECTIONS.map(s => (
           <button key={s.key} className={`mine-nav-item ${activeSection === s.key ? 'active' : ''}`} onClick={() => toggleSection(s.key)}>
-            <span>{s.icon}</span>
+            <Icon name={s.icon as any} size={18} />
             <span>{s.label}</span>
             <span className={`nav-arrow ${activeSection === s.key ? 'expanded' : ''}`}>▸</span>
           </button>
@@ -518,7 +519,7 @@ export default function MinePage() {
                 >
                   {configList.map(c => (
                     <option key={c.id} value={c.id}>
-                      {c.name}{c.is_active ? '（当前使用）' : ''} {c.has_key ? '🔑' : '🚫'}
+                      {c.name}{c.is_active ? '（当前使用）' : ''} {c.has_key ? <Icon name="key" size={14} /> : <Icon name="ban" size={14} />}
                     </option>
                   ))}
                 </select>
@@ -535,7 +536,7 @@ export default function MinePage() {
                   style={_cfgBtn}
                   title={configList.length >= maxConfigs ? `最多 ${maxConfigs} 个配置` : '新建一条独立配置，不影响已保存的配置'}
                 >
-                  ＋ 新建配置
+                  <Icon name="plus" size={14} /> 新建配置
                 </button>
                 {formMode === 'edit' && (
                   <button
@@ -545,7 +546,7 @@ export default function MinePage() {
                     style={_cfgBtn}
                     title={configList.length <= 1 ? '至少保留 1 个配置' : '删除当前编辑的配置'}
                   >
-                    🗑️ 删除
+                    <Icon name="trash" size={14} /> 删除
                   </button>
                 )}
                 {/* 计数徽标：与按钮同 class 同 _cfgBtn 样式（等宽、居中，与前两个按钮均匀排布） */}
@@ -573,8 +574,8 @@ export default function MinePage() {
             {customModels.length > 0 && (
               <div className="custom-models-section">
                 <div className="custom-models-header">
-                  <span className="custom-models-title">🏷️ 我的自定义模型</span>
-                  <button className="btn-icon" title="删除" onClick={() => { if (confirm('清空所有自定义模型？')) { setCustomModels([]); try { localStorage.removeItem('app-custom-models'); localStorage.removeItem(legacyKey('custom-models')); } catch {} } }}>🗑️</button>
+                  <span className="custom-models-title"><Icon name="tag" size={14} /> 我的自定义模型</span>
+                  <button className="btn-icon" title="删除" onClick={() => { if (confirm('清空所有自定义模型？')) { setCustomModels([]); try { localStorage.removeItem('app-custom-models'); localStorage.removeItem(legacyKey('custom-models')); } catch {} } }}><Icon name="trash" size={16} /></button>
                 </div>
                 <div className="custom-models-list">
                   {customModels.map((m, i) => (
@@ -583,7 +584,7 @@ export default function MinePage() {
                         <span className="custom-model-name">{m.name}</span>
                         <span className="custom-model-detail">{m.model}</span>
                       </button>
-                      <button className="btn-icon" title="删除" onClick={() => handleDeleteCustomModel(i)}>✕</button>
+                      <button className="btn-icon" title="删除" onClick={() => handleDeleteCustomModel(i)}><Icon name="x" size={14} /></button>
                     </div>
                   ))}
                 </div>
@@ -617,7 +618,7 @@ export default function MinePage() {
               <label>模型（此提供商可用模型，勾选多个选定）</label>
               <div className="input-row">
                 <button className="btn-ghost-sm" onClick={handleFetchModels} disabled={fetchingModels} style={{ flex: 1, justifyContent: 'center' }} title="拉取该提供商全部可用模型，勾选要使用的">
-                  {fetchingModels ? '⏳ 拉取中…' : `🔄 拉取并勾选模型${aiConfig.models && aiConfig.models.length ? `（已选 ${aiConfig.models.length}）` : ''}`}
+                  {fetchingModels ? <><Icon name="hourglass" size={14} /> 拉取中…</> : <><Icon name="refresh" size={14} /> 拉取并勾选模型{aiConfig.models && aiConfig.models.length ? `（已选 ${aiConfig.models.length}）` : ''}</>}
                 </button>
               </div>
               {/* 拉取结果：复选面板（勾选的作为该提供商选定的模型） */}
@@ -625,7 +626,7 @@ export default function MinePage() {
                 <div className="model-list-panel">
                   <div className="model-list-header">
                     <span>共 {modelList.length} 个可用模型 · 勾选要使用的（可多选）</span>
-                    <button className="btn-icon" onClick={() => setShowModelList(false)}>✕</button>
+                    <button className="btn-icon" onClick={() => setShowModelList(false)}><Icon name="x" size={16} /></button>
                   </div>
                   <div className="model-list-items" style={{ maxHeight: 260, overflowY: 'auto' }}>
                     {modelList.map(m => {
@@ -653,11 +654,11 @@ export default function MinePage() {
                         return { ...p, models: mlist, model: cur };
                       });
                       setShowModelList(false);
-                    }}>✓ 选定 {selectedModels.length} 个模型</button>
+                    }}><Icon name="check" size={14} /> 选定 {selectedModels.length} 个模型</button>
                   </div>
                 </div>
               )}
-              {/* 已选定模型 chips：点击设当前（⭐），✕ 移除 */}
+              {/* 已选定模型 chips：点击设当前（星标），✕ 移除 */}
               {aiConfig.models && aiConfig.models.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                   {aiConfig.models.map(mid => {
@@ -675,12 +676,12 @@ export default function MinePage() {
                           color: cur ? 'var(--accent)' : 'inherit',
                         }}
                       >
-                        {mid}{cur ? ' ⭐' : ''}
+                        {mid}{cur ? <Icon name="star" size={12} style={{color:'var(--accent)'}} /> : ''}
                         <span
                           onClick={(e) => { e.stopPropagation(); setAIConfig((p: AIConfig) => ({ ...p, models: (p.models || []).filter(x => x !== mid) })); }}
                           style={{ cursor: 'pointer', opacity: 0.6 }}
                           title="移除该模型"
-                        >✕</span>
+                        ><Icon name="x" size={14} /></span>
                       </span>
                     );
                   })}
@@ -707,7 +708,7 @@ export default function MinePage() {
                     checked={useSeparateRecognition}
                     onChange={e => handleToggleRecognition(e.target.checked)}
                   />
-                  <span>🔍 为AI识别单独设置模型</span>
+                  <span><Icon name="search" size={14} /> 为AI识别单独设置模型</span>
                 </label>
                 <p className="text-muted" style={{fontSize:11,marginTop:2}}>关闭时识别和创作使用同一模型</p>
               </div>
@@ -722,14 +723,14 @@ export default function MinePage() {
                       placeholder="如：deepseek-chat（识别用模型）"
                     />
                     <button className="btn-ghost-sm" onClick={handleFetchRecModels} disabled={fetchingRecModels} title="拉取可用模型">
-                      {fetchingRecModels ? '⏳' : '🔄 拉取'}
+                      {fetchingRecModels ? <Icon name="hourglass" size={14} /> : <><Icon name="refresh" size={14} /> 拉取</>}
                     </button>
                   </div>
                   {showRecognitionModelList && modelList.length > 0 && (
                     <div className="model-list-panel">
                       <div className="model-list-header">
                         <span>共 {modelList.length} 个可用模型</span>
-                        <button className="btn-icon" onClick={() => setShowRecognitionModelList(false)}>✕</button>
+                        <button className="btn-icon" onClick={() => setShowRecognitionModelList(false)}><Icon name="x" size={16} /></button>
                       </div>
                       <div className="model-list-items">
                         {modelList.map(m => (
@@ -764,15 +765,15 @@ export default function MinePage() {
 
             <div className="ai-action-row">
               <button className="btn-primary" onClick={handleSaveAIConfig} disabled={saving}>
-                {saving ? '保存中...' : '💾 保存配置'}
+                {saving ? '保存中...' : <><Icon name="save" size={16} /> 保存配置</>}
               </button>
               <button className="btn-secondary ai-test-btn" onClick={handleTestConnection} disabled={testing}>
-                {testing ? '⏳ 测试中...' : '🔌 测试连接'}
+                {testing ? '⏳ 测试中...' : <><Icon name="plug" size={16} /> 测试连接</>}
               </button>
             </div>
             {testResult && (
               <div className={`test-result ${testResult.success ? 'success' : 'error'}`}>
-                <span className="test-result-icon">{testResult.success ? '✅' : '❌'}</span>
+                <span className="test-result-icon"><Icon name={testResult.success ? 'check-circle' : 'x-circle'} size={16} style={{color: testResult.success ? 'var(--success)' : 'var(--danger)'}} /></span>
                 <span className="test-result-msg">{testResult.msg}</span>
               </div>
             )}
@@ -781,7 +782,7 @@ export default function MinePage() {
 
         {activeSection === 'ledger' && (
           <div className="tool-panel">
-            <h3>🧾 AI 调用账本</h3>
+            <h3><Icon name="receipt" size={16} /> AI 调用账本</h3>
 
             {/* 时间范围：今天 / 近 7 天 / 近 30 天 — 三枚胶囊按钮（桌面端一排，手机端等分换行） */}
             <div className="ledger-range-row nr-filter-section" style={{
@@ -871,7 +872,7 @@ export default function MinePage() {
 
                 {usageStats.by_scene.length > 0 && (
                   <div className="ledger-block" style={{marginTop:16}}>
-                    <h4 style={{fontSize:14,marginBottom:8}}>📌 按场景分布</h4>
+                    <h4 style={{fontSize:14,marginBottom:8}}><Icon name="pin" size={14} /> 按场景分布</h4>
                     <div style={{display:'flex',flexDirection:'column',gap:6}}>
                       {usageStats.by_scene.map((s, i) => {
                         const max = Math.max(...usageStats.by_scene.map(x => x.count), 1);
@@ -891,7 +892,7 @@ export default function MinePage() {
 
                 {usageLogs.length > 0 && (
                   <div className="ledger-block" style={{marginTop:16}}>
-                    <h4 style={{fontSize:14,marginBottom:8}}>🗒️ 最近调用明细（点击行可展开看 Token 与输入/输出原文）</h4>
+                    <h4 style={{fontSize:14,marginBottom:8}}><Icon name="notepad" size={14} /> 最近调用明细（点击行可展开看 Token 与输入/输出原文）</h4>
                     <div style={{maxHeight:360,overflowY:'auto',border:'1px solid var(--border-color)',borderRadius:8}}>
                       <table style={{width:'100%',fontSize:12,borderCollapse:'collapse'}}>
                         <thead style={{position:'sticky',top:0,zIndex:1}}>
@@ -933,7 +934,7 @@ export default function MinePage() {
                                 </td>
                                 <td style={{padding:'6px 8px'}}>{log.duration_ms}ms</td>
                                 <td style={{padding:'6px 8px'}}>
-                                  {log.success ? <span style={{color:'#27ae60'}}>✓</span> : <span style={{color:'#e74c3c'}}>✗ {log.error_message.slice(0,20)}</span>}
+                                  {log.success ? <span style={{color:'#27ae60',display:'inline-flex',alignItems:'center'}}><Icon name="check" size={14} /></span> : <span style={{color:'#e74c3c',display:'inline-flex',alignItems:'center',gap:4}}><Icon name="x" size={14} /> {log.error_message.slice(0,20)}</span>}
                                 </td>
                               </tr>
                             );
@@ -969,7 +970,7 @@ export default function MinePage() {
                                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
                                         <div>
                                           <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4,fontWeight:600}}>
-                                            📥 输入原文（Prompt）· {log.prompt_text ? log.prompt_text.length : 0} 字
+                                            <Icon name="inbox" size={13} /> 输入原文（Prompt）· {log.prompt_text ? log.prompt_text.length : 0} 字
                                           </div>
                                           <pre style={{
                                             maxHeight:260,overflow:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word',
@@ -981,7 +982,7 @@ export default function MinePage() {
                                         </div>
                                         <div>
                                           <div style={{fontSize:11,color:'var(--text-muted)',marginBottom:4,fontWeight:600}}>
-                                            📤 输出原文（Response）· {log.response_text ? log.response_text.length : 0} 字
+                                            <Icon name="upload" size={13} /> 输出原文（Response）· {log.response_text ? log.response_text.length : 0} 字
                                           </div>
                                           <pre style={{
                                             maxHeight:260,overflow:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word',
@@ -1023,12 +1024,12 @@ export default function MinePage() {
               <label>存储模式</label>
               <div className="storage-mode-toggle">
                 <button className={`storage-mode-btn ${storageMode === 'cloud' ? 'active' : ''}`} onClick={() => setStorageMode('cloud')}>
-                  <span className="storage-mode-icon">☁️</span>
+                  <span className="storage-mode-icon"><Icon name="cloud" size={20} /></span>
                   <span>云端同步</span>
                   <span className="storage-mode-desc">数据保存在服务器，多设备同步</span>
                 </button>
                 <button className={`storage-mode-btn ${storageMode === 'local' ? 'active' : ''}`} onClick={() => setStorageMode('local')}>
-                  <span className="storage-mode-icon">📱</span>
+                  <span className="storage-mode-icon"><Icon name="smartphone" size={20} /></span>
                   <span>本地存储</span>
                   <span className="storage-mode-desc">数据保存在手机浏览器，离线可用</span>
                 </button>
@@ -1041,7 +1042,7 @@ export default function MinePage() {
                   <label>本地存储路径（用于备份导出）</label>
                   <div className="input-row">
                     <input className="input" value={localPath} onChange={e => setLocalPath(e.target.value)} placeholder="点击选择文件夹" readOnly style={{flex:1}} />
-                    <button className="btn-ghost-sm" onClick={handlePickDirectory} title="选择本地文件夹">📁 选择</button>
+                    <button className="btn-ghost-sm" onClick={handlePickDirectory} title="选择本地文件夹"><Icon name="folder" size={14} /> 选择</button>
                   </div>
                   <input
                     ref={folderInputRef}
@@ -1058,17 +1059,17 @@ export default function MinePage() {
 
                 <div className="storage-info-card">
                   <div className="storage-info-row">
-                    <span>📦 已用空间</span>
+                    <span><Icon name="package" size={14} /> 已用空间</span>
                     <span>{(() => { try { return (((localStorage.length * 0.5) + JSON.stringify(localStorage).length) / 1024).toFixed(1) + ' KB'; } catch { return 'N/A'; } })()}</span>
                   </div>
                   <div className="storage-info-row">
-                    <span>📊 缓存条目</span>
+                    <span><Icon name="bar-chart" size={14} /> 缓存条目</span>
                     <span>{(() => { try { return localStorage.length + ' 条'; } catch { return 'N/A'; } })()}</span>
                   </div>
                 </div>
 
                 <button className="btn-secondary" onClick={handleExportLocal} disabled={exporting} style={{marginTop:12,width:'100%'}}>
-                  {exporting ? '⏳ 导出中...' : '📥 导出全部数据到本地文件'}
+                  {exporting ? '⏳ 导出中...' : <><Icon name="inbox" size={16} /> 导出全部数据到本地文件</>}
                 </button>
                 <p className="text-muted" style={{fontSize:11,marginTop:6}}>导出为 JSON 文件，可保存到手机任意位置</p>
               </>
@@ -1149,11 +1150,11 @@ export default function MinePage() {
 
         {activeSection === 'server' && (
           <div className="tool-panel">
-            <h3>🌐 后端服务器</h3>
+            <h3><Icon name="globe" size={16} /> 后端服务器</h3>
             <p className="text-muted">系统已内置默认后端服务器，开箱即用。如需切换到自部署的后端，可在下方覆盖。</p>
 
             <div style={{ padding: '10px 12px', background: '#e8f7e8', color: '#27ae60', borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
-              ✅ 已使用内置默认后端服务器，无需配置即可使用登录注册等功能。
+              <Icon name="check-circle" size={14} style={{color:'#27ae60',marginRight:4}} />已使用内置默认后端服务器，无需配置即可使用登录注册等功能。
             </div>
 
             <div className="form-field">
@@ -1167,14 +1168,14 @@ export default function MinePage() {
                   style={{ flex: 1 }}
                 />
                 <button className="btn-ghost-sm" onClick={handleTestServerUrl} disabled={serverStatus === 'testing'}>
-                  {serverStatus === 'testing' ? '⏳' : '🔌 测试'}
+                  {serverStatus === 'testing' ? <Icon name="hourglass" size={14} /> : <><Icon name="plug" size={14} /> 测试</>}
                 </button>
               </div>
               {serverStatus === 'ok' && (
-                <div style={{ color: '#27ae60', fontSize: 12, marginTop: 4 }}>✅ 连接成功</div>
+                <div style={{ color: '#27ae60', fontSize: 12, marginTop: 4, display:'inline-flex', alignItems:'center', gap:4 }}><Icon name="check-circle" size={14} /> 连接成功</div>
               )}
               {serverStatus === 'fail' && (
-                <div style={{ color: '#e74c3c', fontSize: 12, marginTop: 4 }}>❌ 连接失败，请检查地址或后端是否启动</div>
+                <div style={{ color: '#e74c3c', fontSize: 12, marginTop: 4, display:'inline-flex', alignItems:'center', gap:4 }}><Icon name="x-circle" size={14} /> 连接失败，请检查地址或后端是否启动</div>
               )}
               <p className="text-muted" style={{ fontSize: 11, marginTop: 6 }}>
                 当前生效地址：{getApiBaseUrl()}<br />
@@ -1189,7 +1190,7 @@ export default function MinePage() {
             </div>
 
             <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12 }}>
-              <h4 style={{ marginBottom: 8, fontSize: 13 }}>📦 自部署后端（可选）</h4>
+              <h4 style={{ marginBottom: 8, fontSize: 13 }}><Icon name="package" size={14} /> 自部署后端（可选）</h4>
               <p style={{ marginBottom: 8 }}>如果你想使用自己的后端服务器，可以参考以下步骤部署：</p>
               <ol style={{ paddingLeft: 18, lineHeight: 1.8 }}>
                 <li>将 <code>source/backend</code> 目录部署到 Render / Railway / Hugging Face Spaces 等平台</li>
@@ -1203,7 +1204,7 @@ export default function MinePage() {
 
         {activeSection === 'account' && (
           <div className="tool-panel">
-            <h3>🔐 账户安全</h3>
+            <h3><Icon name="lock" size={16} /> 账户安全</h3>
 
             {currentUser ? (
               <>
@@ -1236,7 +1237,7 @@ export default function MinePage() {
                     background: pwdMsg.type === 'success' ? '#e8f7e8' : '#fde8e8',
                     color: pwdMsg.type === 'success' ? '#27ae60' : '#e74c3c'
                   }}>
-                    {pwdMsg.type === 'success' ? '✅ ' : '❌ '}{pwdMsg.text}
+                    {pwdMsg.type === 'success' ? <Icon name="check-circle" size={14} style={{color:'#27ae60',marginRight:4}} /> : <Icon name="x-circle" size={14} style={{color:'#e74c3c',marginRight:4}} />}{pwdMsg.text}
                   </div>
                 )}
 
@@ -1249,7 +1250,7 @@ export default function MinePage() {
               </>
             ) : (
               <div className="empty-state" style={{padding:30}}>
-                <div className="empty-icon">🔒</div>
+                <div className="empty-icon"><Icon name="lock" size={48} /></div>
                 <p>请先登录后再管理账户安全</p>
                 <button className="btn-primary-sm" style={{marginTop:12}} onClick={() => requireAuth()}>登录 / 注册</button>
               </div>

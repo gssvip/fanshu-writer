@@ -4,6 +4,7 @@ import { api } from '../../api';
 import { AuthContext } from '../../App';
 import type { SkillPack, WorkflowStep } from '../../types';
 import { GENRES, GENRE_GROUPS, normalizeGenreKey } from '../../constants';
+import Icon, { type IconName } from '../../components/Icon';
 
 interface SkillEditorState {
   id: string | null;
@@ -19,13 +20,33 @@ interface SkillEditorState {
   genre_target?: string;  // 文风类专属题材标签
 }
 
-const EMOJI_CHOICES = ['📦', '✍️', '🎯', '🚀', '💡', '🔮', '⚔️', '🏰', '❤️', '🔍', '📊', '🎭', '📚', '🎨', '⚡'];
+// 技能包图标选择：使用 IconName 语义名称
+const ICON_CHOICES: string[] = [
+  'package', 'edit-pencil', 'target', 'rocket', 'lightbulb', 'crystal',
+  'sword', 'castle', 'heart', 'search', 'bar-chart', 'drama',
+  'book', 'palette', 'zap',
+];
+
+// 旧 emoji → 新 IconName 映射（向后兼容已有数据）
+const EMOJI_TO_ICON: Record<string, IconName> = {
+  '📦': 'package', '✍️': 'edit-pencil', '🎯': 'target', '🚀': 'rocket',
+  '💡': 'lightbulb', '🔮': 'crystal', '⚔️': 'sword', '🏰': 'castle',
+  '❤️': 'heart', '🔍': 'search', '📊': 'bar-chart', '🎭': 'drama',
+  '📚': 'book', '🎨': 'palette', '⚡': 'zap',
+};
+
+function resolveIcon(icon: string): IconName {
+  if (!icon) return 'package';
+  if (EMOJI_TO_ICON[icon]) return EMOJI_TO_ICON[icon];
+  // 已经是 icon name
+  return icon as IconName;
+}
 
 function emptySkillEditor(): SkillEditorState {
   return {
     id: null,
     name: '',
-    icon: '📦',
+    icon: 'package',
     genre: 'other',
     book_type: 'novel',
     description: '',
@@ -99,7 +120,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
     setSkillEditor({
       id: pack.id,
       name: pack.name,
-      icon: pack.icon || '📦',
+      icon: pack.icon || 'package',
       genre: pack.genre || 'other',
       book_type: pack.book_type || 'novel',
       description: pack.description || '',
@@ -124,7 +145,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
     try {
       const payload = {
         name: skillEditor.name.trim(),
-        icon: skillEditor.icon || '📦',
+        icon: skillEditor.icon || 'package',
         genre: skillEditor.genre,
         book_type: skillEditor.book_type,
         description: skillEditor.description,
@@ -183,7 +204,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
     setSkillEditor({
       id: null,
       name: `${pack.name}（我的副本）`,
-      icon: pack.icon || '📦',
+      icon: pack.icon || 'package',
       genre: pack.genre || 'other',
       book_type: pack.book_type || 'novel',
       description: pack.description || '',
@@ -315,7 +336,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
       const genre_target = normalizeGenreKey(data.genre_target);
       const payload = {
         name: data.name,
-        icon: data.icon || '📦',
+        icon: data.icon || 'package',
         genre,
         genre_target: genre_target || undefined,
         book_type: data.book_type || 'novel',
@@ -470,11 +491,11 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
     <div className="tool-panel">
       <div className="skills-header">
         <div>
-          <h3>📦 技能包市场</h3>
+          <h3><Icon name="package" size={16} /> 技能包市场</h3>
         </div>
         <div className="skills-header-actions">
           <input ref={skillImportRef} type="file" accept=".json,.md,.yaml,.yml" onChange={handleImportSkill} style={{display:'none'}} id="skill-import-input" />
-          <button className="btn-secondary" onClick={() => skillImportRef.current?.click()}>📥 导入技能</button>
+          <button className="btn-secondary" onClick={() => skillImportRef.current?.click()}><Icon name="inbox" size={14} /> 导入技能</button>
           <button className="btn-primary" onClick={openCreateSkill}>+ 创建自定义</button>
         </div>
       </div>
@@ -498,7 +519,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
         const renderSkillCard = (pack: SkillPack) => (
           <div key={pack.id} className={`skill-card ${selectedPack?.id === pack.id ? 'selected' : ''}`} onClick={() => setSelectedPack(pack)} onDoubleClick={() => setPreviewPack(pack)} title="单击选中 · 双击预览">
             <div className="skill-card-header">
-              <span className="skill-card-icon">{pack.icon}</span>
+              <span className="skill-card-icon"><Icon name={resolveIcon(pack.icon)} size={24} /></span>
               <div>
                 <div className="skill-card-name">{pack.name}{pack.is_builtin ? <span className="builtin-badge">系统</span> : <span className="custom-badge">自定义</span>}</div>
                 <div className="skill-card-genre">{GENRES[pack.genre] || pack.genre} · {pack.book_type === 'novel' ? '长篇' : '短篇'}</div>
@@ -506,16 +527,16 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
               <div className="skill-card-actions" onClick={e => e.stopPropagation()}>
                 {pack.is_builtin ? (
                   <>
-                    <button className="btn-icon" title="另存为我的技能" onClick={() => handleCloneSkill(pack)}>📋</button>
-                    <button className="btn-icon" title="编辑副本" onClick={() => handleEditBuiltinSkill(pack)}>✏️</button>
-                    <button className="btn-icon" title="导出" onClick={() => handleExportSkill(pack)}>📤</button>
+                    <button className="btn-icon" title="另存为我的技能" onClick={() => handleCloneSkill(pack)}><Icon name="clipboard" size={16} /></button>
+                    <button className="btn-icon" title="编辑副本" onClick={() => handleEditBuiltinSkill(pack)}><Icon name="edit" size={16} /></button>
+                    <button className="btn-icon" title="导出" onClick={() => handleExportSkill(pack)}><Icon name="upload" size={16} /></button>
                   </>
                 ) : (
                   <>
-                    <button className="btn-icon" title="分享到系统" onClick={() => handlePublishSkill(pack)}>🌐</button>
-                    <button className="btn-icon" title="导出" onClick={() => handleExportSkill(pack)}>📤</button>
-                    <button className="btn-icon" title="编辑" onClick={() => openEditSkill(pack)}>✏️</button>
-                    <button className="btn-icon" title="删除" onClick={() => handleDeleteSkill(pack)}>🗑️</button>
+                    <button className="btn-icon" title="分享到系统" onClick={() => handlePublishSkill(pack)}><Icon name="globe" size={16} /></button>
+                    <button className="btn-icon" title="导出" onClick={() => handleExportSkill(pack)}><Icon name="upload" size={16} /></button>
+                    <button className="btn-icon" title="编辑" onClick={() => openEditSkill(pack)}><Icon name="edit" size={16} /></button>
+                    <button className="btn-icon" title="删除" onClick={() => handleDeleteSkill(pack)}><Icon name="trash" size={16} /></button>
                   </>
                 )}
               </div>
@@ -524,7 +545,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
             {pack.github_source && (
               <div style={{ marginTop: 6, padding: '6px 8px', background: 'var(--bg-tertiary)', borderRadius: 6, fontSize: 11, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  🔗 GitHub: {pack.github_synced_at ? `已同步 ${new Date(pack.github_synced_at).toLocaleDateString()}` : '未同步'}
+                  <Icon name="link" size={12} /> GitHub: {pack.github_synced_at ? `已同步 ${new Date(pack.github_synced_at).toLocaleDateString()}` : '未同步'}
                 </span>
                 <button
                   className="btn-secondary-sm"
@@ -533,7 +554,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
                   onClick={(e) => { e.stopPropagation(); handleSyncFromGitHub(pack); }}
                   title={`从 ${pack.github_source} 拉取最新版本`}
                 >
-                  {syncingPackId === pack.id ? '⏳ 同步中' : '🔄 同步GitHub'}
+                  {syncingPackId === pack.id ? <><Icon name="hourglass" size={12} /> 同步中</> : <><Icon name="refresh" size={12} /> 同步GitHub</>}
                 </button>
               </div>
             )}
@@ -592,7 +613,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
           <div className="skill-editor-modal" onClick={e => e.stopPropagation()}>
             <div className="skill-editor-header">
               <h3>{skillEditor.id ? '编辑技能包' : '创建自定义技能包'}</h3>
-              <button className="btn-icon" onClick={() => setShowSkillEditor(false)}>✕</button>
+              <button className="btn-icon" onClick={() => setShowSkillEditor(false)}><Icon name="x" size={16} /></button>
             </div>
 
             {skillError && <div className="error-msg">{skillError}</div>}
@@ -600,8 +621,8 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
             <div className="form-field">
               <label>图标</label>
               <div className="emoji-picker">
-                {EMOJI_CHOICES.map(em => (
-                  <button key={em} className={`emoji-chip ${skillEditor.icon === em ? 'active' : ''}`} onClick={() => setSkillEditor(prev => ({ ...prev, icon: em }))}>{em}</button>
+                {ICON_CHOICES.map(ic => (
+                  <button key={ic} className={`emoji-chip ${skillEditor.icon === ic ? 'active' : ''}`} onClick={() => setSkillEditor(prev => ({ ...prev, icon: ic }))}><Icon name={resolveIcon(ic)} size={18} /></button>
                 ))}
               </div>
             </div>
@@ -672,7 +693,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
 
             {/* 【用户诉求-易用性】直接粘贴任意文本 / skill.md / JSON/YAML，自动识别成技能包 */}
             <div className="form-field">
-              <label>💡 粘贴提示词或 skill.md 自动生成 <span className="text-muted" style={{fontSize:11}}>（支持 front-matter / JSON / YAML / 普通纯文本，不会覆盖已填好的名称/分类）</span></label>
+              <label style={{display:'inline-flex',alignItems:'center',gap:4}}><Icon name="lightbulb" size={14} /> 粘贴提示词或 skill.md 自动生成 <span className="text-muted" style={{fontSize:11}}>（支持 front-matter / JSON / YAML / 普通纯文本，不会覆盖已填好的名称/分类）</span></label>
               <textarea
                 className="input"
                 rows={5}
@@ -715,14 +736,14 @@ category：master
                     <input className="input" style={{flex:'1 1 160px'}} value={step.desc} onChange={e => updateWorkflowStep(idx, 'desc', e.target.value)} placeholder="步骤说明" />
                     <input className="input" style={{flex:'1 1 100px'}} value={step.prompt_key} onChange={e => updateWorkflowStep(idx, 'prompt_key', e.target.value)} placeholder="prompt键名" />
                     <label style={{display:'flex',alignItems:'center',gap:4,fontSize:12,minWidth:110}}>
-                      🌡 温度
+                      <Icon name="thermometer" size={14} /> 温度
                       <input type="number" min={0} max={2} step={0.1}
                         className="input" style={{width:52,padding:'4px 6px'}}
                         value={step.temperature ?? ''}
                         onChange={e => updateWorkflowTemp(idx, parseFloat(e.target.value))}
                         placeholder="默认" />
                     </label>
-                    <button className="btn-icon" onClick={() => removeWorkflowStep(idx)}>✕</button>
+                    <button className="btn-icon" onClick={() => removeWorkflowStep(idx)}><Icon name="x" size={16} /></button>
                   </div>
                 ))}
                 <button className="btn-secondary" onClick={addWorkflowStep}>+ 添加步骤</button>
@@ -735,7 +756,7 @@ category：master
                 <div key={key} className="prompt-editor-item">
                   <div className="prompt-editor-header">
                     <input className="input prompt-key-input" value={key} onChange={e => updatePromptKey(key, e.target.value)} placeholder="键名" />
-                    <button className="btn-icon" onClick={() => removePrompt(key)}>✕</button>
+                    <button className="btn-icon" onClick={() => removePrompt(key)}><Icon name="x" size={16} /></button>
                   </div>
                   <textarea className="input" rows={3} value={val} onChange={e => updatePromptValue(key, e.target.value)} placeholder="提示词内容，可用 {{变量}} 插入上下文..." />
                 </div>
@@ -759,7 +780,7 @@ category：master
           <div className="skill-editor-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 760 }}>
             <div className="skill-editor-header">
               <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 22 }}>{previewPack.icon}</span>
+                <Icon name={resolveIcon(previewPack.icon)} size={22} />
                 <span>{previewPack.name}</span>
                 {previewPack.is_builtin ? <span className="builtin-badge">系统</span> : <span className="custom-badge">自定义</span>}
                 <span style={{
@@ -772,12 +793,12 @@ category：master
                   {(previewPack.category || 'master') === 'master' ? '构思类' : previewPack.category === 'style' ? '文风类' : '审查类'}
                 </span>
               </h3>
-              <button className="btn-icon" onClick={() => setPreviewPack(null)}>✕</button>
+              <button className="btn-icon" onClick={() => setPreviewPack(null)}><Icon name="x" size={16} /></button>
             </div>
 
             <div style={{ padding: '0 4px 12px', fontSize: 12, color: 'var(--text-secondary)' }}>
               {GENRES[previewPack.genre] || previewPack.genre} · {previewPack.book_type === 'novel' ? '长篇' : '短篇'}
-              {previewPack.github_source && <> · 🔗 <a href={previewPack.github_source} target="_blank" rel="noreferrer" style={{ color: 'var(--link)' }}>GitHub 源</a></>}
+              {previewPack.github_source && <> · <Icon name="link" size={13} /> <a href={previewPack.github_source} target="_blank" rel="noreferrer" style={{ color: 'var(--link)' }}>GitHub 源</a></>}
             </div>
 
             <div style={{ background: 'var(--bg-tertiary)', padding: 12, borderRadius: 8, marginBottom: 16 }}>
@@ -807,7 +828,7 @@ category：master
                           fontFamily: 'var(--mono)', background: 'var(--bg-secondary)',
                           padding: '2px 6px', borderRadius: 4, display: 'inline-block'
                         }}>
-                          🔑 {step.prompt_key}
+                          <Icon name="key" size={11} /> {step.prompt_key}
                         </div>
                       )}
                     </div>
@@ -830,7 +851,7 @@ category：master
                       fontSize: 12, fontWeight: 600, fontFamily: 'var(--mono)',
                       borderBottom: '1px solid var(--border)', color: 'var(--accent)'
                     }}>
-                      📝 {key}
+                      <Icon name="file-text" size={12} /> {key}
                     </div>
                     <pre style={{
                       margin: 0, padding: 10, fontSize: 12, lineHeight: 1.7,
@@ -845,9 +866,9 @@ category：master
 
             <div className="form-row" style={{ justifyContent: 'flex-end', marginTop: 8, gap: 8 }}>
               {previewPack.is_builtin ? (
-                <button className="btn-secondary" onClick={() => { setPreviewPack(null); handleEditBuiltinSkill(previewPack); }}>✏️ 编辑副本</button>
+                <button className="btn-secondary" onClick={() => { setPreviewPack(null); handleEditBuiltinSkill(previewPack); }}><Icon name="edit-pencil" size={14} /> 编辑副本</button>
               ) : (
-                <button className="btn-secondary" onClick={() => { setPreviewPack(null); openEditSkill(previewPack); }}>✏️ 编辑</button>
+                <button className="btn-secondary" onClick={() => { setPreviewPack(null); openEditSkill(previewPack); }}><Icon name="edit-pencil" size={14} /> 编辑</button>
               )}
               <button className="btn-primary" onClick={() => setPreviewPack(null)}>关闭</button>
             </div>

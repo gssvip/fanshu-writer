@@ -6,6 +6,7 @@ import type { Chapter, SkillPack } from '../../types';
 import CarLogo from '../../components/CarLogo';
 import { CHAPTER_LANG_STYLES } from '../../constants';
 import { SkillPackGroupedList } from './write-shared';
+import Icon from '../../components/Icon';
 
 /* ===== 章节管理面板 ===== */
 // 单个卷分组子组件：用 memo 包裹，折叠/展开某个卷时其他卷不会重渲染
@@ -35,7 +36,7 @@ export const VolumeGroup = memo(function VolumeGroup({
     <div className="chapter-volume-group">
       <div className="chapter-volume-header" onClick={() => !renaming && onToggle(volId)}>
         <span className="chapter-volume-arrow">
-          {expanded ? '▼' : '▶'}
+          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
         </span>
         {renaming ? (
           <input
@@ -51,12 +52,12 @@ export const VolumeGroup = memo(function VolumeGroup({
             onClick={e => e.stopPropagation()}
           />
         ) : (
-          <span className="chapter-volume-title">📁 {volTitle}</span>
+          <span className="chapter-volume-title"><Icon name="folder" size={14} /> {volTitle}</span>
         )}
         <span className="chapter-volume-count">{volChs.length}章</span>
-        <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onStartRename(volId, volTitle); }} title="重命名">✏️</button>
+        <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onStartRename(volId, volTitle); }} title="重命名"><Icon name="edit" size={14} /></button>
         <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onCreateChapter(volId); }} title="在此卷下添加章节">+</button>
-        <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onDeleteVolume(volId); }} title="删除此卷" style={{color:'#e74c3c'}}>🗑️</button>
+        <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onDeleteVolume(volId); }} title="删除此卷" style={{color:'#e74c3c'}}><Icon name="trash" size={16} /></button>
       </div>
       {expanded && (
         <div className="chapter-volume-children">
@@ -348,7 +349,7 @@ export function ChapterPanel(props: {
             <button
               className="ai-fullscreen-stop-btn"
               onClick={() => { onStopAiCreate(); setStreamFullscreen(false); }}
-            >⏹ 停止生成</button>
+            ><Icon name="stop" size={14} /> 停止生成</button>
           </div>
         </div>
       );
@@ -361,7 +362,7 @@ export function ChapterPanel(props: {
         <div className="ai-fullscreen-stream ai-fullscreen-view">
           <div className="ai-fullscreen-stream-header">
             <div className="ai-fullscreen-stream-title">
-              📖 {viewingContent.title || '正文阅读'}
+              <Icon name="book" size={16} /> {viewingContent.title || '正文阅读'}
             </div>
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{viewingContent.content.length}字</span>
           </div>
@@ -372,7 +373,7 @@ export function ChapterPanel(props: {
             <button
               className="ai-fullscreen-stop-btn"
               onClick={() => setViewingContent(null)}
-            >✕ 关闭阅读</button>
+            ><Icon name="x" size={14} /> 关闭阅读</button>
           </div>
         </div>
       );
@@ -384,7 +385,7 @@ export function ChapterPanel(props: {
         {batchCreating && batchProgress && batchProgress.total > 0 && (
           <div className="ai-batch-toast">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 600, color: 'var(--accent)' }}>📚 连续创作 {batchProgress.done}/{batchProgress.total}</span>
+              <span style={{ fontWeight: 600, color: 'var(--accent)' }}><Icon name="book-open" size={14} /> 连续创作 {batchProgress.done}/{batchProgress.total}</span>
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{Math.round((batchProgress.done / batchProgress.total) * 100)}%</span>
             </div>
             <div className="ai-batch-toast-progress">
@@ -398,13 +399,13 @@ export function ChapterPanel(props: {
           <div className="ai-create-header-left">
             <button className="btn-ghost-sm" onClick={onCancelAiCreate} disabled={aiCreating}>← 返回</button>
             <span className="ai-chat-target" title="AI当前锚定的章节（点击刷新重新识别进度）">
-              📍 {chapterEditTitle}
+              <Icon name="pin" size={14} /> {chapterEditTitle}
               <button
                 className="ai-anchor-refresh"
                 onClick={onRefreshChapterAnchor}
                 disabled={aiCreating}
                 title="重新识别当前章节数，刷新定位到待写章"
-              >🔄</button>
+              ><Icon name="refresh" size={16} /></button>
             </span>
             {aiCreating && <span className="ai-create-status">生成中...</span>}
           </div>
@@ -421,7 +422,7 @@ export function ChapterPanel(props: {
         <div className="ai-chat-history">
           {aiChatHistory.length === 0 && !aiCreating && (
             <div className="ai-create-empty">
-              <span className="ai-create-empty-icon">✨</span>
+              <div className="ai-create-empty-icon"><Icon name="sparkles" size={40} /></div>
               <p>告诉AI你想写什么，AI将根据你的要求和故事设定创作章节正文</p>
             </div>
           )}
@@ -435,9 +436,9 @@ export function ChapterPanel(props: {
             const showToggle = isContent && isLong;
             return (
             <div key={i} className={`ai-chat-msg ai-chat-msg-${msg.role}`}>
-              <div className="ai-chat-msg-avatar">{msg.role === 'user' ? '👤' : '🤖'}</div>
+              <div className="ai-chat-msg-avatar">{msg.role === 'user' ? <Icon name="user" size={18} /> : <Icon name="bot" size={18} />}</div>
               <div className="ai-chat-msg-body">
-                {msg.chapterTitle && <div className="ai-chat-msg-chapter">📍 {msg.chapterTitle}</div>}
+                {msg.chapterTitle && <div className="ai-chat-msg-chapter"><Icon name="pin" size={12} /> {msg.chapterTitle}</div>}
                 {/* 折叠时隐藏正文，只保留章名+全屏查看按钮；展开时原位显示全文 */}
                 {!collapsed && (
                   <div className={`ai-chat-msg-content${showToggle ? ' ai-chat-msg-expanded' : ''}`}>
@@ -460,7 +461,7 @@ export function ChapterPanel(props: {
                     }}
                     title={collapsed ? '全屏查看正文' : '收起正文'}
                   >
-                    {collapsed ? `📖 全屏阅读（${msg.content.length}字）` : '收起'}
+                    {collapsed ? <><Icon name="book" size={13} /> 全屏阅读（{msg.content.length}字）</> : '收起'}
                   </button>
                 )}
               </div>
@@ -471,7 +472,7 @@ export function ChapterPanel(props: {
           {/* 流式生成中的助手消息 */}
           {streaming && (
             <div className="ai-chat-msg ai-chat-msg-assistant ai-chat-msg-streaming">
-              <div className="ai-chat-msg-avatar">🤖</div>
+              <div className="ai-chat-msg-avatar"><Icon name="bot" size={18} /></div>
               <div className="ai-chat-msg-body">
                 <div className="ai-chat-msg-content">
                   {aiGeneratedContent.split(/\n+/).filter(p => p.trim()).map((para, pi) => (
@@ -502,49 +503,49 @@ export function ChapterPanel(props: {
               style={{ marginTop: 8, padding: '6px 10px', background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12 }}
             >
               <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--text-secondary)', lineHeight: 1.7, listStyle: 'none' }}>
-                <span style={{ fontSize: 10, marginRight: 4 }}>{agentMetaExpanded ? '▼' : '▶'}</span>
-                📍 第{agentMeta.current_chapter_num}章 · {agentMeta.vol_title || `第${agentMeta.vol_index}卷`}
-                {agentMeta.deai_status === 'success' && <span style={{ color: '#27ae60' }}> · ✅去AI味</span>}
-                {agentMeta.deai_status === 'failed' && <span style={{ color: '#e67e22' }} title={agentMeta.review_notes}> · ⚠️去AI味失败</span>}
-                {agentMeta.consistency_passed === false && <span style={{ color: '#e74c3c' }} title={agentMeta.consistency_issues}> · ❌一致性异常</span>}
-                {agentMeta.consistency_passed === true && <span style={{ color: '#27ae60' }}> · ✅一致性</span>}
+                <span style={{ marginRight: 4 }}><Icon name={agentMetaExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+                <Icon name="pin" size={12} /> 第{agentMeta.current_chapter_num}章 · {agentMeta.vol_title || `第${agentMeta.vol_index}卷`}
+                {agentMeta.deai_status === 'success' && <span style={{ color: '#27ae60' }}> · <Icon name="check" size={11} />去AI味</span>}
+                {agentMeta.deai_status === 'failed' && <span style={{ color: '#e67e22' }} title={agentMeta.review_notes}> · <Icon name="warning" size={11} />去AI味失败</span>}
+                {agentMeta.consistency_passed === false && <span style={{ color: '#e74c3c' }} title={agentMeta.consistency_issues}> · <Icon name="x" size={11} />一致性异常</span>}
+                {agentMeta.consistency_passed === true && <span style={{ color: '#27ae60' }}> · <Icon name="check" size={11} />一致性</span>}
                 {agentMeta.post_validate && agentMeta.post_validate.critical_count > 0 && (
-                  <span style={{ color: '#e74c3c' }} title={`AI痕迹检测：${agentMeta.post_validate.critical_count}个严重问题`}>{' · ⚠️AI痕迹'}({agentMeta.post_validate.critical_count})</span>
+                  <span style={{ color: '#e74c3c' }} title={`AI痕迹检测：${agentMeta.post_validate.critical_count}个严重问题`}> · <Icon name="warning" size={11} />AI痕迹({agentMeta.post_validate.critical_count})</span>
                 )}
-                {agentMeta.changes_applied && agentMeta.changes_applied.applied && <span style={{ color: '#27ae60' }}> · 📝已回写</span>}
-                {agentMeta.suggested_title && <span style={{ color: '#9b59b6' }}> · 🏷️{agentMeta.suggested_title}</span>}
+                {agentMeta.changes_applied && agentMeta.changes_applied.applied && <span style={{ color: '#27ae60' }}> · <Icon name="edit" size={11} />已回写</span>}
+                {agentMeta.suggested_title && <span style={{ color: '#9b59b6' }}> · <Icon name="tag" size={11} />{agentMeta.suggested_title}</span>}
               </summary>
               <div style={{ marginTop: 6 }}>
               {agentMeta.chapter_plan && (
                 <div style={{ marginBottom: 4, padding: '6px 8px', background: 'var(--bg-secondary)', borderRadius: 4, borderLeft: '3px solid var(--accent)' }}>
-                  <b>📋 章节计划：</b>{agentMeta.chapter_plan.slice(0, 200)}{agentMeta.chapter_plan.length > 200 ? '...' : ''}
+                  <b><Icon name="clipboard" size={11} /> 章节计划：</b>{agentMeta.chapter_plan.slice(0, 200)}{agentMeta.chapter_plan.length > 200 ? '...' : ''}
                 </div>
               )}
               <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-                📍 第{agentMeta.current_chapter_num}章 · {agentMeta.vol_title || `第${agentMeta.vol_index}卷`} · 温度{agentMeta.temperature}
-                {agentMeta.deai_status === 'success' && <span style={{ color: '#27ae60' }}> · ✅去AI味成功</span>}
-                {agentMeta.deai_status === 'failed' && <span style={{ color: '#e67e22' }} title={agentMeta.review_notes}> · ⚠️去AI味失败(用初稿)</span>}
+                <Icon name="pin" size={11} /> 第{agentMeta.current_chapter_num}章 · {agentMeta.vol_title || `第${agentMeta.vol_index}卷`} · 温度{agentMeta.temperature}
+                {agentMeta.deai_status === 'success' && <span style={{ color: '#27ae60' }}> · <Icon name="check" size={11} />去AI味成功</span>}
+                {agentMeta.deai_status === 'failed' && <span style={{ color: '#e67e22' }} title={agentMeta.review_notes}> · <Icon name="warning" size={11} />去AI味失败(用初稿)</span>}
                 {agentMeta.deai_status === 'skipped' && <span className="text-muted"> · 未启用去AI味</span>}
-                {agentMeta.consistency_passed === false && <span style={{ color: '#e74c3c' }} title={agentMeta.consistency_issues}> · ❌一致性异常</span>}
-                {agentMeta.consistency_passed === true && <span style={{ color: '#27ae60' }}> · ✅一致性通过</span>}
+                {agentMeta.consistency_passed === false && <span style={{ color: '#e74c3c' }} title={agentMeta.consistency_issues}> · <Icon name="x" size={11} />一致性异常</span>}
+                {agentMeta.consistency_passed === true && <span style={{ color: '#27ae60' }}> · <Icon name="check" size={11} />一致性通过</span>}
                 {agentMeta.post_validate && agentMeta.post_validate.critical_count > 0 && (
                   <span style={{ color: '#e74c3c' }} title={`AI痕迹检测：${agentMeta.post_validate.critical_count}个严重问题`}>
-                    {' · ⚠️AI痕迹'}({agentMeta.post_validate.critical_count})
+                    {' · '}<Icon name="warning" size={11} />AI痕迹({agentMeta.post_validate.critical_count})
                   </span>
                 )}
                 {agentMeta.post_validate && agentMeta.post_validate.critical_count === 0 && agentMeta.post_validate.warning_count > 0 && (
                   <span style={{ color: '#f39c12' }} title={`检测到${agentMeta.post_validate.warning_count}个轻微问题`}>
-                    {' · 🔍痕迹检测'}({agentMeta.post_validate.warning_count})
+                    {' · '}<Icon name="search" size={11} />痕迹检测({agentMeta.post_validate.warning_count})
                   </span>
                 )}
                 {agentMeta.changes_applied && agentMeta.changes_applied.applied && (
                   <span style={{ color: '#27ae60' }} title={`状态回写：${(agentMeta.changes_applied.fields_updated||[]).join('、')}`}>
-                    {' · 📝状态已回写'}
+                    {' · '}<Icon name="edit" size={11} />状态已回写
                   </span>
                 )}
                 {agentMeta.suggested_title && (
                   <span style={{ color: '#9b59b6' }} title={`AI自动生成标题：${agentMeta.suggested_title}`}>
-                    {' · 🏷️标题已生成'}「{agentMeta.suggested_title}」
+                    {' · '}<Icon name="tag" size={11} />标题已生成「{agentMeta.suggested_title}」
                   </span>
                 )}
               </div>
@@ -554,19 +555,19 @@ export function ChapterPanel(props: {
                 if (!sc.has_issues || !sc.issues || sc.issues.length === 0) {
                   return (
                     <div style={{ marginTop: 6, padding: '6px 8px', background: 'var(--bg-secondary)', borderRadius: 4, borderLeft: '3px solid #27ae60', fontSize: 12 }}>
-                      ✅ 校验通过，未发现问题
+                      <Icon name="check" size={12} /> 校验通过，未发现问题
                     </div>
                   );
                 }
                 return (
                   <details style={{ marginTop: 6, padding: '6px 8px', background: 'var(--bg-secondary)', borderRadius: 4, borderLeft: '3px solid #f39c12' }}>
                     <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#f39c12' }}>
-                      ⚠️ 发现 {sc.issues.length} 个校验问题（点击展开）
+                      <Icon name="warning" size={12} /> 发现 {sc.issues.length} 个校验问题（点击展开）
                     </summary>
                     <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.6 }}>
                       {sc.issues.map((iss: any, i: number) => (
                         <div key={i} style={{ color: iss.severity === 'critical' ? '#e74c3c' : '#f39c12', marginBottom: 4 }}>
-                          {iss.severity === 'critical' ? '🔴' : ''} [{iss.type === 'ai_trace' ? 'AI痕迹' : '一致性'}] {iss.description}
+                          {iss.severity === 'critical' ? <span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',background:'#e74c3c',marginRight:4}} /> : ''} [{iss.type === 'ai_trace' ? 'AI痕迹' : '一致性'}] {iss.description}
                         </div>
                       ))}
                     </div>
@@ -578,7 +579,7 @@ export function ChapterPanel(props: {
                 <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 4, padding: '4px 8px', background: 'var(--bg-secondary)', borderRadius: 4 }}>
                   {agentMeta.post_validate.issues.slice(0, 5).map((iss: any, i: number) => (
                     <div key={i} style={{ color: iss.severity === 'critical' ? '#e74c3c' : '#f39c12' }}>
-                      {iss.severity === 'critical' ? '🔴' : '🟡'} [{iss.category}] {iss.pattern} — {iss.suggestion}
+                      {iss.severity === 'critical' ? <span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',background:'#e74c3c',marginRight:4}} /> : <span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',background:'#f39c12',marginRight:4}} />} [{iss.category}] {iss.pattern} — {iss.suggestion}
                     </div>
                   ))}
                   {agentMeta.post_validate.issues.length > 5 && <div>...还有 {agentMeta.post_validate.issues.length - 5} 条</div>}
@@ -592,7 +593,7 @@ export function ChapterPanel(props: {
                     disabled={!!spotFixing}
                     onClick={() => onSpotFix(aiGeneratedContent, agentMeta.post_validate)}
                   >
-                    {spotFixing ? '⏳ 修订中...' : '🔧 一键Spot-Fix修订'}
+                    {spotFixing ? <><Icon name="hourglass" size={13} /> 修订中...</> : <><Icon name="wrench" size={13} /> 一键Spot-Fix修订</>}
                   </button>
                   {spotFixMsg && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-secondary)' }}>{spotFixMsg}</span>}
                 </div>
@@ -600,10 +601,10 @@ export function ChapterPanel(props: {
               {/* P2-10：落地门禁结果展示 */}
               {agentMeta?.gate_result && !agentMeta.gate_result.passed && (
                 <div style={{ fontSize: 10, color: 'var(--text-secondary)', lineHeight: 1.6, marginTop: 4, padding: '4px 8px', background: 'var(--bg-secondary)', borderRadius: 4 }}>
-                  <div style={{ fontWeight: 600, color: '#e74c3c' }}>🚪 落地门禁告警（{agentMeta.gate_result.critical_count} critical / {agentMeta.gate_result.warning_count} warning）</div>
+                  <div style={{ fontWeight: 600, color: '#e74c3c' }}><Icon name="shield" size={12} /> 落地门禁告警（{agentMeta.gate_result.critical_count} critical / {agentMeta.gate_result.warning_count} warning）</div>
                   {agentMeta.gate_result.issues.map((iss: any, i: number) => (
                     <div key={i} style={{ color: iss.severity === 'critical' ? '#e74c3c' : '#f39c12' }}>
-                      {iss.severity === 'critical' ? '🔴' : '🟡'} [{iss.gate}] {iss.message}
+                      {iss.severity === 'critical' ? <span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',background:'#e74c3c',marginRight:4}} /> : <span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',background:'#f39c12',marginRight:4}} />} [{iss.gate}] {iss.message}
                     </div>
                   ))}
                 </div>
@@ -623,7 +624,7 @@ export function ChapterPanel(props: {
                 onClick={() => setConfigDrawerOpen(true)}
                 disabled={aiCreating}
               >
-                <span>⚙️</span>
+                <span><Icon name="settings" size={14} /></span>
                 <span>创作配置</span>
                 {(selectedCount + (langStyles?.length || 0) + (useAgent ? 1 : 0)) > 0 && (
                   <span className="ai-config-trigger-badge">{selectedCount + (langStyles?.length || 0) + (useAgent ? 1 : 0)}</span>
@@ -640,7 +641,7 @@ export function ChapterPanel(props: {
             {isMobile && configDrawerOpen && (
               <div className="ai-config-drawer-header">
                 <span className="ai-config-drawer-header-title">创作配置</span>
-                <button className="ai-config-drawer-header-close" onClick={() => setConfigDrawerOpen(false)}>✕</button>
+                <button className="ai-config-drawer-header-close" onClick={() => setConfigDrawerOpen(false)}><Icon name="x" size={14} /></button>
               </div>
             )}
           {/* P0-1: 多Agent协同管线开关（紧邻协同技能包，两行相邻） */}
@@ -648,7 +649,7 @@ export function ChapterPanel(props: {
             <div className="agent-pipeline-toggle">
               <label>
                 <input type="checkbox" checked={!!useAgent} onChange={e => onToggleAgentPipeline(e.target.checked)} disabled={aiCreating} />
-                <span>🤖 多Agent协同管线</span>
+                <span><Icon name="bot" size={13} /> 多Agent协同管线</span>
                 <span className="text-muted">（计划→正文→去AI味→一致性）</span>
               </label>
             </div>
@@ -664,8 +665,8 @@ export function ChapterPanel(props: {
                   background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500,
                   textAlign: 'left', border: 'none', cursor: aiCreating ? 'not-allowed' : 'pointer',
                   opacity: aiCreating ? 0.5 : 1 }}>
-                <span style={{ fontSize: 10, flexShrink: 0, width: 12 }}>{langStyleExpanded ? '▼' : '▶'}</span>
-                <span>🎨 本章语言风格</span>
+                <span style={{ flexShrink: 0, width: 12, display: 'inline-flex' }}><Icon name={langStyleExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+                <span><Icon name="palette" size={13} /> 本章语言风格</span>
                 {(langStyles || []).length > 0 && (
                   <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                     minWidth: 20, height: 16, padding: '0 5px', borderRadius: 8,
@@ -705,14 +706,14 @@ export function ChapterPanel(props: {
           {/* P2-6：进度条移到顶部 toast 浮层，不占配置区空间 */}
           {onBatchCreate && aiCreateMode === 'write' && (
             <div className="batch-create-row" style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6, padding: '6px 8px', background: 'var(--bg-tertiary)', borderRadius: 6, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>📚 连续创作</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}><Icon name="book-open" size={12} /> 连续创作</span>
               <input type="number" min={1} max={10} value={batchCount ?? 3}
                 onChange={e => onBatchCountChange?.(Math.max(1, Math.min(10, Number(e.target.value) || 3)))}
                 disabled={!!batchCreating} style={{ width: 56, padding: '2px 6px', fontSize: 12, borderRadius: 4, border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>章</span>
               <button className="btn-primary-sm" onClick={() => onBatchCreate?.()} disabled={!!batchCreating || aiCreating}
                 style={{ padding: '4px 10px', fontSize: 12 }}>
-                {batchCreating ? `⏳ 生成中...` : '🚀 开始连续创作'}
+                {batchCreating ? <><Icon name="hourglass" size={12} /> 生成中...</> : <><Icon name="rocket" size={12} /> 开始连续创作</>}
               </button>
             </div>
           )}
@@ -724,8 +725,8 @@ export function ChapterPanel(props: {
                 onClick={() => setSkillExpanded(v => !v)}
                 disabled={aiCreating}
               >
-                <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-                <span>📦 协同技能包</span>
+                <span className="skill-pack-toggle-icon"><Icon name={skillExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+                <span><Icon name="package" size={13} /> 协同技能包</span>
                 {selectedCount > 0 && <span className="skill-pack-toggle-badge">{selectedCount}</span>}
                 <span className="skill-pack-toggle-hint">{skillExpanded ? '收起' : '展开'}</span>
               </button>
@@ -761,7 +762,7 @@ export function ChapterPanel(props: {
           <div className="ai-prompt-section ai-prompt-vertical">
             {hasResult && !aiCreating && (
               <div className="ai-prompt-tip">
-                💡 已生成正文，可输入修改意见（如"节奏太快请放慢""开头改紧张些"）后点发送，AI将基于本次结果调整；或点上方"🔄 重新生成"重跑
+                <Icon name="lightbulb" size={12} /> 已生成正文，可输入修改意见（如"节奏太快请放慢""开头改紧张些"）后点发送，AI将基于本次结果调整；或点上方"重新生成"重跑
               </div>
             )}
             <textarea
@@ -785,11 +786,11 @@ export function ChapterPanel(props: {
                   style={{ marginRight: 8, color: 'var(--accent)', borderColor: 'var(--accent)' }}
                   title="立即停止生成（已生成内容会保留）"
                 >
-                  ⏹ 停止
+                  <Icon name="stop" size={13} /> 停止
                 </button>
               )}
               <button className="btn-primary ai-prompt-submit" onClick={() => onExecuteAiCreate()} disabled={aiCreating || !aiUserPrompt.trim()}>
-                {aiCreating ? '⏳ 创作中...' : '🚀 发送'}
+                {aiCreating ? <><Icon name="hourglass" size={14} /> 创作中...</> : <><Icon name="rocket" size={14} /> 发送</>}
               </button>
             </div>
 
@@ -797,7 +798,7 @@ export function ChapterPanel(props: {
             {hasResult && !aiCreating && (
               <div className="ai-prompt-bottom-actions" style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end', alignItems: 'center', paddingTop: 10, borderTop: '1px solid var(--border-color)' }}>
                 <span style={{ fontSize: 11, color: 'var(--text-muted)', marginRight: 'auto' }}>
-                  💬 修改意见 → 发送重写，或直接重新生成/保存
+                  <Icon name="message-circle" size={12} /> 修改意见 → 发送重写，或直接重新生成/保存
                 </span>
                 <button
                   className="btn-primary"
@@ -805,7 +806,7 @@ export function ChapterPanel(props: {
                   title="基于上一次要求重新生成（覆盖当前结果）"
                   style={{ background: 'linear-gradient(135deg,#e67e22 0%,#d35400 100%)', boxShadow: '0 2px 8px rgba(211,84,0,0.35)' }}
                 >
-                  🔄 重新生成
+                  <Icon name="refresh" size={14} /> 重新生成
                 </button>
                 <button
                   className="btn-primary-sm"
@@ -814,7 +815,7 @@ export function ChapterPanel(props: {
                   title={savingChapter ? '保存中...' : '将本次生成内容保存到目标章节'}
                   style={savingChapter ? { opacity: 0.6, cursor: 'not-allowed' } : undefined}
                 >
-                  {savingChapter ? '⏳ 保存中...' : '✓ 保存到章节'}
+                  {savingChapter ? <><Icon name="hourglass" size={13} /> 保存中...</> : <><Icon name="check" size={13} /> 保存到章节</>}
                 </button>
               </div>
             )}
@@ -832,7 +833,7 @@ export function ChapterPanel(props: {
         <div className="chapter-detail-header">
           <button className="btn-ghost-sm" onClick={onBackToList}>← 返回列表</button>
           <div className="chapter-detail-actions">
-            <button className="btn-ghost-sm" style={{color:'#e74c3c'}} onClick={() => onDeleteChapter(activeChapter.id)}>🗑️</button>
+            <button className="btn-ghost-sm" style={{color:'#e74c3c'}} onClick={() => onDeleteChapter(activeChapter.id)}><Icon name="trash" size={16} /></button>
           </div>
         </div>
 
@@ -865,7 +866,7 @@ export function ChapterPanel(props: {
         <div className="chapter-edit-header">
           <button className="btn-ghost-sm" onClick={onCancelEdit}>取消</button>
           <button className="btn-primary-sm" onClick={onSaveChapter} disabled={chapterSaving}>
-            {chapterSaving ? '保存中...' : '💾 保存'}
+            {chapterSaving ? '保存中...' : <><Icon name="save" size={14} /> 保存</>}
           </button>
         </div>
 
@@ -907,12 +908,12 @@ export function ChapterPanel(props: {
     <div className="chapter-list-panel">
       <div className="chapter-list-header">
         <div className="chapter-header-row1">
-          <button className="btn-ghost-sm" onClick={() => onCreateVolume()} title="新建卷">📂 新卷</button>
+          <button className="btn-ghost-sm" onClick={() => onCreateVolume()} title="新建卷"><Icon name="folder" size={14} /> 新卷</button>
           <button className="btn-ghost-sm" onClick={handleRebinVolumes} disabled={rebinning || !bookId || chapters.filter(c => !c.is_volume).length === 0} title="按50章/卷自动重新分卷（清空现有卷结构后重建）">
-            {rebinning ? '⏳ 分卷中...' : '🔄 重新分卷'}
+            {rebinning ? <><Icon name="hourglass" size={13} /> 分卷中...</> : <><Icon name="refresh" size={13} /> 重新分卷</>}
           </button>
           <button className="btn-secondary-sm" onClick={() => importChaptersRef.current?.click()} disabled={importingChapters || !bookId} title="从 txt/md/docx/zip 文件追加章节，不影响已有章节">
-            {importingChapters ? '⏳ 导入中...' : '📥 导入章节'}
+            {importingChapters ? <><Icon name="hourglass" size={13} /> 导入中...</> : <><Icon name="inbox" size={13} /> 导入章节</>}
           </button>
           <button className="btn-secondary-sm" onClick={() => onCreateChapter()}>+ 新章节</button>
         </div>
@@ -923,7 +924,7 @@ export function ChapterPanel(props: {
             disabled={aiImportRecognizing || !bookId || chapters.filter(c => !c.is_volume).length === 0}
             title="根据导入作品的文件名/章节标题+内容样本，AI自动识别填入空的创作维度（不覆盖已有内容）"
           >
-            {aiImportRecognizing ? '⏳ 识别中...' : '🤖 AI识别填维度'}
+            {aiImportRecognizing ? <><Icon name="hourglass" size={13} /> 识别中...</> : <><Icon name="bot" size={13} /> AI识别填维度</>}
           </button>
           <button
             className="btn-primary-sm"
@@ -945,7 +946,7 @@ export function ChapterPanel(props: {
       {importChaptersError && <div className="error-msg" style={{padding:'0 12px'}}>{importChaptersError}</div>}
       {chapters.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">📖</div>
+          <div className="empty-icon"><Icon name="book" size={40} /></div>
           <p>还没有章节，点击"新章节"开始写作</p>
         </div>
       ) : (
@@ -983,7 +984,7 @@ export function ChapterPanel(props: {
                 onClick={() => volumes.length > 0 && toggleVolume('__orphan__')}
               >
                 {volumes.length > 0 && (
-                  <span className="chapter-volume-arrow">{expandedVolumes['__orphan__'] !== false ? '▼' : '▶'}</span>
+                  <span className="chapter-volume-arrow"><Icon name={expandedVolumes['__orphan__'] !== false ? 'chevron-down' : 'chevron-right'} size={12} /></span>
                 )}
                 {renamingVolId === '__orphan__' ? (
                   <input
@@ -1003,11 +1004,11 @@ export function ChapterPanel(props: {
                     placeholder="输入卷名..."
                   />
                 ) : (
-                  <span className="chapter-volume-title">📋 未分卷</span>
+                  <span className="chapter-volume-title"><Icon name="clipboard" size={14} /> 未分卷</span>
                 )}
                 <span className="chapter-volume-count">{orphanChapters.length}章</span>
-                <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); setRenamingVolId('__orphan__'); setRenameVolTitle(''); }} title="将未分卷转为命名卷">✏️</button>
-                <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onDeleteVolume('__orphan__'); }} title="删除全部未分卷章节" style={{color:'#e74c3c'}}>🗑️</button>
+                <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); setRenamingVolId('__orphan__'); setRenameVolTitle(''); }} title="将未分卷转为命名卷"><Icon name="edit" size={14} /></button>
+                <button className="btn-ghost-sm chapter-volume-add" onClick={e => { e.stopPropagation(); onDeleteVolume('__orphan__'); }} title="删除全部未分卷章节" style={{color:'#e74c3c'}}><Icon name="trash" size={16} /></button>
               </div>
               {(volumes.length === 0 || expandedVolumes['__orphan__'] !== false) && (
                 <div className="chapter-volume-children">

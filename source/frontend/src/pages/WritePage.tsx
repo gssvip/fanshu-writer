@@ -11,6 +11,7 @@ import { ConceptPanel } from './write/ConceptPanel';
 import { LocationsPanel } from './write/LocationsPanel';
 import { ForeshadowingPanel } from './write/ForeshadowingPanel';
 import { ChapterPanel } from './write/ChapterPanel';
+import Icon from '../components/Icon';
 import { DynamicMemoryPanel } from './write/DynamicMemoryPanel';
 import { SettingsCombinedPanel } from './write/SettingsCombinedPanel';
 import { OutlineCombinedPanel } from './write/OutlineCombinedPanel';
@@ -18,7 +19,6 @@ import { CharacterPanel } from './write/CharacterPanel';
 import { PlotPanel } from './write/PlotPanel';
 import { InventoryPanel } from './write/InventoryPanel';
 import { BibleEditPanel } from './write/BibleEditPanel';
-import Icon from '../components/Icon';
 
 export default function WritePage() {
   const navigate = useNavigate();
@@ -1568,7 +1568,7 @@ ${chapterEditContent}`;
           {books.map(b => (
             <div key={b.id} className="book-card" onClick={() => navigate(`/write?book=${b.id}`)}>
               <div className="book-card-cover">
-                {b.cover_path ? <img src={b.cover_path} alt="" /> : <div className="cover-placeholder">📖</div>}
+                {b.cover_path ? <img src={b.cover_path} alt="" /> : <div className="cover-placeholder"><Icon name="book" size={36} /></div>}
               </div>
               <div className="book-card-info">
                 <h3>{b.title}</h3>
@@ -1581,7 +1581,7 @@ ${chapterEditContent}`;
           ))}
           {books.length === 0 && (
             <div className="empty-state" style={{gridColumn:'1/-1'}}>
-              <div className="empty-icon">📚</div>
+              <div className="empty-icon"><Icon name="book-open" size={40} /></div>
               <p>还没有作品，去首页创建吧</p>
               <button className="btn-primary" onClick={() => navigate('/workbench')}>前往首页</button>
             </div>
@@ -1679,7 +1679,7 @@ ${chapterEditContent}`;
       {afAlert && (
         <div style={{ background: '#fff3cd', borderBottom: '1px solid #ffeaa7', padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, fontSize: 13 }}>
           <div>
-            <b>🛡️ 防遗忘检查提醒</b>：「{afAlert.title}」{typeof afAlert.score === 'number' ? `健康度 ${afAlert.score}` : ''}，AI 已生成修正草稿，请审阅后决定是否应用。
+            <b><Icon name="shield" size={14} /> 防遗忘检查提醒</b>：「{afAlert.title}」{typeof afAlert.score === 'number' ? `健康度 ${afAlert.score}` : ''}，AI 已生成修正草稿，请审阅后决定是否应用。
           </div>
           <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
             <button className="btn-primary-sm" onClick={() => setActiveTab('foreshadowing')}>立即查看</button>

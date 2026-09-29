@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import type { BookBible, Chapter, SkillPack } from '../../types';
 import { SkillPackGroupedList, extractSkillPrompt, safeText } from './write-shared';
+import Icon from '../../components/Icon';
 
 /* ===== 物资库面板（按卷） ===== */
 export function InventoryPanel(props: {
@@ -217,7 +218,7 @@ export function InventoryPanel(props: {
   };
 
   const CATEGORY_LABELS: Record<string, string> = {
-    '物品': '📦', '功法': '📖', '法宝': '⚔️', '境界': '⚡', '灵宠': '🐾', '领地': '🗺️', '资源': '💎', '其他': '🔹',
+    '物品': 'package', '功法': 'book', '法宝': 'sword', '境界': 'zap', '灵宠': 'paw', '领地': 'map', '资源': 'diamond', '其他': 'tag',
   };
 
   // AI协同创作模式
@@ -225,14 +226,14 @@ export function InventoryPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3>🎒 AI协同创作 · 物资库</h3>
+          <h3><Icon name="package" size={16} /> AI协同创作 · 物资库</h3>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillPacks.length > 0 && (
           <div className="skill-pack-collapsible">
             <button className="skill-pack-toggle" onClick={() => setSkillExpanded(v => !v)} disabled={aiAssisting}>
-              <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-              <span>📦 协同技能包</span>
+              <span className="skill-pack-toggle-icon"><Icon name={skillExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+              <span><Icon name="package" size={16} /> 协同技能包</span>
               {selectedSkillPackIds.length > 0 && <span className="skill-pack-toggle-badge">{selectedSkillPackIds.length}</span>}
             </button>
             {skillExpanded && (
@@ -248,7 +249,7 @@ export function InventoryPanel(props: {
         <div className="ai-prompt-vertical">
           <textarea className="input bible-ai-prompt-input" rows={6} value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} onKeyDown={handlePromptKeyDown} placeholder="例如：生成三卷的物资库，每卷包含主角和主要势力的法宝、功法、境界..." disabled={aiAssisting} autoFocus />
           <div className="ai-prompt-bottom-row">
-            <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? '⏳ 创作中...' : '🚀 发送'}</button>
+            <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? <><Icon name="hourglass" size={14} /> 创作中...</> : <><Icon name="rocket" size={14} /> 发送</>}</button>
           </div>
         </div>
         {aiError && <div className="error-msg" style={{marginTop:8}}>{aiError}</div>}
@@ -264,14 +265,14 @@ export function InventoryPanel(props: {
           {(
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
-                {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
+                {analyzingVol ? <><Icon name="bot" size={14} /> 识别中...</> : <><Icon name="search" size={14} /> AI识别</>}
               </button>
               {volSelectorOpen && (
                 <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
                   <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
-                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
+                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}><Icon name="book-open" size={14} /> 全部章节</button>
                   {displayVolumes.map((vol, idx) => (
-                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
+                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}><Icon name="book" size={14} /> {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
                   ))}
                   <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
                 </div>
@@ -282,7 +283,7 @@ export function InventoryPanel(props: {
       </div>
       {displayVolumes.length === 0 ? (
         <div className="bible-empty">
-          <span className="bible-empty-icon">🎒</span>
+          <span className="bible-empty-icon"><Icon name="package" size={40} /></span>
           <p>暂无物资信息</p>
           <p className="text-muted">先在剧情维度创建分卷，或用顶部 AI 智驾 生成物资库</p>
           <div className="bible-empty-actions">
@@ -293,15 +294,15 @@ export function InventoryPanel(props: {
           {displayVolumes.map((vol, idx) => (
             <div key={idx} className="plot-volume-card">
               <div className="plot-volume-header" onClick={() => toggleVol(idx)} style={{cursor:'pointer'}}>
-                <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVols.has(idx) ? '▶' : '▼'}</span>
+                <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={collapsedVols.has(idx) ? 'chevron-right' : 'chevron-down'} size={12} /></span>
                 <h4>{vol.volume || `第${idx + 1}卷`}</h4>
                 {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                 <span className="text-muted" style={{fontSize:12}}>{(vol.items || []).length}项物资</span>
                 <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                  {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
-                  <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolInventory(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷物资数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
+                  {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12,display:'inline-flex',alignItems:'center',gap:4}}><Icon name="bot" size={13} /> 识别中...</span>}
+                  <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolInventory(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷物资数据（JSON）'}>{editingVolIdx === idx ? '取消' : <Icon name="edit" size={14} />}</button>
                   {(vol.items || []).length > 0 && (
-                    <button className="btn-ghost-sm" onClick={() => deleteVolumeInventory(idx)} style={{color:'#e74c3c'}} title="删除此卷物资数据">🗑️</button>
+                    <button className="btn-ghost-sm" onClick={() => deleteVolumeInventory(idx)} style={{color:'#e74c3c'}} title="删除此卷物资数据"><Icon name="trash" size={16} /></button>
                   )}
                 </div>
               </div>
@@ -312,12 +313,12 @@ export function InventoryPanel(props: {
                       <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑本卷物资数据（JSON 格式）：items（物资清单）、realms（境界变化）。</p>
                       <textarea className="input" value={editVolJson} onChange={e => setEditVolJson(e.target.value)} rows={16} style={{fontFamily:'monospace',fontSize:12}} />
                       <div style={{display:'flex',gap:6,marginTop:8}}>
-                        <button className="btn-primary-sm" onClick={() => saveEditVolInventory(idx)}>💾 保存</button>
+                        <button className="btn-primary-sm" onClick={() => saveEditVolInventory(idx)}><Icon name="save" size={14} /> 保存</button>
                         <button className="btn-ghost-sm" onClick={() => { setEditingVolIdx(null); setEditVolJson(''); }}>取消</button>
                       </div>
                     </div>
                   ) : (!vol.items || vol.items.length === 0) && (!vol.realms || vol.realms.length === 0) ? (
-                    <p className="text-muted" style={{fontSize:13}}>暂无物资数据，点击「🔍 AI识别」选择此卷进行识别</p>
+                    <p className="text-muted" style={{fontSize:13}}>暂无物资数据，点击「AI识别」选择此卷进行识别</p>
                   ) : (
                     <>
                       {vol.items && vol.items.length > 0 && (
@@ -326,7 +327,7 @@ export function InventoryPanel(props: {
                           <ul>
                             {vol.items.map((item: any, i: number) => (
                               <li key={i}>
-                                <span style={{color:'#5b8def',fontWeight:600}}>{CATEGORY_LABELS[item.category] || '🔹'} {safeText(item.name)}</span>
+                                <span style={{color:'#5b8def',fontWeight:600,display:'inline-flex',alignItems:'center',gap:4}}><Icon name={(CATEGORY_LABELS[item.category] || 'tag') as any} size={14} /> {safeText(item.name)}</span>
                                 {item.owner && <span style={{color:'#888'}}> · 持有：{safeText(item.owner)}</span>}
                                 {item.category && <span style={{color:'#27ae60'}}> · {safeText(item.category)}</span>}
                                 {item.status && <span style={{color:'#e87d3e'}}> · {safeText(item.status)}</span>}

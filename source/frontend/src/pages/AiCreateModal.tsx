@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import type { Book, BookBible, SkillPack, AISession, AIMessage } from '../types';
+import Icon from '../components/Icon';
 
 // 维度 field → AI 创作 prompt（与 WritePage 内 FIELD_AI_PROMPTS 保持一致）
 // 【P1修复】补充明确的「输出格式铁律」与平台 bible 字段格式对齐，避免模型自由发挥导致前后不搭
@@ -52,14 +53,14 @@ const DIMENSION_SKILL_KEYS: Record<string, string[]> = {
 // 全部可创作的维度清单（全局模式选择用）
 // 物资库和动态文件不在此列：它们根据章节正文提取，不走 AI 总创作
 const ALL_DIMENSIONS = [
-  { field: 'concept', label: '构思', icon: '💡' },
-  { field: 'key_rules', label: '设定', icon: '⚙️' },
-  { field: 'worldbuilding', label: '世界观', icon: '🌍' },
-  { field: 'plot_design', label: '大纲', icon: '📋' },
-  { field: 'character_profiles', label: '人物', icon: '👤' },
-  { field: 'timeline', label: '剧情', icon: '📅' },
-  { field: 'foreshadowing', label: '伏笔', icon: '🔮' },
-  { field: 'locations', label: '地点', icon: '🗺️' },
+  { field: 'concept', label: '构思', icon: 'lightbulb' },
+  { field: 'key_rules', label: '设定', icon: 'settings' },
+  { field: 'worldbuilding', label: '世界观', icon: 'globe' },
+  { field: 'plot_design', label: '大纲', icon: 'clipboard' },
+  { field: 'character_profiles', label: '人物', icon: 'user' },
+  { field: 'timeline', label: '剧情', icon: 'calendar' },
+  { field: 'foreshadowing', label: '伏笔', icon: 'crystal' },
+  { field: 'locations', label: '地点', icon: 'map' },
 ];
 
 const DIM_LABEL: Record<string, string> = Object.fromEntries(ALL_DIMENSIONS.map(d => [d.field, d.label]));
@@ -549,9 +550,9 @@ export default function AiCreateModal({
         {/* 顶部 Header */}
         <div className="master-create-modal-header">
           <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>
-            ✨ {isGlobal ? 'AI 总创作' : `AI 创作·${DIM_LABEL[dimension || ''] || ''}`}
+            <Icon name="sparkles" size={17} /> {isGlobal ? 'AI 总创作' : `AI 创作·${DIM_LABEL[dimension || ''] || ''}`}
           </h2>
-          <button className="btn-ghost-sm" onClick={handleClose} disabled={phase === 'streaming'} title="关闭">✕</button>
+          <button className="btn-ghost-sm" onClick={handleClose} disabled={phase === 'streaming'} title="关闭"><Icon name="x" size={14} /></button>
         </div>
 
         {/* 主体 */}
@@ -570,7 +571,7 @@ export default function AiCreateModal({
                     style={{ fontSize: 12 }}
                     onClick={() => toggleDim(d.field)}
                   >
-                    {d.icon} {d.label}
+                    <Icon name={d.icon as any} size={14} /> {d.label}
                   </button>
                 ))}
               </div>
@@ -599,7 +600,7 @@ export default function AiCreateModal({
                     onClick={() => setSkillExpanded(v => !v)}
                   >
                     <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-                    <span>📦 协同技能包（构思类）</span>
+                    <span><Icon name="package" size={14} /> 协同技能包（构思类）</span>
                     {selectedPacks.length > 0 && <span className="skill-pack-toggle-badge">{selectedPacks.length}</span>}
                     <span className="skill-pack-toggle-hint">{skillExpanded ? '收起' : '展开'}</span>
                   </button>
@@ -643,7 +644,7 @@ export default function AiCreateModal({
                   onClick={handleStart}
                   disabled={selectedDims.length === 0}
                 >
-                  🚀 开始生成
+                  <Icon name="rocket" size={14} /> 开始生成
                 </button>
               </div>
             </>
@@ -668,12 +669,12 @@ export default function AiCreateModal({
                     >
                       <div style={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         {canCollapse && <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{isCollapsed ? '▶' : '▼'}</span>}
-                        {dimMeta?.icon || '📝'} {DIM_LABEL[dim] || dim}
-                        {isCurrent && <span style={{ color: 'var(--accent)', marginLeft: 4, fontSize: 11 }}>⏳ 生成中…</span>}
+                        <Icon name={(dimMeta?.icon || 'edit') as any} size={13} /> {DIM_LABEL[dim] || dim}
+                        {isCurrent && <span style={{ color: 'var(--accent)', marginLeft: 4, fontSize: 11 }}><Icon name="hourglass" size={11} /> 生成中…</span>}
                         {hasContent && <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>{content.length} 字</span>}
                         {warnings[dim] && (
                           <span style={{ color: '#e67e22', fontSize: 11, fontWeight: 400, marginLeft: 4 }} title={warnings[dim]}>
-                            ⚠️ {warnings[dim].slice(0, 40)}{warnings[dim].length > 40 ? '…' : ''}
+                            <Icon name="warning" size={11} /> {warnings[dim].slice(0, 40)}{warnings[dim].length > 40 ? '…' : ''}
                           </span>
                         )}
                       </div>
@@ -685,7 +686,7 @@ export default function AiCreateModal({
                             title="只重新生成此维度（其他维度已生成内容会作为上下文注入，保持一致）"
                             style={{ fontSize: 11, padding: '2px 8px' }}
                           >
-                            🔄 重做
+                            <Icon name="refresh" size={13} /> 重做
                           </button>
                         </div>
                       )}
@@ -725,7 +726,7 @@ export default function AiCreateModal({
           {/* 修改意见（完成后显示） */}
           {phase === 'done' && (
             <div style={{ marginTop: 14, padding: 12, background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>💬 修改意见（可选）：</div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}><Icon name="message-circle" size={13} /> 修改意见（可选）：</div>
               <textarea
                 className="input"
                 placeholder="对生成结果有什么不满意？写下修改意见，点「重新生成」会带上意见重新生成。例如：\n- 主角性格太冷漠，加些热血\n- 伏笔太多，精简到3条\n- 世界观再详细些"
@@ -751,7 +752,7 @@ export default function AiCreateModal({
               title="保留已生成的维度内容，基于它们生成新勾选的维度（例如已生成构思，再基于构思生成人物/大纲）"
               style={{ background: 'linear-gradient(135deg,#27ae60 0%,#1e8449 100%)', color: '#fff', border: 'none' }}
             >
-              ➕ 追加维度
+              <Icon name="plus" size={14} /> 追加维度
             </button>
             <button
               className="btn-primary"
@@ -760,14 +761,14 @@ export default function AiCreateModal({
               title={modification.trim() ? '带上修改意见重新生成' : '请先填写修改意见'}
               style={!modification.trim() ? { opacity: 0.5, background: 'linear-gradient(135deg,#e67e22 0%,#d35400 100%)' } : { background: 'linear-gradient(135deg,#e67e22 0%,#d35400 100%)', boxShadow: '0 2px 8px rgba(211,84,0,0.35)' }}
             >
-              🔄 重新生成
+              <Icon name="refresh" size={14} /> 重新生成
             </button>
             <button
               className="btn-primary-sm"
               onClick={handleConfirm}
               disabled={applying || !hasOutput}
             >
-              {applying ? '⏳ 填入中…' : '✅ 确定·填入维度'}
+              {applying ? <><Icon name="hourglass" size={13} /> 填入中…</> : <><Icon name="check" size={13} /> 确定·填入维度</>}
             </button>
           </div>
         )}

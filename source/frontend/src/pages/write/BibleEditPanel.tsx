@@ -51,8 +51,8 @@ export function BibleEditPanel(props: {
         onClick={() => setSkillExpanded(v => !v)}
         disabled={aiAssisting}
       >
-        <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-        <span>📦 协同技能包</span>
+        <span className="skill-pack-toggle-icon"><Icon name={skillExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+        <span><Icon name="package" size={16} /> 协同技能包</span>
         {selectedCount > 0 && <span className="skill-pack-toggle-badge">{selectedCount}</span>}
         <span className="skill-pack-toggle-hint">{skillExpanded ? '收起' : '展开'}</span>
       </button>
@@ -114,7 +114,7 @@ export function BibleEditPanel(props: {
           />
           <div className="ai-prompt-bottom-row">
             <button className="btn-primary ai-prompt-submit" onClick={onExecuteAi} disabled={aiAssisting || !bibleAiPrompt.trim()}>
-              {aiAssisting ? '⏳ 创作中...' : '🚀 发送'}
+              {aiAssisting ? <><Icon name="hourglass" size={14} /> 创作中...</> : <><Icon name="rocket" size={14} /> 发送</>}
             </button>
           </div>
         </div>
@@ -136,17 +136,17 @@ export function BibleEditPanel(props: {
           {!editing ? (
             <>
               <button className="btn-ghost-sm" onClick={onAnalyzeDimension} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别此维度内容' : '需要先创建章节才能AI识别'}>
-                {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
+                {dimAnalyzing ? <><Icon name="bot" size={14} /> 识别中...</> : <><Icon name="search" size={14} /> AI识别</>}
               </button>
               {content && (
-                <button className="btn-ghost-sm" onClick={onDelete} style={{color:'#e74c3c'}} title="清空此维度内容">🗑️</button>
+                <button className="btn-ghost-sm" onClick={onDelete} style={{color:'#e74c3c'}} title="清空此维度内容"><Icon name="trash" size={16} /></button>
               )}
             </>
           ) : (
             <>
               <button className="btn-ghost-sm" onClick={onCancelEdit}>取消</button>
               <button className="btn-primary-sm" onClick={onSaveEdit} disabled={saving}>
-                {saving ? '保存中...' : '💾 保存'}
+                {saving ? '保存中...' : <><Icon name="save" size={14} /> 保存</>}
               </button>
             </>
           )}
@@ -165,7 +165,7 @@ export function BibleEditPanel(props: {
           />
           <div className="bible-edit-footer">
             <span className="bible-edit-count">{editValue.length}字符</span>
-            <span className="bible-edit-hint">💡 {tab.placeholder}</span>
+            <span className="bible-edit-hint"><Icon name="bulb" size={14} /> {tab.placeholder}</span>
           </div>
         </>
       ) : content ? (
@@ -181,19 +181,19 @@ export function BibleEditPanel(props: {
             </div>
           </div>
           <button className="bible-tips-toggle" onClick={() => setShowTips(v => !v)}>
-            {showTips ? '▼ 收起提示' : '▶ 创作提示'}
+            {showTips ? <><Icon name="chevron-down" size={12} /> 收起提示</> : <><Icon name="chevron-right" size={12} /> 创作提示</>}
           </button>
           {showTips && (
             <div className="bible-tips-box">
-              <p>✨ 点击「AI创作」可让AI根据构思和设定自动生成{tab.label}内容</p>
-              <p>🔍 点击「AI识别」可从已有章节中提取{tab.label}信息（无章节时自动从设定/大纲/剧情维度提取）</p>
-              <p>✏️ 点击内容区域可直接编辑</p>
-              {selectedSkillPacks.length > 0 && <p>📦 已选{selectedCount}个技能包协同创作</p>}
+              <p><Icon name="sparkles" size={14} /> 点击「AI创作」可让AI根据构思和设定自动生成{tab.label}内容</p>
+              <p><Icon name="search" size={14} /> 点击「AI识别」可从已有章节中提取{tab.label}信息（无章节时自动从设定/大纲/剧情维度提取）</p>
+              <p><Icon name="edit" size={14} /> 点击内容区域可直接编辑</p>
+              {selectedSkillPacks.length > 0 && <p><Icon name="package" size={14} /> 已选{selectedCount}个技能包协同创作</p>}
               <p style={{marginTop:6,color:'var(--accent)',fontSize:12,borderTop:'1px dashed var(--border-color)',paddingTop:6}}>
-                🔗 维度协同工作流（参考：番茄金番作者 / 长篇小说创作全流程 / 长篇小说防遗忘系统）：<br/>
+                <Icon name="link" size={14} /> 维度协同工作流（参考：番茄金番作者 / 长篇小说创作全流程 / 长篇小说防遗忘系统）：<br/>
                 构思→设定→大纲→剧情→人物 相互反哺；大纲⇄剧情双向（提取各卷/反生成总纲）；<br/>
                 各维度AI识别会读取其他维度作"已确认"上下文保持一致；<br/>
-                🛡️ 伏笔面板「防遗忘检查」定期扫描一致性/伏笔/叙事债务，防长篇遗忘。
+                <Icon name="shield" size={14} /> 伏笔面板「防遗忘检查」定期扫描一致性/伏笔/叙事债务，防长篇遗忘。
               </p>
             </div>
           )}
@@ -205,10 +205,10 @@ export function BibleEditPanel(props: {
           <p className="text-muted">点击此处编辑，或使用上方按钮AI创作</p>
           <div className="bible-empty-actions">
             <button className="btn-primary-sm" onClick={(e) => { e.stopPropagation(); onOpenAiCreate(tab.field); }} disabled={aiAssisting}>
-              {aiAssisting ? '⏳ 生成中...' : '✨ AI创作'}
+              {aiAssisting ? <><Icon name="hourglass" size={14} /> 生成中...</> : <><Icon name="sparkles" size={14} /> AI创作</>}
             </button>
             <button className="btn-ghost-sm" onClick={(e) => { e.stopPropagation(); onAnalyzeDimension(); }} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别' : '需要先创建章节才能AI识别'}>
-              {dimAnalyzing ? '⏳ 识别中...' : '🔍 AI识别'}
+              {dimAnalyzing ? <><Icon name="hourglass" size={14} /> 识别中...</> : <><Icon name="search" size={14} /> AI识别</>}
             </button>
           </div>
         </div>

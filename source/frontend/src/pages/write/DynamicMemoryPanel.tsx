@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import type { BookBible, Chapter, DynamicReport, SkillPack } from '../../types';
 import { collapseNewlines, safeText } from './write-shared';
+import Icon from '../../components/Icon';
 
 /* ===== 动态文件面板（防遗忘摘要系统） ===== */
 // 动态文件报告缓存（按 bookId），避免切换 tab 重新挂载时重复请求导致打开慢
@@ -199,7 +200,7 @@ export function DynamicMemoryPanel(props: {
   }
 
   // 【dyn5】动态报告已改为全自动：写满每5章 / 导入作品后按顺序自动生成，无需手动触发。
-  // 保留的唯一 AI 入口是「📝 摘要」（按卷动态摘要写入 dynamic_volumes，属另一套数据）。
+  // 保留的唯一 AI 入口是「摘要」（按卷动态摘要写入 dynamic_volumes，属另一套数据）。
 
   // P0-4: AI识别指定卷的动态摘要（人物/事件/时间/地点/势力/伏笔/境界/关系），写入 dynamic_volumes
   async function handleAnalyzeDynamicVolume(volId: string, volTitle: string) {
@@ -411,7 +412,7 @@ export function DynamicMemoryPanel(props: {
             disabled={batchDeleting || reports.length === 0}
             title="批量选择并删除报告"
           >
-            {batchMode ? '✕ 退出批量' : '☑ 批量管理'}
+            {batchMode ? <><Icon name="x" size={14} /> 退出批量</> : <><Icon name="check-square" size={14} /> 批量管理</>}
           </button>
         </div>
       </div>
@@ -419,10 +420,10 @@ export function DynamicMemoryPanel(props: {
       {/* 章节进度指示：只保留章数和报告数，移除 1-5/6-10 等 chips（下方已有可编辑报告目录） */}
       <div className="dm-progress-bar">
         <div className="dm-progress-info">
-          <span>📊 已有 {chapterCount} 章 · {reports.length} 份报告</span>
+          <span><Icon name="bar-chart" size={15} /> 已有 {chapterCount} 章 · {reports.length} 份报告</span>
           {chapterCount > 0 && (
             <span className="dm-progress-next">
-              ⚡ 每满5章自动生成一份（导入作品同样按顺序自动补齐），下次：第{(Math.floor(chapterCount / 5) + 1) * 5}章
+              <Icon name="zap" size={13} /> 每满5章自动生成一份（导入作品同样按顺序自动补齐），下次：第{(Math.floor(chapterCount / 5) + 1) * 5}章
             </span>
           )}
         </div>
@@ -446,16 +447,16 @@ export function DynamicMemoryPanel(props: {
             return (
               <div key={idx} className="plot-volume-card">
                 <div className="plot-volume-header" onClick={() => toggleVolDyn(idx)} style={{cursor:'pointer'}}>
-                  <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVolDyn.has(idx) ? '▶' : '▼'}</span>
+                  <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={collapsedVolDyn.has(idx) ? 'chevron-right' : 'chevron-down'} size={12} /></span>
                   <h4>{vol.volume || `第${idx + 1}卷`}</h4>
                   {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                   {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
                   <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                    {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 摘要识别中...</span>}
-                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeDynamicVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={!!analyzingVol} title="AI识别本卷动态摘要（人物/事件/伏笔/关系）写入按卷动态文件">📝 摘要</button>
-                    <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolDynamic(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷动态文件数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
+                    {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12,display:'inline-flex',alignItems:'center',gap:4}}><Icon name="bot" size={13} /> 摘要识别中...</span>}
+                    <button className="btn-ghost-sm" onClick={() => handleAnalyzeDynamicVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`)} disabled={!!analyzingVol} title="AI识别本卷动态摘要（人物/事件/伏笔/关系）写入按卷动态文件"><Icon name="notepad" size={14} /> 摘要</button>
+                    <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolDynamic(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷动态文件数据（JSON）'}>{editingVolIdx === idx ? '取消' : <Icon name="edit" size={14} />}</button>
                     {hasData && (
-                      <button className="btn-ghost-sm" onClick={() => deleteVolumeDynamic(idx)} style={{color:'#e74c3c'}} title="删除此卷动态文件数据">🗑️</button>
+                      <button className="btn-ghost-sm" onClick={() => deleteVolumeDynamic(idx)} style={{color:'#e74c3c'}} title="删除此卷动态文件数据"><Icon name="trash" size={16} /></button>
                     )}
                   </div>
                 </div>
@@ -466,12 +467,12 @@ export function DynamicMemoryPanel(props: {
                         <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑本卷动态文件数据（JSON 格式）：summary/characters/events/timeline/locations/factions/foreshadowing/realms/relationships。</p>
                         <textarea className="input" value={editVolJson} onChange={e => setEditVolJson(e.target.value)} rows={18} style={{fontFamily:'monospace',fontSize:12}} />
                         <div style={{display:'flex',gap:6,marginTop:8}}>
-                          <button className="btn-primary-sm" onClick={() => saveEditVolDynamic(idx)}>💾 保存</button>
+                          <button className="btn-primary-sm" onClick={() => saveEditVolDynamic(idx)}><Icon name="save" size={14} /> 保存</button>
                           <button className="btn-ghost-sm" onClick={() => { setEditingVolIdx(null); setEditVolJson(''); }}>取消</button>
                         </div>
                       </div>
                     ) : !hasData ? (
-                      <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据：点击「📝 摘要」AI识别本卷综合摘要；动态报告每满5章自动生成，无需手动触发。</p>
+                      <p className="text-muted" style={{fontSize:13}}>暂无动态文件数据：点击「摘要」AI识别本卷综合摘要；动态报告每满5章自动生成，无需手动触发。</p>
                     ) : (
                       <div className="plot-events">
                         {d.summary && <p><b>综合摘要：</b>{safeText(d.summary)}</p>}
@@ -490,7 +491,7 @@ export function DynamicMemoryPanel(props: {
                     <div style={{marginTop:12}}>
                       {volReports.length === 0 ? (
                         <p className="text-muted" style={{fontSize:12, margin:0}}>
-                          🗒️ 本卷暂无动态报告：写满5章的整数倍后自动生成（如第5、10、15章…），结果显示在此。
+                          <Icon name="notepad" size={13} /> 本卷暂无动态报告：写满5章的整数倍后自动生成（如第5、10、15章…），结果显示在此。
                         </p>
                       ) : (
                         <div className="dm-volume-group" style={{borderTop:'1px solid var(--border)', paddingTop:8}}>
@@ -499,8 +500,8 @@ export function DynamicMemoryPanel(props: {
                             onClick={e => { e.stopPropagation(); toggleReportVol(groupKey); }}
                             style={{cursor:'pointer',display:'flex',alignItems:'center',gap:6,padding:'4px 0',marginBottom:6,userSelect:'none'}}
                           >
-                            <span style={{fontSize:10,color:'var(--text-muted)'}}>{isReportCollapsed ? '▶' : '▼'}</span>
-                            <span style={{fontWeight:600,fontSize:13}}>📄 本卷动态报告（{volReports.length}份）</span>
+                            <span style={{color:'var(--text-muted)',display:'inline-flex'}}><Icon name={isReportCollapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
+                            <span style={{fontWeight:600,fontSize:13}}><Icon name="file-text" size={14} /> 本卷动态报告（{volReports.length}份）</span>
                           </div>
                           {!isReportCollapsed && (
                             <div className="dm-tab-bar" style={{marginBottom:4}}>
@@ -531,7 +532,7 @@ export function DynamicMemoryPanel(props: {
       {/* 报告区域 */}
       {reports.length === 0 ? (
         <div className="bible-empty">
-          <span className="bible-empty-icon">🗂️</span>
+          <span className="bible-empty-icon"><Icon name="folder-open" size={40} /></span>
           <p>暂无动态报告</p>
           <p className="text-muted">
             {chapterCount >= 5
@@ -556,7 +557,7 @@ export function DynamicMemoryPanel(props: {
                   onClick={handleBatchDelete}
                   disabled={batchDeleting || checkedIds.size === 0}
                 >
-                  {batchDeleting ? '⏳ 删除中...' : `🗑️ 删除选中(${checkedIds.size})`}
+                  {batchDeleting ? <><Icon name="hourglass" size={14} /> 删除中...</> : <><Icon name="trash" size={14} /> 删除选中({checkedIds.size})</>}
                 </button>
               </div>
               {/* 带复选框的报告标签栏 - 按卷分类 */}
@@ -570,8 +571,8 @@ export function DynamicMemoryPanel(props: {
                         onClick={() => toggleReportVol(group.key)}
                         style={{cursor:'pointer',display:'flex',alignItems:'center',gap:6,padding:'6px 4px',borderBottom:'1px solid var(--border)',marginBottom:6,userSelect:'none'}}
                       >
-                        <span style={{fontSize:10,color:'var(--text-muted)'}}>{isCollapsed ? '▶' : '▼'}</span>
-                        <span style={{fontWeight:600,fontSize:14}}>📖 {group.title}</span>
+                        <span style={{color:'var(--text-muted)',display:'inline-flex'}}><Icon name={isCollapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
+                        <span style={{fontWeight:600,fontSize:14}}><Icon name="book" size={15} /> {group.title}</span>
                         <span className="text-muted" style={{fontSize:12}}>{group.reports.length}份</span>
                       </div>
                       {!isCollapsed && (
@@ -615,8 +616,8 @@ export function DynamicMemoryPanel(props: {
                           onClick={() => toggleReportVol(group.key)}
                           style={{cursor:'pointer',display:'flex',alignItems:'center',gap:6,padding:'6px 4px',borderBottom:'1px solid var(--border)',marginBottom:6,userSelect:'none'}}
                         >
-                          <span style={{fontSize:10,color:'var(--text-muted)'}}>{isCollapsed ? '▶' : '▼'}</span>
-                          <span style={{fontWeight:600,fontSize:14}}>📖 {group.title}</span>
+                          <span style={{color:'var(--text-muted)',display:'inline-flex'}}><Icon name={isCollapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
+                          <span style={{fontWeight:600,fontSize:14}}><Icon name="book" size={15} /> {group.title}</span>
                           <span className="text-muted" style={{fontSize:12}}>{group.reports.length}份</span>
                         </div>
                         {!isCollapsed && (
@@ -645,7 +646,7 @@ export function DynamicMemoryPanel(props: {
                 <div className={`dm-editor-panel ${editorCollapsed ? 'collapsed' : ''}`}>
               <div className="dm-editor-panel-header" onClick={() => setEditorCollapsed(!editorCollapsed)}>
                 <div className="dm-editor-panel-title">
-                  <span className="dm-editor-toggle">{editorCollapsed ? '▶' : '▼'}</span>
+                  <span className="dm-editor-toggle"><Icon name={editorCollapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
                   {editMode ? (
                     <input
                       className="dm-report-title-input"
@@ -655,7 +656,7 @@ export function DynamicMemoryPanel(props: {
                     />
                   ) : (
                     <>
-                      <span className="dm-report-icon">📄</span>
+                      <span className="dm-report-icon"><Icon name="file-text" size={16} /></span>
                       <span className="dm-editor-panel-name">{selectedReport.title}</span>
                       {selectedReport.auto_generated && <span className="dm-badge dm-badge-auto">自动</span>}
                     </>
@@ -666,16 +667,16 @@ export function DynamicMemoryPanel(props: {
                     <>
                       <button className="btn-ghost-sm" onClick={() => setEditMode(false)} disabled={saving}>取消</button>
                       <button className="btn-primary-sm" onClick={saveEdit} disabled={saving}>
-                        {saving ? '保存中...' : '💾 保存'}
+                        {saving ? '保存中...' : <><Icon name="save" size={14} /> 保存</>}
                       </button>
                     </>
                   ) : (
                     <>
                       <button className="btn-ghost-sm" onClick={() => regenerate(selectedReport)} disabled={generating} title="AI重新生成">
-                        {generating ? '⏳' : '🔄'}
+                        {generating ? <Icon name="hourglass" size={16} /> : <Icon name="refresh" size={16} />}
                       </button>
-                      <button className="btn-ghost-sm" onClick={startEditSelected} title="编辑">✏️</button>
-                      <button className="btn-ghost-sm dm-btn-danger" onClick={() => handleDelete(selectedReport)} title="删除">🗑️</button>
+                      <button className="btn-ghost-sm" onClick={startEditSelected} title="编辑"><Icon name="edit" size={16} /></button>
+                      <button className="btn-ghost-sm dm-btn-danger" onClick={() => handleDelete(selectedReport)} title="删除"><Icon name="trash" size={16} /></button>
                     </>
                   )}
                 </div>

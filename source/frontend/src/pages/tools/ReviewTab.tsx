@@ -1,6 +1,7 @@
 import { useState, useContext } from 'react';
 import { api } from '../../api';
 import { AuthContext } from '../../App';
+import Icon from '../../components/Icon';
 import type { ReviewResult } from '../../types';
 
 const REVIEW_LABELS: Record<string, string> = {
@@ -29,7 +30,7 @@ export default function ReviewTab({ selectedBookId }: { selectedBookId: string }
 
   return (
     <div className="tool-panel">
-      <h3>🔍 AI 责编审稿</h3>
+      <h3 style={{display:'inline-flex',alignItems:'center',gap:6}}><Icon name="search" size={18} /> AI 责编审稿</h3>
       <button className="btn-primary" onClick={handleReview} disabled={!selectedBookId || loading}>
         {loading ? '审稿中...' : '开始审稿'}
       </button>

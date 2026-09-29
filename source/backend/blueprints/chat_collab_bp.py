@@ -4447,15 +4447,15 @@ SMART_DIMENSIONS = [
     #             多方案只会诱导 LLM 各换一套体系，选定后与已定构思打架=拼凑感根源），
     #             直接基于锁定上游生成 + 不满意整体重生成（reroll）；
     #             依赖未完善时保留多方案作为探索模式兜底
-    {'key': 'concept',            'label': '构思',       'field': 'concept',            'card': 'SAVE_CONCEPT',      'icon': '💡', 'hint': '一句话讲清故事核：主角是谁、要什么、最大的阻碍', 'mode': 'suggest'},
-    {'key': 'key_rules',          'label': '设定',       'field': 'key_rules',          'card': 'SAVE_RULE',         'icon': '⚙️', 'hint': '能力体系/修炼体系/科技树，硬规则（构思已定金手指方向时直接生成）', 'mode': 'direct'},
-    {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': '🌍', 'hint': '故事发生的世界，独特规则或设定（生成中会提取世界地图架构到“地图”维度）', 'mode': 'direct'},
-    {'key': 'plot_design',        'label': '大纲',       'field': 'plot_design',        'card': 'SAVE_OUTLINE_NODE', 'icon': '📋', 'hint': '主线走向，五幕式总纲（构思已定故事核、卷数已锁定时直接生成）', 'mode': 'direct'},
-    {'key': 'character_profiles', 'label': '人物',       'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': '👤', 'hint': '主角和核心配角的动机、性格、关系网（大纲已定各卷人物方向时直接生成）', 'mode': 'direct'},
-    {'key': 'timeline',           'label': '剧情',       'field': 'timeline',           'card': 'SAVE_PLOT',         'icon': '📖', 'hint': '关键剧情节点的时间顺序（大纲已定每卷目标时直接生成）', 'mode': 'direct'},
-    {'key': 'foreshadowing',      'label': '伏笔',       'field': 'foreshadowing',      'card': 'SAVE_FORESHADOW',   'icon': '🔮', 'hint': '长线伏笔的埋设与回收计划（基于大纲/剧情派生，直接生成）', 'mode': 'direct'},
-    {'key': 'locations',          'label': '地图',       'field': 'locations',          'card': 'SAVE_LOCATION',     'icon': '🗺️', 'hint': '故事中的地点、势力分布、世界地图架构（基于世界观派生，直接生成）', 'mode': 'direct'},
-    {'key': 'style_guide',        'label': '文风',       'field': 'style_guide',        'card': 'APPLY_STYLE',       'icon': '🎨', 'hint': '叙事风格、语言调性、节奏把控', 'mode': 'suggest'},
+    {'key': 'concept',            'label': '构思',       'field': 'concept',            'card': 'SAVE_CONCEPT',      'icon': 'bulb', 'hint': '一句话讲清故事核：主角是谁、要什么、最大的阻碍', 'mode': 'suggest'},
+    {'key': 'key_rules',          'label': '设定',       'field': 'key_rules',          'card': 'SAVE_RULE',         'icon': 'settings', 'hint': '能力体系/修炼体系/科技树，硬规则（构思已定金手指方向时直接生成）', 'mode': 'direct'},
+    {'key': 'worldbuilding',      'label': '世界观',     'field': 'worldbuilding',      'card': 'SAVE_WORLDSETTING', 'icon': 'globe', 'hint': '故事发生的世界，独特规则或设定（生成中会提取世界地图架构到“地图”维度）', 'mode': 'direct'},
+    {'key': 'plot_design',        'label': '大纲',       'field': 'plot_design',        'card': 'SAVE_OUTLINE_NODE', 'icon': 'clipboard', 'hint': '主线走向，五幕式总纲（构思已定故事核、卷数已锁定时直接生成）', 'mode': 'direct'},
+    {'key': 'character_profiles', 'label': '人物',       'field': 'character_profiles', 'card': 'SAVE_CHARACTER',    'icon': 'user', 'hint': '主角和核心配角的动机、性格、关系网（大纲已定各卷人物方向时直接生成）', 'mode': 'direct'},
+    {'key': 'timeline',           'label': '剧情',       'field': 'timeline',           'card': 'SAVE_PLOT',         'icon': 'book', 'hint': '关键剧情节点的时间顺序（大纲已定每卷目标时直接生成）', 'mode': 'direct'},
+    {'key': 'foreshadowing',      'label': '伏笔',       'field': 'foreshadowing',      'card': 'SAVE_FORESHADOW',   'icon': 'crystal', 'hint': '长线伏笔的埋设与回收计划（基于大纲/剧情派生，直接生成）', 'mode': 'direct'},
+    {'key': 'locations',          'label': '地图',       'field': 'locations',          'card': 'SAVE_LOCATION',     'icon': 'map', 'hint': '故事中的地点、势力分布、世界地图架构（基于世界观派生，直接生成）', 'mode': 'direct'},
+    {'key': 'style_guide',        'label': '文风',       'field': 'style_guide',        'card': 'APPLY_STYLE',       'icon': 'palette', 'hint': '叙事风格、语言调性、节奏把控', 'mode': 'suggest'},
 ]
 
 # 通用聊天：不属于任何维度，自由讨论小说/剧情分析，通过触发关键词填入各维度

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api';
 import type { SkillPack } from '../types';
+import Icon from './Icon';
 
 // ============================================================================
 // 技能包选择器（精简版，按 category 分组）
@@ -21,7 +22,7 @@ export function SkillPackSelector({ packs, selected, onToggle, compact, onPrevie
   return (
     <div className={`smart-skill-selector ${compact ? 'compact' : ''}`}>
       <button className="smart-skill-toggle" onClick={() => setExpanded(e => !e)}>
-        📦 技能包 {selectedCount > 0 && <span className="smart-skill-badge">{selectedCount}</span>}
+        <Icon name="package" size={16} /> 技能包 {selectedCount > 0 && <span className="smart-skill-badge">{selectedCount}</span>}
         <span className="smart-skill-arrow">{expanded ? '▲' : '▼'}</span>
       </button>
       {expanded && (
@@ -101,7 +102,7 @@ export function GeneralAssistantSelector({ roles, currentId, onSelect }: {
           title="切换助手（10款内置角色）"
           style={{ flex: 1 }}
         >
-          👤 <span style={{ fontWeight: 600 }}>{curRole.emoji}{curRole.name}</span>
+          <Icon name="user" size={16} /> <span style={{ fontWeight: 600, display:'inline-flex', alignItems:'center', gap:4 }}><Icon name={curRole.emoji as any} size={16} />{curRole.name}</span>
           <span className="smart-skill-arrow">{open ? '▲' : '▼'}</span>
         </button>
         <button
@@ -110,7 +111,7 @@ export function GeneralAssistantSelector({ roles, currentId, onSelect }: {
           title="配置联网搜索 Key（Tavily / Exa / Brave）"
           style={{ border: '1px solid #bfe3d2', background: '#eafaf3', color: '#0a7d4f',
                    borderRadius: 6, padding: '0 10px', fontSize: 15, cursor: 'pointer', flex: '0 0 auto' }}
-        >🌐</button>
+        ><Icon name="globe" size={16} /></button>
       </div>
       {open && (
         <div className="smart-skill-list smart-assistant-list" data-gt-assistant-popover
@@ -127,7 +128,7 @@ export function GeneralAssistantSelector({ roles, currentId, onSelect }: {
                 title={r.brief}
                 style={{ cursor: 'pointer', opacity: 1 }}
               >
-                <span className="smart-skill-icon">{r.emoji}</span>
+                <span className="smart-skill-icon"><Icon name={r.emoji as any} size={16} /></span>
                 <span className="smart-skill-name" style={{ color: active ? '#c25e00' : '#333' }}>{r.name}</span>
                 {active && <span style={{ marginLeft: 'auto', color: '#e97b00', fontSize: 12 }}>当前</span>}
               </div>
@@ -150,11 +151,11 @@ export function GeneralAssistantSelector({ roles, currentId, onSelect }: {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>🌐 联网搜索 Key</span>
+            <span style={{ fontWeight: 700, fontSize: 14, display:'inline-flex', alignItems:'center', gap:6 }}><Icon name="globe" size={16} />联网搜索 Key</span>
             <button
               onClick={(e) => { e.stopPropagation(); setCfgOpen(false); }}
-              style={{ border: 'none', background: '#f2f2f5', borderRadius: 8, width: 26, height: 26, cursor: 'pointer', fontSize: 13, color: '#666' }}
-            >✕</button>
+              style={{ border: 'none', background: '#f2f2f5', borderRadius: 8, width: 26, height: 26, cursor: 'pointer', fontSize: 13, color: '#666', display:'inline-flex', alignItems:'center', justifyContent:'center' }}
+            ><Icon name="x" size={14} /></button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {(['tavily', 'exa', 'brave'] as const).map(k => (

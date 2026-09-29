@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import type { BookBible, Chapter } from '../../types';
 import { collapseNewlines } from './write-shared';
+import Icon from '../../components/Icon';
 
 /* ===== 地图/地点面板（按卷） ===== */
 export function LocationsPanel(props: {
@@ -176,14 +177,14 @@ export function LocationsPanel(props: {
           {(
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
-                {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
+                {analyzingVol ? <><Icon name="bot" size={14} /> 识别中...</> : <><Icon name="search" size={14} /> AI识别</>}
               </button>
               {volSelectorOpen && (
                 <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',right:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
                   <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
-                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
+                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}><Icon name="book-open" size={14} /> 全部章节</button>
                   {displayVolumes.map((vol, idx) => (
-                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
+                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}><Icon name="book" size={14} /> {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
                   ))}
                   <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
                 </div>
@@ -201,15 +202,15 @@ export function LocationsPanel(props: {
             return (
               <div key={idx} className="plot-volume-card">
                 <div className="plot-volume-header" onClick={() => toggleVol(idx)} style={{cursor:'pointer'}}>
-                  <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsedVols.has(idx) ? '▶' : '▼'}</span>
+                  <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={collapsedVols.has(idx) ? 'chevron-right' : 'chevron-down'} size={12} /></span>
                   <h4>{vol.volume || `第${idx + 1}卷`}</h4>
                   {vol.chapter_count !== undefined && <span className="text-muted" style={{fontSize:12}}>{vol.chapter_count}章</span>}
                   {hasData && <span className="text-muted" style={{fontSize:12}}>已识别</span>}
                   <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
-                    {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12}}>🤖 识别中...</span>}
-                    <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolLoc(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷地点数据（JSON）'}>{editingVolIdx === idx ? '取消' : '✏️'}</button>
-                    {hasData && (
-                      <button className="btn-ghost-sm" onClick={() => deleteVolumeLoc(idx)} style={{color:'#e74c3c'}} title="删除此卷地点数据">🗑️</button>
+                    {analyzingVol === (vol.volume_id || vol.volume) && <span className="text-muted" style={{fontSize:12,display:'inline-flex',alignItems:'center',gap:4}}><Icon name="bot" size={13} /> 识别中...</span>}
+                    <button className="btn-ghost-sm" onClick={() => editingVolIdx === idx ? (setEditingVolIdx(null), setEditVolJson('')) : startEditVolLoc(idx)} title={editingVolIdx === idx ? '取消编辑' : '编辑此卷地点数据（JSON）'}>{editingVolIdx === idx ? '取消' : <Icon name="edit" size={14} />}</button>
+                    {(vol.locations || []).length > 0 && (
+                      <button className="btn-ghost-sm" onClick={() => deleteVolumeLoc(idx)} style={{color:'#e74c3c'}} title="删除此卷地点数据"><Icon name="trash" size={16} /></button>
                     )}
                   </div>
                 </div>
@@ -220,12 +221,12 @@ export function LocationsPanel(props: {
                         <p className="text-muted" style={{fontSize:12,marginBottom:6}}>编辑本卷地点数据（JSON 格式）：summary（地理概况）、locations（地点）、regions（区域）。</p>
                         <textarea className="input" value={editVolJson} onChange={e => setEditVolJson(e.target.value)} rows={16} style={{fontFamily:'monospace',fontSize:12}} />
                         <div style={{display:'flex',gap:6,marginTop:8}}>
-                          <button className="btn-primary-sm" onClick={() => saveEditVolLoc(idx)}>💾 保存</button>
+                          <button className="btn-primary-sm" onClick={() => saveEditVolLoc(idx)}><Icon name="save" size={14} /> 保存</button>
                           <button className="btn-ghost-sm" onClick={() => { setEditingVolIdx(null); setEditVolJson(''); }}>取消</button>
                         </div>
                       </div>
                     ) : !hasData ? (
-                      <p className="text-muted" style={{fontSize:13}}>暂无地点识别数据，点击「🔍 AI识别」选择此卷进行识别</p>
+                      <p className="text-muted" style={{fontSize:13}}>暂无地点识别数据，点击「AI识别」选择此卷进行识别</p>
                     ) : (
                       <div className="plot-events">
                         {d.summary && <p><b>地理概况：</b>{d.summary}</p>}
@@ -259,12 +260,12 @@ export function LocationsPanel(props: {
           style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,cursor:'pointer',userSelect:'none'}}
           onClick={() => setGlobalLocCollapsed(c => !c)}
         >
-          <b>📝 全局地点档案 <span style={{fontSize:10,color:'var(--text-muted)'}}>{globalLocCollapsed ? '▶ 点击展开' : '▼ 点击折叠'}</span></b>
+          <b><Icon name="map" size={14} /> 全局地点档案 <span style={{fontSize:10,color:'var(--text-muted)',display:'inline-flex',alignItems:'center',gap:2}}>{globalLocCollapsed ? <><Icon name="chevron-right" size={10} /> 点击展开</> : <><Icon name="chevron-down" size={10} /> 点击折叠</>}</span></b>
           {!editing ? (
-            <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); setEditing(true); setEditValue(collapseNewlines(locations)); setGlobalLocCollapsed(false); }}>✏️ 编辑</button>
+            <button className="btn-ghost-sm" onClick={e => { e.stopPropagation(); setEditing(true); setEditValue(collapseNewlines(locations)); setGlobalLocCollapsed(false); }}><Icon name="edit" size={14} /> 编辑</button>
           ) : (
             <div style={{display:'flex',gap:6}} onClick={e => e.stopPropagation()}>
-              <button className="btn-primary-sm" onClick={() => { saveLocations(collapseNewlines(editValue)); setEditing(false); }} disabled={saving}>{saving ? '保存中...' : '💾 保存'}</button>
+              <button className="btn-primary-sm" onClick={() => { saveLocations(collapseNewlines(editValue)); setEditing(false); }} disabled={saving}>{saving ? '保存中...' : <><Icon name="save" size={14} /> 保存</>}</button>
               <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
             </div>
           )}

@@ -4,6 +4,7 @@ import { useStore } from '../../store';
 import type { AISession, BookBible, BrainstormResult, BrainstormSuggestion, SkillPack } from '../../types';
 import CarLogo from '../../components/CarLogo';
 import { DIMENSION_LABELS, SkillPackGroupedList } from './write-shared';
+import Icon from '../../components/Icon';
 
 /* ===== 构思面板 ===== */
 export function ConceptPanel(props: {
@@ -134,8 +135,8 @@ export function ConceptPanel(props: {
         {skillPacks.length > 0 && (
           <div className="skill-pack-collapsible">
             <button className="skill-pack-toggle" onClick={() => setSkillExpanded(v => !v)} disabled={conceptAiAssisting}>
-              <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-              <span>📦 协同技能包</span>
+              <span className="skill-pack-toggle-icon"><Icon name={skillExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+              <span><Icon name="package" size={16} /> 协同技能包</span>
               {selectedCount > 0 && <span className="skill-pack-toggle-badge">{selectedCount}</span>}
               <span className="skill-pack-toggle-hint">{skillExpanded ? '收起' : '展开'}</span>
             </button>
@@ -177,7 +178,7 @@ export function ConceptPanel(props: {
           />
           <div className="ai-prompt-bottom-row">
             <button className="btn-primary ai-prompt-submit" onClick={onExecuteConceptAi} disabled={conceptAiAssisting || !conceptAiPrompt.trim()}>
-              {conceptAiAssisting ? '⏳ AI创作中...' : '🚀 发送'}
+              {conceptAiAssisting ? <><Icon name="hourglass" size={14} /> AI创作中...</> : <><Icon name="rocket" size={14} /> 发送</>}
             </button>
           </div>
         </div>
@@ -218,7 +219,7 @@ export function ConceptPanel(props: {
         <div className="brainstorm-results">
           {brainstormResult.concept_analysis && (
             <div className="concept-analysis">
-              <h4>📋 构思分析</h4>
+              <h4><Icon name="clipboard" size={16} /> 构思分析</h4>
               <p>{brainstormResult.concept_analysis}</p>
             </div>
           )}
@@ -237,7 +238,7 @@ export function ConceptPanel(props: {
                         onClick={() => onAdopt(dim, s)}
                         disabled={adopted}
                       >
-                        {adopted ? '✓ 已采纳' : '采纳'}
+                        {adopted ? <><Icon name="check" size={13} /> 已采纳</> : '采纳'}
                       </button>
                     </div>
                   );
@@ -264,7 +265,7 @@ export function ConceptPanel(props: {
             style={{ padding: '2px 8px', fontSize: 12, fontWeight: 600, flexShrink: 0 }}
             title={historyExpanded ? '收起' : '展开'}
           >
-            {historyExpanded ? '▼' : '▶'} 💬 历史对话 {aiSessions.length > 0 && `(${aiSessions.length})`}
+            <Icon name={historyExpanded ? 'chevron-down' : 'chevron-right'} size={12} /> <Icon name="message-circle" size={14} /> 历史对话 {aiSessions.length > 0 && `(${aiSessions.length})`}
           </button>
           <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexShrink: 0 }}>
             {aiSessions.length > 0 && (
@@ -284,7 +285,7 @@ export function ConceptPanel(props: {
                   style={{ padding: '2px 8px', fontSize: 11, color: selectedIds.size === 0 ? undefined : '#e74c3c' }}
                   title={selectedIds.size === 0 ? '先选中要删除的对话' : `删除选中的 ${selectedIds.size} 条对话`}
                 >
-                  🗑️ 删除选中 {selectedIds.size > 0 && `(${selectedIds.size})`}
+                  <Icon name="trash" size={14} /> 删除选中 {selectedIds.size > 0 && `(${selectedIds.size})`}
                 </button>
               </>
             )}
@@ -294,7 +295,7 @@ export function ConceptPanel(props: {
               style={{ padding: '2px 8px', fontSize: 11 }}
               title="刷新列表"
             >
-              🔄
+              <Icon name="refresh" size={14} />
             </button>
           </div>
         </div>
@@ -361,7 +362,7 @@ export function ConceptPanel(props: {
                         style={{ padding: '3px 10px', fontSize: 11 }}
                         title="打开并继续与 AI 对话，可提修改意见"
                       >
-                        💬 继续
+                        <Icon name="message-circle" size={13} /> 继续
                       </button>
                       <button
                         className="btn-ghost-sm"
@@ -370,7 +371,7 @@ export function ConceptPanel(props: {
                         style={{ padding: '3px 10px', fontSize: 11 }}
                         title="重命名"
                       >
-                        ✏️ 重命名
+                        <Icon name="edit" size={13} /> 重命名
                       </button>
                       <button
                         className="btn-ghost-sm"
@@ -378,7 +379,7 @@ export function ConceptPanel(props: {
                         style={{ padding: '3px 10px', fontSize: 11, color: '#e74c3c' }}
                         title="删除"
                       >
-                        🗑️ 删除
+                        <Icon name="trash" size={13} /> 删除
                       </button>
                     </div>
                   </div>

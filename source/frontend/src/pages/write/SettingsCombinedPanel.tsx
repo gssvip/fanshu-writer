@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { api } from '../../api';
 import type { BookBible, SkillPack } from '../../types';
 import { SkillPackGroupedList, collapseNewlines, extractSkillPrompt } from './write-shared';
+import Icon from '../../components/Icon';
 
 /* ===== 设定面板（核心规则 + 文风指南，双子Tab） ===== */
 export function SettingsCombinedPanel(props: {
@@ -36,7 +37,7 @@ export function SettingsCombinedPanel(props: {
 
   const fieldMap = { rules: 'key_rules', style: 'style_guide' } as const;
   const labelMap = { rules: '设定', style: '文风' } as const;
-  const iconMap = { rules: '⚙️', style: '🎨' } as const;
+  const iconMap = { rules: 'settings', style: 'palette' } as const;
   const placeholderMap = {
     rules: '核心规则、能力限制、世界观禁忌、力量体系/科技树…每条规则单独列出。',
     style: '叙事风格、语言调性、节奏把控、常用句式、语感参考。例：冷硬直给/细腻抒情/幽默吐槽/古风雅致…',
@@ -91,8 +92,8 @@ export function SettingsCombinedPanel(props: {
   const skillSelector = skillPacks.length > 0 && (
     <div className="skill-pack-collapsible">
       <button className="skill-pack-toggle" onClick={() => setSkillExpanded(v => !v)} disabled={aiAssisting}>
-        <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-        <span>📦 协同技能包</span>
+        <span className="skill-pack-toggle-icon"><Icon name={skillExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+        <span><Icon name="package" size={16} /> 协同技能包</span>
         {selectedCount > 0 && <span className="skill-pack-toggle-badge">{selectedCount}</span>}
         <span className="skill-pack-toggle-hint">{skillExpanded ? '收起' : '展开'}</span>
       </button>
@@ -128,7 +129,7 @@ export function SettingsCombinedPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3>{iconMap[subTab]} AI协同创作 · {labelMap[subTab]}</h3>
+          <h3><Icon name={iconMap[subTab]} size={16} /> AI协同创作 · {labelMap[subTab]}</h3>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillSelector}
@@ -139,7 +140,7 @@ export function SettingsCombinedPanel(props: {
             disabled={aiAssisting} autoFocus />
           <div className="ai-prompt-bottom-row">
             <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>
-              {aiAssisting ? '⏳ 创作中...' : '🚀 发送'}
+              {aiAssisting ? <><Icon name="hourglass" size={14} /> 创作中...</> : <><Icon name="rocket" size={14} /> 发送</>}
             </button>
           </div>
         </div>
@@ -159,25 +160,25 @@ export function SettingsCombinedPanel(props: {
       {/* 单行：设定/文风/AI创作/AI识别 四按钮平铺，space-between 均匀分布，等高同字号 */}
       <div className="bible-edit-header dims-single-row">
         <button className={`outline-sub-tab ${subTab === 'rules' ? 'active' : ''}`} onClick={() => { setSubTab('rules'); setEditing(false); }}>
-          ⚙️ 设定
+          <Icon name="settings" size={14} /> 设定
         </button>
         <button className={`outline-sub-tab ${subTab === 'style' ? 'active' : ''}`} onClick={() => { setSubTab('style'); setEditing(false); }}>
-          🎨 文风
+          <Icon name="palette" size={14} /> 文风
         </button>
         {!editing ? (
           <>
             <button className="btn-primary-sm" onClick={() => { setAiMode(true); }} disabled={aiAssisting} title={`AI生成${labelMap[subTab]}内容`}>
-              {aiAssisting ? '⏳ 生成中...' : '✨ AI创作'}
+              {aiAssisting ? <><Icon name="hourglass" size={14} /> 生成中...</> : <><Icon name="sparkles" size={14} /> AI创作</>}
             </button>
             <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(currentField)} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? `AI分析已有章节，自动识别${labelMap[subTab]}内容` : '需要先创建章节才能AI识别'}>
-              {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
+              {dimAnalyzing ? <><Icon name="bot" size={14} /> 识别中...</> : <><Icon name="search" size={14} /> AI识别</>}
             </button>
           </>
         ) : (
           <>
             <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
             <button className="btn-primary-sm" onClick={saveEdit} disabled={saving}>
-              {saving ? '保存中...' : '💾 保存'}
+              {saving ? '保存中...' : <><Icon name="save" size={14} /> 保存</>}
             </button>
           </>
         )}

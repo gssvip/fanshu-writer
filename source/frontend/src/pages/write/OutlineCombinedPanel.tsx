@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { api } from '../../api';
 import type { BookBible, SkillPack } from '../../types';
 import { SkillPackGroupedList, collapseNewlines, extractSkillPrompt } from './write-shared';
+import Icon from '../../components/Icon';
 
 /* ===== 大纲合并面板（大纲+世界观） ===== */
 export function OutlineCombinedPanel(props: {
@@ -37,6 +38,7 @@ export function OutlineCombinedPanel(props: {
 
   const fieldMap = { outline: 'plot_design', worldview: 'worldbuilding' } as const;
   const labelMap = { outline: '大纲', worldview: '世界观' } as const;
+  const iconMap = { outline: 'clipboard', worldview: 'globe' } as const;
   const placeholderMap = {
     outline: '主线冲突、卷纲拆解、章节规划...',
     worldview: '世界背景、力量体系、社会结构、地理概况、历史脉络...',
@@ -168,14 +170,14 @@ export function OutlineCombinedPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3>📋 AI协同创作 · {labelMap[subTab]}</h3>
+          <h3><Icon name={iconMap[subTab]} size={16} /> AI协同创作 · {labelMap[subTab]}</h3>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillPacks.length > 0 && (
           <div className="skill-pack-collapsible">
             <button className="skill-pack-toggle" onClick={() => setSkillExpanded(v => !v)} disabled={aiAssisting}>
-              <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-              <span>📦 协同技能包</span>
+              <span className="skill-pack-toggle-icon"><Icon name={skillExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+              <span><Icon name="package" size={16} /> 协同技能包</span>
               {selectedCount > 0 && <span className="skill-pack-toggle-badge">{selectedCount}</span>}
               <span className="skill-pack-toggle-hint">{skillExpanded ? '收起' : '展开'}</span>
             </button>
@@ -217,7 +219,7 @@ export function OutlineCombinedPanel(props: {
           />
           <div className="ai-prompt-bottom-row">
             <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>
-              {aiAssisting ? '⏳ 创作中...' : '🚀 发送'}
+              {aiAssisting ? <><Icon name="hourglass" size={14} /> 创作中...</> : <><Icon name="rocket" size={14} /> 发送</>}
             </button>
           </div>
         </div>
@@ -237,25 +239,25 @@ export function OutlineCombinedPanel(props: {
       {/* 单行：大纲/世界观/AI创作/AI识别 四按钮平铺（与设定维度一致）；电脑端等长拉伸、间距均匀 */}
       <div className="bible-edit-header dims-single-row outline-dims-row">
         <button className={`outline-sub-tab ${subTab === 'outline' ? 'active' : ''}`} onClick={() => { setSubTab('outline'); setEditing(false); }}>
-          📋 大纲
+          <Icon name="clipboard" size={14} /> 大纲
         </button>
         <button className={`outline-sub-tab ${subTab === 'worldview' ? 'active' : ''}`} onClick={() => { setSubTab('worldview'); setEditing(false); }}>
-          🌍 世界观
+          <Icon name="globe" size={14} /> 世界观
         </button>
         {!editing ? (
           <>
             <button className="btn-primary-sm" onClick={handleAiCreate} disabled={outlineWorkflowLoading !== ''} title={subTab === 'outline' ? '生成五幕式总纲（写入大纲）' : 'AI生成世界观内容'}>
-              {outlineWorkflowLoading === 'master' ? '⏳ 生成中...' : '✨ AI创作'}
+              {outlineWorkflowLoading === 'master' ? <><Icon name="hourglass" size={14} /> 生成中...</> : <><Icon name="sparkles" size={14} /> AI创作</>}
             </button>
             <button className="btn-ghost-sm" onClick={() => onAnalyzeDimension(subTab === 'outline' ? 'outline' : 'worldview')} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别' : '需要先创建章节才能AI识别'}>
-              {dimAnalyzing ? '🤖 识别中...' : '🔍 AI识别'}
+              {dimAnalyzing ? <><Icon name="bot" size={14} /> 识别中...</> : <><Icon name="search" size={14} /> AI识别</>}
             </button>
           </>
         ) : (
           <>
             <button className="btn-ghost-sm" onClick={() => setEditing(false)}>取消</button>
             <button className="btn-primary-sm" onClick={saveEdit} disabled={saving}>
-              {saving ? '保存中...' : '💾 保存'}
+              {saving ? '保存中...' : <><Icon name="save" size={14} /> 保存</>}
             </button>
           </>
         )}
@@ -287,7 +289,7 @@ export function OutlineCombinedPanel(props: {
         </div>
       ) : (
         <div className="bible-empty" onClick={startEdit}>
-          <span className="bible-empty-icon">{subTab === 'outline' ? '📋' : '🌍'}</span>
+          <span className="bible-empty-icon"><Icon name={subTab === 'outline' ? 'clipboard' : 'globe'} size={40} /></span>
           <p>暂无{labelMap[subTab]}内容</p>
           <p className="text-muted">点击编辑或使用AI创作</p>
         </div>

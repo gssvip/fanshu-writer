@@ -4,6 +4,7 @@ import { api } from '../../api';
 import { useStore } from '../../store';
 import type { BookBible, Chapter, SkillPack } from '../../types';
 import { SkillPackGroupedList, extractSkillPrompt } from './write-shared';
+import Icon from '../../components/Icon';
 
 /* ===== 伏笔面板（按卷） ===== */
 export function ForeshadowingPanel(props: {
@@ -289,7 +290,7 @@ export function ForeshadowingPanel(props: {
     const title = rec?.title ? `「${rec.title}${volLabel}」` : '防遗忘检查报告';
     const presetInput = fixTasks.length > 0
       ? `基于${title}的 ${fixTasks.length} 处违规，请在下方任务清单逐条「去修改」`
-      : `参考${title}，请选择章节并说明修改意见后点「✨ 修改」`;
+      : `参考${title}，请选择章节并说明修改意见后点「修改」`;
     // 首次进入 chatPanelSessionId 为 null（新建会话）；之后复用同一会话延续修正上下文
     openChatPanel(bookId, chatPanelSessionId, { tab: 'chapter', input: presetInput, fixTasks: fixTasks.length > 0 ? fixTasks : undefined });
   }
@@ -400,14 +401,14 @@ export function ForeshadowingPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3>🔮 AI协同创作 · 伏笔</h3>
+          <h3><Icon name="crystal" size={16} /> AI协同创作 · 伏笔</h3>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillPacks.length > 0 && (
           <div className="skill-pack-collapsible">
             <button className="skill-pack-toggle" onClick={() => setSkillExpanded(v => !v)} disabled={aiAssisting}>
-              <span className="skill-pack-toggle-icon">{skillExpanded ? '▼' : '▶'}</span>
-              <span>📦 协同技能包</span>
+              <span className="skill-pack-toggle-icon"><Icon name={skillExpanded ? 'chevron-down' : 'chevron-right'} size={12} /></span>
+              <span><Icon name="package" size={16} /> 协同技能包</span>
               {selectedSkillPackIds.length > 0 && <span className="skill-pack-toggle-badge">{selectedSkillPackIds.length}</span>}
             </button>
             {skillExpanded && (
@@ -423,7 +424,7 @@ export function ForeshadowingPanel(props: {
         <div className="ai-prompt-vertical">
           <textarea className="input bible-ai-prompt-input" rows={6} value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} onKeyDown={handlePromptKeyDown} placeholder="例如：设计贯穿全书的核心伏笔，埋设3个关键悬念..." disabled={aiAssisting} autoFocus />
           <div className="ai-prompt-bottom-row">
-            <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? '⏳ 创作中...' : '🚀 发送'}</button>
+            <button className="btn-primary ai-prompt-submit" onClick={executeAi} disabled={aiAssisting || !aiPrompt.trim()}>{aiAssisting ? <><Icon name="hourglass" size={14} /> 创作中...</> : <><Icon name="rocket" size={14} /> 发送</>}</button>
           </div>
         </div>
         {aiError && <div className="error-msg" style={{marginTop:8}}>{aiError}</div>}
@@ -439,14 +440,14 @@ export function ForeshadowingPanel(props: {
           {(
             <>
               <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
-                {analyzingVol ? '🤖 识别中...' : '🔍 AI识别'}
+                {analyzingVol ? <><Icon name="bot" size={14} /> 识别中...</> : <><Icon name="search" size={14} /> AI识别</>}
               </button>
               {volSelectorOpen && (
                 <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',left:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
                   <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
-                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📚 全部章节</button>
+                  <button className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume('', '全部章节'); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}><Icon name="book-open" size={14} /> 全部章节</button>
                   {displayVolumes.map((vol, idx) => (
-                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}>📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
+                    <button key={idx} className="vol-selector-item" onClick={() => { setVolSelectorOpen(false); handleAnalyzeVolume(vol.volume_id || '', vol.volume || `第${idx + 1}卷`); }} style={{display:'block',width:'100%',textAlign:'left',padding:'6px 10px',background:'transparent',border:'none',borderRadius:4,cursor:'pointer',color:'var(--text)',fontSize:13}}><Icon name="book" size={14} /> {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}</button>
                   ))}
                   <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
                 </div>
@@ -455,7 +456,7 @@ export function ForeshadowingPanel(props: {
           )}
         </div>
         <span className="text-muted" style={{fontSize:12,cursor:'pointer'}} onClick={() => setForeCollapsed(v => !v)}>
-          {foreCollapsed ? '▶ 展开' : '▼ 收起'}
+          {foreCollapsed ? <><Icon name="chevron-right" size={11} /> 展开</> : <><Icon name="chevron-down" size={11} /> 收起</>}
         </span>
       </div>
       {!foreCollapsed && (
@@ -464,17 +465,17 @@ export function ForeshadowingPanel(props: {
       <div className="bible-edit-section" style={{marginTop:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
           <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <h4 style={{margin:0}}>🛡️ 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}{(() => { const c = afReports.filter((r: any) => r.status === 'pending' || (!r.status && r.fix_draft?.length > 0)).length; return c > 0 ? <span style={{fontSize:11,background:'#ff4757',color:'#fff',borderRadius:10,padding:'2px 8px',marginLeft:6}}>待审阅 {c}</span> : null; })()}</h4>
+            <h4 style={{margin:0}}><Icon name="shield" size={16} /> 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}{(() => { const c = afReports.filter((r: any) => r.status === 'pending' || (!r.status && r.fix_draft?.length > 0)).length; return c > 0 ? <span style={{fontSize:11,background:'#ff4757',color:'#fff',borderRadius:10,padding:'2px 8px',marginLeft:6}}>待审阅 {c}</span> : null; })()}</h4>
             <button
               className="btn-primary-sm"
               onClick={openAfVolPicker}
               disabled={afChecking}
               style={{fontSize:14,padding:'4px 14px'}}
             >
-              {afChecking ? '⏳ 检查中...' : '🛡️ 开始检查'}
+              {afChecking ? <><Icon name="hourglass" size={14} /> 检查中...</> : <><Icon name="shield" size={14} /> 开始检查</>}
             </button>
           </div>
-          <span className="text-muted" style={{fontSize:12,cursor:'pointer'}} onClick={() => setAfSectionOpen(v => !v)}>{afSectionOpen ? '▼ 收起' : '▶ 展开'}</span>
+          <span className="text-muted" style={{fontSize:12,cursor:'pointer'}} onClick={() => setAfSectionOpen(v => !v)}>{afSectionOpen ? <><Icon name="chevron-down" size={11} /> 收起</> : <><Icon name="chevron-right" size={11} /> 展开</>}</span>
         </div>
 
         {afSectionOpen && (
@@ -487,19 +488,19 @@ export function ForeshadowingPanel(props: {
                 disabled={afChecking}
                 title="检查所有动态报告"
                 style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='reports'?'var(--accent)':'var(--border)'}`,background:afScope==='reports'?'var(--accent-light)':'transparent',color:afScope==='reports'?'var(--accent)':'var(--text)',fontWeight:afScope==='reports'?600:400}}
-              >📄 动态文件</button>
+              ><Icon name="file-text" size={14} /> 动态文件</button>
               <button
                 onClick={() => setAfScope('dimensions')}
                 disabled={afChecking}
                 title="查阅除构思、章节外所有维度"
                 style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='dimensions'?'var(--accent)':'var(--border)'}`,background:afScope==='dimensions'?'var(--accent-light)':'transparent',color:afScope==='dimensions'?'var(--accent)':'var(--text)',fontWeight:afScope==='dimensions'?600:400}}
-              >📐 仅维度</button>
+              ><Icon name="ruler" size={14} /> 仅维度</button>
             </div>
 
             {/* 自动检查草稿提示 */}
             {afReports.some((r: any) => r.status === 'pending' && r.auto_generated && r.fix_draft?.length > 0) && (
               <div style={{background:'#fff3cd',border:'1px solid #ffeaa7',borderRadius:6,padding:'8px 10px',marginBottom:10,fontSize:13}}>
-                <b>🤖 AI 自动检查提醒</b>：检测到 {afReports.filter((r: any) => r.status === 'pending' && r.auto_generated && r.fix_draft?.length > 0).length} 份自动检查报告已生成修正草稿，请展开报告后点击「查看修正草稿」审阅并决定是否应用。
+                <b><Icon name="bot" size={14} /> AI 自动检查提醒</b>：检测到 {afReports.filter((r: any) => r.status === 'pending' && r.auto_generated && r.fix_draft?.length > 0).length} 份自动检查报告已生成修正草稿，请展开报告后点击「查看修正草稿」审阅并决定是否应用。
               </div>
             )}
 
@@ -507,7 +508,7 @@ export function ForeshadowingPanel(props: {
             {afLoading ? (
               <p className="text-muted" style={{fontSize:13}}>加载报告中...</p>
             ) : afReports.length === 0 ? (
-              <p className="text-muted" style={{fontSize:13}}>暂无检查报告，点击「🛡️ 开始检查」开始首次检查。</p>
+              <p className="text-muted" style={{fontSize:13}}>暂无检查报告，点击「开始检查」开始首次检查。</p>
             ) : (
               <div className="plot-volume-list">
                 {afReports.map((r: any) => {
@@ -520,7 +521,7 @@ export function ForeshadowingPanel(props: {
                   return (
                     <div key={r.id} className="plot-volume-card">
                       <div className="plot-volume-header" style={{cursor:'pointer'}} onClick={() => !isEditing && !isRenaming && toggleAfReport(r.id)}>
-                        <span className="map-toggle" style={{fontSize:10,marginRight:6}}>{collapsed ? '▶' : '▼'}</span>
+                        <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
                         {isRenaming ? (
                           <input
                             type="text"
@@ -546,27 +547,27 @@ export function ForeshadowingPanel(props: {
                         <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
                           {isRenaming ? (
                             <>
-                              <button className="btn-primary-sm" onClick={() => saveAfRename(r)}>💾</button>
-                              <button className="btn-ghost-sm" onClick={() => setAfRenamingId(null)}>✕</button>
+                              <button className="btn-primary-sm" onClick={() => saveAfRename(r)}><Icon name="save" size={14} /></button>
+                              <button className="btn-ghost-sm" onClick={() => setAfRenamingId(null)}><Icon name="x" size={14} /></button>
                             </>
                           ) : isEditing ? (
                             <>
-                              <button className="btn-primary-sm" onClick={() => saveAfEdit(r)}>💾 保存</button>
+                              <button className="btn-primary-sm" onClick={() => saveAfEdit(r)}><Icon name="save" size={14} /> 保存</button>
                               <button className="btn-ghost-sm" onClick={() => { setAfEditingId(null); setAfEditValue(''); }}>取消</button>
                             </>
                           ) : (
                             <>
-                              <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? '📥 拉取' : '📂 折叠'}</button>
+                              <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? <><Icon name="inbox" size={14} /> 拉取</> : <><Icon name="folder-open" size={14} /> 折叠</>}</button>
                               <button className="btn-primary-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'setting' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·设定，协同修正设定维度">
-                                🔧 AI修正
+                                <Icon name="wrench" size={14} /> AI修正
                               </button>
-                              <button className="btn-ghost-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'chapter' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·正文，协同修正违规章节">📝 修正正文</button>
+                              <button className="btn-ghost-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'chapter' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·正文，协同修正违规章节"><Icon name="edit" size={14} /> 修正正文</button>
                               {r.status === 'pending' && (
-                                <button className="btn-ghost-sm" onClick={() => ignoreFixDraft(r.id)} title="忽略此报告的修正草稿">🚫 忽略</button>
+                                <button className="btn-ghost-sm" onClick={() => ignoreFixDraft(r.id)} title="忽略此报告的修正草稿"><Icon name="ban" size={14} /> 忽略</button>
                               )}
-                              <button className="btn-ghost-sm" onClick={() => startAfEdit(r)} title="编辑报告内容">✏️</button>
-                              <button className="btn-ghost-sm" onClick={() => startAfRename(r)} title="重命名">🏷️</button>
-                              <button className="btn-ghost-sm" onClick={() => deleteAfReport(r)} style={{color:'#e74c3c'}} title="删除">🗑️</button>
+                              <button className="btn-ghost-sm" onClick={() => startAfEdit(r)} title="编辑报告内容"><Icon name="edit" size={14} /></button>
+                              <button className="btn-ghost-sm" onClick={() => startAfRename(r)} title="重命名"><Icon name="tag" size={14} /></button>
+                              <button className="btn-ghost-sm" onClick={() => deleteAfReport(r)} style={{color:'#e74c3c'}} title="删除"><Icon name="trash" size={16} /></button>
                             </>
                           )}
                         </div>
@@ -585,38 +586,38 @@ export function ForeshadowingPanel(props: {
                             <div className="plot-events">
                               {(r.summary || rep.summary) && <p style={{marginBottom:8}}><b>总览：</b>{r.summary || rep.summary}</p>}
                               {Array.isArray(rep.violations) && rep.violations.length > 0 && (
-                                <div style={{marginBottom:8}}><b>⚠️ 一致性违规（{rep.violations.length}）：</b><ul>
+                                <div style={{marginBottom:8}}><b><Icon name="warning" size={14} /> 一致性违规（{rep.violations.length}）：</b><ul>
                                   {rep.violations.map((v: any, i: number) => (
-                                    <li key={i}><span style={{color:'var(--danger)',fontWeight:600}}>[{v.severity||'提示'}] {v.type||''}</span>{v.location && <span style={{color:'#888'}}> · {v.location}</span>}{v.desc && <span style={{color:'#666'}}> — {v.desc}</span>}{v.fix && <span style={{color:'var(--success)'}}> 💡{v.fix}</span>}</li>
+                                    <li key={i}><span style={{color:'var(--danger)',fontWeight:600}}>[{v.severity||'提示'}] {v.type||''}</span>{v.location && <span style={{color:'#888'}}> · {v.location}</span>}{v.desc && <span style={{color:'#666'}}> — {v.desc}</span>}{v.fix && <span style={{color:'var(--success)'}}> <Icon name="lightbulb" size={13} />{v.fix}</span>}</li>
                                   ))}
                                 </ul></div>
                               )}
                               {Array.isArray(rep.pending_foreshadowing) && rep.pending_foreshadowing.length > 0 && (
-                                <div style={{marginBottom:8}}><b>🔮 待回收伏笔（{rep.pending_foreshadowing.length}）：</b><ul>
+                                <div style={{marginBottom:8}}><b><Icon name="crystal" size={14} /> 待回收伏笔（{rep.pending_foreshadowing.length}）：</b><ul>
                                   {rep.pending_foreshadowing.map((f: any, i: number) => (
                                     <li key={i}><span style={{color:'#e87d3e',fontWeight:600}}>{f.content||''}</span>{f.urgency && <span style={{color:'#888'}}> · {f.urgency}</span>}{f.suggest_chapter && <span style={{color:'#666'}}> — 建议回收于 {f.suggest_chapter}</span>}</li>
                                   ))}
                                 </ul></div>
                               )}
                               {Array.isArray(rep.narrative_debt) && rep.narrative_debt.length > 0 && (
-                                <div style={{marginBottom:8}}><b>📊 叙事债务（{rep.narrative_debt.length}）：</b><ul>
+                                <div style={{marginBottom:8}}><b><Icon name="bar-chart" size={14} /> 叙事债务（{rep.narrative_debt.length}）：</b><ul>
                                   {rep.narrative_debt.map((d: any, i: number) => (
                                     <li key={i}><span style={{color:'#e87d3e',fontWeight:600}}>{d.promise||''}</span>{d.status && <span style={{color:'#888'}}> · {d.status}</span>}{d.priority && <span style={{color:'#e74c3c'}}> · {d.priority}</span>}</li>
                                   ))}
                                 </ul></div>
                               )}
                               {Array.isArray(rep.character_cognition_issues) && rep.character_cognition_issues.length > 0 && (
-                                <div style={{marginBottom:8}}><b>👥 角色认知边界问题：</b><ul>
+                                <div style={{marginBottom:8}}><b><Icon name="users" size={14} /> 角色认知边界问题：</b><ul>
                                   {rep.character_cognition_issues.map((c: string, i: number) => <li key={i}>{c}</li>)}
                                 </ul></div>
                               )}
                               {Array.isArray(rep.locked_facts) && rep.locked_facts.length > 0 && (
-                                <div style={{marginBottom:8}}><b>🔒 锁定事实清单：</b><ul>
+                                <div style={{marginBottom:8}}><b><Icon name="lock" size={14} /> 锁定事实清单：</b><ul>
                                   {rep.locked_facts.map((f: string, i: number) => <li key={i}>{f}</li>)}
                                 </ul></div>
                               )}
                               {Array.isArray(rep.suggestions) && rep.suggestions.length > 0 && (
-                                <div><b>💡 改进建议：</b><ul>
+                                <div><b><Icon name="lightbulb" size={14} /> 改进建议：</b><ul>
                                   {rep.suggestions.map((s: string, i: number) => <li key={i}>{s}</li>)}
                                 </ul></div>
                               )}
@@ -642,11 +643,11 @@ export function ForeshadowingPanel(props: {
         <div className="modal-overlay" onClick={() => setAfVolPickerOpen(false)}>
           <div className="modal-content" style={{maxWidth:460}} onClick={e => e.stopPropagation()}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-              <h3 style={{margin:0}}>🛡️ 防遗忘检查 · 选择分卷</h3>
-              <button className="btn-ghost-sm" onClick={() => setAfVolPickerOpen(false)}>✕</button>
+              <h3 style={{margin:0}}><Icon name="shield" size={16} /> 防遗忘检查 · 选择分卷</h3>
+              <button className="btn-ghost-sm" onClick={() => setAfVolPickerOpen(false)}><Icon name="x" size={14} /></button>
             </div>
             <p className="text-muted" style={{fontSize:12,marginBottom:6}}>
-              当前检查资料：<b>{afScope === 'dimensions' ? '📐 仅维度（除构思、章节外所有维度）' : '📄 动态文件（所有动态报告）'}</b>
+              当前检查资料：<b>{afScope === 'dimensions' ? <><Icon name="ruler" size={13} /> 仅维度（除构思、章节外所有维度）</> : <><Icon name="file-text" size={13} /> 动态文件（所有动态报告）</>}</b>
             </p>
             <div style={{maxHeight:320,overflowY:'auto',border:'1px solid var(--border)',borderRadius:8,padding:6}}>
               {displayVolumes.length === 0 ? (
@@ -659,7 +660,7 @@ export function ForeshadowingPanel(props: {
                       checked={afSelectedVolIds.length === 0}
                       onChange={e => { if (e.target.checked) setAfSelectedVolIds([]); }}
                     />
-                    📚 全部章节
+                    <Icon name="book-open" size={14} /> 全部章节
                   </label>
                   {displayVolumes.map((vol, idx) => {
                     const id = vol.volume_id || vol.volume || `vol${idx}`;
@@ -667,7 +668,7 @@ export function ForeshadowingPanel(props: {
                     return (
                       <label key={idx} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 8px',cursor:'pointer',fontSize:13}}>
                         <input type="checkbox" checked={checked} onChange={() => toggleAfVol(id)} />
-                        📖 {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}
+                        <Icon name="book" size={14} /> {vol.volume || `第${idx + 1}卷`}{vol.chapter_count ? ` (${vol.chapter_count}章)` : ''}
                       </label>
                     );
                   })}
@@ -677,7 +678,7 @@ export function ForeshadowingPanel(props: {
             <div className="confirm-actions" style={{marginTop:12}}>
               <button className="btn-ghost-sm" onClick={() => setAfVolPickerOpen(false)}>取消</button>
               <button className="btn-primary-sm" onClick={confirmAfVolPicker} disabled={afChecking}>
-                {afChecking ? '⏳ 检查中...' : '🚀 开始检查'}
+                {afChecking ? <><Icon name="hourglass" size={14} /> 检查中...</> : <><Icon name="rocket" size={14} /> 开始检查</>}
               </button>
             </div>
           </div>
@@ -691,8 +692,8 @@ export function ForeshadowingPanel(props: {
         <div className="modal-overlay" onClick={() => setFixVolPicker(null)}>
           <div className="modal-content" style={{maxWidth:440}} onClick={e => e.stopPropagation()}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-              <h3 style={{margin:0}}>{fixVolPicker.mode === 'setting' ? '🔧 AI修正' : '📝 修正正文'} · 选择卷</h3>
-              <button className="btn-ghost-sm" onClick={() => setFixVolPicker(null)}>✕</button>
+              <h3 style={{margin:0}}>{fixVolPicker.mode === 'setting' ? <><Icon name="wrench" size={16} /> AI修正</> : <><Icon name="edit" size={16} /> 修正正文</>} · 选择卷</h3>
+              <button className="btn-ghost-sm" onClick={() => setFixVolPicker(null)}><Icon name="x" size={14} /></button>
             </div>
             <div style={{maxHeight:300,overflowY:'auto',border:'1px solid var(--border)',borderRadius:8,padding:6}}>
               {volumes.length === 0 ? (
@@ -706,7 +707,7 @@ export function ForeshadowingPanel(props: {
                       checked={fixSelectedVolId === ''}
                       onChange={() => setFixSelectedVolId('')}
                     />
-                    📚 全部章节
+                    <Icon name="book-open" size={14} /> 全部章节
                   </label>
                   {volumes.map((vol) => {
                     const chs = chaptersByVolume[vol.id] || [];
@@ -718,7 +719,7 @@ export function ForeshadowingPanel(props: {
                           checked={fixSelectedVolId === vol.id}
                           onChange={() => setFixSelectedVolId(vol.id)}
                         />
-                        📖 {vol.title}（{chs.length}章）
+                        <Icon name="book" size={14} /> {vol.title}（{chs.length}章）
                       </label>
                     );
                   })}
@@ -739,7 +740,7 @@ export function ForeshadowingPanel(props: {
                   else jumpToChatForTextFix(reportId, vid);
                 }}
               >
-                🚀 开始修正
+                <Icon name="rocket" size={14} /> 开始修正
               </button>
             </div>
           </div>

@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { api } from '../api';
 import type { ActionCard, ProgressMap, AIMessage, SkillPack, BookBible, AIConfig } from '../types';
 import CarLogo from './CarLogo';
+import Icon from './Icon';
 // AI 提供商预设（icon/label）：通用Tab模型选择器按提供商分组展示多模型
 import { AI_PROVIDERS } from '../aiProviders';
 // Q1：直接复用现有实体管理弹窗（跨维度重命名/合并），不再在 ChatPanel 里重复造"动作影响预览"轮子
@@ -47,6 +48,18 @@ function shouldShowSuggestions(dimKey: string | null, bible?: BookBible | null):
   if (!dimKey || dimKey === 'general') return false;
   void bible; // 依赖判断已由后端 direct 模式接管（构思已定→返回固定直生卡片），前端不再重复判断
   return ['concept', 'plot_design', 'style_guide', 'inventory'].includes(dimKey);
+}
+
+// 技能包图标兼容：旧 emoji → IconName
+const SKILL_EMOJI_TO_ICON: Record<string, string> = {
+  '📦': 'package', '✍️': 'edit-pencil', '🎯': 'target', '🚀': 'rocket',
+  '💡': 'lightbulb', '🔮': 'crystal', '⚔️': 'sword', '🏰': 'castle',
+  '❤️': 'heart', '🔍': 'search', '📊': 'bar-chart', '🎭': 'drama',
+  '📚': 'book', '🎨': 'palette', '⚡': 'zap',
+};
+function resolveSkillIcon(icon: string): string {
+  if (!icon) return 'package';
+  return SKILL_EMOJI_TO_ICON[icon] || icon;
 }
 
 
@@ -144,16 +157,16 @@ export default function ChatPanel() {
   // 顺序按用户指定（通用助手选择器一排 emoji 小卡片，从左到右）：
   //   1.🧠默认   2.🪑圆桌   3.🎯节点设计师   4.🧾榜单分析师（用户要求的第4位，显眼位置）   5.✍️润色   6.🔥毒舌   7.🧱架构   8.🗺️世界观   9.📈爆款   10.🎙️深度采访
   const BUILTIN_ROLES = [
-    { id: 'default',       name: '默认助手',     emoji: '🧠​', brief: '正常智驾回答，不附加人格' },
-    { id: 'roundtable',    name: '圆桌会议',     emoji: '🪑​', brief: '7位专家Agent围坐开会（榜单分析师率先扫榜定风向），两轮轮流发言后产出总结报告' },
-    { id: 'node_designer', name: '节点设计师',   emoji: '🎯​', brief: '按卷生成情节节点（1章=1节点+资源滚动+人物关系），结果可采纳落入剧情线' },
-    { id: 'rank_analyst',  name: '榜单分析师',   emoji: '🧾​', brief: '【先扫榜再聊天】对话前自动扫番茄/起点新书榜，基于真实榜单风向给构思/书名/钩子建议' },
-    { id: 'polish',        name: '润色编辑',     emoji: '✍️​', brief: '擅长文字润色，指出语病、节奏、结构问题，给出具体改写对比' },
-    { id: 'toxic_critic',  name: '毒舌读者',     emoji: '🔥​', brief: '极度挑剔的读者视角，不留情面，专挑AI味和套路化' },
-    { id: 'architect',     name: '剧情架构师',   emoji: '🧱​', brief: '擅长分卷结构、张力曲线、伏笔回收、CDL角色三角' },
-    { id: 'worldbuilder',  name: '世界观策划',   emoji: '🗺️​', brief: '擅长能量体系、势力地图、科技树/修炼树、经济体系自洽' },
-    { id: 'marketeer',     name: '爆款编辑',     emoji: '📈​', brief: '从书名/一句话梗/前3章钩子的工业化爆款视角把关' },
-    { id: 'interviewer',   name: '深度采访',     emoji: '🎙️​', brief: '连续追问直到挖透设定矛盾和人物动机，擅长逼出冰山' },
+    { id: 'default',       name: '默认助手',     emoji: 'brain',       brief: '正常智驾回答，不附加人格' },
+    { id: 'roundtable',    name: '圆桌会议',     emoji: 'chair',       brief: '7位专家Agent围坐开会（榜单分析师率先扫榜定风向），两轮轮流发言后产出总结报告' },
+    { id: 'node_designer', name: '节点设计师',   emoji: 'target',      brief: '按卷生成情节节点（1章=1节点+资源滚动+人物关系），结果可采纳落入剧情线' },
+    { id: 'rank_analyst',  name: '榜单分析师',   emoji: 'receipt',     brief: '【先扫榜再聊天】对话前自动扫番茄/起点新书榜，基于真实榜单风向给构思/书名/钩子建议' },
+    { id: 'polish',        name: '润色编辑',     emoji: 'edit',        brief: '擅长文字润色，指出语病、节奏、结构问题，给出具体改写对比' },
+    { id: 'toxic_critic',  name: '毒舌读者',     emoji: 'flame',       brief: '极度挑剔的读者视角，不留情面，专挑AI味和套路化' },
+    { id: 'architect',     name: '剧情架构师',   emoji: 'brick',       brief: '擅长分卷结构、张力曲线、伏笔回收、CDL角色三角' },
+    { id: 'worldbuilder',  name: '世界观策划',   emoji: 'map',         brief: '擅长能量体系、势力地图、科技树/修炼树、经济体系自洽' },
+    { id: 'marketeer',     name: '爆款编辑',     emoji: 'trending-up', brief: '从书名/一句话梗/前3章钩子的工业化爆款视角把关' },
+    { id: 'interviewer',   name: '深度采访',     emoji: 'mic',         brief: '连续追问直到挖透设定矛盾和人物动机，擅长逼出冰山' },
   ] as const;
   // 通用聊天每个会话独立记住上次选的角色：sessionId -> roleId
   const [sessionRoleMap, setSessionRoleMap] = useState<Record<string, string>>({});
@@ -2158,10 +2171,10 @@ export default function ChatPanel() {
   };
 
   const TABS: Array<{ key: SmartTab; label: string; icon: string }> = [
-    { key: 'setting', label: '设定', icon: '⚙️' },
-    { key: 'chapter', label: '正文', icon: '✍️' },
-    { key: 'deai', label: '去AI', icon: '🧹' },
-    { key: 'review', label: '校审', icon: '🔍' },
+    { key: 'setting', label: '设定', icon: 'settings' },
+    { key: 'chapter', label: '正文', icon: 'edit' },
+    { key: 'deai', label: '去AI', icon: 'broom' },
+    { key: 'review', label: '校审', icon: 'search' },
   ];
 
   return (
@@ -2193,13 +2206,13 @@ export default function ChatPanel() {
                 >{dimRowsCollapsed ? '▶' : '▼'}</button>
               </div>
               <div className="chat-panel-tools">
-                <button className="chat-tool-btn" onClick={() => { setShowProgress(s => !s); }} title="创作进度">🗺️<span className="chat-tool-label">创作进度</span></button>
+                <button className="chat-tool-btn" onClick={() => { setShowProgress(s => !s); }} title="创作进度"><Icon name="map" size={18} /><span className="chat-tool-label">创作进度</span></button>
                 <button className="chat-tool-btn" onClick={() => { setShowEntityRegistry(true); }} title="实体管理（跨维度重命名/合并实体）">
-                  🏗️<span className="chat-tool-label">实体管理</span>
+                  <Icon name="building" size={18} /><span className="chat-tool-label">实体管理</span>
                 </button>
-                <button className="chat-tool-btn" onClick={() => { setShowHistory(s => !s); refreshHistory(); }} title="历史会话">🕘<span className="chat-tool-label">历史会话</span></button>
-                <button className="chat-tool-btn" onClick={handleNewSession} title="新会话">✨<span className="chat-tool-label">新会话</span></button>
-                <button className="chat-tool-btn close" onClick={closeChatPanel} title="关闭">✕</button>
+                <button className="chat-tool-btn" onClick={() => { setShowHistory(s => !s); refreshHistory(); }} title="历史会话"><Icon name="clock" size={18} /><span className="chat-tool-label">历史会话</span></button>
+                <button className="chat-tool-btn" onClick={handleNewSession} title="新会话"><Icon name="sparkles" size={18} /><span className="chat-tool-label">新会话</span></button>
+                <button className="chat-tool-btn close" onClick={closeChatPanel} title="关闭"><Icon name="x" size={18} /></button>
               </div>
             </div>
 
@@ -2265,7 +2278,7 @@ export default function ChatPanel() {
                         }}
                         disabled={streaming || loadingSuggest}
                         title="通用聊天：自由讨论任何话题，自然语言直接说需求即可。"
-                      >💬 通用</button>
+                      ><Icon name="message-circle" size={16} /> 通用</button>
                       {dimensions.filter(d => ['concept', 'key_rules', 'worldbuilding'].includes(d.key)).map(d => (
                         <button
                           key={d.key}
@@ -2273,7 +2286,7 @@ export default function ChatPanel() {
                           onClick={() => { setSelectedDim(d.key); setSuggestions([]); setSelectedSuggestion(null); setInput(''); }}
                           disabled={streaming || loadingSuggest}
                           title={d.key === 'key_rules' ? '能力体系/科技树等硬规则（生成时同步产出文风指南）' : d.hint}
-                        >{d.icon} {d.label}</button>
+                        ><Icon name={d.icon as any} size={16} /> {d.label}</button>
                       ))}
                     </div>
                     <div className="smart-dim-row">
@@ -2287,7 +2300,7 @@ export default function ChatPanel() {
                             onClick={() => { setSelectedDim(d.key); setSuggestions([]); setSelectedSuggestion(null); setInput(''); }}
                             disabled={streaming || loadingSuggest}
                             title={d.hint}
-                          >{d.icon} {d.label}</button>
+                          ><Icon name={d.icon as any} size={16} /> {d.label}</button>
                         );
                       })}
                     </div>
@@ -2313,7 +2326,7 @@ export default function ChatPanel() {
                   {fixTasks.length > 0 && (
                     <div className="fix-tasks-panel">
                       <div className="fix-tasks-head">
-                        <span className="fix-tasks-title">📋 设定修正任务清单</span>
+                        <span className="fix-tasks-title"><Icon name="clipboard" size={16} /> 设定修正任务清单</span>
                         <span className="fix-tasks-progress">
                           {fixTasks.filter(t => t.done).length}/{fixTasks.length} 已完成
                         </span>
@@ -2321,7 +2334,7 @@ export default function ChatPanel() {
                       <div className="fix-tasks-list">
                         {fixTasks.map((task, idx) => {
                           const dimLabel = task.dimKey ? (dimensions.find(d => d.key === task.dimKey)?.label || task.dimKey) : '未匹配';
-                          const dimIcon = task.dimKey ? (dimensions.find(d => d.key === task.dimKey)?.icon || '📌') : '❓';
+                          const dimIcon = task.dimKey ? (dimensions.find(d => d.key === task.dimKey)?.icon || 'pin') : 'help-circle';
                           return (
                             <div key={idx} className={`fix-task-item ${task.done ? 'fix-task-done' : ''}`}>
                               <label className="fix-task-check">
@@ -2335,7 +2348,7 @@ export default function ChatPanel() {
                               <div className="fix-task-content">
                                 <div className="fix-task-location">
                                   {task.location || '（未指定位置）'}
-                                  <span className="fix-task-dim-tag">{dimIcon} {dimLabel}</span>
+                                  <span className="fix-task-dim-tag"><Icon name={dimIcon as any} size={13} /> {dimLabel}</span>
                                   {task.severity && <span className={`fix-task-sev sev-${task.severity}`}>{task.severity}</span>}
                                 </div>
                                 <div className="fix-task-desc">{task.desc}</div>
@@ -2354,7 +2367,7 @@ export default function ChatPanel() {
                                   title="定位到该维度并填充修正意见"
                                 >去修正</button>
                               )}
-                              {task.done && <span className="fix-task-done-tag">✓ 已处理</span>}
+                              {task.done && <span className="fix-task-done-tag"><Icon name="check" size={13} /> 已处理</span>}
                             </div>
                           );
                         })}
@@ -2376,7 +2389,7 @@ export default function ChatPanel() {
                         >▶ 继续下一个未完成</button>
                       )}
                       {fixTasks.every(t => t.done) && (
-                        <div className="fix-tasks-all-done">🎉 全部设定修正任务已完成</div>
+                        <div className="fix-tasks-all-done"><Icon name="party" size={16} /> 全部设定修正任务已完成</div>
                       )}
                     </div>
                   )}
@@ -2394,9 +2407,9 @@ export default function ChatPanel() {
                   <div className="smart-chapter-info smart-chapter-info-row">
                     <span className="smart-chapter-info-text">
                       {latestChapter ? (
-                        <>📖 最新：<strong>{formatChapterTitle(latestChapter)}</strong>（{latestChapter.word_count}字，第{displayChapterNum(latestChapter)}章）</>
+                        <><Icon name="book" size={16} /> 最新：<strong>{formatChapterTitle(latestChapter)}</strong>（{latestChapter.word_count}字，第{displayChapterNum(latestChapter)}章）</>
                       ) : (
-                        <>📖 还没有章节，将创建第 1 章</>
+                        <><Icon name="book" size={16} /> 还没有章节，将创建第 1 章</>
                       )}
                     </span>
                     <button
@@ -2404,7 +2417,7 @@ export default function ChatPanel() {
                       onClick={refreshChapterAnchor}
                       disabled={streaming}
                       title="刷新章节定位（写作后会自动填入新章节到目录）"
-                    >🔄</button>
+                    ><Icon name="refresh" size={16} /></button>
                   </div>
                   {/* 章节选择器（用于「修改」模式定位目标章节） */}
                   <div className="smart-chapter-select">
@@ -2428,7 +2441,7 @@ export default function ChatPanel() {
                   {fixTasks.length > 0 && (
                     <div className="fix-tasks-panel">
                       <div className="fix-tasks-head">
-                        <span className="fix-tasks-title">📋 修正任务清单</span>
+                        <span className="fix-tasks-title"><Icon name="clipboard" size={16} /> 修正任务清单</span>
                         <span className="fix-tasks-progress">
                           {fixTasks.filter(t => t.done).length}/{fixTasks.length} 已完成
                         </span>
@@ -2464,7 +2477,7 @@ export default function ChatPanel() {
                                 title="定位到该章节并填充修改意见"
                               >去修改</button>
                             )}
-                            {task.done && <span className="fix-task-done-tag">✓ 已处理</span>}
+                            {task.done && <span className="fix-task-done-tag"><Icon name="check" size={13} /> 已处理</span>}
                           </div>
                         ))}
                       </div>
@@ -2483,7 +2496,7 @@ export default function ChatPanel() {
                         >▶ 继续下一个未完成</button>
                       )}
                       {fixTasks.every(t => t.done) && (
-                        <div className="fix-tasks-all-done">🎉 全部修正任务已完成</div>
+                        <div className="fix-tasks-all-done"><Icon name="party" size={16} /> 全部修正任务已完成</div>
                       )}
                     </div>
                   )}
@@ -2494,7 +2507,7 @@ export default function ChatPanel() {
                       onClick={() => doChapterAction('continue', null, input.trim() || undefined)}
                       disabled={streaming}
                       title="续写下一章（输入框内容作为写作要求）"
-                    >✍️ 写作第 {nextChapterNum} 章</button>
+                    ><Icon name="edit" size={16} /> 写作第 {nextChapterNum} 章</button>
                     <button
                       className={`smart-action-btn ${chapterEditArmed ? 'primary' : ''}`}
                       onClick={() => {
@@ -2529,7 +2542,7 @@ export default function ChatPanel() {
                             ? (chapters.find(c => c.id === chapterTargetId) ? formatChapterOption(chapters.find(c => c.id === chapterTargetId)!) : '已选')
                             : '从输入框解析') + '）'
                         : '修改已写章节（先点此按钮进入"待修改"模式，再点一次才执行）'}
-                    >{chapterEditArmed ? '🚀 开始修改' : '✨ 修改'}</button>
+                    >{chapterEditArmed ? <><Icon name="rocket" size={16} /> 开始修改</> : <><Icon name="sparkles" size={16} /> 修改</>}</button>
                     {chapterEditArmed && (
                       <button
                         className="smart-action-btn"
@@ -2563,7 +2576,7 @@ export default function ChatPanel() {
                     )}
                   </div>
                   {chapters.length > 10 && (
-                    <div className="smart-deai-hint">💡 仅显示最新10章，其他章节可在下方消息框输入「第N章」指定</div>
+                    <div className="smart-deai-hint"><Icon name="bulb" size={14} /> 仅显示最新10章，其他章节可在下方消息框输入「第N章」指定</div>
                   )}
                   <SkillPackSelector packs={skillPacks.filter(p => p.category === 'review')} selected={deaiPacks_selected} onToggle={(id) => toggleSkillPack('deai', id)} onPreview={(pack) => setPreviewPack(pack)} compact />
                 </>
@@ -2577,21 +2590,21 @@ export default function ChatPanel() {
                       onClick={() => handleReview('anti_forget')}
                       disabled={reviewing || streaming}
                     >
-                      {reviewArmedMode === 'anti_forget' ? <>✅ 确认：{_reviewScopeAntiForget}</> : <>🔍 防遗忘检查</>}
+                      {reviewArmedMode === 'anti_forget' ? <><Icon name="check-circle" size={16} /> 确认：{_reviewScopeAntiForget}</> : <><Icon name="search" size={16} /> 防遗忘检查</>}
                     </button>
                     <button
                       className={`smart-action-btn ${reviewArmedMode === 'consistency' ? 'armed' : ''}`}
                       onClick={() => handleReview('consistency')}
                       disabled={reviewing || streaming}
                     >
-                      {reviewArmedMode === 'consistency' ? <>✅ 确认：{_reviewScopeConsistency}</> : <>⚖️ 一致性检查</>}
+                      {reviewArmedMode === 'consistency' ? <><Icon name="check-circle" size={16} /> 确认：{_reviewScopeConsistency}</> : <><Icon name="scale" size={16} /> 一致性检查</>}
                     </button>
                   </div>
                   {/* 校审范围：两行下拉选择（按卷 + 一致性章节），样式统一对齐 */}
                   <div className={`smart-review-scope ${reviewArmedMode ? 'armed' : ''}`}>
                     {volumes.length > 0 && (
                       <div className="smart-chapter-select smart-review-scope-row">
-                        <label>📚 按卷（不选=全书）</label>
+                        <label><Icon name="book-open" size={15} /> 按卷（不选=全书）</label>
                         <select
                           className="smart-review-scope-select"
                           value={reviewVolumeIds[0] || ''}
@@ -2611,7 +2624,7 @@ export default function ChatPanel() {
                     )}
                     {chapters.length > 0 && (
                       <div className="smart-chapter-select smart-review-scope-row">
-                        <label>📖 一致性章节（不选=最新）</label>
+                        <label><Icon name="book" size={15} /> 一致性章节（不选=最新）</label>
                         <select
                           className="smart-review-scope-select"
                           value={reviewChapterId || ''}
@@ -2634,7 +2647,7 @@ export default function ChatPanel() {
                       落地只替换 original→rewritten 命中的片段，未改动内容 100% 保留，不再整字段覆盖导致内容不全。 */}
                   <div className="impact-preview-panel review-grid-cell" style={{marginTop:8}}>
                     <div className="impact-preview-head">
-                      <span>🔧 设定修正方案（精准局部落地）</span>
+                      <span><Icon name="wrench" size={16} /> 设定修正方案（精准局部落地）</span>
                     </div>
                     <div className="impact-preview-body">
                       <div className="impact-preview-actions" style={{alignItems:'flex-start'}}>
@@ -2654,7 +2667,7 @@ export default function ChatPanel() {
                             }
                           }}
                         >
-                          {reviewFixLoading ? '生成中…' : '🔧 生成设定修正方案'}
+                          {reviewFixLoading ? '生成中…' : <><Icon name="wrench" size={16} /> 生成设定修正方案</>}
                         </button>
                         <span style={{fontSize:11,color:'var(--text-muted)'}}>基于当前各维度诊断生成<strong>局部修正</strong>方案并精准落地；未改动内容 100% 保留。</span>
                       </div>
@@ -2719,7 +2732,7 @@ export default function ChatPanel() {
                   <div className="impact-preview-panel review-grid-cell">
                     <div className="impact-preview-head" onClick={() => setShowBackfill(s => !s)}>
                       <span className="review-head-title">
-                        <span className="review-head-emoji">🧩</span>
+                        <span className="review-head-emoji"><Icon name="puzzle" size={16} /></span>
                         <span className="review-head-text">事件日志</span>
                       </span>
                       <span className="impact-preview-toggle">{showBackfill ? '▲' : '▼'}</span>
@@ -2734,7 +2747,7 @@ export default function ChatPanel() {
                             <option value="never">never（只用正则，零成本，速度最快）</option>
                           </select>
                           <button onClick={runBackfill} disabled={streaming || backfillRunning} style={{minWidth:120}}>
-                            {backfillRunning ? '运行中…' : '🚀 全文重算'}
+                            {backfillRunning ? '运行中…' : <><Icon name="rocket" size={16} /> 全文重算</>}
                           </button>
                         </div>
                         <div style={{fontSize:11,color:'var(--text-muted)',marginTop:4}}>
@@ -2772,14 +2785,14 @@ export default function ChatPanel() {
                   <div className="opt-report-inline impact-preview-panel review-grid-cell">
                     <div className="impact-preview-head">
                       <span className="review-head-title" onClick={(e) => { e.stopPropagation(); setShowOptReport(s => !s); }} style={{cursor:'pointer'}}>
-                        <span className="review-head-emoji">🧠</span>
+                        <span className="review-head-emoji"><Icon name="brain" size={16} /></span>
                         <span className="review-head-text">系统学习</span>
                         {optimizationReport && optimizationReport.failure_count > 0 && (
                           <span className="chat-tool-badge" style={{fontSize:10}}>{optimizationReport.failure_count}</span>
                         )}
                         {optimizationReport && (optimizationReport.applied_patch_count || 0) > 0 && (
                           <span className="chat-tool-badge" style={{fontSize:10,background:'var(--accent-light)',color:'var(--accent)'}}>
-                            ✓ {optimizationReport.applied_patch_count}
+                            <Icon name="check" size={11} /> {optimizationReport.applied_patch_count}
                           </span>
                         )}
                       </span>
@@ -2791,7 +2804,7 @@ export default function ChatPanel() {
                             const r: any = await api.getOptimizationReport(bookId);
                             setOptimizationReport(r);
                           } catch {}
-                        }}>🔄 刷新</button>
+                        }}><Icon name="refresh" size={14} /> 刷新</button>
                         <span className="impact-preview-toggle" style={{cursor:'pointer'}} onClick={(e) => { e.stopPropagation(); setShowOptReport(s => !s); }}>{showOptReport ? '▲' : '▼'}</span>
                       </span>
                     </div>
@@ -2800,8 +2813,8 @@ export default function ChatPanel() {
                     <div className="impact-preview-body">
                       {!optimizationReport ? (
                         <div className="opt-report-empty" style={{padding: '10px 4px'}}>
-                          <div className="opt-report-empty-icon" style={{fontSize:20}}>🪄</div>
-                          <div style={{fontSize:12}}>点右上「🔄 刷新」扫描 FailureDB</div>
+                          <div className="opt-report-empty-icon" style={{fontSize:20}}><Icon name="wand" size={20} /></div>
+                          <div style={{fontSize:12}}>点右上「<Icon name="refresh" size={12} /> 刷新」扫描 FailureDB</div>
                           <div className="opt-report-empty-sub" style={{fontSize:11}}>
                             跑过校审/章节门禁后，这里会根据累积的失败记录自动生成优化建议。
                           </div>
@@ -2809,7 +2822,7 @@ export default function ChatPanel() {
                       ) : optimizationReport.failure_count === 0 ||
                            optimizationReport.suggestions.filter((s: any) => !locallyDismissedBuckets.has(s.bucket_key)).length === 0 ? (
                         <div className="opt-report-empty" style={{padding: '10px 4px'}}>
-                          <div className="opt-report-empty-icon" style={{fontSize:20}}>✅</div>
+                          <div className="opt-report-empty-icon" style={{fontSize:20}}><Icon name="check-circle" size={20} /></div>
                           <div style={{fontSize:12}}>
                             {optimizationReport.ready ? '当前没有可处理的建议' : '暂无高频失败模式'}
                           </div>
@@ -2853,7 +2866,7 @@ export default function ChatPanel() {
                                     {s.examples && s.examples.length > 0 && (
                                       <details className="opt-report-snippet" style={{marginTop:4}}>
                                         <summary style={{cursor:'pointer', fontSize:11, color:'var(--text-muted)'}}>
-                                          📎 失败片段（{s.examples.length} 条）
+                                          <Icon name="paperclip" size={13} /> 失败片段（{s.examples.length} 条）
                                         </summary>
                                         {s.examples.map((ex:any, i:number) => (
                                           <div key={i} style={{marginTop:4, padding:'4px 6px', background:'var(--bg-secondary)', borderRadius:4}}>
@@ -2912,7 +2925,7 @@ export default function ChatPanel() {
                                                 } finally {
                                                   setOptBusyBucket(null);
                                                 }
-                                              }}>💾 保存并采纳</button>
+                                              }}><Icon name="save" size={14} /> 保存并采纳</button>
                                             <button className="btn-ghost-sm" onClick={() => { setEditingBucket(null); setEditingPatch(''); }}>
                                               取消
                                             </button>
@@ -2942,13 +2955,13 @@ export default function ChatPanel() {
                                                   setOptBusyBucket(null);
                                                 }
                                               }}>
-                                              {isBusy ? '处理中…' : '✅ 采纳建议'}
+                                              {isBusy ? '处理中…' : <><Icon name="check-circle" size={14} /> 采纳建议</>}
                                             </button>
                                             <button className="btn-ghost-sm" disabled={isBusy}
                                               onClick={() => {
                                                 setEditingBucket(s.bucket_key);
                                                 setEditingPatch(s.proposed_patch || '');
-                                              }}>📝 自定义编辑</button>
+                                              }}><Icon name="edit" size={14} /> 自定义编辑</button>
                                             <button className="btn-ghost-sm" disabled={isBusy}
                                               onClick={async () => {
                                                 if (!bookId) return;
@@ -2962,7 +2975,7 @@ export default function ChatPanel() {
                                                 } finally {
                                                   setOptBusyBucket(null);
                                                 }
-                                              }}>❌ 忽略</button>
+                                              }}><Icon name="x-circle" size={14} /> 忽略</button>
                                           </div>
                                         </>
                                       )}
@@ -3000,7 +3013,7 @@ export default function ChatPanel() {
                       disabled={streaming}
                     >
                       {s._from_user && (
-                        <div className="user-suggestion-badge">📝 我的创作内容 · 直接落地不改动原文</div>
+                        <div className="user-suggestion-badge"><Icon name="file-text" size={13} /> 我的创作内容 · 直接落地不改动原文</div>
                       )}
                       <div className="smart-suggestion-title">
                         {!s._from_user && <>{schemeLabel}：</>}
@@ -3031,7 +3044,7 @@ export default function ChatPanel() {
                   <div className="chat-empty-icon"><CarLogo size={56} /></div>
                   {activeTab === 'setting' && selectedDim === 'general' ? (
                     <div style={{ textAlign: 'center' }}>
-                      <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b' }}>💬 通用聊天模式 · 想聊啥就聊啥</p>
+                      <p style={{ fontSize: 15, fontWeight: 600, color: '#1e1b4b', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}><Icon name="message-circle" size={18} /> 通用聊天模式 · 想聊啥就聊啥</p>
                     </div>
                   ) : (
                     <p>AI 智驾已就绪。选择上方维度或操作，开始人机协作创作。</p>
@@ -3078,7 +3091,7 @@ export default function ChatPanel() {
                   onClick={handleDeai}
                   disabled={streaming}
                   style={{ flex: '0 0 auto' }}
-                >{streaming ? '处理中…' : '🧹 开始去AI味'}</button>
+                >{streaming ? '处理中…' : <><Icon name="broom" size={16} /> 开始去AI味</>}</button>
                 <button
                   className="smart-main-action"
                   onClick={handleStyleAlign}
@@ -3089,7 +3102,7 @@ export default function ChatPanel() {
                     color: '#fff',
                     border: 'none',
                   }}
-                >🎯 风格对齐诊断</button>
+                ><Icon name="target" size={16} /> 风格对齐诊断</button>
                 {!deaiTargetId && <span className="smart-main-hint">未选章节时可在输入框输入「第N章」</span>}
               </div>
             )}
@@ -3097,7 +3110,7 @@ export default function ChatPanel() {
             {/* 自动上下文命中提示：已定位并注入章节/维度资料 */}
             {autoContextNotice && (autoContextNotice.chapters.length > 0 || autoContextNotice.dims.length > 0) && (
               <div className="auto-context-notice" onClick={() => setAutoContextNotice(null)} title="点击关闭">
-                <span className="acn-icon">🎯</span>
+                <span className="acn-icon"><Icon name="target" size={16} /></span>
                 <span className="acn-text">
                   已自动定位并注入：
                   {autoContextNotice.dims.length > 0 && (
@@ -3194,7 +3207,7 @@ export default function ChatPanel() {
                               color: '#333',
                             }}
                           >
-                            🤖{' '}
+                            <Icon name="bot" size={16} />{' '}
                             <span className="gt-model-text" style={{
                               fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100,
                             }}>
@@ -3216,7 +3229,7 @@ export default function ChatPanel() {
                             title={generalWebSearch ? '🔍 联网搜索已开启：每次提问都先联网搜索最新资料再回答' : '🔍 点击开启联网搜索：开启后每次提问都先联网搜最新资料；关闭时不联网（默认关闭）'}
                             style={{ ..._chipBase, border: '1px solid #d6e4d8', background: generalWebSearch ? '#eafaf3' : '#fafafa', cursor: 'pointer', color: generalWebSearch ? '#0a7d4f' : '#555' }}
                           >
-                            🔍<span style={{ fontWeight: 600 }}>联网</span>
+                            <Icon name="search" size={16} /><span style={{ fontWeight: 600 }}>联网</span>
                           </button>
 
                           {/* ── 🧠 深度思考 Button：占 1/4（三档：关/标准/深度，点开选档） ── */}
@@ -3228,7 +3241,7 @@ export default function ChatPanel() {
                             style={{ ..._chipBase, border: '1px solid #d8d0ec', background: generalDeepThink > 0 ? '#f1ecfa' : '#fafafa', cursor: 'pointer', color: generalDeepThink > 0 ? '#6236c9' : '#555' }}
                           >
                             <span style={{ fontWeight: 600 }}>
-                              🧠{generalDeepThink === 2 ? '深度' : generalDeepThink === 1 ? '标准' : '思考'}
+                              <Icon name="brain" size={16} />{generalDeepThink === 2 ? '深度' : generalDeepThink === 1 ? '标准' : '思考'}
                             </span>
                             <span style={{ color: '#bbb' }}>{deepThinkOpen ? '▲' : '▼'}</span>
                           </button>
@@ -3320,7 +3333,7 @@ export default function ChatPanel() {
                             }}
                             title="导入 Silly Tavern V2/V3 格式的 JSON 角色卡（非多模态），自动生成人物草稿并一键入库到【人物】维度"
                           >
-                            📥<span className="gt-import-text">导入角色卡</span>
+                            <Icon name="upload" size={16} /><span className="gt-import-text">导入角色卡</span>
                           </button>
                         </div>
 
@@ -3342,7 +3355,8 @@ export default function ChatPanel() {
                           const _groups = aiConfigList.map(cfg => ({
                             key: cfg.id,
                             label: cfg.name || cfg.provider,
-                            icon: AI_PROVIDERS.find(p => p.value === cfg.provider)?.icon || '🔌',
+                            icon: AI_PROVIDERS.find(p => p.value === cfg.provider)?.icon || 'plug',
+                            iconColor: AI_PROVIDERS.find(p => p.value === cfg.provider)?.color,
                             models: (cfg.models && cfg.models.length ? cfg.models : (cfg.model ? [cfg.model] : [])),
                             has_key: cfg.has_key,
                             cfg,
@@ -3387,7 +3401,7 @@ export default function ChatPanel() {
                                         border: _curGroup ? '1px solid #c3d2ff' : '1px solid transparent',
                                       }}
                                     >
-                                      <span style={{ fontSize: 15 }}>{g.icon}</span>
+                                      <Icon name={g.icon as any} size={16} style={g.iconColor ? { color: g.iconColor } : undefined} />
                                       <span style={{ fontWeight: 600, fontSize: 13, color: '#222', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                         {g.label}
                                       </span>
@@ -3399,7 +3413,7 @@ export default function ChatPanel() {
                                           {(_chosen.model || '').split('/').pop()}
                                         </span>
                                       )}
-                                      {!g.has_key && <span style={{ fontSize: 10, color: '#e24' }}>🚫</span>}
+                                      {!g.has_key && <Icon name="ban" size={12} style={{ color: '#e24', marginLeft: 4 }} />}
                                       <span style={{ color: '#999', fontSize: 11 }}>{_open ? '▾' : '▸'}</span>
                                     </div>
                                     {/* 组内：用户选定的模型（未选定的不放这里） */}
@@ -3451,9 +3465,9 @@ export default function ChatPanel() {
                             }}
                           >
                             {([
-                              { level: 0, label: '⚡ 关闭', desc: '默认快速回答' },
-                              { level: 1, label: '🔄 标准思考', desc: '先理清思路，言简意赅' },
-                              { level: 2, label: '🧠 深度思考', desc: '拆假设·列逻辑·权衡取舍再给结论' },
+                              { level: 0, icon: 'zap', label: '关闭', desc: '默认快速回答' },
+                              { level: 1, icon: 'refresh', label: '标准思考', desc: '先理清思路，言简意赅' },
+                              { level: 2, icon: 'brain', label: '深度思考', desc: '拆假设·列逻辑·权衡取舍再给结论' },
                             ]).map(opt => {
                               const active = generalDeepThink === opt.level;
                               return (
@@ -3467,7 +3481,7 @@ export default function ChatPanel() {
                                     border: active ? '1px solid #9b7ee0' : '1px solid transparent',
                                   }}
                                 >
-                                  <span style={{ fontWeight: 600, fontSize: 13, color: active ? '#6236c9' : '#333' }}>{opt.label}</span>
+                                  <span style={{ fontWeight: 600, fontSize: 13, color: active ? '#6236c9' : '#333', display: 'flex', alignItems: 'center', gap: 6 }}><Icon name={opt.icon as any} size={14} />{opt.label}</span>
                                   <span style={{ fontSize: 11, color: '#888' }}>{opt.desc}</span>
                                 </div>
                               );
@@ -3541,7 +3555,7 @@ export default function ChatPanel() {
                       className="chat-send"
                       onClick={handleDeai}
                       disabled={!input.trim() && !deaiTargetId}
-                    >🧹 去味</button>
+                    ><Icon name="broom" size={16} /> 去味</button>
                   ) : null}
                 </div>
               </div>
@@ -3555,7 +3569,7 @@ export default function ChatPanel() {
                   className={`smart-tab ${activeTab === t.key ? 'active' : ''}`}
                   onClick={() => switchTab(t.key)}
                 >
-                  <span className="smart-tab-icon">{t.icon}</span>
+                  <Icon name={t.icon as any} size={18} className="smart-tab-icon" />
                   <span className="smart-tab-label">{t.label}</span>
                 </button>
               ))}
@@ -3570,7 +3584,7 @@ export default function ChatPanel() {
           <div className="skill-editor-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 720 }}>
             <div className="skill-editor-header">
               <h3 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 22 }}>{previewPack.icon}</span>
+                <Icon name={resolveSkillIcon(previewPack.icon) as any} size={22} />
                 <span>{previewPack.name}</span>
                 {previewPack.is_builtin ? <span className="builtin-badge">系统</span> : <span className="custom-badge">自定义</span>}
                 <span style={{
@@ -3583,7 +3597,7 @@ export default function ChatPanel() {
                   {(previewPack.category || 'master') === 'master' ? '构思类' : previewPack.category === 'style' ? '文风类' : '审查类'}
                 </span>
               </h3>
-              <button className="btn-icon" onClick={() => setPreviewPack(null)}>✕</button>
+              <button className="btn-icon" onClick={() => setPreviewPack(null)}><Icon name="x" size={18} /></button>
             </div>
 
             <div style={{ background: 'var(--bg-tertiary)', padding: 12, borderRadius: 8, marginBottom: 12 }}>
@@ -3612,7 +3626,7 @@ export default function ChatPanel() {
                           marginTop: 3, fontFamily: 'var(--mono)', fontSize: 10,
                           color: 'var(--accent)', background: 'var(--bg-secondary)',
                           padding: '1px 5px', borderRadius: 3, display: 'inline-block'
-                        }}>🔑 {step.prompt_key}</div>
+                        }}><Icon name="key" size={12} /> {step.prompt_key}</div>
                       )}
                     </div>
                   </div>
@@ -3633,7 +3647,7 @@ export default function ChatPanel() {
                       padding: '5px 10px', fontSize: 12, fontWeight: 600,
                       fontFamily: 'var(--mono)', cursor: 'pointer', color: 'var(--accent)',
                       listStyle: 'none'
-                    }}>📝 {key} <span style={{ float: 'right', color: 'var(--text-muted)', fontWeight: 400 }}>点击展开</span></summary>
+                    }}><Icon name="file-text" size={13} /> {key} <span style={{ float: 'right', color: 'var(--text-muted)', fontWeight: 400 }}>点击展开</span></summary>
                     <pre style={{
                       margin: 0, padding: 10, fontSize: 11, lineHeight: 1.7,
                       color: 'var(--text-primary)', whiteSpace: 'pre-wrap',
