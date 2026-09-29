@@ -490,7 +490,7 @@ export function CharacterPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3><Icon name="user" size={14} /> AI协同创作 · 人物</h3>
+          <h3><Icon name="user" size={16} /> AI协同创作 · 人物</h3>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillPacks.length > 0 && (
@@ -693,7 +693,7 @@ export function CharacterPanel(props: {
           <div className="plot-volume-card">
             <div className="plot-volume-header" onClick={() => setGlobalCharCollapsed(v => !v)} style={{cursor:'pointer'}}>
               <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={globalCharCollapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
-              <h4><Icon name="globe" size={14} /> 全局人物档案</h4>
+              <h4><Icon name="globe" size={16} /> 全局人物档案</h4>
               <span className="text-muted" style={{fontSize:12}}>{characters.length}人</span>
               <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
                 {charBatchMode ? (
@@ -759,7 +759,7 @@ export function CharacterPanel(props: {
         <div className="plot-volume-card">
           <div className="plot-volume-header" onClick={() => setRelGraphCollapsed(v => !v)} style={{cursor:'pointer'}}>
             <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={relGraphCollapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
-            <h4><Icon name="link" size={14} /> 人物关系图谱</h4>
+            <h4><Icon name="link" size={16} /> 人物关系图谱</h4>
             <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
               {relGraphEditing ? (
                 <>

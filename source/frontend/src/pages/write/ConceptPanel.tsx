@@ -219,7 +219,7 @@ export function ConceptPanel(props: {
         <div className="brainstorm-results">
           {brainstormResult.concept_analysis && (
             <div className="concept-analysis">
-              <h4><Icon name="clipboard" size={14} /> 构思分析</h4>
+              <h4><Icon name="clipboard" size={16} /> 构思分析</h4>
               <p>{brainstormResult.concept_analysis}</p>
             </div>
           )}
