@@ -289,7 +289,7 @@ export function OutlineCombinedPanel(props: {
         </div>
       ) : (
         <div className="bible-empty" onClick={startEdit}>
-          <span className="bible-empty-icon"><Icon name={subTab === 'outline' ? 'clipboard' : 'globe'} size={40} /></span>
+          <span className="bible-empty-icon"><Icon name={subTab === 'outline' ? 'clipboard' : 'globe'} size={32} /></span>
           <p>暂无{labelMap[subTab]}内容</p>
           <p className="text-muted">点击编辑或使用AI创作</p>
         </div>

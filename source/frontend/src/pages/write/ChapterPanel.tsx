@@ -422,7 +422,7 @@ export function ChapterPanel(props: {
         <div className="ai-chat-history">
           {aiChatHistory.length === 0 && !aiCreating && (
             <div className="ai-create-empty">
-              <div className="ai-create-empty-icon"><Icon name="sparkles" size={40} /></div>
+              <div className="ai-create-empty-icon"><Icon name="sparkles" size={32} /></div>
               <p>告诉AI你想写什么，AI将根据你的要求和故事设定创作章节正文</p>
             </div>
           )}
@@ -946,7 +946,7 @@ export function ChapterPanel(props: {
       {importChaptersError && <div className="error-msg" style={{padding:'0 12px'}}>{importChaptersError}</div>}
       {chapters.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon"><Icon name="book" size={40} /></div>
+          <div className="empty-icon"><Icon name="book" size={32} /></div>
           <p>还没有章节，点击"新章节"开始写作</p>
         </div>
       ) : (
