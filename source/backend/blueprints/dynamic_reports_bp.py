@@ -44,7 +44,7 @@ def _generate_dynamic_report_content(book_id, chapter_start, chapter_end, skill_
     if not book:
         return None, 'Book not found'
 
-    config = AIConfig.get_active()
+    config = AIConfig.get_active(user_id=book.user_id)
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.model if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
@@ -249,7 +249,7 @@ def _revise_dimensions_from_chapters(book_id, chapter_start, chapter_end):
     bb = BookBible.query.filter_by(book_id=book_id).first()
     if not book or not bb:
         return None
-    config = AIConfig.get_active()
+    config = AIConfig.get_active(user_id=book.user_id)
     if not config or not config.api_key:
         return None
     api_key = config.api_key

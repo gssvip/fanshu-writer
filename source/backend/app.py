@@ -891,6 +891,8 @@ def fetch_ai_models():
     # 显式指定 config_id → 用该提供商存库的真实 key/地址（编辑非激活提供商也能拉取）
     if cfg_id:
         c = AIConfig.query.get(cfg_id)
+        if c and c.user_id != getattr(request, 'current_user_id', None):
+            c = None  # 非当前用户的配置，视为不存在（多租户隔离）
         if c:
             if not base_url:
                 base_url = c.base_url or ''
@@ -901,7 +903,7 @@ def fetch_ai_models():
 
     # 如果 api_key 是掩码或为空，尝试使用已保存的配置
     if api_key == '***' or not api_key:
-        cfg = AIConfig.get_active()
+        cfg = AIConfig.get_active(user_id=getattr(request, 'current_user_id', None))
         if cfg and cfg.api_key:
             api_key = cfg.api_key
             if not base_url:
@@ -936,7 +938,7 @@ def test_ai_connection():
 
     # 如果 api_key 是掩码或为空，尝试使用已保存的配置
     if api_key == '***' or not api_key:
-        cfg = AIConfig.get_active()
+        cfg = AIConfig.get_active(user_id=getattr(request, 'current_user_id', None))
         if cfg and cfg.api_key:
             api_key = cfg.api_key
             if not base_url:
@@ -968,7 +970,7 @@ def ai_chat():
     if not messages:
         return jsonify({'error': 'No messages'}), 400
 
-    cfg = AIConfig.get_active()
+    cfg = AIConfig.get_active(user_id=getattr(request, 'current_user_id', None))
     if not cfg or not cfg.api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
@@ -1005,7 +1007,7 @@ def ai_chat_stream():
     data = request.json
     messages = data.get('messages', [])
 
-    cfg = AIConfig.get_active()
+    cfg = AIConfig.get_active(user_id=getattr(request, 'current_user_id', None))
     if not cfg or not cfg.api_key:
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 

@@ -309,11 +309,21 @@ class AIConfig(db.Model):
 
     @classmethod
     def get_active(cls, user_id=None):
-        """返回激活配置。user_id 非空时优先取该用户的激活配置；
-        无用户上下文（后台任务）时回退到共享配置（user_id IS NULL），保证兼容。"""
+        """返回激活配置。user_id 非空时优先取该用户的激活配置（含共享兜底）；
+        无参时：若处于请求上下文中，自动绑定当前登录用户（多租户隔离）；
+        后台任务（无请求上下文）仅使用共享配置（user_id IS NULL），杜绝跨租户借用。"""
         q = cls.query
+        if not user_id:
+            try:
+                from flask import has_request_context, request as _req
+                if has_request_context():
+                    user_id = getattr(_req, 'current_user_id', None)
+            except Exception:
+                user_id = None
         if user_id:
             q = q.filter((cls.user_id == user_id) | (cls.user_id.is_(None)))
+        else:
+            q = q.filter(cls.user_id.is_(None))
         cfg = q.filter_by(is_active=True).order_by(cls.user_id.is_(None).asc()).first()
         if cfg:
             return cfg
@@ -329,11 +339,20 @@ class AIConfig(db.Model):
 
 
     @classmethod
-    def get_by_id(cls, cfg_id):
-        """P1-1 会话级切模型：按ID取指定配置（找不到返回None），绝不修改全局激活。"""
+    def get_by_id(cls, cfg_id, user_id=None):
+        """P1-1 会话级切模型：按ID取指定配置（找不到返回None），绝不修改全局激活。
+        user_id 非空时仅允许取该用户自己的配置（含共享配置兜底）；
+        无参时若处于请求上下文中自动绑定当前登录用户，杜绝跨租户越权读取。"""
         if not cfg_id: return None
         try:
-            return cls.query.filter_by(id=str(cfg_id)).first()
+            if not user_id:
+                from flask import has_request_context, request as _req
+                if has_request_context():
+                    user_id = getattr(_req, 'current_user_id', None)
+            q = cls.query.filter_by(id=str(cfg_id))
+            if user_id:
+                q = q.filter((cls.user_id == user_id) | (cls.user_id.is_(None)))
+            return q.first()
         except Exception:
             return None
 

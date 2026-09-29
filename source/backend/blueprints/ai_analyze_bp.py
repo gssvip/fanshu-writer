@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 
 from auth_utils import login_required
+from llm_gateway import build_auth_headers
 
 ai_analyze_bp = Blueprint('ai_analyze', __name__)
 

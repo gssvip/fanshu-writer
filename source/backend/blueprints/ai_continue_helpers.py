@@ -332,7 +332,7 @@ def _build_ai_continue_context(book_id, bb, instruction, skill_pack_ids, target_
 
     # ============== 以下是真正装配逻辑（以前代码一字不动，仅函数签名扩展了 2 个 kwarg）==============
     book = Book.query.get(book_id)
-    config = AIConfig.get_active()
+    config = AIConfig.get_active(user_id=book.user_id)
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.model if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')

@@ -448,6 +448,7 @@ def serve_cover(filename):
 # ============================================================================
 
 @export_bp.route('/api/books/import-zip', methods=['POST'])
+@login_required
 def import_book_zip():
     from app import db, Book, Chapter, Character, Outline, count_words, update_book_stats
     if 'file' not in request.files:
@@ -468,6 +469,7 @@ def import_book_zip():
             data = json.load(f)
 
         book = Book(
+            user_id=getattr(request, 'current_user_id', ''),
             title=data.get('title', '导入书籍'), author=data.get('author', ''),
             genre=data.get('genre', 'other'), book_type=data.get('book_type', 'novel'),
             synopsis=data.get('synopsis', ''), status='draft'
