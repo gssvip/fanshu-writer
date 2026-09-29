@@ -17,20 +17,20 @@ export function collapseNewlines(s: unknown): string {
 
 // 两行 Tab 布局：上下各 5 个维度
 export const TAB_ROW_1 = [
-  { key: 'concept', label: '构思', icon: '💡', field: 'concept', placeholder: '一句话描述你的故事核心创意...' },
-  { key: 'settings', label: '设定', icon: '⚙️', field: 'key_rules', placeholder: '核心规则、能力限制、世界观禁忌...' },
-  { key: 'outline', label: '大纲', icon: '📋', field: 'plot_design', placeholder: '主线冲突、卷纲拆解、章节规划...' },
-  { key: 'plot', label: '剧情', icon: '📖', field: 'timeline', placeholder: '按时间顺序列出关键事件...' },
-  { key: 'characters', label: '人物及关系', icon: '👤', field: 'character_profiles', placeholder: '主角、配角的姓名、身份、性格、动机、人物关系...' },
+  { key: 'concept', label: '构思', icon: 'bulb', field: 'concept', placeholder: '一句话描述你的故事核心创意...' },
+  { key: 'settings', label: '设定', icon: 'settings', field: 'key_rules', placeholder: '核心规则、能力限制、世界观禁忌...' },
+  { key: 'outline', label: '大纲', icon: 'clipboard', field: 'plot_design', placeholder: '主线冲突、卷纲拆解、章节规划...' },
+  { key: 'plot', label: '剧情', icon: 'book-open', field: 'timeline', placeholder: '按时间顺序列出关键事件...' },
+  { key: 'characters', label: '人物及关系', icon: 'users', field: 'character_profiles', placeholder: '主角、配角的姓名、身份、性格、动机、人物关系...' },
 ];
 
 
 export const TAB_ROW_2 = [
-  { key: 'chapters', label: '章节', icon: '📚', field: '', placeholder: '' },
-  { key: 'inventory', label: '物资库', icon: '🎒', field: 'inventory', placeholder: '按势力/角色记录物品、功法、法宝、境界...' },
-  { key: 'dynamicMemory', label: '动态文件', icon: '🗂️', field: '', placeholder: '' },
-  { key: 'foreshadowing', label: '伏笔', icon: '🔮', field: 'foreshadowing', placeholder: '伏笔内容、埋设时机、回收方式...' },
-  { key: 'map', label: '地图', icon: '🗺️', field: 'locations', placeholder: '' },
+  { key: 'chapters', label: '章节', icon: 'library', field: '', placeholder: '' },
+  { key: 'inventory', label: '物资库', icon: 'backpack', field: 'inventory', placeholder: '按势力/角色记录物品、功法、法宝、境界...' },
+  { key: 'dynamicMemory', label: '动态文件', icon: 'folder', field: '', placeholder: '' },
+  { key: 'foreshadowing', label: '伏笔', icon: 'crystal', field: 'foreshadowing', placeholder: '伏笔内容、埋设时机、回收方式...' },
+  { key: 'map', label: '地图', icon: 'map', field: 'locations', placeholder: '' },
 ];
 
 

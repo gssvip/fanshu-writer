@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import type { Book } from '../types';
+import Icon from '../components/Icon';
+import { useIsMobile } from '../hooks/useMobileUI';
 import ReviewTab from './tools/ReviewTab';
 import SkillsTab from './tools/SkillsTab';
 import AnalyzeTab from './tools/AnalyzeTab';
@@ -9,10 +11,10 @@ import RankingsTab from './tools/RankingsTab';
 type ToolTab = 'review' | 'skills' | 'analyze' | 'rankings';
 
 const TOOL_TABS: { key: ToolTab; label: string; icon: string; desc: string }[] = [
-  { key: 'review', label: 'AI 责编', icon: '🔍', desc: 'AI平台视角审稿打分' },
-  { key: 'skills', label: '技能包', icon: '📦', desc: '15+题材工作流套件' },
-  { key: 'analyze', label: '拆书分析', icon: '📊', desc: '导入文件分析提炼方法论' },
-  { key: 'rankings', label: '榜单风向', icon: '📈', desc: '各平台排行榜趋势洞察' },
+  { key: 'review', label: 'AI 责编', icon: 'search', desc: 'AI平台视角审稿打分' },
+  { key: 'skills', label: '技能包', icon: 'package', desc: '15+题材工作流套件' },
+  { key: 'analyze', label: '拆书分析', icon: 'bar-chart', desc: '导入文件分析提炼方法论' },
+  { key: 'rankings', label: '榜单风向', icon: 'trending-up', desc: '各平台排行榜趋势洞察' },
 ];
 
 export default function ToolsPage() {
@@ -21,10 +23,10 @@ export default function ToolsPage() {
   const [selectedBookId, setSelectedBookId] = useState('');
   // #3 移动端自动折叠：工具箱 + 选择作品 在 activeTab=rankings 时收起
   const [toolsCollapsedMobile, setToolsCollapsedMobile] = useState<boolean | null>(null); // null=未初始化
+  const isMobile = useIsMobile();
 
   // 工具类型 Tab 切换 → 移动端自动展开/折叠工具箱与作品选择
   useEffect(() => {
-    const isMobile = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
     if (!isMobile) { setToolsCollapsedMobile(false); return; }
     if (activeTab === 'rankings') {
       // 需求 3：手机端点击榜单风向，选择作品上面的（工具箱 + 选择作品）自动折叠
@@ -32,7 +34,7 @@ export default function ToolsPage() {
     } else if (toolsCollapsedMobile !== false) {
       setToolsCollapsedMobile(false);
     }
-  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTab, isMobile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     api.listBooks().then(setBooks).catch(() => {});
@@ -62,7 +64,7 @@ export default function ToolsPage() {
           <div className="tools-grid">
             {TOOL_TABS.map(tab => (
               <button key={tab.key} className={`tool-card ${activeTab === tab.key ? 'active' : ''}`} onClick={() => setActiveTab(tab.key)}>
-                <span className="tool-card-icon">{tab.icon}</span>
+                <span className="tool-card-icon"><Icon name={tab.icon as any} size={28} /></span>
                 <div className="tool-card-info">
                   <div className="tool-card-name">{tab.label}</div>
                   <div className="tool-card-desc">{tab.desc}</div>

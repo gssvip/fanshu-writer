@@ -18,6 +18,7 @@ import { CharacterPanel } from './write/CharacterPanel';
 import { PlotPanel } from './write/PlotPanel';
 import { InventoryPanel } from './write/InventoryPanel';
 import { BibleEditPanel } from './write/BibleEditPanel';
+import Icon from '../components/Icon';
 
 export default function WritePage() {
   const navigate = useNavigate();
@@ -1621,13 +1622,13 @@ ${chapterEditContent}`;
             disabled={!bookId}
             title="跨维度统一管理角色/势力/地点/物品，重命名/合并会同步到全部设定与正文"
           >
-            <span aria-hidden>🏗️</span><span className="btn-label">实体管理</span>
+            <Icon name="building" size={16} /><span className="btn-label">实体管理</span>
           </button>
           <button className="btn-ghost-sm" onClick={handleAnalyzeContent} disabled={analyzing || dimAnalyzing || chapters.length === 0} title={chapters.length === 0 ? '需要先创建章节才能AI识别' : 'AI分析章节内容，一键识别全部维度'}>
-            <span aria-hidden>{analyzing ? '🤖' : '🔍'}</span><span className="btn-label">{analyzing ? '识别中' : '全部识别'}</span>
+            <Icon name={analyzing ? 'bot' : 'search'} size={16} /><span className="btn-label">{analyzing ? '识别中' : '全部识别'}</span>
           </button>
           <button className="btn-ghost-sm header-collapse-btn" onClick={() => setHeaderCollapsed(!headerCollapsed)} title={headerCollapsed ? '展开头部' : '收起头部'}>
-            {headerCollapsed ? '▾' : '▴'}
+            <Icon name={headerCollapsed ? 'chevron-down' : 'chevron-up'} size={16} />
           </button>
         </div>
       </header>
@@ -1635,7 +1636,7 @@ ${chapterEditContent}`;
       {headerCollapsed && (
         <div className="compact-tab-bar">
           <button className="btn-ghost-sm" onClick={() => setHeaderCollapsed(false)} title="展开">
-            ▾ {currentTab.icon} {currentTab.label}
+            <Icon name="chevron-down" size={14} /> <Icon name={currentTab.icon as any} size={14} /> {currentTab.label}
           </button>
         </div>
       )}
@@ -1649,7 +1650,7 @@ ${chapterEditContent}`;
                 className={`write-tab ${activeTab === tab.key ? 'active' : ''}`}
                 onClick={() => { setActiveTab(tab.key); setEditing(false); setAiError(''); }}
               >
-                <span className="write-tab-icon">{tab.icon}</span>
+                <Icon name={tab.icon as any} size={16} />
                 <span className="write-tab-label">{tab.label}</span>
                 {tab.key === 'foreshadowing' && afPendingCount > 0 && (
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff4757', marginLeft: 4, display: 'inline-block' }} />
@@ -1664,7 +1665,7 @@ ${chapterEditContent}`;
                 className={`write-tab ${activeTab === tab.key ? 'active' : ''}`}
                 onClick={() => { setActiveTab(tab.key); setEditing(false); setAiError(''); }}
               >
-                <span className="write-tab-icon">{tab.icon}</span>
+                <Icon name={tab.icon as any} size={16} />
                 <span className="write-tab-label">{tab.label}</span>
                 {tab.key === 'foreshadowing' && afPendingCount > 0 && (
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff4757', marginLeft: 4, display: 'inline-block' }} />

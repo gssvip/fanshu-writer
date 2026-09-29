@@ -3,6 +3,7 @@ import { useState, useEffect, createContext, useContext, useCallback, lazy, Susp
 import { useStore } from './store';
 import { api, warmUpBackend, legacyKey } from './api';
 import AuthModal from './components/AuthModal';
+import Icon from './components/Icon';
 import './index.css';
 
 // ============================================================================
@@ -20,10 +21,10 @@ const MinePage = lazy(() => import('./pages/MinePage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 
 const TABS = [
-  { key: 'workbench', label: '首页', icon: '🏠', path: '/workbench' },
-  { key: 'write', label: '创作', icon: '✍️', path: '/write' },
-  { key: 'tools', label: '工具', icon: '🔧', path: '/tools' },
-  { key: 'mine', label: '我的', icon: '👤', path: '/mine' },
+  { key: 'workbench', label: '首页', icon: 'home', path: '/workbench' },
+  { key: 'write', label: '创作', icon: 'edit', path: '/write' },
+  { key: 'tools', label: '工具', icon: 'tools', path: '/tools' },
+  { key: 'mine', label: '我的', icon: 'user', path: '/mine' },
 ];
 
 export const AuthContext = createContext<{ requireAuth: () => Promise<boolean> }>({ requireAuth: async () => false });
@@ -36,7 +37,7 @@ function TabBar() {
     <nav className="tab-bar">
       {TABS.map(tab => (
         <button key={tab.key} className={`tab-item ${currentTab === tab.key ? 'active' : ''}`} onClick={() => navigate(tab.path)}>
-          <span className="tab-icon">{tab.icon}</span>
+          <Icon name={tab.icon as any} size={22} className="tab-icon" />
           <span className="tab-label">{tab.label}</span>
         </button>
       ))}
@@ -58,7 +59,7 @@ function DesktopSidebar() {
       <nav className="sidebar-nav">
         {TABS.map(tab => (
           <button key={tab.key} className={`sidebar-item ${currentTab === tab.key ? 'active' : ''}`} onClick={() => navigate(tab.path)}>
-            <span>{tab.icon}</span>
+            <Icon name={tab.icon as any} size={18} />
             <span>{tab.label}</span>
           </button>
         ))}
@@ -70,7 +71,7 @@ function DesktopSidebar() {
             <div className="sidebar-user-info">
               <div className="sidebar-username">{currentUser.username}</div>
             </div>
-            <button className="btn-ghost-sm" onClick={() => { logout?.(); }} title="退出">↩</button>
+            <button className="btn-ghost-sm" onClick={() => { logout?.(); }} title="退出"><Icon name="arrow-left" size={16} /></button>
           </div>
         ) : (
           <button className="sidebar-login-btn" onClick={() => requireAuth()}>登录 / 注册</button>

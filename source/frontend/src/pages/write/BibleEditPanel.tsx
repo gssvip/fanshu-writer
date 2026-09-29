@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import type { SkillPack } from '../../types';
 import { ALL_TABS, SkillPackGroupedList, collapseNewlines } from './write-shared';
+import Icon from '../../components/Icon';
 
 /* ===== 内容编辑面板 ===== */
 export function BibleEditPanel(props: {
@@ -96,7 +97,7 @@ export function BibleEditPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3>{tab.icon} AI协同创作 · {tab.label}</h3>
+          <h3 style={{display:'inline-flex',alignItems:'center',gap:8}}><Icon name={tab.icon as any} size={16} /> AI协同创作 · {tab.label}</h3>
           <button className="btn-ghost-sm" onClick={onCancelAi} disabled={aiAssisting}>取消</button>
         </div>
         {skillSelector}
@@ -199,7 +200,7 @@ export function BibleEditPanel(props: {
         </>
       ) : (
         <div className="bible-empty" onClick={onStartEdit}>
-          <span className="bible-empty-icon">{tab.icon}</span>
+          <span className="bible-empty-icon"><Icon name={tab.icon as any} size={40} /></span>
           <p>暂无{tab.label}内容</p>
           <p className="text-muted">点击此处编辑，或使用上方按钮AI创作</p>
           <div className="bible-empty-actions">

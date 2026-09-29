@@ -1257,14 +1257,14 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border-color);border-radius:2px}
 ::placeholder{color:var(--text-muted);opacity:0.6}
 
-.btn-primary{background:var(--accent);color:#fff;font-weight:600}.btn-primary:hover{background:var(--accent-hover)}
+.btn-primary{background:var(--accent);color:#fff;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn-primary:hover{background:var(--accent-hover)}
 .btn-primary:disabled{opacity:0.5;cursor:not-allowed}
-.btn-primary-sm{background:var(--accent);color:#fff;font-weight:600;font-size:12px;padding:5px 12px;border-radius:4px}
-.btn-secondary-sm{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);font-weight:600;font-size:12px;padding:5px 12px;border-radius:4px}
+.btn-primary-sm{background:var(--accent);color:#fff;font-weight:600;font-size:12px;padding:5px 12px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn-secondary-sm{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);font-weight:600;font-size:12px;padding:5px 12px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .btn-secondary-sm:hover{background:var(--bg-hover)}
-.btn-secondary{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color)}.btn-secondary:hover{background:var(--bg-hover)}
-.btn-ghost{background:transparent;color:var(--text-secondary);padding:6px 10px;font-size:13px}.btn-ghost:hover{background:var(--bg-hover)}
-.btn-ghost-sm{background:transparent;color:var(--text-secondary);padding:4px 8px;font-size:12px}.btn-ghost-sm:hover{background:var(--bg-hover)}
+.btn-secondary{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn-secondary:hover{background:var(--bg-hover)}
+.btn-ghost{background:transparent;color:var(--text-secondary);padding:6px 10px;font-size:13px;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn-ghost:hover{background:var(--bg-hover)}
+.btn-ghost-sm{background:transparent;color:var(--text-secondary);padding:4px 8px;font-size:12px;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn-ghost-sm:hover{background:var(--bg-hover)}
 .btn-danger{background:var(--danger);color:#fff;font-weight:600;width:100%;padding:12px}.btn-danger:hover{background:var(--danger-hover)}
 
 .modal-overlay{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center}
@@ -1331,10 +1331,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 
 /* Tab Bar (mobile) — 作为 flex 子元素贴在 app-layout 底部，避免 fixed 在移动端被地址栏遮挡 */
 .tab-bar{flex-shrink:0;display:flex;background:var(--bg-secondary);border-top:1px solid var(--border-color);padding:6px 0 calc(8px + env(safe-area-inset-bottom, 0px));z-index:50}
-.tab-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 4px;font-size:11px;color:var(--text-muted);border-radius:0}
+.tab-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 4px;font-size:12px;color:var(--text-muted);border-radius:0}
 .tab-item.active{color:var(--accent);font-weight:600}
 .tab-icon{font-size:20px;line-height:1}
-.tab-label{font-size:11px}
+.tab-label{font-size:12px}
 
 /* Home Header */
 .home-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);position:sticky;top:0;z-index:10}
@@ -1543,10 +1543,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 /* Write Page - Two Row Tabs */
 .write-tabs-two-rows{display:flex;flex-direction:column;gap:4px;padding:8px 12px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);position:sticky;top:0;z-index:10}
 .write-tab-row{display:flex;gap:4px}
-.write-tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;border-radius:var(--radius-sm);background:var(--bg-tertiary);border:1px solid transparent;font-size:11px;color:var(--text-secondary);white-space:nowrap;flex:1;min-width:0;cursor:pointer;transition:all .15s}
+.write-tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;border-radius:var(--radius-sm);background:var(--bg-tertiary);border:1px solid transparent;font-size:12px;color:var(--text-secondary);white-space:nowrap;flex:1;min-width:0;cursor:pointer;transition:all .15s}
 .write-tab.active{background:var(--accent-light);border-color:var(--accent);color:var(--accent);font-weight:700}
 .write-tab-icon{font-size:18px;line-height:1}
-.write-tab-label{font-size:10px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.write-tab-label{font-size:11px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 
 /* Map Panel */
 .map-panel{padding:16px}
@@ -6426,4 +6426,55 @@ textarea.input.paper-textarea{
 [data-theme="green"] .master-create-entry-icon,
 [data-theme="green"] .chat-card-icon,
 [data-theme="green"] .mine-tab-icon{ filter: saturate(0.50) brightness(0.96) !important; display:inline-block; }
+
+/* ===== 统一矢量图标系统（替代 emoji） ===== */
+/* 清除 emoji 时代的 filter 褪色 hack，让 SVG 图标按 currentColor 正常着色 */
+[data-theme] .tab-icon,
+[data-theme] .write-tab-icon,
+[data-theme] .tool-card-icon,
+[data-theme] .bible-empty-icon,
+[data-theme] .tab-icon svg,
+[data-theme] .write-tab-icon svg,
+[data-theme] .tool-card-icon svg,
+[data-theme] .bible-empty-icon svg{ filter:none !important; display:inline-flex; align-items:center; justify-content:center; }
+
+/* 激活态图标跟随文字配色（SVG 用 currentColor） */
+.tab-item.active .tab-icon,
+.sidebar-item.active svg,
+.write-tab.active svg,
+.tool-card.active .tool-card-icon{ color:var(--accent); }
+
+/* 非激活态图标用次要文字色 */
+.tab-item:not(.active) .tab-icon,
+.sidebar-item:not(.active) svg,
+.write-tab:not(.active) svg{ color:var(--text-secondary); }
+
+/* 图标在按钮内垂直居中、不收缩 */
+.btn-ghost-sm svg, .btn-ghost svg, .btn-primary svg, .btn-primary-sm svg,
+.btn-secondary svg, .btn-secondary-sm svg{ flex-shrink:0; }
+
+/* ===== P1 响应式与触控规范 ===== */
+/* 断点约定：767/768 = 移动↔桌面导航切换；899/900 = 竖幅手机↔桌面大幅面。
+   禁止新增其它断点值；移动端判断统一走 useIsMobile(768)。 */
+
+/* 触屏设备：清除 hover 粘滞（点击后 hover 态残留） */
+@media (hover: none) {
+  .btn-ghost:hover, .btn-ghost-sm:hover, .btn-primary:hover, .btn-primary-sm:hover,
+  .btn-secondary:hover, .btn-secondary-sm:hover, .sidebar-item:hover,
+  .tab-item:hover, .write-tab:hover, .tool-card:hover{
+    background:transparent !important;
+  }
+  .sidebar-item:hover, .write-tab:hover, .tool-card:hover{ background:var(--bg-tertiary) !important; }
+}
+
+/* 移动端触控目标：小按钮最小可点高度 38px */
+@media (max-width: 767px) {
+  .btn-ghost-sm, .btn-primary-sm, .btn-secondary-sm{ min-height:38px; padding:8px 12px; }
+}
+
+/* 横屏矮屏：收窄底部导航高度，给内容更多空间 */
+@media (max-height: 500px) and (orientation: landscape) {
+  .tab-bar{ padding:4px 0; }
+  .tab-item{ min-height:42px; padding:4px; }
+}
 
