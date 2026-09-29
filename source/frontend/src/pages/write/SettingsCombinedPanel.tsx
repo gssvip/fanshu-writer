@@ -129,7 +129,7 @@ export function SettingsCombinedPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3><Icon name={iconMap[subTab]} size={16} /> AI协同创作 · {labelMap[subTab]}</h3>
+          <h3><Icon name={iconMap[subTab]} size={14} /> AI协同创作 · {labelMap[subTab]}</h3>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillSelector}

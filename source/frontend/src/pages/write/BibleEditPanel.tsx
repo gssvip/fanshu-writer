@@ -97,7 +97,7 @@ export function BibleEditPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3 style={{display:'inline-flex',alignItems:'center',gap:8}}><Icon name={tab.icon as any} size={16} /> AI协同创作 · {tab.label}</h3>
+          <h3 style={{display:'inline-flex',alignItems:'center',gap:8}}><Icon name={tab.icon as any} size={14} /> AI协同创作 · {tab.label}</h3>
           <button className="btn-ghost-sm" onClick={onCancelAi} disabled={aiAssisting}>取消</button>
         </div>
         {skillSelector}

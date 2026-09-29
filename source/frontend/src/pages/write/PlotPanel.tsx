@@ -704,7 +704,7 @@ ${existingVols || '（暂无）'}
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3><Icon name="book" size={16} /> AI协同创作 · 剧情</h3>
+          <h3><Icon name="book" size={14} /> AI协同创作 · 剧情</h3>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillPacks.length > 0 && (
@@ -742,7 +742,7 @@ ${existingVols || '（暂无）'}
       {editingNode && (
         <div style={{position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.5)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:16}} onClick={() => setEditingNode(null)}>
           <div style={{background:'#fff', borderRadius:8, padding:16, maxWidth:560, width:'100%', maxHeight:'90vh', overflowY:'auto'}} onClick={e => e.stopPropagation()}>
-            <h4 style={{margin:'0 0 12px', color:'#5b8def'}}><Icon name="edit" size={16} /> 编辑情节节点</h4>
+            <h4 style={{margin:'0 0 12px', color:'#5b8def'}}><Icon name="edit" size={14} /> 编辑情节节点</h4>
             <div style={{display:'flex', flexDirection:'column', gap:10}}>
               <div>
                 <label style={{fontSize:13, color:'#5b8def', fontWeight:600}}>节点标题</label>
@@ -932,7 +932,7 @@ ${existingVols || '（暂无）'}
       {volumeData.length > 0 && (
         <div className="volume-plan-display">
           <div className="volume-plan-header">
-            <h4><Icon name="bar-chart" size={16} /> 分卷规划（{volumeData.length}卷 · 每卷50章约12万字）</h4>
+            <h4><Icon name="bar-chart" size={14} /> 分卷规划（{volumeData.length}卷 · 每卷50章约12万字）</h4>
             <div style={{display:'flex',gap:6}}>
               <button className="btn-ghost-sm" onClick={exportVolumePlan}><Icon name="file-text" size={14} /> 导出到大纲</button>
             </div>

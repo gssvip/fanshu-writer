@@ -401,7 +401,7 @@ export function ForeshadowingPanel(props: {
     return (
       <div className="bible-edit-panel">
         <div className="bible-edit-header">
-          <h3><Icon name="crystal" size={16} /> AI协同创作 · 伏笔</h3>
+          <h3><Icon name="crystal" size={14} /> AI协同创作 · 伏笔</h3>
           <button className="btn-ghost-sm" onClick={() => { setAiMode(false); setAiError(''); }} disabled={aiAssisting}>取消</button>
         </div>
         {skillPacks.length > 0 && (
@@ -465,7 +465,7 @@ export function ForeshadowingPanel(props: {
       <div className="bible-edit-section" style={{marginTop:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
           <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <h4 style={{margin:0}}><Icon name="shield" size={16} /> 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}{(() => { const c = afReports.filter((r: any) => r.status === 'pending' || (!r.status && r.fix_draft?.length > 0)).length; return c > 0 ? <span style={{fontSize:11,background:'#ff4757',color:'#fff',borderRadius:10,padding:'2px 8px',marginLeft:6}}>待审阅 {c}</span> : null; })()}</h4>
+            <h4 style={{margin:0}}><Icon name="shield" size={14} /> 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}{(() => { const c = afReports.filter((r: any) => r.status === 'pending' || (!r.status && r.fix_draft?.length > 0)).length; return c > 0 ? <span style={{fontSize:11,background:'#ff4757',color:'#fff',borderRadius:10,padding:'2px 8px',marginLeft:6}}>待审阅 {c}</span> : null; })()}</h4>
             <button
               className="btn-primary-sm"
               onClick={openAfVolPicker}
@@ -643,7 +643,7 @@ export function ForeshadowingPanel(props: {
         <div className="modal-overlay" onClick={() => setAfVolPickerOpen(false)}>
           <div className="modal-content" style={{maxWidth:460}} onClick={e => e.stopPropagation()}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-              <h3 style={{margin:0}}><Icon name="shield" size={16} /> 防遗忘检查 · 选择分卷</h3>
+              <h3 style={{margin:0}}><Icon name="shield" size={14} /> 防遗忘检查 · 选择分卷</h3>
               <button className="btn-ghost-sm" onClick={() => setAfVolPickerOpen(false)}><Icon name="x" size={14} /></button>
             </div>
             <p className="text-muted" style={{fontSize:12,marginBottom:6}}>
@@ -692,7 +692,7 @@ export function ForeshadowingPanel(props: {
         <div className="modal-overlay" onClick={() => setFixVolPicker(null)}>
           <div className="modal-content" style={{maxWidth:440}} onClick={e => e.stopPropagation()}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-              <h3 style={{margin:0}}>{fixVolPicker.mode === 'setting' ? <><Icon name="wrench" size={16} /> AI修正</> : <><Icon name="edit" size={16} /> 修正正文</>} · 选择卷</h3>
+              <h3 style={{margin:0}}>{fixVolPicker.mode === 'setting' ? <><Icon name="wrench" size={14} /> AI修正</> : <><Icon name="edit" size={14} /> 修正正文</>} · 选择卷</h3>
               <button className="btn-ghost-sm" onClick={() => setFixVolPicker(null)}><Icon name="x" size={14} /></button>
             </div>
             <div style={{maxHeight:300,overflowY:'auto',border:'1px solid var(--border)',borderRadius:8,padding:6}}>
