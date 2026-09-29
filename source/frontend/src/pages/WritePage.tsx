@@ -1650,7 +1650,7 @@ ${chapterEditContent}`;
                 className={`write-tab ${activeTab === tab.key ? 'active' : ''}`}
                 onClick={() => { setActiveTab(tab.key); setEditing(false); setAiError(''); }}
               >
-                <Icon name={tab.icon as any} size={14} />
+                <Icon name={tab.icon as any} size={16} />
                 <span className="write-tab-label">{tab.label}</span>
                 {tab.key === 'foreshadowing' && afPendingCount > 0 && (
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff4757', marginLeft: 4, display: 'inline-block' }} />
@@ -1665,7 +1665,7 @@ ${chapterEditContent}`;
                 className={`write-tab ${activeTab === tab.key ? 'active' : ''}`}
                 onClick={() => { setActiveTab(tab.key); setEditing(false); setAiError(''); }}
               >
-                <Icon name={tab.icon as any} size={14} />
+                <Icon name={tab.icon as any} size={16} />
                 <span className="write-tab-label">{tab.label}</span>
                 {tab.key === 'foreshadowing' && afPendingCount > 0 && (
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ff4757', marginLeft: 4, display: 'inline-block' }} />

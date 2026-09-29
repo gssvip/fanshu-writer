@@ -684,7 +684,7 @@ export function CharacterPanel(props: {
       {/* 全局人物档案 */}
       {characters.length === 0 ? (
         <div className="bible-empty">
-          <span className="bible-empty-icon"><Icon name="user" size={32} /></span>
+          <span className="bible-empty-icon"><Icon name="user" size={40} /></span>
           <p>暂无角色信息</p>
           <p className="text-muted">点击顶部「＋ 添加角色」或「AI创作」生成人物档案</p>
         </div>

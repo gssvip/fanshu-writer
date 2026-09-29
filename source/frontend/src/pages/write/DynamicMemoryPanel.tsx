@@ -532,7 +532,7 @@ export function DynamicMemoryPanel(props: {
       {/* 报告区域 */}
       {reports.length === 0 ? (
         <div className="bible-empty">
-          <span className="bible-empty-icon"><Icon name="folder-open" size={32} /></span>
+          <span className="bible-empty-icon"><Icon name="folder-open" size={40} /></span>
           <p>暂无动态报告</p>
           <p className="text-muted">
             {chapterCount >= 5

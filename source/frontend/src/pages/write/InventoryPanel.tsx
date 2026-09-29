@@ -283,7 +283,7 @@ export function InventoryPanel(props: {
       </div>
       {displayVolumes.length === 0 ? (
         <div className="bible-empty">
-          <span className="bible-empty-icon"><Icon name="package" size={32} /></span>
+          <span className="bible-empty-icon"><Icon name="package" size={40} /></span>
           <p>暂无物资信息</p>
           <p className="text-muted">先在剧情维度创建分卷，或用顶部 AI 智驾 生成物资库</p>
           <div className="bible-empty-actions">
