@@ -435,13 +435,11 @@ export function ForeshadowingPanel(props: {
 
   return (
     <div className="bible-edit-panel">
-      <div className="bible-edit-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <div className="bible-edit-actions" style={{display:'flex',alignItems:'center',gap:8,position:'relative'}}>
-          {(
-            <>
-              <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
-                {analyzingVol ? <><Icon name="bot" size={14} /> 识别中...</> : <><Icon name="search" size={14} /> AI识别</>}
-              </button>
+      <div className="bible-edit-header dims-single-row">
+        <div style={{position:'relative',flexShrink:0}}>
+          <button className="btn-ghost-sm" onClick={() => setVolSelectorOpen(v => !v)} disabled={!!analyzingVol || !hasChapters} title={hasChapters ? '选择卷进行AI识别' : '需要先创建章节才能AI识别'}>
+            {analyzingVol ? <><Icon name="bot" size={14} /> 识别中...</> : <><Icon name="search" size={14} /> AI识别</>}
+          </button>
               {volSelectorOpen && (
                 <div className="vol-selector-dropdown" style={{position:'absolute',top:'100%',left:0,marginTop:4,background:'var(--bg-secondary)',border:'1px solid var(--border)',borderRadius:8,padding:6,minWidth:180,zIndex:100,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
                   <div style={{fontSize:12,color:'var(--text-muted)',padding:'4px 8px',borderBottom:'1px solid var(--border)',marginBottom:4}}>选择要识别的卷</div>
@@ -452,10 +450,8 @@ export function ForeshadowingPanel(props: {
                   <button onClick={() => setVolSelectorOpen(false)} style={{display:'block',width:'100%',textAlign:'center',padding:'4px',background:'transparent',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:12,marginTop:2}}>取消</button>
                 </div>
               )}
-            </>
-          )}
         </div>
-        <span className="text-muted" style={{fontSize:12,cursor:'pointer'}} onClick={() => setForeCollapsed(v => !v)}>
+        <span className="text-muted" style={{fontSize:12,cursor:'pointer',marginLeft:'auto'}} onClick={() => setForeCollapsed(v => !v)}>
           {foreCollapsed ? <><Icon name="chevron-right" size={11} /> 展开</> : <><Icon name="chevron-down" size={11} /> 收起</>}
         </span>
       </div>
