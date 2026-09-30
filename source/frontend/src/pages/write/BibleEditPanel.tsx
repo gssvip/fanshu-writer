@@ -200,7 +200,6 @@ export function BibleEditPanel(props: {
         </>
       ) : (
         <div className="bible-empty" onClick={onStartEdit}>
-          <span className="bible-empty-icon"><Icon name={tab.icon as any} size={40} /></span>
           <p>暂无{tab.label}内容</p>
           <p className="text-muted">点击此处编辑，或使用上方按钮AI创作</p>
           <div className="bible-empty-actions">

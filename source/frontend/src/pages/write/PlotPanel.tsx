@@ -1021,7 +1021,6 @@ ${existingVols || '（暂无）'}
 
       {displayVolumes.length === 0 ? (
         <div className="bible-empty">
-          <span className="bible-empty-icon"><Icon name="book" size={40} /></span>
           <p>暂无剧情信息</p>
           <p className="text-muted">点击「添加卷大纲」手动添加，或用AI识别自动提取</p>
           <div className="bible-empty-actions">
