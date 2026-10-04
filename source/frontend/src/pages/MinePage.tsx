@@ -1177,27 +1177,11 @@ export default function MinePage() {
               {serverStatus === 'fail' && (
                 <div style={{ color: '#e74c3c', fontSize: 12, marginTop: 4, display:'inline-flex', alignItems:'center', gap:4 }}><Icon name="x-circle" size={14} /> 连接失败，请检查地址或后端是否启动</div>
               )}
-              <p className="text-muted" style={{ fontSize: 11, marginTop: 6 }}>
-                当前生效地址：{getApiBaseUrl()}<br />
-                填写后端根地址即可（无需带 <code>/api</code>），系统会自动拼接 <code>/api</code> 前缀。<br />
-                留空则使用内置默认地址，普通用户无需配置。
-              </p>
             </div>
 
             <div className="form-row" style={{ marginTop: 8 }}>
               <button className="btn-primary" onClick={handleSaveServerUrl}>保存并刷新</button>
               <button className="btn-ghost-sm" onClick={() => { setServerUrl(''); setServerStatus('idle'); }}>清空</button>
-            </div>
-
-            <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8, fontSize: 12 }}>
-              <h4 style={{ marginBottom: 8, fontSize: 13 }}><Icon name="package" size={14} /> 自部署后端（可选）</h4>
-              <p style={{ marginBottom: 8 }}>如果你想使用自己的后端服务器，可以参考以下步骤部署：</p>
-              <ol style={{ paddingLeft: 18, lineHeight: 1.8 }}>
-                <li>将 <code>source/backend</code> 目录部署到 Render / Railway / Hugging Face Spaces 等平台</li>
-                <li>确保安装 <code>requirements.txt</code> 中的依赖</li>
-                <li>启动命令：<code>python app.py</code>（端口通过 <code>PORT</code> 环境变量指定）</li>
-                <li>将平台分配的域名填入上方，点击「测试」确认连接，再「保存并刷新」</li>
-              </ol>
             </div>
           </div>
         )}
