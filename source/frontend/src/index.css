@@ -4826,13 +4826,20 @@ textarea.input.paper-textarea{
   }
   .tools-top-section.nr-collapsible {
     width: 100%;
-    padding: 6px 0 0;
+    padding: 0;
+  }
+  .tools-page .page-header {
+    padding-top: 12px;
+    padding-bottom: 8px;
   }
   .tools-top-section .nr-collapsible-body {
     transition: max-height .35s ease, opacity .25s ease, margin .25s ease, padding .25s ease;
     overflow: hidden;
     max-height: 2000px;
     opacity: 1;
+    margin: 0 8px;
+    width: calc(100% - 16px);
+    box-sizing: border-box;
   }
   .tools-top-section.nr-collapsible.is-collapsed .nr-collapsible-body {
     max-height: 0;
