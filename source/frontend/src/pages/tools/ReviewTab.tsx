@@ -30,10 +30,12 @@ export default function ReviewTab({ selectedBookId }: { selectedBookId: string }
 
   return (
     <div className="tool-panel">
-      <h3 style={{display:'inline-flex',alignItems:'center',gap:6}}><Icon name="search" size={18} /> AI 责编审稿</h3>
-      <button className="btn-primary" onClick={handleReview} disabled={!selectedBookId || loading}>
-        {loading ? '审稿中...' : '开始审稿'}
-      </button>
+      <div className="skills-header" style={{alignItems:'center'}}>
+        <h3 style={{display:'inline-flex',alignItems:'center',gap:6,marginBottom:0}}><Icon name="search" size={18} /> AI 责编审稿</h3>
+        <button className="btn-primary" style={{marginTop:0}} onClick={handleReview} disabled={!selectedBookId || loading}>
+          {loading ? '审稿中...' : '开始审稿'}
+        </button>
+      </div>
       {reviewError && <div className="error-msg">{reviewError}</div>}
       {reviewResult && (
         <div className="review-result">
