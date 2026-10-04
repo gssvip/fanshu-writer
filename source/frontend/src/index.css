@@ -4790,38 +4790,39 @@ textarea.input.paper-textarea{
   width: 100%; box-sizing: border-box;
 }
 .nr-collapse-toggle {
+  display: none; /* 已弃用：折叠功能移至 page-header */
+}
+.nr-header-toggle {
   display: none; /* 桌面端隐藏 */
+}
+/* 选择作品下拉：防止原生 select 因 option 文字过长撑破容器 */
+.nr-select-book-row select {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 .tools-top-section .nr-collapsible-body {
   display: block;
   overflow: visible;
   max-height: none;
 }
-/* 手机端：折叠按钮显示；is-collapsed 时 body 收起 */
+/* 手机端：折叠按钮移至顶部栏；is-collapsed 时 body 收起 */
 @media (max-width: 767px) {
-  .nr-collapse-toggle {
-    display: flex !important;
+  .nr-header-toggle {
+    display: inline-flex !important;
     align-items: center;
-    justify-content: space-between;
-    width: calc(100% - 20px);
-    margin: 0 10px 6px;
-    padding: 8px 14px;
-    background: linear-gradient(135deg, rgba(124,184,158,0.1), rgba(91,163,168,0.08));
-    border: 1.5px dashed rgba(91,163,168,0.35);
-    border-radius: 10px;
+    gap: 4px;
+    padding: 5px 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
     color: var(--accent);
-    font-size: 12.5px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     user-select: none;
     box-sizing: border-box;
-  }
-  .nr-collapse-toggle__icon {
-    font-size: 14px;
-    font-weight: 800;
-    padding: 1px 6px;
-    border-radius: 50%;
-    background: rgba(255,255,255,0.5);
+    flex-shrink: 0;
   }
   .tools-top-section.nr-collapsible {
     width: 100%;

@@ -44,22 +44,20 @@ export default function ToolsPage() {
     <div className="page tools-page">
       <header className="page-header">
         <h1>工具箱</h1>
+        <button
+          type="button"
+          className="nr-header-toggle"
+          aria-expanded={!toolsCollapsedMobile}
+          onClick={() => setToolsCollapsedMobile((v: boolean | null) => !(v === true))}
+        >
+          <Icon name={toolsCollapsedMobile ? 'chevron-down' : 'chevron-up'} size={16} />
+          <span>{toolsCollapsedMobile ? '展开' : '收起'}</span>
+        </button>
       </header>
 
       {/* #3 手机端：工具箱 + 选择作品 = 可折叠面板（进榜单风向时自动收起） */}
       <section className={`tools-top-section nr-collapsible ${toolsCollapsedMobile ? 'is-collapsed' : ''}`}
                data-collapsed={toolsCollapsedMobile ? '1' : '0'}>
-        <button
-          type="button"
-          className="nr-collapse-toggle"
-          aria-expanded={!toolsCollapsedMobile}
-          onClick={() => setToolsCollapsedMobile((v: boolean | null) => !(v === true))}
-        >
-          <span className="nr-collapse-toggle__label">
-            {toolsCollapsedMobile ? '▽ 展开 工具箱 & 选择作品' : '△ 收起 工具箱 & 选择作品'}
-          </span>
-          <span className="nr-collapse-toggle__icon">{toolsCollapsedMobile ? '＋' : '－'}</span>
-        </button>
         <div className="nr-collapsible-body">
           <div className="tools-grid">
             {TOOL_TABS.map(tab => (
