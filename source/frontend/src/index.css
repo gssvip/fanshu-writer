@@ -5035,9 +5035,14 @@ textarea.input.paper-textarea{
     border: none !important;
     border-radius: 0 !important;
     padding: 0 !important;
-    width: 100% !important;
+    width: calc(100% - 16px) !important;
     max-width: none !important;
-    margin: 0 !important;
+    margin: 0 8px !important;
+    box-sizing: border-box;
+  }
+  /* 工具卡：去掉基础 16px 内边距，与下方 tool-panel 同宽对齐 */
+  .tools-grid {
+    padding: 8px 0 0 !important;
   }
   /* 根容器严格不超出屏幕 */
   .tool-panel {
