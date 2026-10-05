@@ -2654,10 +2654,20 @@ textarea.input.paper-textarea{
 
 /* ===== ToolsPage 移动端优化 ===== */
 @media (max-width: 767px){
-  /* 工具卡片紧凑 */
-  .tool-card{flex-direction:column;gap:6px;text-align:center;padding:10px 8px}
-  .tool-card-icon{font-size:24px}
-  .tool-card-name{font-size:12px}
+  /* 工具卡片紧凑精致：图标+文字横排 */
+  .tool-card{
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    gap: 7px;
+    text-align: left;
+    padding: 9px 6px;
+    min-height: 38px;
+    border-width: 1px;
+    border-radius: 10px;
+  }
+  .tool-card-icon{font-size:18px}
+  .tool-card-name{font-size:13px;font-weight:600}
   /* 审稿结果优化 */
   .review-scores-grid{grid-template-columns:1fr 1fr;gap:8px}
   .review-score-item{padding:6px}
