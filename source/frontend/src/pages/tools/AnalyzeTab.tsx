@@ -72,19 +72,18 @@ export default function AnalyzeTab({ books }: { books: Book[] }) {
   return (
     <>
       <div className="tool-panel">
-        <h3><Icon name="bar-chart" size={16} /> AI 拆书分析</h3>
-        <div className="form-row" style={{alignItems:'center',gap:8,marginBottom:10,flexDirection:'row',flexWrap:'nowrap'}}>
+        <div className="form-row" style={{alignItems:'stretch',gap:8,marginBottom:10,flexDirection:'row',flexWrap:'nowrap'}}>
           <button
             className={analyzeMode === 'normal' ? 'btn-primary' : 'btn-secondary'}
-            style={{fontSize:12,padding:'6px 14px',flex:1,justifyContent:'center',display:'inline-flex',alignItems:'center',gap:5}}
+            style={{fontSize:13,padding:'8px 14px',flex:1,justifyContent:'center',display:'inline-flex',alignItems:'center',gap:6}}
             onClick={() => setAnalyzeMode('normal')}
-          ><Icon name="book" size={14} /> 普通拆书</button>
+          ><Icon name="book" size={15} /> 普通拆书</button>
           <button
             className={analyzeMode === 'competitor' ? 'btn-primary' : 'btn-secondary'}
-            style={{fontSize:12,padding:'6px 14px',flex:1,justifyContent:'center',display:'inline-flex',alignItems:'center',gap:5}}
+            style={{fontSize:13,padding:'8px 14px',flex:1,justifyContent:'center',display:'inline-flex',alignItems:'center',gap:6}}
             onClick={() => setAnalyzeMode('competitor')}
             title="站在竞品对标角度，输出市场定位、核心优势、差异弱点与可复刻方案"
-          ><Icon name="sword" size={14} /> 竞品拆书</button>
+          ><Icon name="sword" size={15} /> 竞品拆书</button>
         </div>
         <div className="form-row" style={{marginBottom:10}}>
           <input ref={fileInputRef} type="file" accept=".txt,.md,.docx,.zip,.json" onChange={handleUploadFile} style={{display:'none'}} id="analyze-file-input" />
