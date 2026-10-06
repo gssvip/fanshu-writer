@@ -3358,14 +3358,17 @@ export default function ChatPanel() {
                             icon: AI_PROVIDERS.find(p => p.value === cfg.provider)?.icon || 'plug',
                             iconColor: AI_PROVIDERS.find(p => p.value === cfg.provider)?.color,
                             models: (cfg.models && cfg.models.length ? cfg.models : (cfg.model ? [cfg.model] : [])),
-                            has_key: cfg.has_key,
+                            // Kilo 免费网关免 Key：has_key 视为已满足（否则模型选择器会被禁用）
+                            has_key: cfg.has_key || cfg.provider === 'kilo',
                             cfg,
                           }));
                           // 展开态：优先用户点过的组，否则默认展开当前选中提供商
                           const _expandedKey = modelPickerProvider || _chosen?.id || (_groups[0]?.key ?? '');
                           // 点选模型：会话级记忆 + 后端 select-model（该提供商成为激活、当前模型=所选 → 智驾各Tab全局跟随）
                           const _chooseModel = (cfg: AIConfig, model: string) => {
-                            if (!cfg.has_key) return;
+                            // Kilo 免费网关免 Key：has_key 视为已满足（否则模型选择器会被禁用）
+                            const _usable = cfg.has_key || cfg.provider === 'kilo';
+                            if (!_usable) return;
                             setSessionModelMap(m => ({ ...m, [_sid]: cfg.id }));
                             setShowModelPicker(false);
                             api.selectAIConfigModel(cfg.id, model).then(updated => {
