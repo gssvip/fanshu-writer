@@ -92,18 +92,33 @@ def parse_stream_retry_event(chunk):
         return None
 
 
+def is_kilo_base(base_url: str) -> bool:
+    """是否为 Kilo 免费网关。Kilo 免费模型无需 API Key：
+    - 不下发任何 Authorization/x-api-key 头（实测带无效 Key 会回 401）
+    - 免 Key 校验（api_key 为空属正常）
+    """
+    return 'kilo.ai' in (base_url or '').lower()
+
+
+# Kilo 免费网关的占位 api_key：Kilo 免 Key，但全站大量代码用 `if not api_key`
+# 判断「是否已配置 AI」。保存 Kilo 配置时写入此哨兵，使其通过非空校验；
+# build_auth_headers 识别此哨兵 -> 不下发认证头（否则网关回 401）。
+KILO_FREE_API_KEY = '__kilo_free__'
+
+
 def build_auth_headers(api_key: str, content_type: bool = True) -> dict:
     """构造 LLM 请求认证头。
 
     同时下发 Authorization: Bearer 与 x-api-key 两种认证头，兼容：
     - 标准 OpenAI 兼容服务（deepseek/qwen/glm 等认 Authorization，忽略 x-api-key）
     - OpenCode Zen 免费模型端点（认 x-api-key）
-    对任一 provider 均无副作用：HTTP 服务通常忽略未识别的 header。
+
+    api_key 为空或为 Kilo 免费哨兵时不加认证头（Kilo 免费网关带无效 Key 会回 401）。
     """
-    headers: dict[str, str] = {
-        "Authorization": f"Bearer {api_key}",
-        "x-api-key": api_key,
-    }
+    headers: dict[str, str] = {}
+    if api_key and api_key != KILO_FREE_API_KEY:
+        headers["Authorization"] = f"Bearer {api_key}"
+        headers["x-api-key"] = api_key
     if content_type:
         headers["Content-Type"] = "application/json"
     return headers
@@ -461,6 +476,12 @@ def _normalize_llm_base_url(base_url: str, model: Optional[str] = None) -> str:
 
     # 去重复段：比如 .../v4/v1 中，智谱场景下 /v1 是误加的（先去掉）
     model_l = (model or '').lower()
+
+    # Kilo 免费网关：/api/gateway 是完整路径，/models 与 /chat/completions 直接挂在其下，
+    # 不能补 /v1（补了会 404/405）。保持原样只去尾斜杠。
+    if 'kilo.ai' in s:
+        return s.rstrip('/')
+
     is_zhipu = ('glm' in model_l) or ('zhipu' in model_l) or ('bigmodel.cn' in s) or ('/api/paas' in s)
 
     if is_zhipu:
@@ -526,7 +547,7 @@ class LLMGateway:
         result = ModelResult()
         url = f"{self.base_url}/chat/completions"
         # Kilo 免费网关无 Key 时不下 Auth 头，否则网关会回 401
-        is_kilo = 'kilo.ai' in (self.base_url or '').lower()
+        is_kilo = is_kilo_base(self.base_url)
         headers = None if (is_kilo and not self.api_key) else build_auth_headers(self.api_key)
         payload = {
             "model": self.model,
@@ -678,7 +699,7 @@ class LLMGateway:
         """
         url = f"{self.base_url}/chat/completions"
         # Kilo 免费网关无 Key 时不下 Auth 头，否则网关会回 401
-        is_kilo = 'kilo.ai' in (self.base_url or '').lower()
+        is_kilo = is_kilo_base(self.base_url)
         headers = None if (is_kilo and not self.api_key) else build_auth_headers(self.api_key)
         payload = {
             "model": self.model,

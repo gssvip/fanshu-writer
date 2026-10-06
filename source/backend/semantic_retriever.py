@@ -385,10 +385,12 @@ def _embedding_config() -> Optional[Tuple[str, str, str]]:
     if requests is None:
         return None
     try:
-        from llm_gateway import get_llm_config
+        from llm_gateway import get_llm_config, is_kilo_base
         base_url, api_key, _chat_model = get_llm_config()
         if not api_key or not base_url:
             return None
+        if is_kilo_base(base_url):
+            return None  # Kilo 免费网关不支持 /embeddings，语义检索静默降级
         model = os.environ.get('EMBEDDING_MODEL', 'text-embedding-3-small').strip()
         if not model:
             return None

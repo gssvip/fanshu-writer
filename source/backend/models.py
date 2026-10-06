@@ -287,15 +287,18 @@ class AIConfig(db.Model):
         return raw
 
     def to_dict(self):
+        from llm_gateway import KILO_FREE_API_KEY
         models = self.get_models()
+        # Kilo 免费哨兵 key 不视为「已设置 Key」（避免前端误显示已配置）
+        _has_key = bool(self.api_key) and self.api_key != KILO_FREE_API_KEY
         return {
             'id': self.id, 'name': self.name or '默认配置', 'is_active': self.is_active,
             'provider': self.provider, 'model': self.model or (models[0] if models else ''),
             'models': models,
             'recognition_model': self.recognition_model or '',
-            'api_key': '***' if self.api_key else '', 'base_url': self.base_url,
+            'api_key': '***' if _has_key else '', 'base_url': self.base_url,
             'temperature': self.temperature, 'max_tokens': self.max_tokens,
-            'has_key': bool(self.api_key)
+            'has_key': _has_key
         }
 
     def get_model_for_task(self, task_type='creation'):

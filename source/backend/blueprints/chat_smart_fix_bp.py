@@ -71,7 +71,7 @@ def smart_fix_from_report():
         return jsonify({'error': '请先创建设定'}), 400
 
     cfg = AIConfig.get_active()
-    if not cfg or not cfg.api_key:
+    if not cfg or (not cfg.api_key and 'kilo.ai' not in (cfg.base_url or '').lower()):
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
     # 取指定报告（默认最近一份）

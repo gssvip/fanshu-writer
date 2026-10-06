@@ -276,12 +276,12 @@ export default function MinePage() {
 
   async function handleTestConnection() {
     if (!aiConfig.base_url.trim()) { alert('请先填写 API 地址'); return; }
-    if (!aiConfig.api_key.trim()) { alert('请先填写 API Key'); return; }
+    if (aiConfig.provider !== 'kilo' && !aiConfig.api_key.trim()) { alert('请先填写 API Key'); return; }
     if (!aiConfig.model.trim()) { alert('请先填写模型名称'); return; }
     setTesting(true);
     setTestResult(null);
     try {
-      const result = await api.testAIConnection(aiConfig.base_url, aiConfig.api_key, aiConfig.model);
+      const result = await api.testAIConnection(aiConfig.base_url, aiConfig.provider === 'kilo' ? '' : aiConfig.api_key, aiConfig.model);
       setTestResult({ success: true, msg: `连接成功！模型回复：${result.reply}` });
     } catch (e: any) {
       setTestResult({ success: false, msg: e.message || '连接失败' });

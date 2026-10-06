@@ -90,6 +90,11 @@ def _apply_config_fields(cfg, data):
         cfg.models = json.dumps([new_model] + models)
     if 'api_key' in data and data['api_key'] and data['api_key'] != '***':
         cfg.api_key = data['api_key']
+    # Kilo 免费网关：免 Key。写入哨兵占位，使全站 `if not api_key` 校验通过；
+    # build_auth_headers 会识别哨兵、不下发认证头。
+    from llm_gateway import is_kilo_base, KILO_FREE_API_KEY
+    if is_kilo_base(cfg.base_url) and not cfg.api_key:
+        cfg.api_key = KILO_FREE_API_KEY
     return cfg
 
 
@@ -156,6 +161,10 @@ def create_ai_config():
         is_active=True,
         user_id=uid,
     )
+    # Kilo 免费网关：免 Key。写入哨兵占位，使全站 `if not api_key` 校验通过
+    from llm_gateway import is_kilo_base, KILO_FREE_API_KEY
+    if is_kilo_base(cfg.base_url) and not cfg.api_key:
+        cfg.api_key = KILO_FREE_API_KEY
     # 仅取消当前用户自己配置的激活态（不影响共享兜底配置）
     AIConfig.query.filter_by(is_active=True, user_id=uid).update({'is_active': False})
     db.session.add(cfg)

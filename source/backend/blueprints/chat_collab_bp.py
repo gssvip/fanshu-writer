@@ -2125,12 +2125,12 @@ def chat_smart():
         session_cfg_id = None
     chosen_cfg_id = req_ai_config_id or session_cfg_id
     cfg = AIConfig.get_by_id(chosen_cfg_id) if chosen_cfg_id else None
-    if cfg and not cfg.api_key:
-        cfg = None  # 指定配置但无key → 回退全局
+    if cfg and not cfg.api_key and 'kilo.ai' not in (cfg.base_url or '').lower():
+        cfg = None  # 指定配置但无key → 回退全局（Kilo 免费网关无需 key，不回退）
     if cfg is None:
         cfg = AIConfig.get_active()
     # chat_smart（维度感知聊天链路）：归一化URL（防智谱GLM 404/HTTP 500）
-    if not cfg or not cfg.api_key:
+    if not cfg or (not cfg.api_key and 'kilo.ai' not in (cfg.base_url or '').lower()):
         return jsonify({'error': '请先配置 AI'}), 400
     # 把当前选择持久化到 session.meta_json（保证下一轮聊天沿用同一模型，即会话级锁定）
     if chosen_cfg_id and chosen_cfg_id == cfg.id and session:
@@ -3107,7 +3107,7 @@ def chat_smart_action():
         base_url, api_key, model = get_llm_config()
     except Exception as e:
         return jsonify({'error': f'AI 配置异常：{e}'}), 400
-    if not api_key:
+    if not api_key and 'kilo.ai' not in (base_url or '').lower():
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
     gw = LLMGateway(base_url, api_key, model)

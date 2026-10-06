@@ -474,12 +474,12 @@ def ai_spot_fix(book_id):
     api_key = config.api_key if config and config.api_key else os.environ.get('USER_LLM_API_KEY', '')
     base_url = config.base_url if config else os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
     model = config.get_model_for_task('creation') if config else os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
-    if not api_key:
+    if not api_key and 'kilo.ai' not in (base_url or '').lower():
         return jsonify({'error': '请先配置 AI 模型 API Key'}), 400
 
     try:
         resp = requests.post(f'{base_url}/chat/completions',
-            headers=build_auth_headers(api_key),
+            headers=None if 'kilo.ai' in (base_url or '').lower() else build_auth_headers(api_key),
             json={'model': model,
                   'messages': [{'role': 'system', 'content': sys_prompt},
                                {'role': 'user', 'content': user_prompt}],

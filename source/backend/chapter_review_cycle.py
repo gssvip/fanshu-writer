@@ -153,7 +153,7 @@ def run_review_cycle_with_bible(polished_content, bb, post_validate, book_id, ch
             # 【输出上限适配】12000 会撞 8k 输出上限的模型直接 400，按已知/已学习上限钳制
             _rev_max_tok = min(12000, get_output_limit(base_url, model) or 12000)
             resp = requests.post(f'{base_url}/chat/completions',
-                headers=build_auth_headers(api_key),
+                headers=None if 'kilo.ai' in (base_url or '').lower() else build_auth_headers(api_key),
                 json={'model': model,
                       'messages': [{'role': 'system', 'content': sys_prompt},
                                    {'role': 'user', 'content': user_prompt}],
