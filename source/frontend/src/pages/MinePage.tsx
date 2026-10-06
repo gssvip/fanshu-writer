@@ -700,11 +700,7 @@ export default function MinePage() {
                   <span className={`key-status ${(aiConfig.has_key || (aiConfig.api_key && aiConfig.api_key !== '***' && aiConfig.api_key.trim())) ? 'set' : 'unset'}`}>{aiConfig.has_key ? '(已设置)' : (aiConfig.api_key && aiConfig.api_key !== '***' && aiConfig.api_key.trim() ? '(已填写，保存后生效)' : '(未设置)')}</span>
                 )}
               </label>
-              {aiConfig.provider === 'kilo' ? (
-                <div style={{fontSize:12,color:'#0ea5e9',padding:'8px 12px',background:'#e0f2fe',borderRadius:6,border:'1px solid #bae6fd'}}>
-                  <Icon name="info" size={13} /> Kilo 免费网关无需 API Key。注册/匿名均可使用，模型在「上方拉取并勾选」中由你选。
-                </div>
-              ) : (
+              {aiConfig.provider === 'kilo' ? null : (
                 <div className="input-row">
                   <input className="input" type={showApiKey ? 'text' : 'password'}
                     value={aiConfig.api_key === '***' ? '' : aiConfig.api_key}
