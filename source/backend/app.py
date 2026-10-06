@@ -785,9 +785,12 @@ def _do_fetch_models(base_url, api_key, model=None):
     from llm_gateway import _normalize_llm_base_url
     import requests as req
     base = _normalize_llm_base_url(base_url, model)
+    # Kilo 免费网关：无需 Key，直接 GET；其他提供商按既有逻辑下 Auth 头
+    is_kilo = 'kilo.ai' in (base or '').lower()
+    headers = None if is_kilo else build_auth_headers(api_key, content_type=False)
     resp = req.get(
         f"{base}/models",
-        headers=build_auth_headers(api_key, content_type=False),
+        headers=headers,
         timeout=15
     )
     if resp.status_code != 200:
@@ -815,6 +818,10 @@ def _do_fetch_models(base_url, api_key, model=None):
             )
             if not is_free:
                 continue
+        elif is_kilo:
+            # Kilo：每个模型带 isFree 字段；少数旧字段是 free / cost == 0 也认
+            if not (m.get('isFree') is True or m.get('free') is True):
+                continue
         models.append({
             'id': mid,
             'owned_by': m.get('owned_by', ''),
@@ -827,17 +834,20 @@ def _do_test_connection(base_url, api_key, model):
 
     【智谱 GLM 404 修复】删除老代码"非 /v1 结尾就补 /v1"。
     用户点"测试连接"按钮看到的 "HTTP 404 path=/v4/v1/chat/completions" 就是这里产生的。
+    【Kilo 免费】无 Key 时不下 Auth 头，否则网关会回 401。
     """
     from llm_gateway import _normalize_llm_base_url, _pin_temperature_for_thinking
     import requests as req
     base = _normalize_llm_base_url(base_url, model)
+    is_kilo = 'kilo.ai' in (base or '').lower()
+    headers = None if (is_kilo and not api_key) else build_auth_headers(api_key)
 
     def _post(temp):
         # timeout=90：思考型模型（DeepSeek-R1 / GLM-5.3 等）即使 max_tokens=20
         # 也会先做内部推理，实际耗时 20-60s 很常见；30s 会误判超时。
         return req.post(
             f"{base}/chat/completions",
-            headers=build_auth_headers(api_key),
+            headers=headers,
             json={
                 'model': model,
                 'messages': [{'role': 'user', 'content': '你好，请回复"连接成功"四个字。'}],
@@ -911,7 +921,9 @@ def fetch_ai_models():
             if not model:
                 model = cfg.model or ''
         else:
-            return jsonify({'error': '请先填写 API Key 或保存配置'}), 400
+            # Kilo 免费网关：无需 Key 也允许拉取；其他提供商仍要求 Key
+            if 'kilo.ai' not in (base_url or '').lower():
+                return jsonify({'error': '请先填写 API Key 或保存配置'}), 400
 
     if not base_url:
         return jsonify({'error': '请填写 API 地址'}), 400
@@ -945,11 +957,12 @@ def test_ai_connection():
                 base_url = cfg.base_url or ''
             if not model:
                 model = cfg.model or ''
-        else:
+        # Kilo 免费网关：允许无 Key 测试连接（其他提供商无 Key 直接拒绝）
+        if not api_key and 'kilo.ai' not in (base_url or '').lower():
             return jsonify({'error': '请先填写 API Key 或保存配置'}), 400
 
-    if not base_url or not api_key or not model:
-        return jsonify({'error': '请填写完整的 API 地址、API Key 和模型名称'}), 400
+    if not base_url or not model:
+        return jsonify({'error': '请填写完整的 API 地址和模型名称（Kilo 免费网关无需 API Key）'}), 400
 
     try:
         result, err, code = _do_test_connection(base_url, api_key, model)

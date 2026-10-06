@@ -3,7 +3,7 @@
 验证：
   - 旧数据自动迁移为激活配置（兼容性）
   - 新增/切换/删除配置
-  - 最多 10 个限制
+  - 最多 20 个限制
   - get_active() 始终返回当前激活配置
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ def test_list_configs_returns_at_least_one(auth_client):
     resp = auth_client.get("/api/ai/configs")
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body["max"] == 10
+    assert body["max"] == 20
     assert len(body["configs"]) >= 1
     # 第一条应是激活的
     assert body["configs"][0]["is_active"] is True
@@ -53,20 +53,20 @@ def test_create_config_auto_activates(auth_client):
     assert active[0]["id"] == new_cfg["id"]
 
 
-def test_max_ten_configs_limit(auth_client):
-    """最多 10 个提供商配置，第 11 个返回 400。"""
-    # provider 级：一行一个提供商；用 10 个不同 provider 建满
-    for i in range(1, 11):
+def test_max_twenty_configs_limit(auth_client):
+    """最多 20 个提供商配置，第 21 个返回 400。"""
+    # provider 级：一行一个提供商；用 20 个不同 provider 建满
+    for i in range(1, 21):
         resp = auth_client.post("/api/ai/configs", json={"name": f"provider{i}", "provider": f"p{i}"})
         assert resp.status_code == 201, f"p{i} 应创建成功"
-    # 第 11 个应拒绝
-    resp = auth_client.post("/api/ai/configs", json={"name": "provider11", "provider": "p11"})
+    # 第 21 个应拒绝
+    resp = auth_client.post("/api/ai/configs", json={"name": "provider21", "provider": "p21"})
     assert resp.status_code == 400
     assert "最多" in resp.get_json()["error"]
-    # 确认 /api/ai/configs 返回的 max = 10
+    # 确认 /api/ai/configs 返回的 max = 20
     body = auth_client.get("/api/ai/configs").get_json()
-    assert body["max"] == 10
-    assert len(body["configs"]) == 10
+    assert body["max"] == 20
+    assert len(body["configs"]) == 20
 
 
 def test_activate_switches_active(auth_client):

@@ -525,7 +525,9 @@ class LLMGateway:
         """
         result = ModelResult()
         url = f"{self.base_url}/chat/completions"
-        headers = build_auth_headers(self.api_key)
+        # Kilo 免费网关无 Key 时不下 Auth 头，否则网关会回 401
+        is_kilo = 'kilo.ai' in (self.base_url or '').lower()
+        headers = None if (is_kilo and not self.api_key) else build_auth_headers(self.api_key)
         payload = {
             "model": self.model,
             "messages": messages,
@@ -675,7 +677,9 @@ class LLMGateway:
         任何抛错都带 status_code/body_text/traceId（若上游给了），不再只说"状态码:503"。
         """
         url = f"{self.base_url}/chat/completions"
-        headers = build_auth_headers(self.api_key)
+        # Kilo 免费网关无 Key 时不下 Auth 头，否则网关会回 401
+        is_kilo = 'kilo.ai' in (self.base_url or '').lower()
+        headers = None if (is_kilo and not self.api_key) else build_auth_headers(self.api_key)
         payload = {
             "model": self.model,
             "messages": messages,

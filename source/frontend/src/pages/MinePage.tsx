@@ -11,9 +11,9 @@ export default function MinePage() {
   const { currentUser, theme, customColors, setTheme, setCustomColors, setCurrentUser, logout } = useStore() as any;
   const { requireAuth } = useContext(AuthContext);
   const [aiConfig, setAIConfig] = useState<AIConfig>({ id: '', name: '默认配置', is_active: true, provider: 'deepseek', model: 'deepseek-chat', recognition_model: '', api_key: '', base_url: 'https://api.deepseek.com/v1', temperature: 0.7, max_tokens: 4000, has_key: false });
-  // 多配置支持：最多 10 个，可切换（实际权威值以 listAIConfigs 返回的 max 字段为准，后端 MAX_CONFIGS=10）
+  // 多配置支持：最多 20 个，可切换（实际权威值以 listAIConfigs 返回的 max 字段为准，后端 MAX_CONFIGS=20）
   const [configList, setConfigList] = useState<AIConfig[]>([]);
-  const [maxConfigs, setMaxConfigs] = useState(10);
+  const [maxConfigs, setMaxConfigs] = useState(20);
   // 表单模式：edit = 编辑已保存的某条配置；create = 新建独立配置草稿（保存时新建，不覆盖任何已有配置）
   const [formMode, setFormMode] = useState<'edit' | 'create'>('edit');
   const [showApiKey, setShowApiKey] = useState(false);
@@ -216,8 +216,9 @@ export default function MinePage() {
     if (!ok) return;
     if (!aiConfig.provider) { alert('请选择提供商'); setSaving(false); return; }
     if (!aiConfig.base_url.trim()) { alert('请先填写 API 地址'); setSaving(false); return; }
-    // 无 Key 的配置无法调用 LLM（OpenRouter 等「免费模型」仍需 Key 鉴权）
-    if (!aiConfig.api_key.trim() && !aiConfig.has_key) {
+    // 无 Key 的配置无法调用 LLM；Kilo 免费网关例外：无需 Key
+    const isKeylessProvider = aiConfig.provider === 'kilo';
+    if (!isKeylessProvider && !aiConfig.api_key.trim() && !aiConfig.has_key) {
       alert('请先填写 API Key（OpenRouter 免费模型也需要 Key：openrouter.ai → Settings → Keys 生成）');
       setSaving(false);
       return;
@@ -256,7 +257,9 @@ export default function MinePage() {
     setTestResult(null);
     try {
       // api_key 为空/掩码也不阻止：后端按 config_id（或激活配置）取真实 Key
-      const result = await api.fetchAIModels(aiConfig.base_url, aiConfig.api_key || '***', aiConfig.id || undefined);
+      // Kilo 免费网关：无需 Key（无配置 Key 也能调用 /models）
+      const apiKeyToSend = aiConfig.provider === 'kilo' ? '' : (aiConfig.api_key || '***');
+      const result = await api.fetchAIModels(aiConfig.base_url, apiKeyToSend, aiConfig.id || undefined);
       setModelList(result.models);
       // 预勾选：当前已选定的模型出现在列表里 → 勾上
       const existing = (aiConfig.models && aiConfig.models.length ? aiConfig.models : (aiConfig.model ? [aiConfig.model] : []));
@@ -689,14 +692,27 @@ export default function MinePage() {
               )}
             </div>
             <div className="form-field">
-              <label>API Key <span className={`key-status ${(aiConfig.has_key || (aiConfig.api_key && aiConfig.api_key !== '***' && aiConfig.api_key.trim())) ? 'set' : 'unset'}`}>{aiConfig.has_key ? '(已设置)' : (aiConfig.api_key && aiConfig.api_key !== '***' && aiConfig.api_key.trim() ? '(已填写，保存后生效)' : '(未设置)')}</span></label>
-              <div className="input-row">
-                <input className="input" type={showApiKey ? 'text' : 'password'}
-                  value={aiConfig.api_key === '***' ? '' : aiConfig.api_key}
-                  onChange={e => setAIConfig((p: AIConfig) => ({ ...p, api_key: e.target.value }))}
-                  placeholder={aiConfig.has_key ? '已保存（留空则保持不变，输入新 Key 才会替换）' : '输入你的API Key（OpenRouter 免费模型也需要 Key）'} />
-                <button className="btn-ghost-sm" onClick={() => setShowApiKey(!showApiKey)}>{showApiKey ? '隐藏' : '显示'}</button>
-              </div>
+              <label>
+                API Key
+                {aiConfig.provider === 'kilo' ? (
+                  <span className="key-status set" style={{marginLeft:6,color:'#0ea5e9'}}>(Kilo 免费网关无需 Key)</span>
+                ) : (
+                  <span className={`key-status ${(aiConfig.has_key || (aiConfig.api_key && aiConfig.api_key !== '***' && aiConfig.api_key.trim())) ? 'set' : 'unset'}`}>{aiConfig.has_key ? '(已设置)' : (aiConfig.api_key && aiConfig.api_key !== '***' && aiConfig.api_key.trim() ? '(已填写，保存后生效)' : '(未设置)')}</span>
+                )}
+              </label>
+              {aiConfig.provider === 'kilo' ? (
+                <div style={{fontSize:12,color:'#0ea5e9',padding:'8px 12px',background:'#e0f2fe',borderRadius:6,border:'1px solid #bae6fd'}}>
+                  <Icon name="info" size={13} /> Kilo 免费网关无需 API Key。注册/匿名均可使用，模型在「上方拉取并勾选」中由你选。
+                </div>
+              ) : (
+                <div className="input-row">
+                  <input className="input" type={showApiKey ? 'text' : 'password'}
+                    value={aiConfig.api_key === '***' ? '' : aiConfig.api_key}
+                    onChange={e => setAIConfig((p: AIConfig) => ({ ...p, api_key: e.target.value }))}
+                    placeholder={aiConfig.has_key ? '已保存（留空则保持不变，输入新 Key 才会替换）' : '输入你的API Key（OpenRouter 免费模型也需要 Key）'} />
+                  <button className="btn-ghost-sm" onClick={() => setShowApiKey(!showApiKey)}>{showApiKey ? '隐藏' : '显示'}</button>
+                </div>
+              )}
             </div>
 
             {/* 识别模型独立设置 */}

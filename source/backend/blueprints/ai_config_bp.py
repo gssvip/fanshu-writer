@@ -1,4 +1,4 @@
-"""AI 配置管理 Blueprint：支持最多 10 个配置，可切换激活。
+"""AI 配置管理 Blueprint：支持最多 20 个配置，可切换激活。
 
 将 /api/ai/config 与 /api/ai/configs 系列 CRUD 从 app.py 拆出，
 避免 app.py 巨石膨胀。所有 LLM 调用仍通过 AIConfig.get_active() 取激活配置。
@@ -23,8 +23,8 @@ from flask import Blueprint, jsonify, request
 
 ai_config_bp = Blueprint('ai_config', __name__)
 
-# 最多保留 10 个配置
-MAX_CONFIGS = 10
+# 最多保留 20 个配置
+MAX_CONFIGS = 20
 
 
 @ai_config_bp.route('/api/ai/config', methods=['GET'])
