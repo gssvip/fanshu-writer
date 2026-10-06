@@ -633,9 +633,6 @@ const ActionCardView = memo(function ActionCardView(props: CardViewProps) {
           </span>
         )}
         <span className="chat-card-status"><Icon name="check" size={13} /> 已采纳落地 · {card.target}</span>
-        <span className="chat-card-toggle" style={{ marginLeft: 'auto', fontSize: 12, color: '#999' }}>
-          {expanded ? '收起 ▲' : '展开 ▼'}
-        </span>
       </div>
       {card.subtitle && (
         <div style={{ padding: '2px 14px 4px', fontSize: 12, color: '#6b7280', marginTop: -2 }}>{card.subtitle}</div>

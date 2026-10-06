@@ -1,6 +1,6 @@
 import { useState, useEffect, useContext, useRef } from 'react';
 import { useStore } from '../store';
-import { api, getApiBaseUrl, setApiBaseUrl, legacyKey } from '../api';
+import { api, setApiBaseUrl, legacyKey } from '../api';
 import { AuthContext } from '../App';
 import type { AIConfig } from '../types';
 import type { Book, AIUsageStats, AIUsageLogItem } from '../types';
