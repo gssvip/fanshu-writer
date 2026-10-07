@@ -248,12 +248,12 @@ export const api = {
     request<AIConfig>(`/ai/configs/${id}/select-model`, { method: 'POST', body: JSON.stringify({ model }) }),
   fetchAIModels: (baseUrl: string, apiKey: string, configId?: string) =>
     request<{ models: { id: string; owned_by: string }[] }>('/ai/models', { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, config_id: configId }) }),
-  testAIConnection: (baseUrl: string, apiKey: string, model: string) =>
+  testAIConnection: (baseUrl: string, apiKey: string, model: string, configId?: string) =>
     // 测试连接：后端最多等 90s（思考型模型推理慢），前端给 95s 余量且不重试
     // （重试会重复发请求浪费 token，且 4xx 超时本身不会重试）
     request<{ success: boolean; reply: string; model: string; usage?: any }>(
       '/ai/test',
-      { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, model }) },
+      { method: 'POST', body: JSON.stringify({ base_url: baseUrl, api_key: apiKey, model, config_id: configId }) },
       undefined,
       95000,
       0,

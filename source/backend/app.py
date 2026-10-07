@@ -992,8 +992,22 @@ def test_ai_connection():
     base_url = (data.get('base_url') or '').strip()
     api_key = (data.get('api_key') or '').strip()
     model = (data.get('model') or '').strip()
+    cfg_id = (data.get('config_id') or '').strip()
 
-    # 如果 api_key 是掩码或为空，尝试使用已保存的配置
+    # 显式指定 config_id → 用该提供商存库的真实 key（编辑非激活提供商也能测试）
+    if cfg_id:
+        c = AIConfig.query.get(cfg_id)
+        if c and c.user_id != getattr(request, 'current_user_id', None):
+            c = None  # 非当前用户的配置，视为不存在（多租户隔离）
+        if c:
+            if not base_url:
+                base_url = c.base_url or ''
+            if api_key == '***' or not api_key:
+                api_key = c.api_key or ''
+            if not model:
+                model = c.model or ''
+
+    # 如果 api_key 是掩码或为空，尝试使用已保存的激活配置
     if api_key == '***' or not api_key:
         cfg = AIConfig.get_active(user_id=getattr(request, 'current_user_id', None))
         if cfg and cfg.api_key:
@@ -1002,12 +1016,13 @@ def test_ai_connection():
                 base_url = cfg.base_url or ''
             if not model:
                 model = cfg.model or ''
-        # Kilo 免费网关：允许无 Key 测试连接（其他提供商无 Key 直接拒绝）
-        if not api_key and 'kilo.ai' not in (base_url or '').lower():
+        # Kilo / OpenCode 免费通道：允许无 Key 测试连接（其他提供商无 Key 直接拒绝）
+        is_keyless = 'kilo.ai' in (base_url or '').lower() or 'opencode.ai' in (base_url or '').lower()
+        if not api_key and not is_keyless:
             return jsonify({'error': '请先填写 API Key 或保存配置'}), 400
 
     if not base_url or not model:
-        return jsonify({'error': '请填写完整的 API 地址和模型名称（Kilo 免费网关无需 API Key）'}), 400
+        return jsonify({'error': '请填写完整的 API 地址和模型名称（Kilo/OpenCode 免费通道无需 API Key）'}), 400
 
     try:
         result, err, code = _do_test_connection(base_url, api_key, model)

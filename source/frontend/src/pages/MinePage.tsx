@@ -282,7 +282,7 @@ export default function MinePage() {
     setTesting(true);
     setTestResult(null);
     try {
-      const result = await api.testAIConnection(aiConfig.base_url, isKeyless ? '' : aiConfig.api_key, aiConfig.model);
+      const result = await api.testAIConnection(aiConfig.base_url, isKeyless ? '' : aiConfig.api_key, aiConfig.model, aiConfig.id || undefined);
       setTestResult({ success: true, msg: `连接成功！模型回复：${result.reply}` });
     } catch (e: any) {
       setTestResult({ success: false, msg: e.message || '连接失败' });
