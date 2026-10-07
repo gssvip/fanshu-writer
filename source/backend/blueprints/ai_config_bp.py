@@ -92,9 +92,12 @@ def _apply_config_fields(cfg, data):
         cfg.api_key = data['api_key']
     # Kilo 免费网关：免 Key。写入哨兵占位，使全站 `if not api_key` 校验通过；
     # build_auth_headers 会识别哨兵、不下发认证头。
-    from llm_gateway import is_kilo_base, KILO_FREE_API_KEY
+    # OpenCode Zen 免费通道：匿名 Key 为字面量 public，同样写入哨兵。
+    from llm_gateway import is_kilo_base, KILO_FREE_API_KEY, is_opencode_base, OPENCODE_PUBLIC_KEY
     if is_kilo_base(cfg.base_url) and not cfg.api_key:
         cfg.api_key = KILO_FREE_API_KEY
+    if is_opencode_base(cfg.base_url) and not cfg.api_key:
+        cfg.api_key = OPENCODE_PUBLIC_KEY
     return cfg
 
 
@@ -162,9 +165,12 @@ def create_ai_config():
         user_id=uid,
     )
     # Kilo 免费网关：免 Key。写入哨兵占位，使全站 `if not api_key` 校验通过
-    from llm_gateway import is_kilo_base, KILO_FREE_API_KEY
+    # OpenCode Zen 免费通道：匿名 Key 为字面量 public，同样写入哨兵。
+    from llm_gateway import is_kilo_base, KILO_FREE_API_KEY, is_opencode_base, OPENCODE_PUBLIC_KEY
     if is_kilo_base(cfg.base_url) and not cfg.api_key:
         cfg.api_key = KILO_FREE_API_KEY
+    if is_opencode_base(cfg.base_url) and not cfg.api_key:
+        cfg.api_key = OPENCODE_PUBLIC_KEY
     # 仅取消当前用户自己配置的激活态（不影响共享兜底配置）
     AIConfig.query.filter_by(is_active=True, user_id=uid).update({'is_active': False})
     db.session.add(cfg)

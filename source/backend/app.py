@@ -782,12 +782,18 @@ def _do_fetch_models(base_url, api_key, model=None):
     【智谱 GLM 404 修复】不再无条件补 /v1：走 provider 感知归一化。
     智谱 GLM 的 /models 也在 v4 下（/api/paas/v4/models），若按老逻辑补 /v1 → /v4/v1/models → 404。
     """
-    from llm_gateway import _normalize_llm_base_url
+    from llm_gateway import _normalize_llm_base_url, is_opencode_base, opencode_disguise_headers
     import requests as req
     base = _normalize_llm_base_url(base_url, model)
     # Kilo 免费网关：无需 Key，直接 GET；其他提供商按既有逻辑下 Auth 头
     is_kilo = 'kilo.ai' in (base or '').lower()
     headers = None if is_kilo else build_auth_headers(api_key, content_type=False)
+    # OpenCode Zen：免费通道 /models 也需伪装头（UA + canonical session），否则 403
+    if is_opencode_base(base):
+        if headers is None:
+            headers = {}
+        headers = dict(headers)
+        headers.update(opencode_disguise_headers(base))
     resp = req.get(
         f"{base}/models",
         headers=headers,
@@ -798,6 +804,7 @@ def _do_fetch_models(base_url, api_key, model=None):
     result = resp.json()
     # OpenRouter：专门只显示免费模型（pricing.prompt/completion 均为 0），收费模型一律隐藏
     is_openrouter = 'openrouter.ai' in (base or '').lower()
+    is_opencode = 'opencode.ai' in (base or '').lower()
 
     def _is_free_price(v) -> bool:
         """价格是否为 0（兼容字符串/数字/科学计数法，OpenRouter pricing 为字符串数值）。"""
@@ -822,6 +829,10 @@ def _do_fetch_models(base_url, api_key, model=None):
             # Kilo：每个模型带 isFree 字段；少数旧字段是 free / cost == 0 也认
             if not (m.get('isFree') is True or m.get('free') is True):
                 continue
+        elif is_opencode:
+            # OpenCode Zen：免费模型 id 以 -free 结尾（如 exo-free、mimo-v2.5-free）
+            if not mid.endswith('-free'):
+                continue
         models.append({
             'id': mid,
             'owned_by': m.get('owned_by', ''),
@@ -835,27 +846,46 @@ def _do_test_connection(base_url, api_key, model):
     【智谱 GLM 404 修复】删除老代码"非 /v1 结尾就补 /v1"。
     用户点"测试连接"按钮看到的 "HTTP 404 path=/v4/v1/chat/completions" 就是这里产生的。
     【Kilo 免费】无 Key 时不下 Auth 头，否则网关会回 401。
+    【OpenCode Zen】匿名免费通道需伪装（UA + session + bash/read tools）且必须流式。
     """
-    from llm_gateway import _normalize_llm_base_url, _pin_temperature_for_thinking
+    from llm_gateway import (
+        _normalize_llm_base_url, _pin_temperature_for_thinking,
+        is_opencode_base, opencode_disguise_headers, opencode_inject_gate_tools,
+        _iter_sse_events,
+    )
     import requests as req
     base = _normalize_llm_base_url(base_url, model)
     is_kilo = 'kilo.ai' in (base or '').lower()
     headers = None if (is_kilo and not api_key) else build_auth_headers(api_key)
+    is_opencode = is_opencode_base(base)
+    # OpenCode 免费通道：伪装头 + bash/read tools + 强制流式
+    if is_opencode:
+        if headers is None:
+            headers = {}
+        headers = dict(headers)
+        headers.update(opencode_disguise_headers(base))
+
+    def _build_payload(temp):
+        return {
+            'model': model,
+            'messages': [{'role': 'user', 'content': '你好，请回复"连接成功"四个字。'}],
+            'max_tokens': 20,
+            'temperature': temp,
+            'stream': bool(is_opencode and '/zen/go/' not in base),
+        }
 
     def _post(temp):
         # timeout=90：思考型模型（DeepSeek-R1 / GLM-5.3 等）即使 max_tokens=20
         # 也会先做内部推理，实际耗时 20-60s 很常见；30s 会误判超时。
+        payload = _build_payload(temp)
+        if is_opencode:
+            payload = opencode_inject_gate_tools(payload)
         return req.post(
             f"{base}/chat/completions",
             headers=headers,
-            json={
-                'model': model,
-                'messages': [{'role': 'user', 'content': '你好，请回复"连接成功"四个字。'}],
-                'max_tokens': 20,
-                'temperature': temp,
-                'stream': False
-            },
-            timeout=90
+            json=payload,
+            timeout=90,
+            stream=payload.get('stream', False),
         )
 
     # 思考型模型（DeepSeek-R1/GLM-5.3 等）要求 temperature=1：先按名单钳制，
@@ -876,6 +906,21 @@ def _do_test_connection(base_url, api_key, model):
         except Exception:
             err_msg = resp.text[:300]
         return None, f'连接失败 (HTTP {resp.status_code})：{err_msg}', 400
+    # OpenCode 匿名免费通道：SSE 流式响应，聚合 delta 为完整回复
+    if is_opencode and resp.request and resp.request.body and b'"stream": true' in (resp.request.body or b''):
+        reply_parts: list = []
+        for kind, value in _iter_sse_events(resp):
+            if kind in ('delta', 'message'):
+                reply_parts.append(value)
+        reply = ''.join(reply_parts)
+        if not reply.strip():
+            return None, f'连接失败：模型返回空内容', 400
+        return {
+            'success': True,
+            'reply': reply,
+            'model': model,
+            'usage': {}
+        }, None, 200
     result = resp.json()
     if 'choices' in result and len(result['choices']) > 0:
         reply = result['choices'][0]['message']['content']

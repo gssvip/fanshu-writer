@@ -25,7 +25,7 @@ export const AI_PROVIDERS: AIProvider[] = [
   { value: 'minimax', label: 'MiniMax', icon: 'circle', color: '#6b7280', base_url: 'https://api.minimax.chat/v1', model: 'abab6.5s-chat' },
   { value: 'hunyuan', label: '腾讯混元', icon: 'circle', color: '#0ea5e9', base_url: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-pro' },
   { value: 'openai', label: 'OpenAI', icon: 'bot', color: '#10b981', base_url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  { value: 'opencode', label: 'OpenCode Zen 免费', icon: 'zap', color: '#f59e0b', base_url: 'https://opencode.ai/zen/v1', model: 'deepseek-v4-flash-free' },
+  { value: 'opencode', label: 'OpenCode Zen 免费', icon: 'zap', color: '#f59e0b', base_url: 'https://opencode.ai/zen/v1', model: 'exo-free' },
   { value: 'openrouter-free', label: 'OpenRouter 免费', icon: 'party', color: '#ec4899', base_url: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-chat-v3-0324:free' },
   // Kilo AI Gateway（https://kilo.ai）：统一 API，无需 Key，模型由用户在配置页拉取后自由勾选使用哪些
   { value: 'kilo', label: 'Kilo 免费', icon: 'zap', color: '#0ea5e9', base_url: 'https://api.kilo.ai/api/gateway', model: 'kilo-auto/free' },

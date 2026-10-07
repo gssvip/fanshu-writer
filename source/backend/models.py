@@ -287,10 +287,11 @@ class AIConfig(db.Model):
         return raw
 
     def to_dict(self):
-        from llm_gateway import KILO_FREE_API_KEY
+        from llm_gateway import KILO_FREE_API_KEY, OPENCODE_PUBLIC_KEY
         models = self.get_models()
-        # Kilo 免费哨兵 key 不视为「已设置 Key」（避免前端误显示已配置）
-        _has_key = bool(self.api_key) and self.api_key != KILO_FREE_API_KEY
+        # Kilo 免费哨兵 key / OpenCode 匿名 public key 不视为「已设置 Key」
+        # （避免前端误显示已配置，应像免 Key 提供商一样展示）
+        _has_key = bool(self.api_key) and self.api_key not in (KILO_FREE_API_KEY, OPENCODE_PUBLIC_KEY)
         return {
             'id': self.id, 'name': self.name or '默认配置', 'is_active': self.is_active,
             'provider': self.provider, 'model': self.model or (models[0] if models else ''),

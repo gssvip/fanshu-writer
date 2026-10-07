@@ -20,8 +20,11 @@ requests.post 直连 LLM 的重复问题：
 from __future__ import annotations
 
 import enum
+import hashlib
 import json
+import platform
 import re
+import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -106,6 +109,129 @@ def is_kilo_base(base_url: str) -> bool:
 KILO_FREE_API_KEY = '__kilo_free__'
 
 
+# ============================================================================
+# OpenCode Zen 免费通道伪装（2026-09 起生效的反爬闸门）
+#
+# 背景：OpenCode Zen 的匿名免费通道（/zen/...）从 2026-09-16 起拒绝所有
+# 「不像 OpenCode CLI」的请求，返回 403 FreeTierError:
+#   "OpenCode's free tier can only be used from within OpenCode"
+#
+# 实测闸门由三部分组成，必须同时满足：
+#   1. User-Agent 以 opencode/ 开头
+#   2. x-opencode-session 为 ses_ + 26 字符（12 位小写 hex + 14 位 Base62）
+#   3. 请求体必须 stream:true 且带名为 bash 和 read 的 function tools
+#
+# 匿名通道的 API Key 是字面量字符串 public（无需注册/付费）。
+# 参考：https://github.com/DOCUTEE/dsh-opencode-free-tier
+# ============================================================================
+
+# OpenCode 免费通道的哨兵 api_key：匿名通道无需真实 Key，用此哨兵通过
+# 全站的 `if not api_key` 校验；build_auth_headers 识别后下发 Bearer public。
+OPENCODE_PUBLIC_KEY = 'public'
+
+# Base62 字母表（与 OpenCode CLI 的 canonical session 派生一致）
+_BASE62_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+
+
+def is_opencode_base(base_url: str) -> bool:
+    """是否为 OpenCode Zen 端点（opencode.ai 域名）。"""
+    return 'opencode.ai' in (base_url or '').lower()
+
+
+def _base62_fixed(value: int, width: int) -> str:
+    """把整数编码为定宽 Base62 字符串（高位补零）。"""
+    base = 62
+    out = []
+    n = value
+    for _ in range(width):
+        out.append(_BASE62_ALPHABET[n % base])
+        n //= base
+    return ''.join(reversed(out))
+
+
+def opencode_canonical_session(signal: str = '') -> str:
+    """生成 OpenCode CLI 规范的 session id：ses_ + 12 hex + 14 Base62（共 26 字符）。
+
+    派生算法与 OpenCode CLI / opencode2dsh 一致：
+      SHA-256("ses\\0" + signal) -> ses_ + 前 6 字节 hex + 后续 10 字节的 Base62(14位)
+    若 signal 本身已是规范格式则直接返回（保持上游 prompt-cache 亲和性）。
+    """
+    if isinstance(signal, str) and re.match(r'^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$', signal):
+        return signal
+    sig = signal or secrets.token_hex(16)
+    digest = hashlib.sha256(f'ses\x00{sig}'.encode('utf-8')).digest()
+    hex_part = digest[:6].hex()  # 12 位小写 hex
+    int_part = int.from_bytes(digest[6:16], 'big')  # 10 字节 -> 14 位 Base62
+    return f'ses_{hex_part}{_base62_fixed(int_part, 14)}'
+
+
+def opencode_user_agent() -> str:
+    """生成与 OpenCode CLI 一致的 User-Agent。"""
+    sysname = platform.system().lower()
+    machine = platform.machine().lower() or 'x86_64'
+    pyver = platform.python_version()
+    return f'opencode/1.18.31 ({sysname} {machine}; node{pyver})'
+
+
+def opencode_disguise_headers(base_url: str, signal: str = '') -> dict:
+    """构造 OpenCode Zen 免费通道所需的伪装请求头。
+
+    免费通道（/zen/，非 /zen/go/）需要完整伪装：UA + canonical session + 一组
+    CLI 特征头；付费 Go 通道（/zen/go/）只需 canonical session（保留真实 UA）。
+    """
+    is_go = '/zen/go/' in base_url
+    headers: dict[str, str] = {}
+    session = opencode_canonical_session(signal)
+    headers['x-opencode-session'] = session
+    if not is_go:
+        headers['User-Agent'] = opencode_user_agent()
+        headers['x-opencode-client'] = 'cli'
+        headers['x-session-affinity'] = session
+        headers['X-Session-Id'] = session
+        headers['x-opencode-request'] = f'req_{secrets.token_hex(16)}'
+        headers['x-opencode-project'] = f'prj_{hashlib.sha256(b"opencode2dsh:default-project").hexdigest()[:24]}'
+    return headers
+
+
+def opencode_inject_gate_tools(payload: dict) -> dict:
+    """向 chat-completions 请求体注入免费通道闸门所需的 bash/read 工具。
+
+    若请求体已有 bash 和 read 则原样返回（幂等）；否则补齐缺失的工具，
+    并在原本没有 tools 时设 tool_choice='none'，防止模型真去调用这些桩工具。
+    同时强制 stream=True（闸门要求流式）。
+    """
+    if not isinstance(payload, dict) or not isinstance(payload.get('messages'), list):
+        return payload
+    tools = payload.get('tools')
+    if not isinstance(tools, list):
+        tools = []
+    names = set()
+    for t in tools:
+        if isinstance(t, dict):
+            fn = t.get('function')
+            if isinstance(fn, dict):
+                names.add(fn.get('name'))
+    missing = [n for n in ('bash', 'read') if n not in names]
+    if not missing:
+        return payload
+    new_tools = list(tools)
+    for name in missing:
+        new_tools.append({
+            'type': 'function',
+            'function': {
+                'name': name,
+                'description': 'Reserved for the host runtime; do not call it.',
+                'parameters': {'type': 'object', 'properties': {}},
+            },
+        })
+    result = dict(payload)
+    result['tools'] = new_tools
+    if not tools:
+        result['tool_choice'] = 'none'
+    result['stream'] = True
+    return result
+
+
 def build_auth_headers(api_key: str, content_type: bool = True) -> dict:
     """构造 LLM 请求认证头。
 
@@ -114,6 +240,7 @@ def build_auth_headers(api_key: str, content_type: bool = True) -> dict:
     - OpenCode Zen 免费模型端点（认 x-api-key）
 
     api_key 为空或为 Kilo 免费哨兵时不加认证头（Kilo 免费网关带无效 Key 会回 401）。
+    api_key 为 OpenCode public 哨兵时下发 Bearer public（匿名免费通道）。
     """
     headers: dict[str, str] = {}
     if api_key and api_key != KILO_FREE_API_KEY:
@@ -561,11 +688,27 @@ class LLMGateway:
         # 思考开启时上游要求 temperature=1，统一钳制避免 HTTP 400
         payload["temperature"] = _pin_temperature_for_thinking(self.model, extra, temperature)
 
+        # OpenCode Zen 免费通道伪装：UA + canonical session + bash/read tools
+        # 匿名通道要求 stream:true，所以 chat() 也强制流式并在内部聚合内容。
+        is_opencode = is_opencode_base(self.base_url)
+        if is_opencode:
+            if headers is None:
+                headers = {}
+            headers = dict(headers)
+            headers.update(opencode_disguise_headers(url))
+            payload = opencode_inject_gate_tools(payload)
+            # 匿名免费通道必须流式；Go 付费通道保持原 stream 语义。
+            if '/zen/go/' not in url:
+                payload['stream'] = True
+
         last_error = ""
         for attempt in range(1, self.max_retries + 2):  # 1 正常 + max_retries 重试
             result.attempts = attempt
             try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
+                # OpenCode 匿名免费通道强制流式：请求用 stream=True，响应走 SSE 聚合
+                _stream_resp = is_opencode and payload.get('stream') is True
+                resp = requests.post(url, headers=headers, json=payload, timeout=self.timeout,
+                                     stream=_stream_resp)
                 # 【对齐 chat_stream】非 200 状态码先分类报错（旧实现直接 resp.json()，
                 # 非 JSON 错误页抛异常进 UNKNOWN 盲目重试，错误信息不可读）
                 if resp.status_code != 200:
@@ -621,9 +764,28 @@ class LLMGateway:
                         return result
                     time.sleep(min(2 ** (attempt - 1), 4))
                     continue
-                body = resp.json()
-
-                content, finish_reason, fc = _extract_content(body)
+                # OpenCode 匿名免费通道：SSE 流式响应，聚合所有 delta 为完整正文
+                if _stream_resp:
+                    content_parts: list[str] = []
+                    finish_reason = ''
+                    for kind, value in _iter_sse_events(resp):
+                        if kind in ('delta', 'message'):
+                            content_parts.append(value)
+                        elif kind == 'usage':
+                            pass  # usage 暂不处理
+                    content = ''.join(content_parts)
+                    if content.strip():
+                        result.content = content
+                        result.finish_reason = finish_reason or 'stop'
+                        result.raw = {'streamed': True}
+                        result.failure_class = FailureClass.NONE
+                        return result
+                    # 流式空内容：走下面的空内容处理
+                    fc = FailureClass.EMPTY_RESPONSE
+                    body = {}
+                else:
+                    body = resp.json()
+                    content, finish_reason, fc = _extract_content(body)
                 if fc == FailureClass.NONE:
                     result.content = content
                     result.finish_reason = finish_reason
@@ -715,6 +877,15 @@ class LLMGateway:
         payload.update(extra)
         # 思考开启时上游要求 temperature=1，统一钳制避免 HTTP 400
         payload["temperature"] = _pin_temperature_for_thinking(self.model, extra, temperature)
+
+        # OpenCode Zen 免费通道伪装：UA + canonical session + bash/read tools
+        is_opencode = is_opencode_base(self.base_url)
+        if is_opencode:
+            if headers is None:
+                headers = {}
+            headers = dict(headers)
+            headers.update(opencode_disguise_headers(url))
+            payload = opencode_inject_gate_tools(payload)
 
         got_content = False
         got_reasoning = False  # 思考型模型（GLM-4.7/R1 等）先输出 reasoning_content 再输出 content

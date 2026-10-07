@@ -216,8 +216,8 @@ export default function MinePage() {
     if (!ok) return;
     if (!aiConfig.provider) { alert('请选择提供商'); setSaving(false); return; }
     if (!aiConfig.base_url.trim()) { alert('请先填写 API 地址'); setSaving(false); return; }
-    // 无 Key 的配置无法调用 LLM；Kilo 免费网关例外：无需 Key
-    const isKeylessProvider = aiConfig.provider === 'kilo';
+    // 无 Key 的配置无法调用 LLM；Kilo / OpenCode 免费通道例外：无需 Key
+    const isKeylessProvider = aiConfig.provider === 'kilo' || aiConfig.provider === 'opencode';
     if (!isKeylessProvider && !aiConfig.api_key.trim() && !aiConfig.has_key) {
       alert('请先填写 API Key（OpenRouter 免费模型也需要 Key：openrouter.ai → Settings → Keys 生成）');
       setSaving(false);
@@ -257,8 +257,8 @@ export default function MinePage() {
     setTestResult(null);
     try {
       // api_key 为空/掩码也不阻止：后端按 config_id（或激活配置）取真实 Key
-      // Kilo 免费网关：无需 Key（无配置 Key 也能调用 /models）
-      const apiKeyToSend = aiConfig.provider === 'kilo' ? '' : (aiConfig.api_key || '***');
+      // Kilo 免费网关 / OpenCode Zen：无需 Key（无配置 Key 也能调用 /models）
+      const apiKeyToSend = (aiConfig.provider === 'kilo' || aiConfig.provider === 'opencode') ? '' : (aiConfig.api_key || '***');
       const result = await api.fetchAIModels(aiConfig.base_url, apiKeyToSend, aiConfig.id || undefined);
       setModelList(result.models);
       // 预勾选：当前已选定的模型出现在列表里 → 勾上
@@ -276,12 +276,13 @@ export default function MinePage() {
 
   async function handleTestConnection() {
     if (!aiConfig.base_url.trim()) { alert('请先填写 API 地址'); return; }
-    if (aiConfig.provider !== 'kilo' && !aiConfig.api_key.trim()) { alert('请先填写 API Key'); return; }
+    const isKeyless = aiConfig.provider === 'kilo' || aiConfig.provider === 'opencode';
+    if (!isKeyless && !aiConfig.api_key.trim()) { alert('请先填写 API Key'); return; }
     if (!aiConfig.model.trim()) { alert('请先填写模型名称'); return; }
     setTesting(true);
     setTestResult(null);
     try {
-      const result = await api.testAIConnection(aiConfig.base_url, aiConfig.provider === 'kilo' ? '' : aiConfig.api_key, aiConfig.model);
+      const result = await api.testAIConnection(aiConfig.base_url, isKeyless ? '' : aiConfig.api_key, aiConfig.model);
       setTestResult({ success: true, msg: `连接成功！模型回复：${result.reply}` });
     } catch (e: any) {
       setTestResult({ success: false, msg: e.message || '连接失败' });
@@ -694,13 +695,15 @@ export default function MinePage() {
             <div className="form-field">
               <label>
                 API Key
-                {aiConfig.provider === 'kilo' ? (
-                  <span className="key-status set" style={{marginLeft:6,color:'#0ea5e9'}}>(Kilo 免费网关无需 Key)</span>
+                {(aiConfig.provider === 'kilo' || aiConfig.provider === 'opencode') ? (
+                  <span className="key-status set" style={{marginLeft:6,color:'#0ea5e9'}}>
+                    {aiConfig.provider === 'opencode' ? '(OpenCode Zen 免费通道无需 Key)' : '(Kilo 免费网关无需 Key)'}
+                  </span>
                 ) : (
                   <span className={`key-status ${(aiConfig.has_key || (aiConfig.api_key && aiConfig.api_key !== '***' && aiConfig.api_key.trim())) ? 'set' : 'unset'}`}>{aiConfig.has_key ? '(已设置)' : (aiConfig.api_key && aiConfig.api_key !== '***' && aiConfig.api_key.trim() ? '(已填写，保存后生效)' : '(未设置)')}</span>
                 )}
               </label>
-              {aiConfig.provider === 'kilo' ? null : (
+              {(aiConfig.provider === 'kilo' || aiConfig.provider === 'opencode') ? null : (
                 <div className="input-row">
                   <input className="input" type={showApiKey ? 'text' : 'password'}
                     value={aiConfig.api_key === '***' ? '' : aiConfig.api_key}
