@@ -788,9 +788,9 @@ def _do_fetch_models(base_url, api_key, model=None):
     )
     import requests as req
     base = _normalize_llm_base_url(base_url, model)
-    # Kilo 免费网关 / Token Router：/models 端点免 Key，直接 GET；
-    # 其他提供商按既有逻辑下 Auth 头
-    is_keyless_models = is_kilo_base(base) or is_tokenrouter_base(base)
+    # Kilo 免费网关：/models 端点免 Key，直接 GET；
+    # TokenRouter / OpenCode / 其他提供商按既有逻辑下 Auth 头
+    is_keyless_models = is_kilo_base(base)
     headers = None if is_keyless_models else build_auth_headers(api_key, content_type=False)
     # OpenCode Zen：免费通道 /models 也需伪装头（UA + canonical session），否则 403
     if is_opencode_base(base):
@@ -810,6 +810,7 @@ def _do_fetch_models(base_url, api_key, model=None):
     is_openrouter = 'openrouter.ai' in (base or '').lower()
     is_opencode = 'opencode.ai' in (base or '').lower()
     is_kilo = is_kilo_base(base)
+    is_tokenrouter = is_tokenrouter_base(base)
 
     def _is_free_price(v) -> bool:
         """价格是否为 0（兼容字符串/数字/科学计数法，OpenRouter pricing 为字符串数值）。"""
@@ -817,6 +818,29 @@ def _do_fetch_models(base_url, api_key, model=None):
             return float(v) == 0.0
         except (TypeError, ValueError):
             return str(v).strip() == '0'
+
+    def _is_tokenrouter_free(m: dict) -> bool:
+        """判断 TokenRouter 模型是否免费。
+
+        TokenRouter /models 返回结构可能含 pricing / cost / is_free 等字段（不同版本字段名不同），
+        兼容多种免费标识：pricing.prompt+completion 均为 0、is_free/free 为 True、cost 为 0。
+        若模型无任何价格字段 → 视为免费（无法判断收费时乐观放行，避免漏掉免费模型）。
+        """
+        # 显式免费标识
+        if m.get('is_free') is True or m.get('free') is True:
+            return True
+        # 价格字段
+        pricing = m.get('pricing')
+        if isinstance(pricing, dict):
+            prompt_p = pricing.get('prompt')
+            comp_p = pricing.get('completion')
+            if prompt_p is not None or comp_p is not None:
+                return _is_free_price(prompt_p) and _is_free_price(comp_p)
+        cost = m.get('cost')
+        if cost is not None:
+            return _is_free_price(cost)
+        # 无价格字段 → 无法判断，乐观放行
+        return True
 
     models = []
     for m in result.get('data', []):
@@ -837,6 +861,10 @@ def _do_fetch_models(base_url, api_key, model=None):
         elif is_opencode:
             # OpenCode Zen：免费模型 id 以 -free 结尾（如 exo-free、mimo-v2.5-free）
             if not mid.endswith('-free'):
+                continue
+        elif is_tokenrouter:
+            # TokenRouter：只显示免费模型（pricing 为 0 / is_free / cost 为 0）
+            if not _is_tokenrouter_free(m):
                 continue
         models.append({
             'id': mid,
@@ -973,11 +1001,8 @@ def fetch_ai_models():
             if not model:
                 model = cfg.model or ''
         else:
-            # Kilo / OpenCode / TokenRouter：无需 Key 也允许拉取模型列表；其他提供商仍要求 Key
-            # （TokenRouter /models 免 Key，但 /chat/completions 需 vk_live_ Key）
-            is_keyless = ('kilo.ai' in (base_url or '').lower()
-                          or 'opencode.ai' in (base_url or '').lower()
-                          or 'token-router.org' in (base_url or '').lower())
+            # Kilo / OpenCode 免费通道：无需 Key 也允许拉取；其他提供商仍要求 Key
+            is_keyless = 'kilo.ai' in (base_url or '').lower() or 'opencode.ai' in (base_url or '').lower()
             if not is_keyless:
                 return jsonify({'error': '请先填写 API Key 或保存配置'}), 400
 

@@ -29,6 +29,6 @@ export const AI_PROVIDERS: AIProvider[] = [
   { value: 'openrouter-free', label: 'OpenRouter 免费', icon: 'party', color: '#ec4899', base_url: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-chat-v3-0324:free' },
   // Kilo AI Gateway（https://kilo.ai）：统一 API，无需 Key，模型由用户在配置页拉取后自由勾选使用哪些
   { value: 'kilo', label: 'Kilo 免费', icon: 'zap', color: '#0ea5e9', base_url: 'https://api.kilo.ai/api/gateway', model: 'kilo-auto/free' },
-  // Token Router（https://token-router.org）：注册送 $5 免费额度；/models 免 Key 可拉取，/chat/completions 需 vk_live_ Key
-  { value: 'tokenrouter', label: 'TokenRouter 免费', icon: 'zap', color: '#8b5cf6', base_url: 'https://beta.token-router.org/v1', model: 'qwen3.8-27b' },
+  // TokenRouter（https://tokenrouter.com）：注册送免费额度；/models 需 Key（用户填写），自动筛选免费模型
+  { value: 'tokenrouter', label: 'TokenRouter 免费', icon: 'zap', color: '#8b5cf6', base_url: 'https://api.tokenrouter.com/v1', model: 'qwen3.8-27b' },
 ];

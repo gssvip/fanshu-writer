@@ -104,12 +104,13 @@ def is_kilo_base(base_url: str) -> bool:
 
 
 def is_tokenrouter_base(base_url: str) -> bool:
-    """是否为 Token Router 端点（token-router.org）。
+    """是否为 TokenRouter 端点（tokenrouter.com / token-router.org）。
 
-    Token Router 的 /models 端点免 Key 可访问（用于模型发现），
-    但 /chat/completions 需要 vk_live_ API Key（注册送 $5 免费额度）。
+    TokenRouter 的 /models 与 /chat/completions 均需 API Key（用户注册后获取）。
+    模型列表中含免费模型（pricing 为 0），由 _do_fetch_models 筛选后只展示免费款。
     """
-    return 'token-router.org' in (base_url or '').lower()
+    s = (base_url or '').lower()
+    return 'tokenrouter.com' in s or 'token-router.org' in s
 
 
 # Kilo 免费网关的占位 api_key：Kilo 免 Key，但全站大量代码用 `if not api_key`
