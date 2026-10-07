@@ -820,27 +820,36 @@ def _do_fetch_models(base_url, api_key, model=None):
             return str(v).strip() == '0'
 
     def _is_tokenrouter_free(m: dict) -> bool:
-        """判断 TokenRouter 模型是否免费。
+        """判断 TokenRouter 模型是否免费（严格模式：仅放行明确免费的模型，未知一律排除）。
 
-        TokenRouter /models 返回结构可能含 pricing / cost / is_free 等字段（不同版本字段名不同），
-        兼容多种免费标识：pricing.prompt+completion 均为 0、is_free/free 为 True、cost 为 0。
-        若模型无任何价格字段 → 视为免费（无法判断收费时乐观放行，避免漏掉免费模型）。
+        兼容多种免费标识：
+          - is_free / free / free_tier 为 True
+          - pricing.prompt + pricing.completion 均为 0
+          - pricing.input + pricing.output 均为 0
+          - cost / price 为 0
+        无任何价格/免费字段的模型 → 视为收费，排除。
         """
         # 显式免费标识
-        if m.get('is_free') is True or m.get('free') is True:
+        if m.get('is_free') is True or m.get('free') is True or m.get('free_tier') is True:
             return True
-        # 价格字段
+        # pricing 字典（兼容 prompt/completion 与 input/output 两种命名）
         pricing = m.get('pricing')
         if isinstance(pricing, dict):
             prompt_p = pricing.get('prompt')
             comp_p = pricing.get('completion')
             if prompt_p is not None or comp_p is not None:
                 return _is_free_price(prompt_p) and _is_free_price(comp_p)
-        cost = m.get('cost')
-        if cost is not None:
-            return _is_free_price(cost)
-        # 无价格字段 → 无法判断，乐观放行
-        return True
+            in_p = pricing.get('input')
+            out_p = pricing.get('output')
+            if in_p is not None or out_p is not None:
+                return _is_free_price(in_p) and _is_free_price(out_p)
+        # 顶层价格字段
+        for k in ('cost', 'price'):
+            v = m.get(k)
+            if v is not None:
+                return _is_free_price(v)
+        # 无任何免费标识 → 排除（避免混入收费模型）
+        return False
 
     models = []
     for m in result.get('data', []):
