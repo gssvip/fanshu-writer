@@ -257,8 +257,8 @@ export default function MinePage() {
     setTestResult(null);
     try {
       // api_key 为空/掩码也不阻止：后端按 config_id（或激活配置）取真实 Key
-      // Kilo 免费网关 / OpenCode Zen：无需 Key（无配置 Key 也能调用 /models）
-      const apiKeyToSend = (aiConfig.provider === 'kilo' || aiConfig.provider === 'opencode') ? '' : (aiConfig.api_key || '***');
+      // Kilo / OpenCode / TokenRouter：拉取模型列表无需 Key（TokenRouter 聊天仍需 vk_live_ Key）
+      const apiKeyToSend = (aiConfig.provider === 'kilo' || aiConfig.provider === 'opencode' || aiConfig.provider === 'tokenrouter') ? '' : (aiConfig.api_key || '***');
       const result = await api.fetchAIModels(aiConfig.base_url, apiKeyToSend, aiConfig.id || undefined);
       setModelList(result.models);
       // 预勾选：当前已选定的模型出现在列表里 → 勾上

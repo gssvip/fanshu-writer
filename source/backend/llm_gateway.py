@@ -103,6 +103,15 @@ def is_kilo_base(base_url: str) -> bool:
     return 'kilo.ai' in (base_url or '').lower()
 
 
+def is_tokenrouter_base(base_url: str) -> bool:
+    """是否为 Token Router 端点（token-router.org）。
+
+    Token Router 的 /models 端点免 Key 可访问（用于模型发现），
+    但 /chat/completions 需要 vk_live_ API Key（注册送 $5 免费额度）。
+    """
+    return 'token-router.org' in (base_url or '').lower()
+
+
 # Kilo 免费网关的占位 api_key：Kilo 免 Key，但全站大量代码用 `if not api_key`
 # 判断「是否已配置 AI」。保存 Kilo 配置时写入此哨兵，使其通过非空校验；
 # build_auth_headers 识别此哨兵 -> 不下发认证头（否则网关回 401）。

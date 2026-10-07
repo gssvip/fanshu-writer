@@ -782,12 +782,16 @@ def _do_fetch_models(base_url, api_key, model=None):
     【智谱 GLM 404 修复】不再无条件补 /v1：走 provider 感知归一化。
     智谱 GLM 的 /models 也在 v4 下（/api/paas/v4/models），若按老逻辑补 /v1 → /v4/v1/models → 404。
     """
-    from llm_gateway import _normalize_llm_base_url, is_opencode_base, opencode_disguise_headers
+    from llm_gateway import (
+        _normalize_llm_base_url, is_opencode_base, opencode_disguise_headers,
+        is_kilo_base, is_tokenrouter_base,
+    )
     import requests as req
     base = _normalize_llm_base_url(base_url, model)
-    # Kilo 免费网关：无需 Key，直接 GET；其他提供商按既有逻辑下 Auth 头
-    is_kilo = 'kilo.ai' in (base or '').lower()
-    headers = None if is_kilo else build_auth_headers(api_key, content_type=False)
+    # Kilo 免费网关 / Token Router：/models 端点免 Key，直接 GET；
+    # 其他提供商按既有逻辑下 Auth 头
+    is_keyless_models = is_kilo_base(base) or is_tokenrouter_base(base)
+    headers = None if is_keyless_models else build_auth_headers(api_key, content_type=False)
     # OpenCode Zen：免费通道 /models 也需伪装头（UA + canonical session），否则 403
     if is_opencode_base(base):
         if headers is None:
@@ -805,6 +809,7 @@ def _do_fetch_models(base_url, api_key, model=None):
     # OpenRouter：专门只显示免费模型（pricing.prompt/completion 均为 0），收费模型一律隐藏
     is_openrouter = 'openrouter.ai' in (base or '').lower()
     is_opencode = 'opencode.ai' in (base or '').lower()
+    is_kilo = is_kilo_base(base)
 
     def _is_free_price(v) -> bool:
         """价格是否为 0（兼容字符串/数字/科学计数法，OpenRouter pricing 为字符串数值）。"""
@@ -968,8 +973,11 @@ def fetch_ai_models():
             if not model:
                 model = cfg.model or ''
         else:
-            # Kilo / OpenCode 免费通道：无需 Key 也允许拉取；其他提供商仍要求 Key
-            is_keyless = 'kilo.ai' in (base_url or '').lower() or 'opencode.ai' in (base_url or '').lower()
+            # Kilo / OpenCode / TokenRouter：无需 Key 也允许拉取模型列表；其他提供商仍要求 Key
+            # （TokenRouter /models 免 Key，但 /chat/completions 需 vk_live_ Key）
+            is_keyless = ('kilo.ai' in (base_url or '').lower()
+                          or 'opencode.ai' in (base_url or '').lower()
+                          or 'token-router.org' in (base_url or '').lower())
             if not is_keyless:
                 return jsonify({'error': '请先填写 API Key 或保存配置'}), 400
 
