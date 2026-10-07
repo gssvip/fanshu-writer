@@ -1030,6 +1030,15 @@ def test_ai_connection():
     if not base_url or not model:
         return jsonify({'error': '请填写完整的 API 地址和模型名称（Kilo/OpenCode 免费通道无需 API Key）'}), 400
 
+    # 最终校验：需要认证的 provider（非 Kilo/OpenCode），绝不能把空/掩码/哨兵 key 发往下游，
+    # 否则 OpenRouter 会返回 401 Missing Authentication header（比上游错误更难排查）。
+    from llm_gateway import KILO_FREE_API_KEY, OPENCODE_PUBLIC_KEY
+    _is_keyless_provider = ('kilo.ai' in (base_url or '').lower()
+                            or 'opencode.ai' in (base_url or '').lower())
+    _invalid_key = (not api_key) or (api_key == '***') or (api_key in (KILO_FREE_API_KEY, OPENCODE_PUBLIC_KEY))
+    if not _is_keyless_provider and _invalid_key:
+        return jsonify({'error': f'未取到有效的 API Key（收到 {api_key or "(空)"}）。请重新输入并「保存」该 OpenRouter 配置后再测试；若已保存仍报此错，说明配置未正确入库，请检查后端日志的 [AI测试连接] 记录'}), 400
+
     # 调试日志：确认实际发往下游的 key 来源（仅打印前后 4 位，避免泄露）
     _masked = (api_key[:4] + '...' + api_key[-4:]) if api_key and len(api_key) > 8 else (api_key or '(empty)')
     current_app.logger.info(f'[AI测试连接] base_url={base_url} model={model} api_key={_masked} cfg_id={cfg_id or "(none)"}')
