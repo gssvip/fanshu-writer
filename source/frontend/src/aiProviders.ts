@@ -30,5 +30,5 @@ export const AI_PROVIDERS: AIProvider[] = [
   // Kilo AI Gateway（https://kilo.ai）：统一 API，无需 Key，模型由用户在配置页拉取后自由勾选使用哪些
   { value: 'kilo', label: 'Kilo 免费', icon: 'zap', color: '#0ea5e9', base_url: 'https://api.kilo.ai/api/gateway', model: 'kilo-auto/free' },
   // TokenRouter（https://tokenrouter.com）：注册送免费额度；/models 需 Key（用户填写），自动筛选免费模型
-  { value: 'tokenrouter', label: 'TokenRouter 免费', icon: 'zap', color: '#8b5cf6', base_url: 'https://api.tokenrouter.com/v1', model: 'qwen3.8-27b' },
+  { value: 'tokenrouter', label: 'TokenRouter 免费', icon: 'zap', color: '#8b5cf6', base_url: 'https://api.tokenrouter.com/v1', model: 'stealth/union-alpha' },
 ];

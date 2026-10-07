@@ -776,6 +776,44 @@ def create_template():
 # ==== AI API ====
 # 注：/api/ai/config GET/PUT 已迁移至 blueprints/ai_config_bp.py（多配置支持）
 
+# TokenRouter 官网公开 pricing API：无需鉴权，返回所有模型及价格比率。
+# 免费模型的 model_ratio == 0（输入价格为 0）。
+TOKENROUTER_PRICING_API = 'https://tokenrouter-backend-api.tokenrouter.com/backend-api/api/pricing?sort_type=newest&page=1&page_size=500'
+_tokenrouter_free_ids_cache = {'ids': None, 'ts': 0}
+
+def _fetch_tokenrouter_free_model_ids() -> set:
+    """从 TokenRouter 公开 pricing API 获取免费模型 ID 集合。
+
+    免费判断：model_ratio == 0（输入价格比率为 0）。
+    带 5 分钟缓存，避免频繁请求。
+    """
+    import time, requests as req
+    now = time.time()
+    if _tokenrouter_free_ids_cache['ids'] is not None and (now - _tokenrouter_free_ids_cache['ts']) < 300:
+        return _tokenrouter_free_ids_cache['ids']
+    free_ids = set()
+    try:
+        resp = req.get(TOKENROUTER_PRICING_API, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data if isinstance(data, list) else (data.get('data') or data.get('items') or [])
+            if isinstance(items, dict):
+                items = items.get('items', [])
+            for m in items:
+                try:
+                    ratio = float(m.get('model_ratio', 1))
+                except (TypeError, ValueError):
+                    ratio = 1
+                if ratio == 0:
+                    name = m.get('model_name') or m.get('id') or m.get('name', '')
+                    if name:
+                        free_ids.add(name)
+    except Exception:
+        pass  # pricing API 不可用时返回空集，由调用方兜底
+    _tokenrouter_free_ids_cache['ids'] = free_ids
+    _tokenrouter_free_ids_cache['ts'] = now
+    return free_ids
+
 def _do_fetch_models(base_url, api_key, model=None):
     """实际拉取模型列表的内部函数，供多个接口复用。
 
@@ -819,15 +857,21 @@ def _do_fetch_models(base_url, api_key, model=None):
         except (TypeError, ValueError):
             return str(v).strip() == '0'
 
-    def _is_tokenrouter_free(m: dict) -> bool:
-        """判断 TokenRouter 模型是否免费（严格模式：仅放行明确免费的模型，未知一律排除）。
+    # TokenRouter：/v1/models（new-api 标准格式）通常不含 pricing 字段，
+    # 需额外调用官网公开 pricing API 获取价格，筛选免费模型（model_ratio == 0）。
+    tokenrouter_free_ids = None
+    is_tokenrouter_beta = is_tokenrouter and 'token-router.org' in (base or '').lower()
+    if is_tokenrouter and not is_tokenrouter_beta:
+        tokenrouter_free_ids = _fetch_tokenrouter_free_model_ids()
 
-        兼容多种免费标识：
-          - is_free / free / free_tier 为 True
-          - pricing.prompt + pricing.completion 均为 0
-          - pricing.input + pricing.output 均为 0
-          - cost / price 为 0
-        无任何价格/免费字段的模型 → 视为收费，排除。
+    def _is_tokenrouter_free(m: dict) -> bool:
+        """判断 TokenRouter 模型是否免费。
+
+        优先级：
+          1. 若 /v1/models 响应自带 pricing/is_free 等字段 → 直接用这些字段判断
+          2. beta.token-router.org：独立免费服务，所有模型均免费
+          3. api.tokenrouter.com：用 pricing API 拉取的免费模型 ID 集合判断
+          4. pricing API 不可用时 → 无法判断，放行（避免漏筛免费模型）
         """
         # 显式免费标识
         if m.get('is_free') is True or m.get('free') is True or m.get('free_tier') is True:
@@ -848,8 +892,17 @@ def _do_fetch_models(base_url, api_key, model=None):
             v = m.get(k)
             if v is not None:
                 return _is_free_price(v)
-        # 无任何免费标识 → 排除（避免混入收费模型）
-        return False
+        # beta.token-router.org：独立免费服务，所有模型均免费
+        if is_tokenrouter_beta:
+            return True
+        # api.tokenrouter.com：用 pricing API 的免费模型集合判断
+        if tokenrouter_free_ids is not None:
+            if len(tokenrouter_free_ids) == 0:
+                # pricing API 不可用 → 无法判断，放行
+                return True
+            return m.get('id', '') in tokenrouter_free_ids
+        # 兜底：放行
+        return True
 
     models = []
     for m in result.get('data', []):
