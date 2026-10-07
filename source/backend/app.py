@@ -14,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Optional  # 必须在顶层导入，CI高版本解释器检查类型注解
-from flask import Flask, request, jsonify, send_file, send_from_directory, stream_with_context
+from flask import Flask, request, jsonify, send_file, send_from_directory, stream_with_context, current_app
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -957,17 +957,20 @@ def fetch_ai_models():
                 model = c.model or ''
 
     # 如果 api_key 是掩码或为空，尝试使用已保存的配置
+    # 安全约束：只有 base_url 为空或与激活配置一致时才复用激活配置的 key
     if api_key == '***' or not api_key:
         cfg = AIConfig.get_active(user_id=getattr(request, 'current_user_id', None))
-        if cfg and cfg.api_key:
-            api_key = cfg.api_key
+        if cfg and (not base_url or base_url == (cfg.base_url or '')):
+            if cfg.api_key:
+                api_key = cfg.api_key
             if not base_url:
                 base_url = cfg.base_url or ''
             if not model:
                 model = cfg.model or ''
         else:
-            # Kilo 免费网关：无需 Key 也允许拉取；其他提供商仍要求 Key
-            if 'kilo.ai' not in (base_url or '').lower():
+            # Kilo / OpenCode 免费通道：无需 Key 也允许拉取；其他提供商仍要求 Key
+            is_keyless = 'kilo.ai' in (base_url or '').lower() or 'opencode.ai' in (base_url or '').lower()
+            if not is_keyless:
                 return jsonify({'error': '请先填写 API Key 或保存配置'}), 400
 
     if not base_url:
@@ -1008,10 +1011,13 @@ def test_ai_connection():
                 model = c.model or ''
 
     # 如果 api_key 是掩码或为空，尝试使用已保存的激活配置
+    # 安全约束：只有 base_url 为空或与激活配置一致时才复用激活配置的 key，
+    # 避免把 A 提供商（如 Kilo 哨兵）的 key 发给 B 提供商（如 OpenRouter）导致 401
     if api_key == '***' or not api_key:
         cfg = AIConfig.get_active(user_id=getattr(request, 'current_user_id', None))
-        if cfg and cfg.api_key:
-            api_key = cfg.api_key
+        if cfg and (not base_url or base_url == (cfg.base_url or '')):
+            if cfg.api_key:
+                api_key = cfg.api_key
             if not base_url:
                 base_url = cfg.base_url or ''
             if not model:
@@ -1023,6 +1029,10 @@ def test_ai_connection():
 
     if not base_url or not model:
         return jsonify({'error': '请填写完整的 API 地址和模型名称（Kilo/OpenCode 免费通道无需 API Key）'}), 400
+
+    # 调试日志：确认实际发往下游的 key 来源（仅打印前后 4 位，避免泄露）
+    _masked = (api_key[:4] + '...' + api_key[-4:]) if api_key and len(api_key) > 8 else (api_key or '(empty)')
+    current_app.logger.info(f'[AI测试连接] base_url={base_url} model={model} api_key={_masked} cfg_id={cfg_id or "(none)"}')
 
     try:
         result, err, code = _do_test_connection(base_url, api_key, model)
