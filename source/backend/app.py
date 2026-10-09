@@ -776,40 +776,50 @@ def create_template():
 # ==== AI API ====
 # 注：/api/ai/config GET/PUT 已迁移至 blueprints/ai_config_bp.py（多配置支持）
 
-# TokenRouter 官网公开 pricing API：无需鉴权，返回所有模型及价格比率。
-# 免费模型的 model_ratio == 0（输入价格为 0）。
-TOKENROUTER_PRICING_API = 'https://tokenrouter-backend-api.tokenrouter.com/backend-api/api/pricing?sort_type=newest&page=1&page_size=500'
+# TokenRouter /api/pricing 公开价格表：无需鉴权，返回所有模型及计费方式。
+# 免费模型 = model_ratio == 0（按 token 计费为 0）且 model_price == 0（按次计费为 0）。
+# 注意：视频/图片生成模型是按次收费（model_price > 0，如 kling-v3 $1.68/次），
+# 只看 model_ratio 会把它们误判为免费 → 调用时 403 余额不足。
+TOKENROUTER_PRICING_API = 'https://api.tokenrouter.com/api/pricing'
 _tokenrouter_free_ids_cache = {'ids': None, 'ts': 0}
 
-def _fetch_tokenrouter_free_model_ids() -> set:
-    """从 TokenRouter 公开 pricing API 获取免费模型 ID 集合。
+def _fetch_tokenrouter_free_model_ids():
+    """从 TokenRouter 公开价格表获取免费模型 ID 集合。
 
-    免费判断：model_ratio == 0（输入价格比率为 0）。
-    带 5 分钟缓存，避免频繁请求。
+    免费判断：model_ratio == 0 且 model_price == 0；
+    视频/图片/音频/嵌入模型（按次收费或不可用于聊天）一律排除。
+    带 5 分钟缓存。拉取失败返回 None（区别于"确无免费模型"的空集合）。
     """
     import time, requests as req
     now = time.time()
-    if _tokenrouter_free_ids_cache['ids'] is not None and (now - _tokenrouter_free_ids_cache['ts']) < 300:
-        return _tokenrouter_free_ids_cache['ids']
+    cached = _tokenrouter_free_ids_cache['ids']
+    if cached is not None and (now - _tokenrouter_free_ids_cache['ts']) < 300:
+        return cached
     free_ids = set()
     try:
         resp = req.get(TOKENROUTER_PRICING_API, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            items = data if isinstance(data, list) else (data.get('data') or data.get('items') or [])
-            if isinstance(items, dict):
-                items = items.get('items', [])
-            for m in items:
-                try:
-                    ratio = float(m.get('model_ratio', 1))
-                except (TypeError, ValueError):
-                    ratio = 1
-                if ratio == 0:
-                    name = m.get('model_name') or m.get('id') or m.get('name', '')
-                    if name:
-                        free_ids.add(name)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        items = data if isinstance(data, list) else (data.get('data') or data.get('items') or [])
+        if isinstance(items, dict):
+            items = items.get('items', [])
+        for m in items:
+            try:
+                ratio = float(m.get('model_ratio', 1))
+            except (TypeError, ValueError):
+                ratio = 1  # 无法解析 → 视为收费
+            try:
+                price = float(m.get('model_price', 0) or 0)
+            except (TypeError, ValueError):
+                price = 1  # 无法解析 → 视为收费
+            tags = (m.get('tags') or '').strip().lower()
+            if ratio == 0 and price == 0 and tags not in ('video', 'image', 'audio', 'embedding'):
+                name = m.get('model_name') or m.get('id') or m.get('name', '')
+                if name:
+                    free_ids.add(name)
     except Exception:
-        pass  # pricing API 不可用时返回空集，由调用方兜底
+        return None  # 网络失败 → None，调用方保守处理
     _tokenrouter_free_ids_cache['ids'] = free_ids
     _tokenrouter_free_ids_cache['ts'] = now
     return free_ids
@@ -857,12 +867,15 @@ def _do_fetch_models(base_url, api_key, model=None):
         except (TypeError, ValueError):
             return str(v).strip() == '0'
 
-    # TokenRouter：/v1/models（new-api 标准格式）通常不含 pricing 字段，
-    # 需额外调用官网公开 pricing API 获取价格，筛选免费模型（model_ratio == 0）。
+    # TokenRouter：/v1/models（new-api 标准格式）不含 pricing 字段，
+    # 需调用 /api/pricing 公开价格表筛选免费模型（model_ratio==0 且 model_price==0）。
     tokenrouter_free_ids = None
     is_tokenrouter_beta = is_tokenrouter and 'token-router.org' in (base or '').lower()
     if is_tokenrouter and not is_tokenrouter_beta:
         tokenrouter_free_ids = _fetch_tokenrouter_free_model_ids()
+        if tokenrouter_free_ids is None:
+            # 价格表拉取失败 → 无法判断免费与否，宁可报错也不放行收费模型
+            return None, '无法获取 TokenRouter 免费模型价格表（/api/pricing），请稍后重试', 400
 
     def _is_tokenrouter_free(m: dict) -> bool:
         """判断 TokenRouter 模型是否免费。
@@ -870,8 +883,7 @@ def _do_fetch_models(base_url, api_key, model=None):
         优先级：
           1. 若 /v1/models 响应自带 pricing/is_free 等字段 → 直接用这些字段判断
           2. beta.token-router.org：独立免费服务，所有模型均免费
-          3. api.tokenrouter.com：用 pricing API 拉取的免费模型 ID 集合判断
-          4. pricing API 不可用时 → 无法判断，放行（避免漏筛免费模型）
+          3. api.tokenrouter.com：按 /api/pricing 价格表判断（未知一律排除）
         """
         # 显式免费标识
         if m.get('is_free') is True or m.get('free') is True or m.get('free_tier') is True:
@@ -895,14 +907,8 @@ def _do_fetch_models(base_url, api_key, model=None):
         # beta.token-router.org：独立免费服务，所有模型均免费
         if is_tokenrouter_beta:
             return True
-        # api.tokenrouter.com：用 pricing API 的免费模型集合判断
-        if tokenrouter_free_ids is not None:
-            if len(tokenrouter_free_ids) == 0:
-                # pricing API 不可用 → 无法判断，放行
-                return True
-            return m.get('id', '') in tokenrouter_free_ids
-        # 兜底：放行
-        return True
+        # api.tokenrouter.com：按 /api/pricing 价格表判断，未知一律排除（不放行收费模型）
+        return m.get('id', '') in (tokenrouter_free_ids or set())
 
     models = []
     for m in result.get('data', []):
@@ -925,7 +931,7 @@ def _do_fetch_models(base_url, api_key, model=None):
             if not mid.endswith('-free'):
                 continue
         elif is_tokenrouter:
-            # TokenRouter：只显示免费模型（pricing 为 0 / is_free / cost 为 0）
+            # TokenRouter：只显示免费文本模型（按 /api/pricing 价格表筛选，排除收费与视频/图片等模型）
             if not _is_tokenrouter_free(m):
                 continue
         models.append({
