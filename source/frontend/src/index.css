@@ -1783,6 +1783,9 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .nav-arrow{transition:transform .2s ease;font-size:12px}
 .nav-arrow.expanded{transform:rotate(90deg)}
 .mine-content{margin:0 16px}
+/* 我的页：功能项下的设置面板与上方功能项（mine-nav-item）同宽
+   — 去掉 .tool-panel 自带的 16px 水平外边距，并抵消大屏媒体查询的 max-width 限宽 */
+.mine-content .tool-panel{margin-left:0 !important;margin-right:0 !important;max-width:none !important;width:auto !important}
 .mine-footer{padding:16px;margin:24px 16px}
 
 /* Storage Mode */
