@@ -780,21 +780,18 @@ def create_template():
 # 免费模型 = model_ratio == 0（按 token 计费为 0）且 model_price == 0（按次计费为 0）。
 # 注意：视频/图片生成模型是按次收费（model_price > 0，如 kling-v3 $1.68/次），
 # 只看 model_ratio 会把它们误判为免费 → 调用时 403 余额不足。
+# 说明：免费模型列表完全动态——每次拉取都读实时价格表，不缓存、不写死；
+# 官网新增免费模型后，下一次拉取即可看到。
 TOKENROUTER_PRICING_API = 'https://api.tokenrouter.com/api/pricing'
-_tokenrouter_free_ids_cache = {'ids': None, 'ts': 0}
 
 def _fetch_tokenrouter_free_model_ids():
-    """从 TokenRouter 公开价格表获取免费模型 ID 集合。
+    """从 TokenRouter 实时公开价格表获取免费模型 ID 集合（动态，不缓存）。
 
     免费判断：model_ratio == 0 且 model_price == 0；
     视频/图片/音频/嵌入模型（按次收费或不可用于聊天）一律排除。
-    带 5 分钟缓存。拉取失败返回 None（区别于"确无免费模型"的空集合）。
+    拉取失败返回 None（区别于"确无免费模型"的空集合）。
     """
-    import time, requests as req
-    now = time.time()
-    cached = _tokenrouter_free_ids_cache['ids']
-    if cached is not None and (now - _tokenrouter_free_ids_cache['ts']) < 300:
-        return cached
+    import requests as req
     free_ids = set()
     try:
         resp = req.get(TOKENROUTER_PRICING_API, timeout=10)
@@ -820,8 +817,6 @@ def _fetch_tokenrouter_free_model_ids():
                     free_ids.add(name)
     except Exception:
         return None  # 网络失败 → None，调用方保守处理
-    _tokenrouter_free_ids_cache['ids'] = free_ids
-    _tokenrouter_free_ids_cache['ts'] = now
     return free_ids
 
 def _do_fetch_models(base_url, api_key, model=None):
