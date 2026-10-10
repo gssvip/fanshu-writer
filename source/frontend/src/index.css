@@ -1358,6 +1358,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 
 /* Book Grid */
 .book-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;padding:16px}
+/* 选择作品视图：标题栏（选择作品）两侧与下方作品卡片边缘严格平齐
+   — 标题栏两侧留边与网格水平内边距取同一值（统一 16px，覆盖暗色 24px/大屏 20px 的差异，保证任何主题断点都不跑偏） */
+.write-page .book-select-header{margin-left:16px;margin-right:16px}
+.write-page .book-grid{padding-left:16px;padding-right:16px}
 .book-card{background:var(--bg-secondary);border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--border-color);cursor:pointer;transition:all .15s}
 .book-card:active{transform:scale(0.98)}
 .book-card-cover{height:110px;background:var(--bg-tertiary);display:flex;align-items:center;justify-content:center}

@@ -1561,7 +1561,7 @@ ${chapterEditContent}`;
   if (!bookId || !book) {
     return (
       <div className="page write-page">
-        <header className="page-header">
+        <header className="page-header book-select-header">
           <h1>选择作品</h1>
         </header>
         <div className="book-grid">
