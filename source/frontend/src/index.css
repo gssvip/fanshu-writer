@@ -1915,6 +1915,14 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .ai-action-row .btn-primary,.ai-action-row .ai-test-btn{flex:0 0 calc(50% - 4px);height:40px;margin-top:0;display:inline-flex;align-items:center;justify-content:center;padding:8px 12px;line-height:1.2;white-space:nowrap}
 .ai-test-btn{border-color:#00b894;color:#00b894}
 .ai-test-btn:hover{background:#e8f8f5}
+/* 拆书分析 模式切换（普通拆书/竞品拆书）两按钮完全同尺寸——同 .ai-action-row 三坑：
+   ① flex:0 0 calc(50% - 4px) 等宽，规避 flex:1 平分奇数宽度的亚像素取整偏差
+   ② height:34px + 相同 padding/font-size/letter-spacing/font-weight：主题对
+      .btn-primary/.btn-secondary 的 padding(9/18 vs 8/14)、letter-spacing(1px vs 0)、
+      font-weight(600/700 vs 600) 各不相同，会让两按钮文字宽窄与盒高不一致
+   ③ margin-top:0：覆盖 .tool-panel .btn-primary 的 margin-top:10px（该规则在
+      align-items:stretch 下把选中按钮下推且截短 10px，与未选中按钮高低错位） */
+.analyze-mode-row .btn-primary,.analyze-mode-row .btn-secondary{flex:0 0 calc(50% - 4px);height:34px;margin-top:0;padding:0 14px;font-size:13px;font-weight:600;letter-spacing:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;min-width:0}
 .test-result{display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-radius:var(--radius-sm);margin-top:8px;font-size:13px;line-height:1.5}
 .test-result.success{background:#e8f8f5;color:#006d5b;border:1px solid #00b894}
 .test-result.error{background:#fef0f0;color:#c0392b;border:1px solid #e74c3c}
