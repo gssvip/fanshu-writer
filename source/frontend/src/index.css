@@ -1772,7 +1772,9 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .tool-panel a.btn-primary.disabled{pointer-events:none;opacity:0.5}
 
 /* Mine Pages */
-.mine-page{padding-bottom:100px}.mine-page .page-header{position:sticky;top:0}
+.mine-page{padding-bottom:100px}
+/* 我的页：顶部「设置」标题栏两侧与下方内容块（mine-stats/mine-nav/mine-content/mine-footer 的 16px 边距）严格平齐 */
+.mine-page .page-header{position:sticky;top:0;margin-left:16px;margin-right:16px}
 .mine-avatar-section{display:flex;flex-direction:column;align-items:center;padding:28px 16px 20px}
 .mine-avatar{width:64px;height:64px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:28px;margin-bottom:10px}
 .mine-name{font-size:20px;font-weight:700}
@@ -4848,6 +4850,9 @@ textarea.input.paper-textarea{
   .tools-page .page-header {
     padding-top: 12px;
     padding-bottom: 8px;
+    /* 手机端：标题栏两侧 8px，与 nr-collapsible-body / tool-panel 的 8px 边距平齐 */
+    margin-left: 8px;
+    margin-right: 8px;
   }
   .tools-top-section .nr-collapsible-body {
     transition: max-height .35s ease, opacity .25s ease, margin .25s ease, padding .25s ease;
@@ -4903,6 +4908,11 @@ textarea.input.paper-textarea{
     max-width: 1280px;
     width: calc(100% - 40px);
     box-sizing: border-box;
+  }
+  /* 顶部「工具箱」标题栏两侧 20px，与上方工具卡行 / 下方面板（calc(100% - 40px)）边缘平齐 */
+  .tools-page .page-header {
+    margin-left: 20px;
+    margin-right: 20px;
   }
   .tool-panel h3 { font-size: 17px; margin-bottom: 8px; }
 
@@ -5474,7 +5484,9 @@ textarea.input.paper-textarea{
 }
 /* ≥1440 二档加宽（承接上面 1100~1439 的 1280，此处再升级为 1540） */
 @media (min-width: 1440px) {
-  .tool-panel { max-width: 1540px !important; margin: 20px auto !important; }
+  /* width 与 tools-top-section 同为 calc(100% - 48px)，工具卡行与下方面板严格同宽（原 40/48 不一致） */
+  .tool-panel { max-width: 1540px !important; margin: 20px auto !important; width: calc(100% - 48px); }
+  .tools-page .page-header { margin-left: 24px; margin-right: 24px; }
   .tools-top-section .nr-collapsible-body {
     max-width: 1540px !important;
     margin: 20px auto 0 !important;
@@ -5487,6 +5499,7 @@ textarea.input.paper-textarea{
 /* ≥1760 三档加宽（4K / 大屏），上限 1780 避免一行内容太长读起来累 */
 @media (min-width: 1760px) {
   .tool-panel { max-width: 1780px !important; margin: 24px auto !important; width: calc(100% - 64px) !important; }
+  .tools-page .page-header { margin-left: 32px; margin-right: 32px; }
   .tools-top-section .nr-collapsible-body {
     max-width: 1780px !important;
     margin: 24px auto 0 !important;
