@@ -159,6 +159,11 @@ export default function RankingsTab({ selectedBookId = '', selectedBookTitle = '
   const subCategoryName = nrFilters?.subcategories?.find((s: NRCategory) => s.code === nrSubCategoryCode)?.name || '';
   const hotTags = rankBanner?.hot_tags || [];
   const risingKeywords = rankBanner?.rising_keywords || [];
+  // 注意：hotTags/risingKeywords 是每次渲染新建的数组引用，不能直接进依赖，否则
+  // effect→父级 setState→重渲染→新数组→effect 会死循环（曾导致整 Tab 崩溃、榜单无法抓取）。
+  // 用 join 后的字符串作为稳定原始值依赖。
+  const hotTagsKey = hotTags.join('\u0001');
+  const risingKeywordsKey = risingKeywords.join('\u0001');
 
   useEffect(() => {
     onContextChange?.({
@@ -172,13 +177,13 @@ export default function RankingsTab({ selectedBookId = '', selectedBookTitle = '
       subCategoryCode: nrSubCategoryCode,
       subCategoryName,
       keyword: nrKeyword,
-      hotTags,
-      risingKeywords,
+      hotTags: hotTagsKey ? hotTagsKey.split('\u0001') : [],
+      risingKeywords: risingKeywordsKey ? risingKeywordsKey.split('\u0001') : [],
       fetchedAt: nrList?.fetchAt ?? null,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nrPlatform, platformName, nrRankType, rankTypeName, nrGender, nrCategoryCode, categoryName,
-      nrSubCategoryCode, subCategoryName, nrKeyword, hotTags, risingKeywords, nrList?.fetchAt]);
+      nrSubCategoryCode, subCategoryName, nrKeyword, hotTagsKey, risingKeywordsKey, nrList?.fetchAt]);
 
   const genderLabel = nrGender === 'male' ? '男频' : nrGender === 'female' ? '女频' : '';
   const trackLabel = [platformName, rankTypeName, genderLabel, subCategoryName || categoryName]
