@@ -1,9 +1,34 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../../api';
 import Icon from '../../components/Icon';
-import type { RankingData, NRPlatform, NRFilters, NRRankType, NRCategory, NRListResult, NRItem } from '../../types';
+import type { RankingData, NRPlatform, NRFilters, NRRankType, NRCategory, NRListResult, NRItem, BrainstormResult } from '../../types';
 
-export default function RankingsTab() {
+/** 当前榜单赛道上下文：上报给 ToolsPage，用于「新建作品」题材预填 + metadata 溯源 */
+export interface RankContext {
+  platform: string;
+  platformName: string;
+  rankType: string;
+  rankTypeName: string;
+  gender: string;
+  categoryCode: string;
+  categoryName: string;
+  subCategoryCode: string;
+  subCategoryName: string;
+  keyword: string;
+  hotTags: string[];
+  risingKeywords: string[];
+  fetchedAt: number | null;
+}
+
+interface RankingsTabProps {
+  /** 顶部「选择作品」当前选中的作品 ID/书名（榜单→选题优化工作流的落地目标） */
+  selectedBookId?: string;
+  selectedBookTitle?: string;
+  /** 赛道上下文变化时实时上报父页面 */
+  onContextChange?: (ctx: RankContext) => void;
+}
+
+export default function RankingsTab({ selectedBookId = '', selectedBookTitle = '', onContextChange }: RankingsTabProps = {}) {
   // 【榜单风向 V2 · 移植自 easy-writing: NovelRank】
   const [nrPlatforms, setNrPlatforms] = useState<NRPlatform[]>([]);
   const [nrPlatform, setNrPlatform] = useState('fanqie');
@@ -24,6 +49,13 @@ export default function RankingsTab() {
   const [rankBanner, setRankBanner] = useState<RankingData | null>(null);
   // #6 手动抓取控制：筛选/分类/关键词变化时不自动抓，仅点击「抓取本榜」/ 搜索按钮 / 分页 才抓
   const [nrFetchKey, setNrFetchKey] = useState(0); // 递增：触发一次请求
+
+  // 榜单 → 选中作品 选题构思工作流
+  const [ideaLoading, setIdeaLoading] = useState(false);
+  const [ideaError, setIdeaError] = useState('');
+  const [ideaResult, setIdeaResult] = useState<BrainstormResult | null>(null);
+  const [showIdea, setShowIdea] = useState(false);
+  const [adoptingIdx, setAdoptingIdx] = useState<number | null>(null);
 
   // 加载榜单风向：平台列表 + 默认筛选（仅首次进榜单 Tab 触发一次抓取 + 移动端加载默认源）
   useEffect(() => {
@@ -119,6 +151,82 @@ export default function RankingsTab() {
     finally { setNrCrawling(false); }
   }
 
+  // ===== 榜单赛道上下文：实时上报父页面（新建作品预填 / metadata 溯源用）=====
+  const platformName = nrPlatforms.find(p => p.code === nrPlatform)?.name
+    || (nrPlatform === 'fanqie' ? '番茄小说网' : nrPlatform === 'qidian' ? '起点中文网' : nrPlatform);
+  const rankTypeName = nrFilters?.rankTypes?.find(r => r.value === nrRankType)?.label || '';
+  const categoryName = nrFilters?.categories?.find((c: NRCategory) => c.code === nrCategoryCode && c.code !== '__all__')?.name || '';
+  const subCategoryName = nrFilters?.subcategories?.find((s: NRCategory) => s.code === nrSubCategoryCode)?.name || '';
+  const hotTags = rankBanner?.hot_tags || [];
+  const risingKeywords = rankBanner?.rising_keywords || [];
+
+  useEffect(() => {
+    onContextChange?.({
+      platform: nrPlatform,
+      platformName,
+      rankType: nrRankType,
+      rankTypeName,
+      gender: nrGender,
+      categoryCode: nrCategoryCode,
+      categoryName,
+      subCategoryCode: nrSubCategoryCode,
+      subCategoryName,
+      keyword: nrKeyword,
+      hotTags,
+      risingKeywords,
+      fetchedAt: nrList?.fetchAt ?? null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nrPlatform, platformName, nrRankType, rankTypeName, nrGender, nrCategoryCode, categoryName,
+      nrSubCategoryCode, subCategoryName, nrKeyword, hotTags, risingKeywords, nrList?.fetchAt]);
+
+  const genderLabel = nrGender === 'male' ? '男频' : nrGender === 'female' ? '女频' : '';
+  const trackLabel = [platformName, rankTypeName, genderLabel, subCategoryName || categoryName]
+    .filter(Boolean).join(' · ');
+
+  // 用当前榜单（筛选+热词+在榜书单）作为市场依据，给选中作品生成选题构思
+  async function handleGenerateIdea() {
+    if (!selectedBookId) return;
+    setIdeaLoading(true);
+    setIdeaError('');
+    try {
+      const top = (nrList?.items || []).slice(0, 10)
+        .map(b => `《${b.bookTitle}》${b.authorName ? `(${b.authorName})` : ''}`).join('、');
+      const catPath = [categoryName, subCategoryName].filter(Boolean).join('/');
+      const concept =
+        `我正在${platformName}寻找选题方向，目标赛道：${rankTypeName || '平台榜'}${genderLabel ? '·' + genderLabel : ''}` +
+        `${catPath ? '·' + catPath : ''}${nrKeyword.trim() ? `，对标关键词「${nrKeyword.trim()}」` : ''}。` +
+        `该榜单当前热门标签：${hotTags.slice(0, 10).join('、') || '暂无'}；` +
+        `上升关键词：${risingKeywords.slice(0, 10).join('、') || '暂无'}；` +
+        `在榜代表作品：${top || '暂无'}。` +
+        `请基于该赛道的真实在榜趋势，为我设计差异化选题（核心卖点、目标读者、主线冲突、独特亮点），` +
+        `并主动避开与榜单头部作品的同质化。`;
+      const r = await api.brainstorm(selectedBookId, concept, 'concept');
+      setIdeaResult(r);
+      setShowIdea(true);
+    } catch (e: any) {
+      setIdeaError(e?.message || '生成失败，请检查 AI 配置');
+    } finally {
+      setIdeaLoading(false);
+    }
+  }
+
+  // 将某条选题方案采用为作品简介（榜单优化的第一个落地点）
+  async function handleAdoptSynopsis(idx: number) {
+    const desc = ideaResult?.suggestions?.concept?.[idx]?.description;
+    if (!desc || !selectedBookId) return;
+    if (!confirm('把该选题方案写入《' + (selectedBookTitle || '选中作品') + '》的简介？（将覆盖现有简介）')) return;
+    setAdoptingIdx(idx);
+    try {
+      await api.updateBook(selectedBookId, { synopsis: desc });
+      alert('已写入作品简介，可在创作页大纲/构思阶段继续细化');
+    } catch (e: any) {
+      alert('写入失败：' + (e?.message || '请稍后重试'));
+    } finally {
+      setAdoptingIdx(null);
+    }
+  }
+
   return (
     <div className="tool-panel nr-root">
       {/* #4 #5 标题行：榜单风向 左侧；搜索框+按钮 紧接其右侧（桌面端 inline，移动端换行） */}
@@ -159,6 +267,42 @@ export default function RankingsTab() {
           ><Icon name="search" size={14} /> 搜索</button>
         </div>
       </div>
+
+      {/* 榜单 → 作品 工作流条：顶部选中作品后出现，说明当前榜单赛道将作为该书的选题/优化依据 */}
+      {selectedBookId && (
+        <div className="nr-book-context-bar" style={{
+          display:'flex',flexWrap:'wrap',alignItems:'center',gap:'6px 10px',
+          marginBottom:12,padding:'10px 12px',borderRadius:10,
+          background:'color-mix(in srgb, var(--accent) 8%, var(--bg-secondary))',
+          border:'1px solid color-mix(in srgb, var(--accent) 28%, var(--border-color))',
+        }}>
+          <Icon name="target" size={15} />
+          <span style={{fontSize:13,fontWeight:700,color:'var(--text-primary)'}}>
+            对标作品：《{selectedBookTitle || '未命名'}》
+          </span>
+          <span style={{fontSize:12,color:'var(--text-muted)'}}>
+            当前赛道：{trackLabel || '未选择分类'}
+          </span>
+          <button
+            className="chat-send primary"
+            onClick={handleGenerateIdea}
+            disabled={ideaLoading}
+            title="用当前榜单的热门标签、上升关键词与在榜书单，为该作品生成差异化选题构思"
+            style={{
+              marginLeft:'auto',padding:'6px 14px',minHeight:32,fontSize:12.5,fontWeight:700,
+              borderRadius:8,background:'var(--accent-light)',color:'var(--accent)',
+              border:'1px solid #d0d5dd',whiteSpace:'nowrap',
+            }}
+          >
+            {ideaLoading ? <><Icon name="hourglass" size={13} /> 生成中…</> : <><Icon name="sparkles" size={13} /> 用榜单生成选题构思</>}
+          </button>
+          {ideaError && (
+            <span style={{flexBasis:'100%',fontSize:12,color:'#c0392b'}}>
+              <Icon name="warning" size={12} /> {ideaError}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* 筛选主卡：平台 / 抓取 / 抓取时间 / 榜单类型+频道 / 主题分类 */}
       <div className="fusion-card nr-filter-card" style={{marginBottom:12}}>
@@ -756,6 +900,60 @@ export default function RankingsTab() {
       {!nrListLoading && nrList && (nrList.total ?? 0) === 0 && (
         <div style={{textAlign:'center',padding:30,color:'var(--text-muted)',fontSize:13,background:'var(--bg-secondary)',border:'1px dashed var(--border-color)',borderRadius:8}}>
           暂无线索 {nrKeyword ? `（关键词「${nrKeyword}」无匹配）` : '——请切换分类或手动点击抓取本榜重试'}
+        </div>
+      )}
+
+      {/* 榜单选题构思结果 */}
+      {showIdea && ideaResult && (
+        <div className="modal-overlay" onClick={() => setShowIdea(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:560}}>
+            <h2 style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+              <Icon name="sparkles" size={18} /> 榜单选题构思
+            </h2>
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:12}}>
+              《{selectedBookTitle || '选中作品'}》 · 基于赛道：{trackLabel}
+            </div>
+            {ideaResult.concept_analysis && (
+              <div style={{
+                background:'var(--bg-tertiary)',borderRadius:8,padding:'10px 12px',
+                fontSize:13,lineHeight:1.7,marginBottom:12,
+              }}>
+                <b style={{color:'var(--accent)'}}><Icon name="bulb" size={13} /> 趋势分析：</b>
+                {ideaResult.concept_analysis}
+              </div>
+            )}
+            <div style={{display:'flex',flexDirection:'column',gap:10,maxHeight:'46vh',overflowY:'auto',paddingRight:4}}>
+              {(ideaResult.suggestions.concept || []).map((s, i) => (
+                <div key={i} style={{
+                  border:'1px solid var(--border-color)',borderRadius:10,padding:'10px 12px',
+                  background:'var(--bg-secondary)',
+                }}>
+                  <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                    <span style={{
+                      flexShrink:0,width:22,height:22,borderRadius:6,
+                      display:'inline-flex',alignItems:'center',justifyContent:'center',
+                      fontSize:12,fontWeight:800,color:'#fff',
+                      background:'linear-gradient(135deg,var(--accent),var(--accent-hover))',
+                    }}>{i + 1}</span>
+                    <b style={{fontSize:13.5}}>{s.title || `方案 ${i + 1}`}</b>
+                    <button
+                      className="btn-secondary"
+                      style={{marginLeft:'auto',padding:'4px 10px',fontSize:12,whiteSpace:'nowrap'}}
+                      disabled={adoptingIdx === i}
+                      onClick={() => handleAdoptSynopsis(i)}
+                    >{adoptingIdx === i ? '写入中…' : '采用为简介'}</button>
+                  </div>
+                  <div style={{fontSize:12.5,lineHeight:1.7,color:'var(--text-secondary)'}}>{s.description}</div>
+                </div>
+              ))}
+              {!(ideaResult.suggestions.concept || []).length && (
+                <div style={{fontSize:13,color:'var(--text-muted)'}}>模型未返回选题方案，可切换榜单/分类后重试。</div>
+              )}
+            </div>
+            <div className="form-actions">
+              <button className="btn-secondary" onClick={() => setShowIdea(false)}>关闭</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

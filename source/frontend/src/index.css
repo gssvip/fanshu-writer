@@ -4828,6 +4828,13 @@ textarea.input.paper-textarea{
   width: 100%;
   max-width: 100%;
 }
+/* 「选择作品」四个字必须一排显示：禁止被 select 挤压换行（桌面行内布局） */
+.nr-select-book-row .input-label {
+  white-space: nowrap;
+  flex: 0 0 auto;
+  margin-bottom: 0;
+  align-self: center;
+}
 .tools-top-section .nr-collapsible-body {
   display: block;
   overflow: visible;
@@ -4854,6 +4861,11 @@ textarea.input.paper-textarea{
   .tools-top-section.nr-collapsible {
     width: 100%;
     padding: 0;
+  }
+  /* 手机端选择作品行纵向排列：label 左对齐并保留与 select 的间距 */
+  .nr-select-book-row .input-label {
+    align-self: flex-start;
+    margin-bottom: 4px;
   }
   .tools-page .page-header {
     padding-top: 12px;

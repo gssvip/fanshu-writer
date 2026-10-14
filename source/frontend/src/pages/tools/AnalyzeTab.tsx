@@ -9,7 +9,7 @@ const SYNC_FIELD_LABELS: Record<string, string> = {
   foreshadowing: '伏笔', worldbuilding: '世界观', key_rules: '设定', timeline: '剧情',
 };
 
-export default function AnalyzeTab({ books }: { books: Book[] }) {
+export default function AnalyzeTab({ books, selectedBookId = '' }: { books: Book[]; selectedBookId?: string }) {
   const { requireAuth } = useContext(AuthContext);
 
   const [analyzeInput, setAnalyzeInput] = useState('');
@@ -100,7 +100,7 @@ export default function AnalyzeTab({ books }: { books: Book[] }) {
           {analyzeResult && (
             <>
               <button className="btn-secondary" onClick={handleExportAnalysis}><Icon name="inbox" size={14} /> 导出结果</button>
-              <button className="btn-secondary" onClick={() => setShowSyncModal(true)} style={{borderColor:'var(--accent)',color:'var(--accent)'}}>
+              <button className="btn-secondary" onClick={() => { setSyncBookId(prev => prev || selectedBookId || ''); setShowSyncModal(true); }} style={{borderColor:'var(--accent)',color:'var(--accent)'}}>
                 <Icon name="clipboard" size={14} /> 同步到作品
               </button>
             </>
