@@ -238,36 +238,32 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
                 style={{flexShrink:0,border:'none',background:'transparent',color:'var(--text-muted)',cursor:'pointer',padding:4,fontSize:16,lineHeight:1}}>×</button>
             </div>
 
-            {/* 三个动作：定位轻拆 / 抓正文深拆 / 粘贴兜底 */}
-            <div style={{display:'flex',flexWrap:'wrap',gap:8,padding:'0 14px 12px'}}>
-              <button type="button" className="btn-secondary"
-                onClick={() => handlePositionAnalyze(false)} disabled={positionLoading}
-                style={{borderColor:'var(--accent)',color:'var(--accent)',padding:'7px 12px',fontSize:12.5,fontWeight:700}}>
+            {/* 四个动作一排等宽：定位轻拆 / 前N章 / 抓正文深拆 / 粘贴兜底（手机端自动 2×2） */}
+            <div className={`nr-rank-actions${rankBook.platform === 'fanqie' ? '' : ' no-fetch'}`}>
+              <button type="button" className="btn-secondary nr-ra-btn"
+                onClick={() => handlePositionAnalyze(false)} disabled={positionLoading}>
                 {positionLoading ? <><Icon name="hourglass" size={13} /> 定位分析中…</> : <><Icon name="target" size={13} /> 定位轻拆{positionResult ? '（重跑）' : ''}</>}
               </button>
 
               {rankBook.platform === 'fanqie' ? (
-                <span style={{display:'inline-flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-                  <select className="input" value={chapterN} onChange={e => setChapterN(Number(e.target.value))}
-                    style={{width:'auto',padding:'6px 8px',fontSize:12.5,height:'auto'}} disabled={deepLoading}>
+                <>
+                  <select className="input nr-ra-select" value={chapterN} onChange={e => setChapterN(Number(e.target.value))}
+                    disabled={deepLoading} aria-label="抓取章节数">
                     {[3, 5, 10].map(n => <option key={n} value={n}>前 {n} 章</option>)}
                   </select>
-                  <button type="button" className="btn-primary"
-                    onClick={handleDeepAnalyze} disabled={deepLoading}
-                    style={{padding:'7px 14px',fontSize:12.5,fontWeight:700}}>
+                  <button type="button" className="btn-primary nr-ra-btn"
+                    onClick={handleDeepAnalyze} disabled={deepLoading}>
                     {deepLoading ? <><Icon name="hourglass" size={13} /> 抓取分析中…</> : <><Icon name="download" size={13} /> 抓正文深拆</>}
                   </button>
-                </span>
+                </>
               ) : (
-                <button type="button" className="btn-secondary" disabled
-                  title={`${rankBook.platformName || '该平台'}正文受版权/反爬限制，暂不支持自动抓取`}
-                  style={{padding:'7px 12px',fontSize:12.5,opacity:.6,cursor:'not-allowed'}}>
+                <button type="button" className="btn-secondary nr-ra-btn nr-ra-wide" disabled
+                  title={`${rankBook.platformName || '该平台'}正文受版权/反爬限制，暂不支持自动抓取`}>
                   <Icon name="lock" size={13} /> 该平台暂不支持自动抓取
                 </button>
               )}
 
-              <button type="button" className="btn-secondary" onClick={handlePasteFallback}
-                style={{padding:'7px 12px',fontSize:12.5}}>
+              <button type="button" className="btn-secondary nr-ra-btn" onClick={handlePasteFallback}>
                 <Icon name="edit" size={13} /> 我有正文，粘贴
               </button>
             </div>

@@ -4835,6 +4835,47 @@ textarea.input.paper-textarea{
   margin-bottom: 0;
   align-self: center;
 }
+
+/* ===== 榜单直拆操作行：四个控件一排等宽（定位轻拆 / 前N章 / 抓正文深拆 / 粘贴）===== */
+.nr-rank-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 0 14px 12px;
+  align-items: stretch;
+}
+.nr-rank-actions .nr-ra-btn,
+.nr-rank-actions .nr-ra-select {
+  margin: 0; /* 覆盖 .tool-panel .btn-primary 的 margin-top:10px，避免 grid 错位截短 */
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  white-space: nowrap;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+.nr-rank-actions .nr-ra-select {
+  cursor: pointer;
+}
+/* 定位轻拆保留强调描边层级（尺寸仍与其余三个完全一致） */
+.nr-rank-actions .nr-ra-btn:first-child {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+/* 非番茄平台：无章节下拉，中间禁用按钮占第 2-3 格（保持 4 列轨道，首尾按钮与番茄版同排对齐） */
+.nr-rank-actions .nr-ra-wide {
+  grid-column: span 2;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .tools-top-section .nr-collapsible-body {
   display: block;
   overflow: visible;
@@ -4866,6 +4907,21 @@ textarea.input.paper-textarea{
   .nr-select-book-row .input-label {
     align-self: flex-start;
     margin-bottom: 4px;
+  }
+  /* 榜单直拆四个操作：桌面一排 4 个，手机端改 2×2，避免文字挤压 */
+  .nr-rank-actions,
+  .nr-rank-actions.no-fetch {
+    grid-template-columns: repeat(2, 1fr);
+    padding: 0 10px 10px;
+  }
+  .nr-rank-actions .nr-ra-btn,
+  .nr-rank-actions .nr-ra-select {
+    height: 36px;
+    font-size: 12.5px;
+  }
+  /* 非番茄平台的禁用宽按钮：手机端独占整行（第二行） */
+  .nr-rank-actions .nr-ra-wide {
+    grid-column: span 2;
   }
   .tools-page .page-header {
     padding-top: 12px;
