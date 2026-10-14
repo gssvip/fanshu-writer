@@ -33,6 +33,7 @@ from blueprints.novel_rank_crawlers import (
     _find_source,
     crawl_qidian_api,
     crawl_rank_source,
+    fetch_rank_book_content,
     resolve_sources,
 )
 
@@ -855,4 +856,103 @@ def api_rankings_banner():
     data['books'] = []
     data['fetch_ok'] = False
     data['source'] = '内置精选'
+    return jsonify(data)
+
+
+# ---------------------------------------------------------------------------
+# 榜单书 → 一键拆书
+#  1. GET  /api/rank/book-content      抓取榜单书前 N 章正文（当前仅番茄，SSR+字体解码）
+#  2. POST /api/rank/position-analyze  仅凭榜单元数据的「定位轻拆」（全平台，秒出）
+# ---------------------------------------------------------------------------
+@novel_rank_bp.route('/api/rank/book-content', methods=['GET'])
+def api_rank_book_content():
+    platform = (request.args.get('platform') or 'fanqie').strip().lower()
+    book_id = (request.args.get('bookId') or '').strip()
+    book_url = (request.args.get('bookUrl') or '').strip()
+    try:
+        max_chapters = int(request.args.get('chapters') or 3)
+    except (TypeError, ValueError):
+        max_chapters = 3
+    try:
+        result = fetch_rank_book_content(
+            platform, book_id=book_id, book_url=book_url,
+            max_chapters=max_chapters, max_chars=20000,
+        )
+    except ValueError:
+        platform_name = next((s['name'] for s in RANK_SITES if s['code'] == platform), platform)
+        return jsonify({
+            'ok': False,
+            'code': 'UNSUPPORTED_PLATFORM',
+            'error': f'{platform_name} 的正文受平台版权/反爬限制暂不支持自动抓取，请复制正文到输入框后分析',
+        }), 200  # 业务级可预期结果，用 200 + ok=false，前端走「粘贴兜底」而不是抛红
+    except RuntimeError as e:
+        return jsonify({'ok': False, 'code': 'FETCH_FAILED', 'error': str(e)}), 200
+    except Exception as e:  # 网络/解析等意外
+        return jsonify({'ok': False, 'code': 'FETCH_ERROR', 'error': f'抓取异常：{e}'}), 200
+    return jsonify(result)
+
+
+_POSITION_ANALYZE_SCHEMA_HINT = (
+    '仅输出一个 JSON 对象，不要解释、不要 ```json 包裹。结构固定：\n'
+    '{\n'
+    '  "positioning": "赛道定位(35字内：题材+细分切口+在榜位次含义)",\n'
+    '  "one_liner_hook": "一句话卖点/故事钩子，基于简介反推(40字内)",\n'
+    '  "genre_tags": ["标签1","标签2","标签3"],\n'
+    '  "target_audience": "目标读者画像(50字内：人群+核心阅读期待)",\n'
+    '  "selling_points": ["简介里可辨识的卖点/爽点假设1","...2","...3"],\n'
+    '  "opening_hypothesis": ["黄金三章可能的开篇打法1","...2"],\n'
+    '  "learnable_points": ["我写同题材可直接借鉴的点1","...2","...3"],\n'
+    '  "differentiation": ["可切入的差异化机会1","...2"],\n'
+    '  "to_verify": ["以上哪些只是元数据推测、必须读正文验证1","...2"]\n'
+    '}\n'
+    '要求：全部基于给定的真实榜单数据，不得编造简介中没有的剧情；没有把握就写进 to_verify。'
+)
+
+
+@novel_rank_bp.route('/api/rank/position-analyze', methods=['POST'])
+def api_rank_position_analyze():
+    """榜单元数据 → 定位轻拆（不依赖正文）。输入为榜单 NRItem + 当前赛道热词。"""
+    payload = request.get_json(silent=True) or {}
+    title = _clean(payload.get('title') or payload.get('bookTitle'))
+    intro = _clean(payload.get('intro') or '')
+    if not title and not intro:
+        return jsonify({'ok': False, 'error': '缺少书名/简介，无法分析'}), 400
+
+    platform_name = next((s['name'] for s in RANK_SITES
+                          if s['code'] == (payload.get('platform') or 'fanqie')), '榜单平台')
+    lines = [f'平台：{platform_name}']
+    if title:
+        lines.append(f'书名：《{title}》')
+    if payload.get('authorName') or payload.get('author'):
+        lines.append(f'作者：{_clean(payload.get("authorName") or payload.get("author"))}')
+    cat = ' / '.join(x for x in [_clean(payload.get('categoryName')),
+                                 _clean(payload.get('categorySubName'))] if x)
+    if cat:
+        lines.append(f'分类：{cat}')
+    if payload.get('metricText') or payload.get('metricValue'):
+        metric = _clean(str(payload.get('metricText') or payload.get('metricValue') or ''))
+        mname = _clean(payload.get('metricName') or '热度')
+        lines.append(f'{mname}：{metric}')
+    if payload.get('rankNo'):
+        lines.append(f'当前排名：第{payload.get("rankNo")}名')
+    if payload.get('statusText'):
+        lines.append(f'状态：{_clean(payload.get("statusText"))}')
+    hot_tags = payload.get('hotTags') or []
+    if isinstance(hot_tags, list) and hot_tags:
+        lines.append('该赛道当前热门标签：' + '、'.join(str(x) for x in hot_tags[:10]))
+    if intro:
+        lines.append(f'作品简介：\n{intro[:600]}')
+
+    sys_prompt = ('你是番茄/起点资深爆款责编与竞品分析编辑。你手里只有榜单元数据（书名/简介/分类/热度/赛道热词），'
+                  '没有正文。请站在"我要写一本同题材新书，该如何对标这本书并做出差异化"的角度，'
+                  '给出克制、具体、可落地的判断，并明确标注哪些结论还需读正文验证。')
+    messages = [
+        {'role': 'system', 'content': sys_prompt},
+        {'role': 'user', 'content': '【榜单书籍资料】\n' + '\n'.join(lines) + '\n\n【任务】\n' + _POSITION_ANALYZE_SCHEMA_HINT},
+    ]
+    data = _call_small_llm_json(messages, max_tokens=1400)
+    if not data:
+        return jsonify({'ok': False, 'error': '定位分析失败：请检查 AI 配置后重试'}), 200
+    data['ok'] = True
+    data['bookTitle'] = title
     return jsonify(data)

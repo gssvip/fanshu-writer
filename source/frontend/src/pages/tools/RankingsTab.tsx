@@ -20,15 +20,24 @@ export interface RankContext {
   fetchedAt: number | null;
 }
 
+/** 带去拆书页的榜单书目标：NRItem 全部字段 + 当前平台/赛道热词 */
+export interface RankAnalyzeTarget extends NRItem {
+  platform: string;
+  platformName: string;
+  hotTags: string[];
+}
+
 interface RankingsTabProps {
   /** 顶部「选择作品」当前选中的作品 ID/书名（榜单→选题优化工作流的落地目标） */
   selectedBookId?: string;
   selectedBookTitle?: string;
   /** 赛道上下文变化时实时上报父页面 */
   onContextChange?: (ctx: RankContext) => void;
+  /** 点击书行「拆这本书」：携带元数据跳到拆书分析 Tab */
+  onAnalyzeBook?: (target: RankAnalyzeTarget) => void;
 }
 
-export default function RankingsTab({ selectedBookId = '', selectedBookTitle = '', onContextChange }: RankingsTabProps = {}) {
+export default function RankingsTab({ selectedBookId = '', selectedBookTitle = '', onContextChange, onAnalyzeBook }: RankingsTabProps = {}) {
   // 【榜单风向 V2 · 移植自 easy-writing: NovelRank】
   const [nrPlatforms, setNrPlatforms] = useState<NRPlatform[]>([]);
   const [nrPlatform, setNrPlatform] = useState('fanqie');
@@ -214,6 +223,16 @@ export default function RankingsTab({ selectedBookId = '', selectedBookTitle = '
     } finally {
       setIdeaLoading(false);
     }
+  }
+
+  // 榜单书行「拆这本书」：携带书籍元数据 + 当前赛道热词，跳到拆书分析 Tab
+  function handleAnalyzeBook(b: NRItem) {
+    onAnalyzeBook?.({
+      ...b,
+      platform: nrPlatform,
+      platformName,
+      hotTags,
+    });
   }
 
   // 将某条选题方案采用为作品简介（榜单优化的第一个落地点）
@@ -754,6 +773,17 @@ export default function RankingsTab({ selectedBookId = '', selectedBookTitle = '
                       </span>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleAnalyzeBook(b); }}
+                    style={{
+                      width:'100%',marginTop:2,padding:'7px 10px',borderRadius:8,
+                      display:'inline-flex',alignItems:'center',justifyContent:'center',gap:6,
+                      fontSize:12.5,fontWeight:700,cursor:'pointer',
+                      color:'var(--accent)',background:'var(--accent-light)',
+                      border:'1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
+                    }}
+                  ><Icon name="bar-chart" size={13} /> 拆这本书</button>
                 </a>
               );
             })}
@@ -777,6 +807,7 @@ export default function RankingsTab({ selectedBookId = '', selectedBookTitle = '
                   <th style={{padding:'10px 12px',textAlign:'left',fontWeight:700,width:140,fontSize:12.5}}>分类</th>
                   <th style={{padding:'10px 12px',textAlign:'left',fontWeight:700,width:120,fontSize:12.5}}>{nrList?.items[0]?.metricName || '指标'}</th>
                   <th style={{padding:'10px 12px',textAlign:'left',fontWeight:700,width:90,fontSize:12.5}}>状态</th>
+                  <th style={{padding:'10px 12px',textAlign:'center',fontWeight:700,width:96,fontSize:12.5}}>拆书</th>
                 </tr>
               </thead>
               <tbody>
@@ -856,6 +887,20 @@ export default function RankingsTab({ selectedBookId = '', selectedBookTitle = '
                                  color:'var(--text-secondary)',fontSize:12.5,
                                  overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                         {b.statusText || '—'}
+                      </td>
+                      <td style={{padding:'8px 12px',verticalAlign:'middle',textAlign:'center'}}>
+                        <button
+                          type="button"
+                          onClick={() => handleAnalyzeBook(b)}
+                          title="不用导入，直接拆这本书（定位轻拆 / 抓前几章深拆）"
+                          style={{
+                            padding:'5px 10px',borderRadius:8,whiteSpace:'nowrap',cursor:'pointer',
+                            display:'inline-flex',alignItems:'center',gap:4,
+                            fontSize:12,fontWeight:700,
+                            color:'var(--accent)',background:'var(--accent-light)',
+                            border:'1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
+                          }}
+                        ><Icon name="bar-chart" size={12} /> 拆这本书</button>
                       </td>
                     </tr>
                   );

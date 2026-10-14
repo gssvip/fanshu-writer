@@ -356,6 +356,36 @@ export interface NRListResult {
   items: NRItem[];
 }
 
+// 榜单书 → 一键拆书：后端抓取的前 N 章正文
+export interface NRBookContent {
+  ok: boolean;
+  code?: string;            // ok=false 时：UNSUPPORTED_PLATFORM / FETCH_FAILED / FETCH_ERROR
+  error?: string;
+  platform?: string;
+  bookId?: string;
+  chapterCount?: number;    // 该书目录总章数
+  fetchedChapters?: { title: string; itemId: string; chars: number }[];
+  content?: string;
+  truncated?: boolean;
+  decodeRate?: number;      // PUA 字体解码命中率
+}
+
+// 榜单书 → 仅凭元数据的定位轻拆结果（无需正文）
+export interface RankPositionAnalysis {
+  ok?: boolean;
+  bookTitle?: string;
+  positioning?: string;
+  one_liner_hook?: string;
+  genre_tags?: string[];
+  target_audience?: string;
+  selling_points?: string[];
+  opening_hypothesis?: string[];
+  learnable_points?: string[];
+  differentiation?: string[];
+  to_verify?: string[];
+  error?: string;
+}
+
 export interface ReviewResult {
   scores: Record<string, number>;
   total_score: number;

@@ -7,7 +7,7 @@ import { GENRES, GENRE_GROUPS, normalizeGenreKey } from '../constants';
 import ReviewTab from './tools/ReviewTab';
 import SkillsTab from './tools/SkillsTab';
 import AnalyzeTab from './tools/AnalyzeTab';
-import RankingsTab, { type RankContext } from './tools/RankingsTab';
+import RankingsTab, { type RankContext, type RankAnalyzeTarget } from './tools/RankingsTab';
 
 type ToolTab = 'review' | 'skills' | 'analyze' | 'rankings';
 
@@ -64,6 +64,8 @@ export default function ToolsPage() {
   const [nbForm, setNbForm] = useState({ title: '', author: '', genre: 'other', book_type: 'novel', synopsis: '' });
   // 榜单风向实时上报的当前赛道上下文（用于新建预填 + 随作品 metadata 落库）
   const [rankCtx, setRankCtx] = useState<RankContext | null>(null);
+  // 榜单书 → 一键拆书：从榜单书行携带元数据跳到拆书分析 Tab
+  const [pendingRankBook, setPendingRankBook] = useState<RankAnalyzeTarget | null>(null);
 
   // 工具类型 Tab 切换 → 移动端自动展开/折叠工具箱与作品选择
   useEffect(() => {
@@ -185,12 +187,20 @@ export default function ToolsPage() {
 
       {activeTab === 'review' && <ReviewTab selectedBookId={selectedBookId} />}
       {activeTab === 'skills' && <SkillsTab selectedBookId={selectedBookId} />}
-      {activeTab === 'analyze' && <AnalyzeTab books={books} selectedBookId={selectedBookId} />}
+      {activeTab === 'analyze' && (
+        <AnalyzeTab
+          books={books}
+          selectedBookId={selectedBookId}
+          rankBook={activeTab === 'analyze' ? pendingRankBook : null}
+          onClearRankBook={() => setPendingRankBook(null)}
+        />
+      )}
       {activeTab === 'rankings' && (
         <RankingsTab
           selectedBookId={selectedBookId}
           selectedBookTitle={selectedBook?.title || ''}
           onContextChange={setRankCtx}
+          onAnalyzeBook={(target) => { setPendingRankBook(target); setActiveTab('analyze'); }}
         />
       )}
 

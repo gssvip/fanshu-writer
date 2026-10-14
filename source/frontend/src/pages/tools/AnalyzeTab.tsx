@@ -1,7 +1,8 @@
-import { useState, useContext, useRef } from 'react';
+import { useState, useEffect, useRef, useContext } from 'react';
 import { api } from '../../api';
 import { AuthContext } from '../../App';
-import type { Book, AnalysisResult } from '../../types';
+import type { Book, AnalysisResult, RankPositionAnalysis } from '../../types';
+import type { RankAnalyzeTarget } from './RankingsTab';
 import Icon from '../../components/Icon';
 
 const SYNC_FIELD_LABELS: Record<string, string> = {
@@ -9,7 +10,15 @@ const SYNC_FIELD_LABELS: Record<string, string> = {
   foreshadowing: '伏笔', worldbuilding: '世界观', key_rules: '设定', timeline: '剧情',
 };
 
-export default function AnalyzeTab({ books, selectedBookId = '' }: { books: Book[]; selectedBookId?: string }) {
+interface AnalyzeTabProps {
+  books: Book[];
+  selectedBookId?: string;
+  /** 从榜单风向书行带来的对标书（元数据直拆，无需手动导入） */
+  rankBook?: RankAnalyzeTarget | null;
+  onClearRankBook?: () => void;
+}
+
+export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null, onClearRankBook }: AnalyzeTabProps) {
   const { requireAuth } = useContext(AuthContext);
 
   const [analyzeInput, setAnalyzeInput] = useState('');
@@ -19,11 +28,119 @@ export default function AnalyzeTab({ books, selectedBookId = '' }: { books: Book
   const [analyzeMode, setAnalyzeMode] = useState<'normal' | 'competitor'>('normal');
   const [uploadFilename, setUploadFilename] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncBookId, setSyncBookId] = useState('');
   const [syncMode, setSyncMode] = useState('imitate');
   const [syncing, setSyncing] = useState(false);
+
+  // ===== 榜单书直拆（无需导入）=====
+  const [positionResult, setPositionResult] = useState<RankPositionAnalysis | null>(null);
+  const [positionLoading, setPositionLoading] = useState(false);
+  const [positionError, setPositionError] = useState('');
+  const [deepLoading, setDeepLoading] = useState(false);
+  const [deepMsg, setDeepMsg] = useState('');
+  const [deepError, setDeepError] = useState('');
+  const [chapterN, setChapterN] = useState(3);
+  const [fetchedMeta, setFetchedMeta] = useState<{ chapters: number; total: number; decodeRate: number } | null>(null);
+
+  // 切换到竞品模式更符合榜单对标场景：榜单书进入时默认竞品拆书
+  useEffect(() => {
+    if (rankBook) {
+      setAnalyzeMode('competitor');
+      setPositionResult(null);
+      setPositionError('');
+      setDeepError('');
+      setDeepMsg('');
+      setFetchedMeta(null);
+      setAnalyzeResult(null);
+      setAnalyzeInput('');
+      setUploadFilename('');
+      // 自动跑一次定位轻拆（零正文、秒出）；失败显示重试，不强弹
+      void handlePositionAnalyze(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rankBook?.bookId, rankBook?.platform]);
+
+  async function handlePositionAnalyze(silent = false) {
+    if (!rankBook) return;
+    const ok = await requireAuth();
+    if (!ok) return;
+    setPositionLoading(true);
+    setPositionError('');
+    try {
+      const r = await api.nrPositionAnalyze({
+        platform: rankBook.platform,
+        bookId: rankBook.bookId,
+        bookUrl: rankBook.bookUrl,
+        title: rankBook.bookTitle,
+        authorName: rankBook.authorName,
+        intro: rankBook.intro,
+        categoryName: rankBook.categoryName,
+        categorySubName: rankBook.categorySubName,
+        metricName: rankBook.metricName,
+        metricText: rankBook.metricText ?? rankBook.readingText,
+        metricValue: rankBook.metricValue,
+        rankNo: rankBook.rankNo,
+        statusText: rankBook.statusText,
+        hotTags: rankBook.hotTags || [],
+      });
+      if (r.ok === false || r.error) {
+        setPositionError(r.error || '定位分析失败');
+        if (!silent) alert(r.error || '定位分析失败');
+      } else {
+        setPositionResult(r);
+      }
+    } catch (e: any) {
+      setPositionError(e?.message || '定位分析失败');
+    } finally {
+      setPositionLoading(false);
+    }
+  }
+
+  // 抓取前 N 章正文 → 灌入输入框 → 自动走现有拆书（普通/竞品跟随当前模式）
+  async function handleDeepAnalyze() {
+    if (!rankBook) return;
+    const ok = await requireAuth();
+    if (!ok) return;
+    setDeepLoading(true);
+    setDeepError('');
+    setDeepMsg(`正在从${rankBook.platformName || '平台'}抓取前 ${chapterN} 章（目录+正文，约需几秒）…`);
+    try {
+      const r = await api.nrFetchBookContent({
+        platform: rankBook.platform,
+        bookId: rankBook.bookId,
+        bookUrl: rankBook.bookUrl,
+        chapters: chapterN,
+      });
+      if (!r.ok || !r.content) {
+        setDeepError(r.error || '正文抓取失败，请改用粘贴方式');
+        setDeepMsg('');
+        return;
+      }
+      setDeepMsg(`已抓取 ${r.fetchedChapters?.length || 0} 章 / 共 ${r.chapterCount} 章，正在 AI 深拆…`);
+      setAnalyzeInput(r.content);
+      setFetchedMeta({
+        chapters: r.fetchedChapters?.length || 0,
+        total: r.chapterCount || 0,
+        decodeRate: Math.round((r.decodeRate ?? 1) * 100),
+      });
+      setUploadFilename(`榜单直抓：《${rankBook.bookTitle}》前${r.fetchedChapters?.length || chapterN}章`);
+      await runAnalyze(r.content, analyzeMode);
+    } catch (e: any) {
+      setDeepError(e?.message || '抓取/分析失败，请改用粘贴方式');
+    } finally {
+      setDeepLoading(false);
+      setDeepMsg('');
+    }
+  }
+
+  function handlePasteFallback() {
+    setAnalyzeInput(rankBook?.intro ? `【对标书简介（参考，可删）】\n${rankBook.intro}\n\n【在此粘贴正文】\n` : '');
+    setTimeout(() => textareaRef.current?.focus(), 50);
+    setTimeout(() => textareaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+  }
 
   async function handleUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -37,15 +154,22 @@ export default function AnalyzeTab({ books, selectedBookId = '' }: { books: Book
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
-  async function handleAnalyze() {
-    if (!analyzeInput.trim()) return;
+  // 统一拆书内核：支持榜单直抓后以任意文本直接分析（规避 setState 异步）
+  async function runAnalyze(text: string, mode: 'normal' | 'competitor') {
+    if (!text.trim()) return;
     const ok = await requireAuth();
     if (!ok) return;
     setAnalyzeLoading(true);
     setAnalyzeResult(null);
-    try { const r = await api.analyzeBook(analyzeInput, analyzeMode === 'competitor' ? 'competitor' : undefined); setAnalyzeResult(r); }
-    catch (e: any) { alert('分析失败: ' + e.message); }
+    try {
+      const r = await api.analyzeBook(text, mode === 'competitor' ? 'competitor' : undefined);
+      setAnalyzeResult(r);
+    } catch (e: any) { alert('分析失败: ' + e.message); }
     setAnalyzeLoading(false);
+  }
+
+  async function handleAnalyze() {
+    return runAnalyze(analyzeInput, analyzeMode);
   }
 
   function handleExportAnalysis() {
@@ -72,6 +196,144 @@ export default function AnalyzeTab({ books, selectedBookId = '' }: { books: Book
   return (
     <>
       <div className="tool-panel">
+        {/* ===== 榜单书直拆：来源卡片（无需手动导入）===== */}
+        {rankBook && (
+          <div style={{
+            marginBottom:14,borderRadius:12,border:'1px solid color-mix(in srgb, var(--accent) 30%, var(--border-color))',
+            background:'color-mix(in srgb, var(--accent) 6%, var(--bg-secondary))',overflow:'hidden',
+          }}>
+            <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'12px 14px'}}>
+              {rankBook.coverUrl
+                ? <img src={rankBook.coverUrl} alt="" style={{width:44,height:60,borderRadius:6,objectFit:'cover',flexShrink:0,background:'var(--bg-tertiary)'}} />
+                : <div style={{width:44,height:60,borderRadius:6,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,color:'var(--accent)',background:'var(--accent-light)'}}><Icon name="book" size={24} /></div>}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                  <b style={{fontSize:15,color:'var(--text-primary)'}}>《{rankBook.bookTitle || '未命名'}》</b>
+                  <span style={{fontSize:11,padding:'2px 8px',borderRadius:999,background:'var(--accent-light)',color:'var(--accent)',fontWeight:700}}>
+                    <Icon name="trending-up" size={11} /> {rankBook.platformName || '榜单'}
+                  </span>
+                  {rankBook.rankNo ? <span style={{fontSize:11.5,color:'var(--text-muted)'}}>第{rankBook.rankNo}名</span> : null}
+                  {(rankBook.metricText || rankBook.readingText) && (
+                    <span style={{fontSize:11.5,color:'var(--accent)',fontWeight:700}}>
+                      {rankBook.metricName ? `${rankBook.metricName} ` : ''}{rankBook.metricText || rankBook.readingText}
+                    </span>
+                  )}
+                </div>
+                <div style={{fontSize:12,color:'var(--text-muted)',marginTop:4}}>
+                  {rankBook.authorName ? `作者：${rankBook.authorName}` : ''}
+                  {[rankBook.categoryName, rankBook.categorySubName].filter(Boolean).length ? `　分类：${[rankBook.categoryName, rankBook.categorySubName].filter(Boolean).join(' / ')}` : ''}
+                  {rankBook.statusText ? `　${rankBook.statusText}` : ''}
+                </div>
+                {rankBook.intro && (
+                  <div style={{fontSize:12,color:'var(--text-secondary)',lineHeight:1.6,marginTop:6,
+                    display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}}>{rankBook.intro}</div>
+                )}
+              </div>
+              <button type="button" title="退出榜单直拆，回到手动导入"
+                onClick={() => {
+                  setPositionResult(null); setPositionError('');
+                  setDeepError(''); setDeepMsg(''); setFetchedMeta(null);
+                  onClearRankBook?.();
+                }}
+                style={{flexShrink:0,border:'none',background:'transparent',color:'var(--text-muted)',cursor:'pointer',padding:4,fontSize:16,lineHeight:1}}>×</button>
+            </div>
+
+            {/* 三个动作：定位轻拆 / 抓正文深拆 / 粘贴兜底 */}
+            <div style={{display:'flex',flexWrap:'wrap',gap:8,padding:'0 14px 12px'}}>
+              <button type="button" className="btn-secondary"
+                onClick={() => handlePositionAnalyze(false)} disabled={positionLoading}
+                style={{borderColor:'var(--accent)',color:'var(--accent)',padding:'7px 12px',fontSize:12.5,fontWeight:700}}>
+                {positionLoading ? <><Icon name="hourglass" size={13} /> 定位分析中…</> : <><Icon name="target" size={13} /> 定位轻拆{positionResult ? '（重跑）' : ''}</>}
+              </button>
+
+              {rankBook.platform === 'fanqie' ? (
+                <span style={{display:'inline-flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                  <select className="input" value={chapterN} onChange={e => setChapterN(Number(e.target.value))}
+                    style={{width:'auto',padding:'6px 8px',fontSize:12.5,height:'auto'}} disabled={deepLoading}>
+                    {[3, 5, 10].map(n => <option key={n} value={n}>前 {n} 章</option>)}
+                  </select>
+                  <button type="button" className="btn-primary"
+                    onClick={handleDeepAnalyze} disabled={deepLoading}
+                    style={{padding:'7px 14px',fontSize:12.5,fontWeight:700}}>
+                    {deepLoading ? <><Icon name="hourglass" size={13} /> 抓取分析中…</> : <><Icon name="download" size={13} /> 抓正文深拆</>}
+                  </button>
+                </span>
+              ) : (
+                <button type="button" className="btn-secondary" disabled
+                  title={`${rankBook.platformName || '该平台'}正文受版权/反爬限制，暂不支持自动抓取`}
+                  style={{padding:'7px 12px',fontSize:12.5,opacity:.6,cursor:'not-allowed'}}>
+                  <Icon name="lock" size={13} /> 该平台暂不支持自动抓取
+                </button>
+              )}
+
+              <button type="button" className="btn-secondary" onClick={handlePasteFallback}
+                style={{padding:'7px 12px',fontSize:12.5}}>
+                <Icon name="edit" size={13} /> 我有正文，粘贴
+              </button>
+            </div>
+
+            {deepMsg && (
+              <div style={{padding:'0 14px 10px',fontSize:12.5,color:'var(--accent)',display:'flex',alignItems:'center',gap:6}}>
+                <Icon name="hourglass" size={13} /> {deepMsg}
+              </div>
+            )}
+            {deepError && (
+              <div style={{padding:'0 14px 10px',fontSize:12.5,color:'#c0392b',lineHeight:1.6}}>
+                <Icon name="warning" size={12} /> {deepError}
+              </div>
+            )}
+            {fetchedMeta && (
+              <div style={{padding:'0 14px 10px',fontSize:12,color:'var(--text-muted)'}}>
+                已抓取 {fetchedMeta.chapters} 章（全书共 {fetchedMeta.total} 章），文字解码率 {fetchedMeta.decodeRate}%，正文已填入下方，可直接修改后重新分析。
+              </div>
+            )}
+
+            {/* 定位轻拆结果 */}
+            {positionLoading && !positionResult && (
+              <div style={{padding:'4px 14px 14px',fontSize:13,color:'var(--text-muted)'}}>
+                <Icon name="hourglass" size={13} /> 正在基于榜单数据做定位分析…
+              </div>
+            )}
+            {positionError && !positionResult && (
+              <div style={{padding:'0 14px 12px',fontSize:12.5,color:'#c0392b'}}>
+                <Icon name="warning" size={12} /> {positionError}
+              </div>
+            )}
+            {positionResult && (
+              <div style={{borderTop:'1px solid color-mix(in srgb, var(--accent) 22%, var(--border-color))',padding:'12px 14px'}}>
+                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8,fontSize:13,fontWeight:800,color:'var(--accent)'}}>
+                  <Icon name="target" size={14} /> 定位轻拆（基于榜单数据，无需正文）
+                </div>
+                {positionResult.genre_tags?.length ? (
+                  <div className="analyze-tags" style={{marginBottom:8}}>
+                    {positionResult.genre_tags.map((t, i) => <span key={i} className="tag">{t}</span>)}
+                  </div>
+                ) : null}
+                <div className="analyze-grid" style={{marginBottom:8}}>
+                  {positionResult.positioning && <div className="analyze-item"><h4>赛道定位</h4><p>{positionResult.positioning}</p></div>}
+                  {positionResult.one_liner_hook && <div className="analyze-item"><h4>一句话卖点</h4><p>{positionResult.one_liner_hook}</p></div>}
+                  {positionResult.target_audience && <div className="analyze-item"><h4>目标读者</h4><p>{positionResult.target_audience}</p></div>}
+                </div>
+                {positionResult.selling_points?.length ? (
+                  <div className="review-section"><h4><Icon name="flame" size={14} /> 卖点 / 爽点假设</h4><ul>{positionResult.selling_points.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
+                ) : null}
+                {positionResult.opening_hypothesis?.length ? (
+                  <div className="review-section"><h4>黄金三章开篇打法（推测）</h4><ul>{positionResult.opening_hypothesis.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
+                ) : null}
+                {positionResult.learnable_points?.length ? (
+                  <div className="review-section"><h4>可直接借鉴</h4><ul>{positionResult.learnable_points.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
+                ) : null}
+                {positionResult.differentiation?.length ? (
+                  <div className="review-section"><h4><Icon name="zap" size={14} /> 差异化机会</h4><ul>{positionResult.differentiation.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
+                ) : null}
+                {positionResult.to_verify?.length ? (
+                  <div className="review-section" style={{opacity:.85}}><h4><Icon name="warning" size={13} /> 需读正文验证</h4><ul>{positionResult.to_verify.map((x, i) => <li key={i}>{x}</li>)}</ul></div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="form-row analyze-mode-row" style={{alignItems:'stretch',gap:8,marginBottom:10,flexDirection:'row',flexWrap:'nowrap'}}>
           <button
             className={analyzeMode === 'normal' ? 'btn-primary' : 'btn-secondary'}
@@ -91,8 +353,8 @@ export default function AnalyzeTab({ books, selectedBookId = '' }: { books: Book
           {uploadFilename && <span className="text-muted" style={{alignSelf:'center'}}>已导入: {uploadFilename}</span>}
           <span className="text-muted" style={{alignSelf:'center',fontSize:11}}>支持 txt/md/docx/zip</span>
         </div>
-        <textarea className="input" rows={8} value={analyzeInput} onChange={e => setAnalyzeInput(e.target.value)}
-          placeholder="粘贴要分析的作品片段（建议2000字以上），或导入文件自动填充..." />
+        <textarea ref={textareaRef} className="input" rows={8} value={analyzeInput} onChange={e => setAnalyzeInput(e.target.value)}
+          placeholder={rankBook ? '点击上方「抓正文深拆」自动填入，或点「我有正文，粘贴」后在此粘贴正文…' : '粘贴要分析的作品片段（建议2000字以上），或导入文件自动填充...'} />
         <div className="form-row">
           <button className="btn-primary" onClick={handleAnalyze} disabled={!analyzeInput.trim() || analyzeLoading}>
             {analyzeLoading ? '分析中...' : '开始分析'}

@@ -903,7 +903,7 @@ def _crawl_fq_api(url: str, category_name: str | None, limit: int = 20) -> list[
                     d = r.json() if (r.headers.get('Content-Type') or '').lower().startswith('application/json') or (r.text.lstrip()[:1] in '[{') else None
                     if not d:
                         continue
-                    if int(d.get('code') or -1) != 0:
+                    if int(d.get('code', -1)) != 0:
                         continue
                     data = d.get('data') or {}
                     bl = data.get('book_list') or []
@@ -1318,7 +1318,11 @@ def crawl_qidian_api(rank_type: str, gender: str = 'male', category_code: str | 
 # ---------------------------------------------------------------------------
 _CACHE_TTL = 3600
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
-_lock = threading.Lock()
+# 必须用可重入锁（RLock）：crawl_rank_source 缓存命中分支在 `with _lock:` 内
+# 调用 _get_health()，后者也要 `with _lock:`。普通 Lock 不可重入，同线程二次
+# 获取会永久自锁并持锁不放，导致后续所有榜单接口线程排队挂死（health 不受影响，
+# 现象是"榜单一直加载、列表空白"）。
+_lock = threading.RLock()
 
 
 # ---------------------------------------------------------------------------
@@ -1578,3 +1582,186 @@ def resolve_sources(platform: str, rank_type: str | None, gender: str | None,
                 continue
         out.append(s)
     return out
+
+
+# ===========================================================================
+# 榜单书 → 一键拆书：番茄章节正文抓取（目录 JSON + reader SSR 内嵌正文 + PUA 解码）
+#
+# 技术要点（2026-10 实测）：
+#  - 目录接口 /api/reader/directory/detail?bookId= 无验证码，返回 allItemIds 正序章节；
+#  - 正文接口 /api/reader/full 会触发 bdturing 滑块（content-length=0），不可用；
+#  - 但 reader SSR 页 https://fanqienovel.com/reader/{itemId} 直接 200，
+#    window.__INITIAL_STATE__ 内的 chapter.content 内嵌全文（<p> 段落 + PUA 私用区编码），
+#    用本模块已加载的 fanqie_font_dict.json（PUA码点→明文）解码即可，常用字命中率实测 100%。
+# ===========================================================================
+def _fq_extract_book_id(book_id: str | None, book_url: str | None) -> str:
+    """从 bookId 或书籍页 URL（/page/{id}）中提取番茄数字 bookId。"""
+    if book_id:
+        m = re.search(r'(\d{6,})', str(book_id))
+        if m:
+            return m.group(1)
+    if book_url:
+        m = re.search(r'/page/(\d+)', str(book_url))
+        if m:
+            return m.group(1)
+        m = re.search(r'(\d{10,})', str(book_url))
+        if m:
+            return m.group(1)
+    return ''
+
+
+def fetch_fq_chapter_ids(book_id: str, timeout: int = 15) -> list[str]:
+    """取书籍章节 itemId 正序列表；失败/为空返回 []。目录接口偶发被风控，最多重试 3 次。"""
+    referer = f'https://fanqienovel.com/page/{book_id}'
+    sess = _get_fq_session(referer=referer)
+    headers = {'Accept': 'application/json, text/plain, */*',
+               'Accept-Language': 'zh-CN,zh;q=0.9', 'Referer': referer}
+    for attempt in range(3):
+        try:
+            r = _session_get(
+                sess,
+                'https://fanqienovel.com/api/reader/directory/detail',
+                params={'bookId': book_id},
+                headers=headers,
+                timeout=timeout,
+            )
+            # 注意：番茄成功时 code == 0，不能写 `d.get('code') or -1`（0 or -1 == -1 会误判失败）
+            if r.status_code == 200 and r.text.strip().startswith('{'):
+                d = r.json()
+                if int(d.get('code', -1)) == 0:
+                    ids = (d.get('data') or {}).get('allItemIds') or []
+                    ids = [str(x) for x in ids if str(x).isdigit()]
+                    if ids:
+                        return ids
+        except Exception:
+            pass
+        # 番茄对同 IP 高频 API 会短时风控（返回空体/非0 code），用递增间隔等待窗口过去
+        time.sleep(1.5 * (attempt + 1))
+    return []
+
+
+def fetch_fq_chapter(item_id: str, timeout: int = 20) -> dict[str, Any] | None:
+    """抓单章 reader SSR 页并解码正文。
+    返回 {itemId,title,content,puaTotal,puaHit}；受限/付费/解析失败返回 None。"""
+    import html as _html
+
+    url = f'https://fanqienovel.com/reader/{item_id}'
+    page = ''
+    for attempt in range(2):
+        try:
+            page = _rank_fetch(url, referer='https://fanqienovel.com/', timeout=timeout)
+        except Exception:
+            page = ''
+        if page and 'window.__INITIAL_STATE__' in page and '"content"' in page:
+            break
+        time.sleep(0.8 * (attempt + 1))
+    if not page or 'window.__INITIAL_STATE__' not in page:
+        return None
+    # 第一个长度 >20 的 content 即章节正文（短 content 多为其他元数据字段）
+    mc = re.search(r'"content"\s*:\s*"((?:[^"\\]|\\.){20,})"', page)
+    if not mc:
+        return None
+    try:
+        raw = json.loads('"' + mc.group(1) + '"')
+    except Exception:
+        return None
+    if '<p' not in raw or len(raw) < 50:
+        return None
+    # 章节标题：优先「第x章/节/回…」形态，排除网页 <title> 的“《书名》第x章…在线阅读”
+    title = ''
+    for mt in re.finditer(r'"title"\s*:\s*"((?:[^"\\]|\\.){1,80})"', page):
+        try:
+            cand = json.loads('"' + mt.group(1) + '"')
+        except Exception:
+            continue
+        if re.match(r'^第?\s*[\d零一二三四五六七八九十百千万0-9]+\s*[章节回卷集部篇]', cand) or \
+           re.match(r'^第\s*[\d零一二三四五六七八九十百千万0-9]+', cand):
+            title = cand.strip()
+            break
+    # <p> 段落 → 换行；去标签；反转义；PUA 解码
+    body = re.sub(r'</p\s*>\s*<p[^>]*>', '\n\n', raw)
+    body = re.sub(r'<[^>]+>', '', body)
+    body = _html.unescape(body)
+    pua_total = sum(1 for ch in body if 0xE000 <= ord(ch) <= 0xF8FF)
+    body = _decode_fq(body)
+    pua_left = sum(1 for ch in body if 0xE000 <= ord(ch) <= 0xF8FF)
+    body = re.sub(r'\n{3,}', '\n\n', body).strip()
+    if len(body) < 50:
+        return None
+    return {
+        'itemId': str(item_id),
+        'title': title,
+        'content': body,
+        'puaTotal': pua_total,
+        'puaHit': pua_total - pua_left,
+    }
+
+
+# 书籍目录短缓存：{bookId: (写入时间戳, [itemId,...])}
+_FQ_DIR_CACHE: dict[str, tuple[float, list[str]]] = {}
+_FQ_DIR_CACHE_TTL = 60.0
+
+
+def fetch_rank_book_content(platform: str, *, book_id: str | None = None,
+                            book_url: str | None = None, max_chapters: int = 3,
+                            max_chars: int = 20000) -> dict[str, Any]:
+    """抓取榜单书籍前 N 章正文（当前仅支持番茄 fanqie）。
+    成功返回：{ok, platform, bookId, chapterCount, fetchedChapters:[{title,itemId,chars}],
+              content, truncated, decodeRate}
+    不支持的平台抛 ValueError；抓取失败抛 RuntimeError，由路由层转友好提示。"""
+    platform = (platform or '').strip().lower()
+    if platform != 'fanqie':
+        raise ValueError('unsupported_platform')
+    bid = _fq_extract_book_id(book_id, book_url)
+    if not bid:
+        raise RuntimeError('无法从书籍链接中解析 bookId')
+    # 目录 60s 短缓存：番茄对数据中心 IP 的 directory API 限频严格，缓存让短时间内的
+    # 「换章节数重试 / 连点」不再重复打目录接口，显著降低触发风控概率。
+    cache = _FQ_DIR_CACHE.get(bid)
+    now_ts = time.time()
+    if cache and now_ts - cache[0] < _FQ_DIR_CACHE_TTL:
+        ids = cache[1]
+    else:
+        ids = fetch_fq_chapter_ids(bid)
+        if ids:
+            _FQ_DIR_CACHE[bid] = (now_ts, ids)
+    if not ids:
+        raise RuntimeError('章节目录获取失败（可能被平台限流），请稍后重试或直接粘贴正文')
+    max_chapters = max(1, min(int(max_chapters or 3), 10))
+    parts: list[str] = []
+    chapters: list[dict[str, Any]] = []
+    pua_total_all = 0
+    pua_hit_all = 0
+    total = 0
+    truncated = False
+    for iid in ids[:max_chapters]:
+        ch = fetch_fq_chapter(iid)
+        if not ch:
+            continue
+        piece = ((ch['title'] + '\n\n') if ch.get('title') else '') + ch['content']
+        if total + len(piece) >= max_chars:
+            piece = piece[:max(0, max_chars - total)]
+            truncated = True
+        if piece.strip():
+            parts.append(piece.strip())
+            total += len(piece)
+            chapters.append({'title': ch.get('title') or f'章节{len(chapters) + 1}',
+                             'itemId': iid, 'chars': len(ch['content'])})
+            pua_total_all += int(ch.get('puaTotal') or 0)
+            pua_hit_all += int(ch.get('puaHit') or 0)
+        if truncated:
+            break
+        time.sleep(0.8)  # 礼貌限速，降低触发风控概率
+    if not parts:
+        raise RuntimeError('正文抓取失败（平台可能要求验证），请直接粘贴正文后分析')
+    return {
+        'ok': True,
+        'platform': platform,
+        'bookId': bid,
+        'chapterCount': len(ids),
+        'fetchedChapters': chapters,
+        'content': '\n\n'.join(parts),
+        'truncated': truncated,
+        'decodeRate': round(pua_hit_all / pua_total_all, 3) if pua_total_all else 1.0,
+    }
+

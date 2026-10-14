@@ -414,6 +414,22 @@ export const api = {
   nrForceCrawl: (sourceId: number) =>
     request<{ ok: boolean; itemCount?: number; fetchAt?: number; error?: string }>(`/rank/crawl`, { method: 'POST', body: JSON.stringify({ sourceId }) }),
 
+  // 榜单书 → 一键拆书：抓取前 N 章正文（仅番茄；起点/七猫返回 ok=false 走粘贴兜底）
+  nrFetchBookContent: (params: { platform: string; bookId?: string | null; bookUrl?: string | null; chapters?: number }) => {
+    const qs = new URLSearchParams();
+    qs.set('platform', params.platform);
+    if (params.bookId) qs.set('bookId', params.bookId);
+    if (params.bookUrl) qs.set('bookUrl', params.bookUrl);
+    qs.set('chapters', String(params.chapters ?? 3));
+    return request<import('./types').NRBookContent>(`/rank/book-content?${qs.toString()}`);
+  },
+  // 榜单书 → 仅凭元数据的定位轻拆（全平台，无需正文）
+  nrPositionAnalyze: (payload: Record<string, unknown>) =>
+    request<import('./types').RankPositionAnalysis>(`/rank/position-analyze`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   // 榜单风向：基于构思匹配新书榜（番茄/起点）并抽取市场情报
   rankScanForConcept: (concept: string, opts?: { platform?: 'fanqie' | 'qidian'; bookId?: string; gender?: 'male' | 'female' }) => {
     const body: Record<string, unknown> = {
