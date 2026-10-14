@@ -8,6 +8,7 @@ import Icon from '../../components/Icon';
 const SYNC_FIELD_LABELS: Record<string, string> = {
   style_guide: '风格指南', plot_design: '大纲设计', character_profiles: '人物档案',
   foreshadowing: '伏笔', worldbuilding: '世界观', key_rules: '设定', timeline: '剧情',
+  concept: '构思',
 };
 
 interface AnalyzeTabProps {

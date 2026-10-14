@@ -8625,7 +8625,41 @@ def sync_analysis_to_book(book_id):
     mode_label = {'imitate': '仿写参考', 'fanfic': '同人文素材', 'reference': '方法论参考'}.get(mode, '参考')
     header = f'\n\n【拆书分析·{mode_label}】\n'
 
-    # 风格指南：文风特点 + 节奏特点
+    # ===== v2 深拆字段安全取值辅助（模型输出偶发缺字段/类型漂移）=====
+    def _sv(v):
+        return v.strip() if isinstance(v, str) else ''
+
+    def _kv(item, spec):
+        seg = []
+        for lbl, key in spec:
+            v = _sv(item.get(key))
+            if v:
+                seg.append(f'{lbl}：{v}')
+        return seg
+
+    def _dicts(seq):
+        return [x for x in (seq or []) if isinstance(x, dict)]
+
+    # 构思：v2 一句话故事 / 核心矛盾 / 金手指设计（参考内容不放 key_rules，
+    # 因 key_rules 会被写作端一致性检查 Agent 当作"本书必须遵守的规则"）
+    concept_parts = []
+    if _sv(analysis.get('logline')):
+        concept_parts.append(f'一句话故事参考：{_sv(analysis["logline"])}')
+    if _sv(analysis.get('core_conflict')):
+        concept_parts.append(f'核心矛盾参考：{_sv(analysis["core_conflict"])}')
+    gf = analysis.get('golden_finger')
+    if isinstance(gf, dict):
+        seg = _kv(gf, (('名称', 'name'), ('类型', 'type'), ('规则与代价', 'rules'), ('升级路径', 'upgrade')))
+        if seg:
+            concept_parts.append('金手指设计参考：' + '｜'.join(seg))
+    elif _sv(gf):
+        concept_parts.append(f'金手指设计参考：{_sv(gf)}')
+    if concept_parts:
+        existing = bb.concept or ''
+        bb.concept = (existing + header if existing else '') + '\n'.join(concept_parts)
+        updated_fields.append('concept')
+
+    # 风格指南：文风特点 + 节奏特点 + v2（情绪曲线/节奏体检/可复用模板/行动清单/避坑）
     style_parts = []
     if analysis.get('style_analysis'):
         style_parts.append(f'文风特点：{analysis["style_analysis"]}')
@@ -8635,51 +8669,117 @@ def sync_analysis_to_book(book_id):
         style_parts.append(f'目标平台：{analysis["target_platform"]}')
     if analysis.get('genre_tags'):
         style_parts.append(f'题材标签：{"、".join(analysis["genre_tags"])}')
+    if _sv(analysis.get('emotion_curve')):
+        style_parts.append(f'情绪曲线：{_sv(analysis["emotion_curve"])}')
+    pacing = analysis.get('pacing')
+    if isinstance(pacing, dict):
+        seg = _kv(pacing, (('密度', 'density'), ('张力', 'tension')))
+        issues = [x for x in (pacing.get('issues') or []) if _sv(x)]
+        if issues:
+            seg.append('风险：' + '；'.join(issues))
+        if seg:
+            style_parts.append('节奏体检：' + '｜'.join(seg))
+    elif _sv(pacing):
+        style_parts.append(f'节奏体检：{_sv(pacing)}')
+    if _sv(analysis.get('replicable_template')):
+        style_parts.append(f'可复用模板：{_sv(analysis["replicable_template"])}')
+    acts = [x for x in (analysis.get('action_plan') or []) if _sv(x)]
+    if acts:
+        style_parts.append('复刻行动清单：\n' + '\n'.join(f'{i + 1}. {a}' for i, a in enumerate(acts)))
+    rks = [x for x in (analysis.get('risks') or []) if _sv(x)]
+    if rks:
+        style_parts.append('避坑提示：\n' + '\n'.join(f'· {r}' for r in rks))
     if style_parts:
         existing = bb.style_guide or ''
         bb.style_guide = (existing + header if existing else '') + '\n'.join(style_parts)
         updated_fields.append('style_guide')
 
-    # 大纲设计：结构特点
+    # 大纲设计：结构特点 + v2（黄金三章拆解 / 剧情节拍表）
+    plot_parts = []
     if analysis.get('structure_analysis'):
+        plot_parts.append(f'结构参考：{analysis["structure_analysis"]}')
+    g3_lines = []
+    for i, c in enumerate(_dicts(analysis.get('golden_three'))):
+        head = _sv(c.get('chapter')) or f'第{i + 1}章'
+        seg = _kv(c, (('任务', 'mission'),))
+        g3_lines.append(f'· {head}' + ('｜' + '｜'.join(seg) if seg else ''))
+        for line in _kv(c, (('开篇钩子', 'opening'), ('关键信息', 'info'), ('章尾钩子', 'ending'), ('读者情绪', 'emotion'))):
+            g3_lines.append(f'  {line}')
+    if g3_lines:
+        plot_parts.append('黄金三章拆解：\n' + '\n'.join(g3_lines))
+    beat_lines = []
+    for b in _dicts(analysis.get('plot_beats')):
+        seg = _kv(b, (('功能', 'function'), ('事件', 'event'), ('钩子', 'hook')))
+        if not seg:
+            continue
+        rng = _sv(b.get('range'))
+        beat_lines.append(('· ' + rng + '｜' if rng else '· ') + '｜'.join(seg))
+    if beat_lines:
+        plot_parts.append('剧情节拍表：\n' + '\n'.join(beat_lines))
+    if plot_parts:
         existing = bb.plot_design or ''
-        content = f'结构参考：{analysis["structure_analysis"]}'
-        bb.plot_design = (existing + header if existing else '') + content
+        bb.plot_design = (existing + header if existing else '') + '\n'.join(plot_parts)
         updated_fields.append('plot_design')
 
-    # 人物档案：人设特点
+    # 人物档案：人设特点 + v2 人物表
+    profile_parts = []
     if analysis.get('character_design_analysis'):
+        profile_parts.append(f'人设参考：{analysis["character_design_analysis"]}')
+    char_lines = []
+    for c in _dicts(analysis.get('characters')):
+        name = _sv(c.get('name'))
+        if not name:
+            continue
+        seg = _kv(c, (('身份', 'identity'), ('欲望', 'desire'), ('性格', 'trait'), ('反差', 'contrast'), ('功能', 'function')))
+        if seg:
+            char_lines.append(f'· {name}（' + '｜'.join(seg) + '）')
+        else:
+            char_lines.append(f'· {name}')
+    if char_lines:
+        profile_parts.append('人物表参考：\n' + '\n'.join(char_lines))
+    if mode == 'fanfic' and analysis.get('golden_lines'):
+        profile_parts.append(f'金句参考：{"；".join(analysis["golden_lines"][:5])}')
+    if profile_parts:
         existing = bb.character_profiles or ''
-        content = f'人设参考：{analysis["character_design_analysis"]}'
-        if mode == 'fanfic' and analysis.get('golden_lines'):
-            content += f'\n金句参考：{"；".join(analysis["golden_lines"][:5])}'
-        bb.character_profiles = (existing + header if existing else '') + content
+        bb.character_profiles = (existing + header if existing else '') + '\n'.join(profile_parts)
         updated_fields.append('character_profiles')
 
-    # 伏笔：钩子技巧 + 可学方法
+    # 伏笔：钩子技巧 + 可学方法 + v2（钩子编排 / 爽点库）
     foreshadow_parts = []
     if analysis.get('hook_techniques'):
         foreshadow_parts.append('钩子技巧：\n' + '\n'.join(f'· {h}' for h in analysis['hook_techniques']))
     if analysis.get('learnable_points'):
         foreshadow_parts.append('可学方法：\n' + '\n'.join(f'· {p}' for p in analysis['learnable_points']))
+    if _sv(analysis.get('hook_system')):
+        foreshadow_parts.append(f'钩子编排：{_sv(analysis["hook_system"])}')
+    sp_lines = []
+    for s in _dicts(analysis.get('satisfaction_points')):
+        seg = _kv(s, (('类型', 'type'), ('铺垫', 'setup'), ('兑现', 'payoff'), ('位置', 'position')))
+        if seg:
+            sp_lines.append('· ' + '｜'.join(seg))
+    if sp_lines:
+        foreshadow_parts.append('爽点库（铺垫→兑现）：\n' + '\n'.join(sp_lines))
     if foreshadow_parts:
         existing = bb.foreshadowing or ''
         bb.foreshadowing = (existing + header if existing else '') + '\n'.join(foreshadow_parts)
         updated_fields.append('foreshadowing')
 
-    # 同人文模式：额外同步世界观
+    # 世界观：v2 力量体系要点（所有模式）+ 同人文模式补充原作要素
+    wb_parts = []
+    wv = [x for x in (analysis.get('worldview') or []) if _sv(x)]
+    if wv:
+        wb_parts.append('力量体系参考：\n' + '\n'.join(f'· {w}' for w in wv))
     if mode == 'fanfic':
-        fanfic_parts = []
         if analysis.get('style_analysis'):
-            fanfic_parts.append(f'原作文风：{analysis["style_analysis"]}')
+            wb_parts.append(f'原作文风：{analysis["style_analysis"]}')
         if analysis.get('structure_analysis'):
-            fanfic_parts.append(f'原作结构：{analysis["structure_analysis"]}')
+            wb_parts.append(f'原作结构：{analysis["structure_analysis"]}')
         if analysis.get('character_design_analysis'):
-            fanfic_parts.append(f'原作人设：{analysis["character_design_analysis"]}')
-        if fanfic_parts:
-            existing = bb.worldbuilding or ''
-            bb.worldbuilding = (existing + header if existing else '') + '\n'.join(fanfic_parts)
-            updated_fields.append('worldbuilding')
+            wb_parts.append(f'原作人设：{analysis["character_design_analysis"]}')
+    if wb_parts:
+        existing = bb.worldbuilding or ''
+        bb.worldbuilding = (existing + header if existing else '') + '\n'.join(wb_parts)
+        updated_fields.append('worldbuilding')
 
     bb.last_synced_at = datetime.now(timezone.utc)
     db.session.commit()
