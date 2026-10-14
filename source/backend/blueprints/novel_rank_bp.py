@@ -495,28 +495,52 @@ def _match_rank_new_book_sources(concept: str, platform: str,
     return out
 
 
-def _call_small_llm_json(messages: list[dict], max_tokens: int = 512) -> dict:
-    """调用轻量 LLM 返回 JSON；失败返回空 dict。由 llm_gateway 拿默认配置。"""
+def _call_small_llm_json(messages: list[dict], max_tokens: int = 512) -> tuple[dict, str]:
+    """调用轻量 LLM 返回 JSON。
+
+    返回 (data, error)：成功 data 为解析后的 dict、error 为空串；失败 data 为 {}、
+    error 为可直接展示给用户的真实原因。
+    注意：LLMGateway.chat() 返回的是 ModelResult（字段 .content/.ok/.error），
+    不是 dict——历史代码误用 out.get('text')，导致 str(ModelResult) 的 repr 被
+    贪婪正则匹配到 raw={...} 花括号、JSON 永远解析失败，定位轻拆必挂。
+    """
     try:
         from llm_gateway import LLMGateway, get_llm_config  # 延迟导入，避免循环依赖
         base_url, api_key, model = get_llm_config()
         if not api_key:
-            return {}
+            return {}, '尚未配置 AI（或 API Key 为空），请先在「我的 → AI 配置」中选择模型'
         gw = LLMGateway(base_url, api_key, model)
-        out = gw.chat(messages, temperature=0.4, max_tokens=max_tokens)
-        txt = (out.get('text') if isinstance(out, dict) else str(out)).strip()
+        out = gw.chat(messages, temperature=0.4, max_tokens=max_tokens,
+                      response_format={'type': 'json_object'})
+        # 部分服务商不支持 response_format 参数（400/422）→ 去掉该参数重试一次，
+        # 与 ai_analyze_bp 的兜底策略保持一致，避免“别的功能能用、轻拆必挂”。
+        if not getattr(out, 'ok', False):
+            err_msg = (getattr(out, 'error', '') or '')
+            if ('response_format' in err_msg or 'json_object' in err_msg
+                    or 'unrecognized' in err_msg.lower() or 'unsupported' in err_msg.lower()):
+                out = gw.chat(messages, temperature=0.4, max_tokens=max_tokens)
+        if not getattr(out, 'ok', False):
+            return {}, (getattr(out, 'error', '') or '模型调用失败，请检查 AI 配置或稍后重试')
+        txt = (out.content or '').strip()
         if not txt:
-            return {}
-        # 容错：可能包 ```json ... ```，剥离
-        m = re.search(r'\{[\s\S]*\}', txt)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except Exception:
-                return {}
-    except Exception:
-        return {}
-    return {}
+            return {}, '模型返回了空内容，请换一个模型或稍后重试'
+        # 容错：剥除 ```json ... ``` 包裹
+        fence = re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', txt)
+        if fence:
+            txt = fence.group(1).strip()
+        # 容错：正文前后可能有解释文字，截取首个 { 到末个 }
+        start, end = txt.find('{'), txt.rfind('}')
+        if start != -1 and end > start:
+            txt = txt[start:end + 1]
+        try:
+            data = json.loads(txt)
+            if isinstance(data, dict):
+                return data, ''
+        except Exception:
+            pass
+        return {}, '模型返回内容不是合法 JSON，请换用更强的模型后重试'
+    except Exception as e:
+        return {}, f'AI 调用异常：{str(e)[:200]}'
 
 
 def _aggregate_market_llm(concept: str, merged_items: list[dict], matched_labels: list[str]) -> dict:
@@ -569,7 +593,7 @@ def _aggregate_market_llm(concept: str, merged_items: list[dict], matched_labels
         {'role': 'system', 'content': '你是番茄/起点爆款拆书数据分析编辑：只依据给出的榜单数据做归纳，每条结论尽量点名具体榜上书；说话精炼、全用中文、不输出废话、只给可落地的结论。'},
         {'role': 'user', 'content': user_prompt},
     ]
-    resp = _call_small_llm_json(messages, max_tokens=1800)
+    resp, _err = _call_small_llm_json(messages, max_tokens=1800)
     # 规则级兜底 + 长度裁剪（新深度字段失败时静默为空，不阻塞主情报）
     def _arr(key: str, fallback: list[str]) -> list[str]:
         v = resp.get(key) or fallback
@@ -873,10 +897,14 @@ def api_rank_book_content():
         max_chapters = int(request.args.get('chapters') or 3)
     except (TypeError, ValueError):
         max_chapters = 3
+    max_chapters = max(1, min(max_chapters, 30))
+    # 章均约 2.5~3.5 千字：按章数放大正文容量（3→2万 / 10→4万 / 30→12万），
+    # 不再固定 2 万字导致 10 章以上被静默截断。
+    max_chars = min(120000, max(20000, max_chapters * 4000))
     try:
         result = fetch_rank_book_content(
             platform, book_id=book_id, book_url=book_url,
-            max_chapters=max_chapters, max_chars=20000,
+            max_chapters=max_chapters, max_chars=max_chars,
         )
     except ValueError:
         platform_name = next((s['name'] for s in RANK_SITES if s['code'] == platform), platform)
@@ -950,9 +978,9 @@ def api_rank_position_analyze():
         {'role': 'system', 'content': sys_prompt},
         {'role': 'user', 'content': '【榜单书籍资料】\n' + '\n'.join(lines) + '\n\n【任务】\n' + _POSITION_ANALYZE_SCHEMA_HINT},
     ]
-    data = _call_small_llm_json(messages, max_tokens=1400)
+    data, err = _call_small_llm_json(messages, max_tokens=1600)
     if not data:
-        return jsonify({'ok': False, 'error': '定位分析失败：请检查 AI 配置后重试'}), 200
+        return jsonify({'ok': False, 'error': err or '定位分析失败：请检查 AI 配置后重试'}), 200
     data['ok'] = True
     data['bookTitle'] = title
     return jsonify(data)

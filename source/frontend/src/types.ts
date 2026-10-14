@@ -368,6 +368,8 @@ export interface NRBookContent {
   content?: string;
   truncated?: boolean;
   decodeRate?: number;      // PUA 字体解码命中率
+  locked?: boolean;         // 是否撞到平台付费墙
+  lockedChapterNo?: number; // 付费墙起始章号（1-based）
 }
 
 // 榜单书 → 仅凭元数据的定位轻拆结果（无需正文）
@@ -396,6 +398,35 @@ export interface ReviewResult {
   platform_fit: string;
 }
 
+export interface GoldenThreeBeat {
+  chapter?: string;
+  mission?: string;   // 入局/加压/承诺
+  opening?: string;
+  info?: string;
+  ending?: string;
+  emotion?: string;
+}
+export interface PlotBeat {
+  range?: string;
+  function?: string;
+  event?: string;
+  hook?: string;
+}
+export interface CharacterBeat {
+  name?: string;
+  identity?: string;
+  desire?: string;
+  trait?: string;
+  contrast?: string;
+  function?: string;
+}
+export interface SatisfactionPoint {
+  type?: string;
+  setup?: string;
+  payoff?: string;
+  position?: string;
+}
+
 export interface AnalysisResult {
   style_analysis: string;
   structure_analysis: string;
@@ -411,6 +442,21 @@ export interface AnalysisResult {
   strengths?: string[];
   weaknesses?: string[];
   copy_plan?: string;
+  // ===== 深拆 v2 字段 =====
+  logline?: string;           // 一句话故事
+  core_conflict?: string;     // 主线核心矛盾
+  golden_finger?: { name?: string; type?: string; rules?: string; upgrade?: string };
+  golden_three?: GoldenThreeBeat[];  // 黄金三章逐章拆解
+  plot_beats?: PlotBeat[];           // 剧情节拍表
+  characters?: CharacterBeat[];      // 人物表
+  satisfaction_points?: SatisfactionPoint[]; // 爽点库
+  hook_system?: string;       // 钩子编排
+  emotion_curve?: string;     // 期待感/情绪曲线
+  pacing?: { density?: string; tension?: string; issues?: string[] };
+  worldview?: string[];       // 世界观/力量体系
+  replicable_template?: string; // 可复用模板
+  action_plan?: string[];     // 复刻行动清单
+  risks?: string[];           // 短板/风险
 }
 
 export interface BrainstormSuggestion {

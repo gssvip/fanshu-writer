@@ -3506,49 +3506,114 @@ def sync_skill_pack_from_github(pack_id):
 
 @app.route('/api/analyze-book', methods=['POST'])
 def analyze_book():
-    config = AIConfig.get_active()
-    api_key = os.environ.get('USER_LLM_API_KEY', '')
-    base_url = os.environ.get('USER_LLM_BASE_URL', 'https://api.deepseek.com/v1')
-    model = os.environ.get('USER_LLM_MODEL', 'deepseek-chat')
-    if config and config.api_key:
-        api_key, base_url, model = config.api_key, config.base_url, config.model
-
-    text = request.json.get('content', '')
+    text = (request.json or {}).get('content', '')
     if not text.strip():
         return jsonify({'error': 'No content'}), 400
-    text = text[:20000]
+    # 30 章深拆正文可达 6~9 万字：上限提升到 6 万字（黄金三章在开头，天然优先保留）
+    text = text[:60000]
     # 竞品拆书模式：focus=competitor 时输出更偏"对标与复刻方案"的深度结论
     focus = request.json.get('focus', '')
 
-    base_prompt = """你是专业网文拆书分析师。分析提供的作品片段，严格按JSON格式输出。
+    # ===== 深拆输出 schema（v2）=====
+    # 设计参考成熟网文拆书框架：黄金三章（入局/加压/承诺）、爽点章四步法
+    # （设冲突→展实力→众人震惊→收获）、章尾钩子体系、期待感/情绪曲线、
+    # 金手指升级机制、人设反差与功能、信息密度与注水风险。
+    # 旧字段（style_analysis 等）全部保留，兼容「同步到作品」与导出。
+    shared_schema = """输出格式（严格 JSON，不要输出 JSON 以外的任何文字，不要用 ```json 包裹）：
+{
+  "genre_tags": ["题材标签1","标签2","标签3"],
+  "target_platform": "番茄/起点/七猫/知乎盐选（判断最适配的平台）",
+  "logline": "一句话故事：主角+处境+核心卖点，50字内",
+  "core_conflict": "主线核心矛盾：谁想要什么、被什么挡住、失败代价是什么，100字内",
+  "style_analysis": "文风：叙事视角/语言质感/画面感/对白风格，120字内，须引用原文用词举例",
+  "structure_analysis": "整体结构：开篇方式/主线推进方式/阶段划分/章节功能分布，150字内",
+  "rhythm_analysis": "节奏：张弛安排、冲突与爽点密度、信息释放快慢，120字内",
+  "character_design_analysis": "人物塑造：主角身份+欲望+缺陷+反差记忆点，配角与反派的功能性，150字内",
+  "golden_finger": {"name": "金手指/核心设定名称", "type": "系统/重生/签到/天赋/血脉/装备/无金手指", "rules": "获得方式、使用规则与限制代价", "upgrade": "成长/升级路径如何支撑长线"},
+  "golden_three": [
+    {"chapter": "第1章", "mission": "本章任务（入局/加压/承诺）", "opening": "开篇300字内出了什么钩子（冲突/悬念/金手指亮相）", "info": "本章释放的关键信息", "ending": "章尾钩子的具体写法与类型", "emotion": "读者读完的情绪与追读理由"},
+    {"chapter": "第2章", "mission": "", "opening": "", "info": "", "ending": "", "emotion": ""},
+    {"chapter": "第3章", "mission": "", "opening": "", "info": "", "ending": "", "emotion": ""}
+  ],
+  "plot_beats": [
+    {"range": "章节范围，如 第4章 / 第5-7章", "function": "剧情功能：铺垫/冲突升级/爽点兑现/转折/休整", "event": "关键事件一句话", "hook": "章尾悬念或钩子类型"}
+  ],
+  "characters": [
+    {"name": "角色名", "identity": "身份", "desire": "核心欲望/动机", "trait": "性格关键词", "contrast": "反差或记忆点", "function": "在故事中的功能（主角/对手/垫脚石/情感线）"}
+  ],
+  "satisfaction_points": [
+    {"type": "爽点类型：打脸/逆袭/装逼/扮猪吃虎/收获/复仇/救人/升级", "setup": "如何铺垫蓄力", "payoff": "如何当众兑现（众人反应）", "position": "出现在第几章/什么情节"}
+  ],
+  "hook_techniques": ["钩子技巧1（点名用在第几章）","钩子技巧2","钩子技巧3"],
+  "hook_system": "钩子编排：章尾钩子如何轮换（悬念/危机/反转/期待）、间隔几章一个大钩子，120字内",
+  "emotion_curve": "期待感与情绪曲线：压抑-释放如何交替、如何让读者持续想看下一章，150字内",
+  "pacing": {"density": "冲突/爽点密度评估（几章一个爽点）", "tension": "张弛配比与高压段落分布", "issues": ["节奏问题或注水风险1","风险2"]},
+  "worldview": ["世界观/力量体系规则要点1","要点2"],
+  "golden_lines": ["原文金句1（直接摘录）","金句2"],
+  "learnable_points": ["可直接复用的方法论1（要具体到操作）","方法论2","方法论3","方法论4"],
+  "replicable_template": "可直接套用的章节/开篇模板：用占位符写出这本书的可复用套路，200字内",
+  "action_plan": ["我写同题材可立即执行的动作1（按优先级）","动作2","动作3"],
+  "risks": ["这本书本身的短板/读者毒点/我复刻时要避开的风险1","风险2"]
+}
+要求：
+1. 所有结论必须基于给定正文，尽量引用原文词句或点名章节作为证据；正文没写的不要编造，证据不足的字段写"正文未体现"。
+2. golden_three 严格按前三章实际内容拆；plot_beats 按正文中出现的章节标题/顺序逐段归纳，覆盖你实际收到的全部章节（可多章合并一条，但不要遗漏阶段；没给到的章节不得编造）。
+3. satisfaction_points 至少 3 条；characters 至少覆盖主角和最重要的对手/配角。
+4. 每条要具体、可操作，禁止"节奏紧凑""人物丰满"这类空话。
+5. 字段较多，注意控制单条长度，确保输出的是一个完整、可解析的 JSON（不要被截断）。"""
 
-输出格式（严格JSON）：
-{"style_analysis": "文风特点(50字内)", "structure_analysis": "结构特点(50字内)", "rhythm_analysis": "节奏特点(50字内)",
-"character_design_analysis": "人设特点(50字内)", "hook_techniques": ["钩子技巧1","钩子技巧2"],
-"golden_lines": ["金句1","金句2"], "genre_tags": ["标签1","标签2","标签3"],
-"target_platform": "番茄/起点/七猫/知乎盐选", "learnable_points": ["可学习的点1","可学习的点2","可学习的点3"]}"""
-    competitor_prompt = """你是资深竞品拆书顾问，服务于网文作者的竞品对标分析。分析竞品作品片段，站在"如何复刻/拉开差异化"的角度，严格按JSON格式输出。
+    competitor_extra = """
+【竞品模式额外要求】除上述字段外，再输出以下 4 个字段（并入同一个 JSON 对象）：
+  "market_position": "该竞品的市场定位与目标读者画像（人群+阅读期待+付费动机），80字内",
+  "strengths": ["它真正卖座的核心优势1（要有正文证据）","优势2","优势3"],
+  "weaknesses": ["可切入的弱点/同质化缺口/读者差评风险1","弱点2"],
+  "copy_plan": "若你写同题材：借哪几个爆点、在哪些点上反着做或升级、如何用一句话与它区隔的可执行方案，250字内"
+"""
 
-输出格式（严格JSON）：
-{"style_analysis": "文风特点(50字内)", "structure_analysis": "结构特点(50字内)", "rhythm_analysis": "节奏特点(50字内)",
-"character_design_analysis": "人设卖点(50字内，强调主角辨识度与记忆点)", "hook_techniques": ["钩子技巧1","钩子技巧2","钩子技巧3"],
-"golden_lines": ["金句1","金句2"], "genre_tags": ["标签1","标签2","标签3"],
-"target_platform": "番茄/起点/七猫/知乎盐选",
-"learnable_points": ["可直接借鉴的点1","可直接借鉴的点2","可直接借鉴的点3"],
-"market_position": "该竞品的市场定位与受众画像(60字内)",
-"strengths": ["核心优势1","核心优势2"],
-"weaknesses": ["可切入的弱点/差异化机会1","可切入的弱点/差异化机会2"],
-"copy_plan": "若你写同题材，如何借鉴其爆点同时规避同质化的一页可执行方案(150字内)"}"""
-    system_prompt = competitor_prompt if focus == 'competitor' else base_prompt
-    payload = {'model': model, 'messages': [{'role':'system','content':system_prompt},{'role':'user','content':text}],
-               'temperature': 0.3, 'max_tokens': 1800, 'response_format': {'type': 'json_object'}}
+    base_sys = ("你是专业网文拆书师兼爆款责编，服务对象是要写商业网文的作者。"
+                "你要像起点/番茄头部编辑拆书一样，把正文拆成可复用的创作方法论，而不是写读后感。\n\n")
+    competitor_sys = ("你是资深竞品拆书顾问，服务于网文作者的竞品对标分析。"
+                      "你要站在「我要写一本同题材新书，如何复刻它的爆点同时拉开差异化」的角度，"
+                      "把这本竞品的正文拆成可执行的对标方案。\n\n")
+    system_prompt = (competitor_sys if focus == 'competitor' else base_sys) + shared_schema + (
+        competitor_extra if focus == 'competitor' else '')
+
+    from llm_gateway import LLMGateway, get_llm_config
+    base_url, api_key, model = get_llm_config()
+    if not api_key:
+        return jsonify({'error': '尚未配置 AI（或 API Key 为空），请先在「我的 → AI 配置」中选择模型'}), 400
+    gw = LLMGateway(base_url, api_key, model)
+    messages = [
+        {'role': 'system', 'content': system_prompt},
+        {'role': 'user', 'content': f'以下是作品正文（含章节标题），共约 {len(text)} 字，请按系统约定的 JSON 结构深拆：\n\n{text}'},
+    ]
     try:
-        resp = requests.post(f'{base_url}/chat/completions',
-            headers=build_auth_headers(api_key), json=payload, timeout=120)
-        result = resp.json()
-        return jsonify(json.loads(result['choices'][0]['message']['content']))
+        # v2 schema 字段多（黄金三章+节拍表+爽点库+人物表…），5000 tokens 容易
+        # 输出截断导致 JSON 解析失败；提到 8000，网关会按模型实际上限自动钳制。
+        out = gw.chat(messages, temperature=0.3, max_tokens=8000,
+                      response_format={'type': 'json_object'})
+        # 部分服务商不支持 response_format → 去掉该参数重试一次
+        if not getattr(out, 'ok', False):
+            _em = (getattr(out, 'error', '') or '')
+            if ('response_format' in _em or 'json_object' in _em
+                    or 'unrecognized' in _em.lower() or 'unsupported' in _em.lower()):
+                out = gw.chat(messages, temperature=0.3, max_tokens=8000)
+        if not getattr(out, 'ok', False):
+            return jsonify({'error': getattr(out, 'error', '') or '模型调用失败，请检查 AI 配置'}), 502
+        raw = (out.content or '').strip()
+        # 容错：剥除 ```json 包裹 / 截取首尾花括号
+        fence = re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', raw)
+        if fence:
+            raw = fence.group(1).strip()
+        s0, s1 = raw.find('{'), raw.rfind('}')
+        if s0 != -1 and s1 > s0:
+            raw = raw[s0:s1 + 1]
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError('模型返回不是 JSON 对象')
+        return jsonify(data)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'拆书分析失败：{str(e)[:200]}'}), 500
 
 # AI 一致性检查 / 继续写作
 # ==== 章节正文写作辅助函数（14项优化）====

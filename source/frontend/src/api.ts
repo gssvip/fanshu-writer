@@ -421,7 +421,8 @@ export const api = {
     if (params.bookId) qs.set('bookId', params.bookId);
     if (params.bookUrl) qs.set('bookUrl', params.bookUrl);
     qs.set('chapters', String(params.chapters ?? 3));
-    return request<import('./types').NRBookContent>(`/rank/book-content?${qs.toString()}`);
+    // 30 章含 0.5s/章礼貌限速与正文下载，整体可能 1 分钟以上：超时放宽到 180s
+    return request<import('./types').NRBookContent>(`/rank/book-content?${qs.toString()}`, undefined, undefined, 180000, 1);
   },
   // 榜单书 → 仅凭元数据的定位轻拆（全平台，无需正文）
   nrPositionAnalyze: (payload: Record<string, unknown>) =>
@@ -658,9 +659,9 @@ export const api = {
     return fetchStream(`${getApiBaseUrl()}/books/${bookId}/ai-continue/stream`, cfg, signal);
   },
 
-  // AI Analyze Book
+  // AI Analyze Book（深拆输出结构丰富、正文可达数万字，生成可能超过 60s：放宽到 180s）
   analyzeBook: (content: string, focus?: string) =>
-    request<AnalysisResult>('/analyze-book', { method: 'POST', body: JSON.stringify({ content, focus }) }),
+    request<AnalysisResult>('/analyze-book', { method: 'POST', body: JSON.stringify({ content, focus }) }, undefined, 180000, 1),
 
   // Skill Packs
   listSkillPacks: (genre?: string, bookType?: string) => {

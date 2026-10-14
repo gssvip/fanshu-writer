@@ -43,7 +43,7 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
   const [deepMsg, setDeepMsg] = useState('');
   const [deepError, setDeepError] = useState('');
   const [chapterN, setChapterN] = useState(3);
-  const [fetchedMeta, setFetchedMeta] = useState<{ chapters: number; total: number; decodeRate: number } | null>(null);
+  const [fetchedMeta, setFetchedMeta] = useState<{ chapters: number; total: number; decodeRate: number; locked?: boolean; lockedChapterNo?: number } | null>(null);
 
   // 切换到竞品模式更符合榜单对标场景：榜单书进入时默认竞品拆书
   useEffect(() => {
@@ -106,7 +106,9 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
     if (!ok) return;
     setDeepLoading(true);
     setDeepError('');
-    setDeepMsg(`正在从${rankBook.platformName || '平台'}抓取前 ${chapterN} 章（目录+正文，约需几秒）…`);
+    setDeepMsg(chapterN >= 10
+      ? `正在从${rankBook.platformName || '平台'}抓取前 ${chapterN} 章（章节较多，含礼貌限速，约需 30~90 秒，请勿离开）…`
+      : `正在从${rankBook.platformName || '平台'}抓取前 ${chapterN} 章（目录+正文，约需几秒）…`);
     try {
       const r = await api.nrFetchBookContent({
         platform: rankBook.platform,
@@ -119,14 +121,19 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
         setDeepMsg('');
         return;
       }
-      setDeepMsg(`已抓取 ${r.fetchedChapters?.length || 0} 章 / 共 ${r.chapterCount} 章，正在 AI 深拆…`);
+      const got = r.fetchedChapters?.length || 0;
+      setDeepMsg(r.locked
+        ? `该书第 ${r.lockedChapterNo} 章起为付费章节，已自动抓全此前 ${got} 章免费正文，正在 AI 深拆…`
+        : `已抓取 ${got} 章 / 共 ${r.chapterCount} 章，正在 AI 深拆…`);
       setAnalyzeInput(r.content);
       setFetchedMeta({
-        chapters: r.fetchedChapters?.length || 0,
+        chapters: got,
         total: r.chapterCount || 0,
         decodeRate: Math.round((r.decodeRate ?? 1) * 100),
+        locked: r.locked,
+        lockedChapterNo: r.lockedChapterNo,
       });
-      setUploadFilename(`榜单直抓：《${rankBook.bookTitle}》前${r.fetchedChapters?.length || chapterN}章`);
+      setUploadFilename(`榜单直抓：《${rankBook.bookTitle}》前${got}章${r.locked ? '（免费章）' : ''}`);
       await runAnalyze(r.content, analyzeMode);
     } catch (e: any) {
       setDeepError(e?.message || '抓取/分析失败，请改用粘贴方式');
@@ -249,7 +256,7 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
                 <>
                   <select className="input nr-ra-select" value={chapterN} onChange={e => setChapterN(Number(e.target.value))}
                     disabled={deepLoading} aria-label="抓取章节数">
-                    {[3, 5, 10].map(n => <option key={n} value={n}>前 {n} 章</option>)}
+                    {[3, 10, 30].map(n => <option key={n} value={n}>前 {n} 章</option>)}
                   </select>
                   <button type="button" className="btn-primary nr-ra-btn"
                     onClick={handleDeepAnalyze} disabled={deepLoading}>
@@ -279,8 +286,15 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
               </div>
             )}
             {fetchedMeta && (
-              <div style={{padding:'0 14px 10px',fontSize:12,color:'var(--text-muted)'}}>
-                已抓取 {fetchedMeta.chapters} 章（全书共 {fetchedMeta.total} 章），文字解码率 {fetchedMeta.decodeRate}%，正文已填入下方，可直接修改后重新分析。
+              <div style={{padding:'0 14px 10px',fontSize:12,color:'var(--text-muted)',lineHeight:1.7}}>
+                {fetchedMeta.locked ? (
+                  <span style={{color:'#b3541e'}}>
+                    <Icon name="lock" size={12} /> 该书第 {fetchedMeta.lockedChapterNo} 章起为平台付费章节（仅开放百余字试读，无法自动抓取），
+                    已抓全此前全部 <b>{fetchedMeta.chapters}</b> 章免费正文；文字解码率 {fetchedMeta.decodeRate}%，正文已填入下方，可直接分析或自行粘贴后续章节。
+                  </span>
+                ) : (
+                  <>已抓取 {fetchedMeta.chapters} 章（全书共 {fetchedMeta.total} 章），文字解码率 {fetchedMeta.decodeRate}%，正文已填入下方，可直接修改后重新分析。</>
+                )}
               </div>
             )}
 
@@ -366,18 +380,144 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
         </div>
         {analyzeResult && (
           <div className="analyze-result">
+            {/* 一句话卖点 */}
+            {analyzeResult.logline && (
+              <div className="ar-logline">
+                <Icon name="flame" size={15} />
+                <span><b>一句话卖点：</b>{analyzeResult.logline}</span>
+              </div>
+            )}
             <div className="analyze-tags">
               {analyzeResult.genre_tags?.map((t, i) => <span key={i} className="tag">{t}</span>)}
-              <span className="tag platform">{analyzeResult.target_platform}</span>
+              {analyzeResult.target_platform && <span className="tag platform">{analyzeResult.target_platform}</span>}
             </div>
+
+            {/* 主线核心矛盾 */}
+            {analyzeResult.core_conflict && (
+              <div className="review-section ar-conflict"><h4><Icon name="sword" size={15} /> 主线核心矛盾</h4><p>{analyzeResult.core_conflict}</p></div>
+            )}
+
+            {/* 黄金三章 */}
+            {analyzeResult.golden_three?.length ? (
+              <div className="review-section">
+                <h4><Icon name="book-open" size={15} /> 黄金三章拆解（入局 → 加压 → 承诺）</h4>
+                <div className="ar-golden3">
+                  {analyzeResult.golden_three.map((c, i) => (
+                    <div key={i} className="ar-g3-card">
+                      <div className="ar-g3-head">
+                        <span className="ar-g3-no">{i + 1}</span>
+                        <b>{c.chapter || `第${i + 1}章`}</b>
+                        {c.mission && <span className="ar-g3-mission">{c.mission}</span>}
+                      </div>
+                      {c.opening && <p><em>开篇钩子</em>{c.opening}</p>}
+                      {c.info && <p><em>信息释放</em>{c.info}</p>}
+                      {c.ending && <p><em>章尾钩子</em>{c.ending}</p>}
+                      {c.emotion && <p><em>追读情绪</em>{c.emotion}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* 金手指 / 核心设定 */}
+            {analyzeResult.golden_finger && (analyzeResult.golden_finger.name || analyzeResult.golden_finger.rules) ? (
+              <div className="review-section">
+                <h4><Icon name="zap" size={15} /> 金手指 / 核心设定</h4>
+                <div className="ar-finger">
+                  {analyzeResult.golden_finger.name && <p><em>设定</em><b>{analyzeResult.golden_finger.name}</b>{analyzeResult.golden_finger.type ? `（${analyzeResult.golden_finger.type}）` : ''}</p>}
+                  {analyzeResult.golden_finger.rules && <p><em>规则/代价</em>{analyzeResult.golden_finger.rules}</p>}
+                  {analyzeResult.golden_finger.upgrade && <p><em>升级路径</em>{analyzeResult.golden_finger.upgrade}</p>}
+                </div>
+              </div>
+            ) : null}
+
+            {/* 剧情节拍表 */}
+            {analyzeResult.plot_beats?.length ? (
+              <div className="review-section">
+                <h4><Icon name="bar-chart" size={15} /> 剧情节拍表</h4>
+                <div className="ar-beats-table">
+                  {analyzeResult.plot_beats.map((b, i) => (
+                    <div key={i} className="ar-beat-row">
+                      <span className="ar-beat-range">{b.range || `第${i + 1}段`}</span>
+                      <span className={`ar-beat-func ar-func-${i}`}>{b.function || '—'}</span>
+                      <span className="ar-beat-event">{b.event || ''}</span>
+                      <span className="ar-beat-hook">{b.hook || ''}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* 人物表 */}
+            {analyzeResult.characters?.length ? (
+              <div className="review-section">
+                <h4><Icon name="users" size={15} /> 人物拆解</h4>
+                <div className="ar-char-grid">
+                  {analyzeResult.characters.map((c, i) => (
+                    <div key={i} className="ar-char-card">
+                      <div className="ar-char-head"><b>{c.name || `角色${i + 1}`}</b>{c.function && <span>{c.function}</span>}</div>
+                      {c.identity && <p><em>身份</em>{c.identity}</p>}
+                      {c.desire && <p><em>欲望</em>{c.desire}</p>}
+                      {c.trait && <p><em>性格</em>{c.trait}</p>}
+                      {c.contrast && <p><em>记忆点</em>{c.contrast}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* 爽点库 */}
+            {analyzeResult.satisfaction_points?.length ? (
+              <div className="review-section">
+                <h4><Icon name="flame" size={15} /> 爽点设计库（铺垫 → 兑现）</h4>
+                <div className="ar-sat-list">
+                  {analyzeResult.satisfaction_points.map((s, i) => (
+                    <div key={i} className="ar-sat-card">
+                      <div className="ar-sat-top">
+                        <span className="ar-sat-type">{s.type || `爽点${i + 1}`}</span>
+                        {s.position && <span className="ar-sat-pos">{s.position}</span>}
+                      </div>
+                      {s.setup && <p><em>铺垫</em>{s.setup}</p>}
+                      {s.payoff && <p><em>兑现</em>{s.payoff}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             <div className="analyze-grid">
               <div className="analyze-item"><h4>文风特点</h4><p>{analyzeResult.style_analysis}</p></div>
               <div className="analyze-item"><h4>结构特点</h4><p>{analyzeResult.structure_analysis}</p></div>
               <div className="analyze-item"><h4>节奏特点</h4><p>{analyzeResult.rhythm_analysis}</p></div>
               <div className="analyze-item"><h4>人设特点</h4><p>{analyzeResult.character_design_analysis}</p></div>
             </div>
+
+            {/* 节奏体检 */}
+            {analyzeResult.pacing && (analyzeResult.pacing.density || analyzeResult.pacing.tension || analyzeResult.pacing.issues?.length) ? (
+              <div className="review-section">
+                <h4><Icon name="clock" size={15} /> 节奏体检</h4>
+                <div className="ar-pacing">
+                  {analyzeResult.pacing.density && <p><em>爽点密度</em>{analyzeResult.pacing.density}</p>}
+                  {analyzeResult.pacing.tension && <p><em>张弛配比</em>{analyzeResult.pacing.tension}</p>}
+                  {analyzeResult.pacing.issues?.length ? (
+                    <ul className="compact-list">{analyzeResult.pacing.issues.map((x, i) => <li key={i} className="ar-risk-item">{x}</li>)}</ul>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {analyzeResult.hook_system && (
+              <div className="review-section"><h4><Icon name="link" size={15} /> 钩子编排体系</h4><p>{analyzeResult.hook_system}</p></div>
+            )}
             <div className="review-section"><h4>钩子技巧</h4><ul>{analyzeResult.hook_techniques?.map((h, i) => <li key={i}>{h}</li>)}</ul></div>
+            {analyzeResult.emotion_curve && (
+              <div className="review-section"><h4><Icon name="trending-up" size={15} /> 期待感与情绪曲线</h4><p>{analyzeResult.emotion_curve}</p></div>
+            )}
+            {analyzeResult.worldview?.length ? (
+              <div className="review-section"><h4><Icon name="globe" size={15} /> 世界观 / 力量体系</h4><ul>{analyzeResult.worldview.map((w, i) => <li key={i}>{w}</li>)}</ul></div>
+            ) : null}
             <div className="review-section"><h4>可学习的方法</h4><ul>{analyzeResult.learnable_points?.map((p, i) => <li key={i}>{p}</li>)}</ul></div>
+
             {analyzeMode === 'competitor' && analyzeResult.market_position && (
               <div className="review-section competitor-pos"><h4><Icon name="target" size={15} /> 市场定位</h4><p>{analyzeResult.market_position}</p></div>
             )}
@@ -392,8 +532,29 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
               </div>
             )}
             {analyzeMode === 'competitor' && analyzeResult.copy_plan && (
-              <div className="review-section"><h4><Icon name="edit" size={15} /> 复刻方案（借鉴爆点 + 规避同质化）</h4><p>{analyzeResult.copy_plan}</p></div>
+              <div className="review-section ar-template-box"><h4><Icon name="edit" size={15} /> 复刻方案（借鉴爆点 + 规避同质化）</h4><p>{analyzeResult.copy_plan}</p></div>
             )}
+
+            {/* 可复用模板 */}
+            {analyzeResult.replicable_template && (
+              <div className="review-section ar-template-box">
+                <h4><Icon name="clipboard" size={15} /> 可直接套用的创作模板</h4>
+                <p>{analyzeResult.replicable_template}</p>
+              </div>
+            )}
+            {/* 行动清单 */}
+            {analyzeResult.action_plan?.length ? (
+              <div className="review-section ar-actions-box">
+                <h4><Icon name="check-circle" size={15} /> 我的落地行动清单</h4>
+                <ol className="ar-action-list">
+                  {analyzeResult.action_plan.map((a, i) => <li key={i}>{a}</li>)}
+                </ol>
+              </div>
+            ) : null}
+            {/* 风险 */}
+            {analyzeResult.risks?.length ? (
+              <div className="review-section"><h4><Icon name="warning" size={15} /> 短板与避坑</h4><ul>{analyzeResult.risks.map((x, i) => <li key={i} className="ar-risk-item">{x}</li>)}</ul></div>
+            ) : null}
             {analyzeResult.golden_lines?.length > 0 && (
               <div className="review-section"><h4>金句摘录</h4><ul>{analyzeResult.golden_lines.map((l, i) => <li key={i} className="golden-line">{l}</li>)}</ul></div>
             )}

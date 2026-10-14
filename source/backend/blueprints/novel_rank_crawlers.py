@@ -1642,7 +1642,8 @@ def fetch_fq_chapter_ids(book_id: str, timeout: int = 15) -> list[str]:
 
 def fetch_fq_chapter(item_id: str, timeout: int = 20) -> dict[str, Any] | None:
     """抓单章 reader SSR 页并解码正文。
-    返回 {itemId,title,content,puaTotal,puaHit}；受限/付费/解析失败返回 None。"""
+    返回 {itemId,title,content,puaTotal,puaHit,locked}；locked=True 表示付费/锁定章，
+    content 仅为 ~150~200 字试读片段；受限/解析失败返回 None。"""
     import html as _html
 
     url = f'https://fanqienovel.com/reader/{item_id}'
@@ -1661,6 +1662,11 @@ def fetch_fq_chapter(item_id: str, timeout: int = 20) -> dict[str, Any] | None:
     mc = re.search(r'"content"\s*:\s*"((?:[^"\\]|\\.){20,})"', page)
     if not mc:
         return None
+    # 付费/锁定章标记：取正文对象内（content 前最近窗口）的 isChapterLock。
+    # 锁定章 SSR 只内嵌 ~170 字试读片段，直接拿去深拆会严重污染节拍/人物分析。
+    _win = page[max(0, mc.start() - 2000):mc.start()]
+    _locks = re.findall(r'"isChapterLock"\s*:\s*(true|false)', _win)
+    locked_flag = _locks[-1] if _locks else None
     try:
         raw = json.loads('"' + mc.group(1) + '"')
     except Exception:
@@ -1688,10 +1694,14 @@ def fetch_fq_chapter(item_id: str, timeout: int = 20) -> dict[str, Any] | None:
     body = re.sub(r'\n{3,}', '\n\n', body).strip()
     if len(body) < 50:
         return None
+    # 付费墙判定：页面标记 isChapterLock=true 为准；标记缺失时，正常章普遍 2000+ 字，
+    # 不足 300 字且断在句中，基本可判定为试读片段。
+    locked = locked_flag == 'true' or (locked_flag is None and len(body) < 300)
     return {
         'itemId': str(item_id),
         'title': title,
         'content': body,
+        'locked': locked,
         'puaTotal': pua_total,
         'puaHit': pua_total - pua_left,
     }
@@ -1727,17 +1737,47 @@ def fetch_rank_book_content(platform: str, *, book_id: str | None = None,
             _FQ_DIR_CACHE[bid] = (now_ts, ids)
     if not ids:
         raise RuntimeError('章节目录获取失败（可能被平台限流），请稍后重试或直接粘贴正文')
-    max_chapters = max(1, min(int(max_chapters or 3), 10))
+    # 上限 30 章（前端提供 3/10/30 三档；章均约 2~3 千字，30 章正文约 6~9 万字）
+    max_chapters = max(1, min(int(max_chapters or 3), 30))
+    target_ids = ids[:max_chapters]
+    # 限并发 4 + 提交错峰 0.12s：30 章串行（0.5s 间隔+网络往返）要约 60~90s，
+    # 极易被平台边缘代理（约 100s）切断；并发后墙钟约 20~35s，且错峰避免瞬时高并发风控。
+    fetched: list[dict[str, Any] | None] = [None] * len(target_ids)
+
+    def _grab(pos: int, iid: str) -> tuple[int, dict[str, Any] | None]:
+        try:
+            return pos, fetch_fq_chapter(iid)
+        except Exception:
+            return pos, None
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futs = []
+        for pos, iid in enumerate(target_ids):
+            futs.append(pool.submit(_grab, pos, iid))
+            time.sleep(0.12)  # 礼貌错峰提交
+        for f in futs:
+            pos, ch = f.result()
+            fetched[pos] = ch
+
     parts: list[str] = []
     chapters: list[dict[str, Any]] = []
     pua_total_all = 0
     pua_hit_all = 0
     total = 0
     truncated = False
-    for iid in ids[:max_chapters]:
-        ch = fetch_fq_chapter(iid)
+    # 付费墙：番茄免费章连续排在前面，之后为锁定章（仅 ~170 字试读）。
+    # 在边界处停止，避免大量试读片段污染 AI 深拆。
+    locked = False
+    locked_chapter_no = 0
+    for pos, ch in enumerate(fetched):
         if not ch:
             continue
+        if ch.get('locked'):
+            locked = True
+            locked_chapter_no = pos + 1  # ids 自第 1 章正序，即全书绝对章号
+            break
+        iid = target_ids[pos]
         piece = ((ch['title'] + '\n\n') if ch.get('title') else '') + ch['content']
         if total + len(piece) >= max_chars:
             piece = piece[:max(0, max_chars - total)]
@@ -1751,9 +1791,8 @@ def fetch_rank_book_content(platform: str, *, book_id: str | None = None,
             pua_hit_all += int(ch.get('puaHit') or 0)
         if truncated:
             break
-        time.sleep(0.8)  # 礼貌限速，降低触发风控概率
     if not parts:
-        raise RuntimeError('正文抓取失败（平台可能要求验证），请直接粘贴正文后分析')
+        raise RuntimeError('正文抓取失败（平台可能要求验证或首章即付费），请直接粘贴正文后分析')
     return {
         'ok': True,
         'platform': platform,
@@ -1763,5 +1802,9 @@ def fetch_rank_book_content(platform: str, *, book_id: str | None = None,
         'content': '\n\n'.join(parts),
         'truncated': truncated,
         'decodeRate': round(pua_hit_all / pua_total_all, 3) if pua_total_all else 1.0,
+        # 付费墙信息：locked=True 表示在 lockedChapterNo 章起遇到平台付费锁，
+        # 只返回了此前全部免费章正文（试读片段不纳入）。
+        'locked': locked,
+        'lockedChapterNo': locked_chapter_no,
     }
 
