@@ -908,6 +908,28 @@ def api_rank_book_content():
     # 章均约 2.5~3.5 千字：按章数放大正文容量（3→2万 / 10→4万 / 30→12万），
     # 不再固定 2 万字导致 10 章以上被静默截断。
     max_chars = min(120000, max(20000, max_chapters * 4000))
+
+    # 免费小说站兜底路线（顶点/笔趣阁系）：按书名(+作者)搜索抓前 N 章。
+    # 非番茄平台深拆、或番茄直抓失败的前端 fallback 都走这里。
+    if platform == 'web_novel':
+        from blueprints.novel_web_crawlers import fetch_web_novel_content
+        title = (request.args.get('title') or '').strip()
+        author = (request.args.get('author') or '').strip()
+        if not title:
+            return jsonify({'ok': False, 'code': 'FETCH_FAILED',
+                            'error': '缺少书名，无法在免费小说站检索'}), 200
+        try:
+            result = fetch_web_novel_content(
+                title, author=author or None,
+                max_chapters=max_chapters, max_chars=max_chars,
+            )
+        except RuntimeError as e:
+            return jsonify({'ok': False, 'code': 'FETCH_FAILED', 'error': str(e)}), 200
+        except Exception as e:
+            return jsonify({'ok': False, 'code': 'FETCH_ERROR',
+                            'error': f'抓取异常：{str(e)[:150]}'}), 200
+        return jsonify(result)
+
     try:
         result = fetch_rank_book_content(
             platform, book_id=book_id, book_url=book_url,
