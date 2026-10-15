@@ -1257,15 +1257,48 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border-color);border-radius:2px}
 ::placeholder{color:var(--text-muted);opacity:0.6}
 
-.btn-primary{background:var(--accent);color:#fff;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn-primary:hover{background:var(--accent-hover)}
+/* ===== 统一按钮体系：同排/同列按钮必须同高 =====
+   常规档（36px）：btn-primary / btn-secondary / btn-ghost / btn-ghost-sm
+   小号档（30px）：btn-primary-sm / btn-secondary-sm / btn-sm
+   铁律：所有变体都保留 1px 透明描边占位，有无描边的按钮外框高度完全一致；
+   固定 height + 去掉 line-height 干扰，字号差异只影响文字不影响几何。 */
+.btn-primary,.btn-secondary,.btn-ghost,.btn-ghost-sm{
+  height:36px;padding:0 16px;border:1px solid transparent;border-radius:var(--radius-sm);
+  box-sizing:border-box;line-height:1;white-space:nowrap;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+}
+.btn-primary{background:var(--accent);color:#fff;font-weight:600;font-size:14px}
+.btn-primary:hover{background:var(--accent-hover)}
 .btn-primary:disabled{opacity:0.5;cursor:not-allowed}
-.btn-primary-sm{background:var(--accent);color:#fff;font-weight:600;font-size:12px;padding:5px 12px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
-.btn-secondary-sm{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);font-weight:600;font-size:12px;padding:5px 12px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn-secondary{background:var(--bg-tertiary);color:var(--text-primary);border-color:var(--border-color);font-size:14px}
+.btn-secondary:hover{background:var(--bg-hover)}
+.btn-ghost{background:transparent;color:var(--text-secondary);font-size:13px}
+.btn-ghost:hover{background:var(--bg-hover)}
+.btn-ghost-sm{background:transparent;color:var(--text-secondary);font-size:13px;border-color:var(--border-color)}
+.btn-ghost-sm:hover{border-color:var(--accent);color:var(--accent)}
+.btn-ghost-sm:disabled{opacity:0.5;cursor:not-allowed}
+/* 小号档：紧凑工具条专用，禁止与常规档按钮混入同一排 */
+.btn-primary-sm,.btn-secondary-sm,.btn-sm{
+  height:30px;padding:0 12px;border:1px solid transparent;border-radius:var(--radius-sm);
+  box-sizing:border-box;line-height:1;white-space:nowrap;font-size:12px;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+}
+.btn-primary-sm{background:var(--accent);color:#fff;font-weight:600}
+.btn-primary-sm:hover{background:var(--accent-hover)}
+.btn-primary-sm:disabled{opacity:0.5;cursor:not-allowed}
+.btn-secondary-sm{background:var(--bg-tertiary);color:var(--text-primary);border-color:var(--border-color);font-weight:600}
 .btn-secondary-sm:hover{background:var(--bg-hover)}
-.btn-secondary{background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn-secondary:hover{background:var(--bg-hover)}
-.btn-ghost{background:transparent;color:var(--text-secondary);padding:6px 10px;font-size:13px;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn-ghost:hover{background:var(--bg-hover)}
-.btn-ghost-sm{background:transparent;color:var(--text-secondary);padding:4px 8px;font-size:12px;display:inline-flex;align-items:center;justify-content:center;gap:6px}.btn-ghost-sm:hover{background:var(--bg-hover)}
-.btn-danger{background:var(--danger);color:#fff;font-weight:600;width:100%;padding:12px}.btn-danger:hover{background:var(--danger-hover)}
+.btn-sm{background:var(--bg-secondary);color:var(--text-primary);border-color:var(--border-color);cursor:pointer;touch-action:manipulation}
+.btn-sm:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.btn-sm:disabled{opacity:0.5;cursor:not-allowed}
+.btn-sm.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-sm.primary:hover:not(:disabled){opacity:0.9;color:#fff}
+/* 纯图标按钮：固定正方形命中盒，同行图标按钮宽高严格一致 */
+.btn-icon{width:30px;height:30px;padding:0;border:none;background:none;cursor:pointer;border-radius:var(--radius-sm);font-size:14px;line-height:1;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;flex:0 0 auto;transition:background .15s}
+.btn-icon:hover{background:var(--bg-secondary)}
+.btn-icon-sm{width:28px;height:28px;padding:0;border:none;background:none;cursor:pointer;border-radius:3px;font-size:14px;line-height:1;opacity:0.6;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;flex:0 0 auto;transition:opacity .15s,background .15s}
+.btn-icon-sm:hover{opacity:1;background:var(--bg-tertiary)}
+.btn-danger{background:var(--danger);color:#fff;font-weight:600;width:100%;height:44px;padding:0 16px;border:1px solid transparent;border-radius:var(--radius-sm);display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box}.btn-danger:hover{background:var(--danger-hover)}
 
 .modal-overlay{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center}
 .modal{background:var(--bg-secondary);border-radius:var(--radius-md);padding:24px;width:90vw;max-width:440px;max-height:85vh;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,0.15)}
@@ -1289,11 +1322,20 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .manual-card{border:1px dashed #7cb89e;background:rgba(124,184,158,0.06)}
 
 .input{width:100%}
-.form-row{display:flex;gap:10px;margin:10px 0}
+/* 按钮排：交叉轴居中，防止个别按钮因 margin/边框在垂直方向错位 */
+.form-row{display:flex;gap:10px;margin:10px 0;align-items:center}
+.form-row>*{margin-top:0}
+/* 高特异性覆盖 .tool-panel .btn-primary{margin-top:10px}，保证排内按钮垂直居中 */
+.tool-panel .form-row .btn-primary,.form-row .btn-primary.btn-primary{margin-top:0}
+.modal-actions{align-items:center}
+.confirm-actions{align-items:center}
 .form-field{margin:10px 0}
 .form-field label{display:block;font-size:13px;color:var(--text-secondary);margin-bottom:4px;font-weight:500}
 .input-label{font-size:14px;color:var(--text-secondary);margin-bottom:4px;display:block;font-weight:500}
-.input-row{display:flex;gap:8px}.input-row .input{flex:1}
+/* 输入框+按钮同一排：按钮拉伸到与输入框严格同高（不写死高度，跟随输入框实际高度） */
+.input-row{display:flex;gap:8px;align-items:stretch}
+.input-row .input{flex:1}
+.input-row>button{height:auto;align-self:stretch;flex:0 0 auto}
 
 .loading-screen{display:flex;align-items:center;justify-content:center;height:100vh;height:100dvh;color:var(--text-muted)}
 .text-muted{color:var(--text-muted);font-size:13px}.error-msg{color:var(--danger);margin-top:8px;font-size:13px}
@@ -1569,8 +1611,7 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .map-node-icon{font-size:18px}
 .map-node-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .map-node-actions{display:flex;gap:2px}
-.btn-icon-sm{background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:3px;font-size:14px;line-height:1;opacity:0.6;transition:opacity .15s}
-.btn-icon-sm:hover{opacity:1;background:var(--bg-tertiary)}
+/* .btn-icon-sm 几何统一收归顶部「统一按钮体系」（28×28 固定命中盒） */
 .map-node-desc{padding:0 12px 8px 40px;font-size:12px;color:var(--text-muted);line-height:1.5}
 .map-empty-hint{padding:4px 0 4px 40px;font-size:12px;font-style:italic}
 .map-desc-editor{padding:0 12px 8px 40px}
@@ -1731,8 +1772,7 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .custom-badge{display:inline-block;margin-left:6px;padding:1px 6px;background:var(--accent);color:#fff;font-size:10px;border-radius:3px;font-weight:400;vertical-align:middle}
 .builtin-badge{display:inline-block;margin-left:6px;padding:1px 6px;background:var(--accent);color:#fff;font-size:10px;border-radius:3px;font-weight:400;vertical-align:middle}
 .skill-card-actions{display:flex;gap:4px;margin-left:auto}
-.btn-icon{background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:var(--radius-sm);font-size:14px;line-height:1;transition:background .15s}
-.btn-icon:hover{background:var(--bg-secondary)}
+/* .btn-icon 几何统一收归顶部「统一按钮体系」（30×30 固定命中盒） */
 .skill-editor-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto}
 .skill-editor-modal{background:var(--bg-primary);border-radius:var(--radius-md);max-width:640px;width:100%;padding:20px;margin:auto;box-shadow:0 8px 32px rgba(0,0,0,0.2)}
 
@@ -3199,7 +3239,7 @@ textarea.input.paper-textarea{
 .bible-tips-toggle{background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;padding:6px 0;margin-top:8px}
 .bible-tips-box{padding:10px 12px;background:var(--bg-tertiary);border-radius:var(--radius-sm);margin-top:4px}
 .bible-tips-box p{font-size:12px;color:var(--text-secondary);line-height:1.6;margin:2px 0}
-.bible-empty-actions{display:flex;gap:8px;margin-top:12px;justify-content:center}
+.bible-empty-actions{display:flex;gap:8px;margin-top:12px;justify-content:center;align-items:center}
 
 /* 维度编辑框：最大化填满可用空间（手机友好） */
 .bible-editor-textarea{width:100%;min-height:50vh;padding:12px;font-size:15px;line-height:1.8;resize:vertical;font-family:inherit}
@@ -3254,21 +3294,7 @@ textarea.input.paper-textarea{
 .skill-pack-group-items .skill-pack-checkbox-item{font-size:11px;padding:4px 8px}
 .skill-pack-collapsible .skill-pack-grouped{padding:0 10px 8px}
 
-.btn-primary-sm{padding:6px 14px;font-size:13px;font-weight:600;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);cursor:pointer}
-.btn-primary-sm:hover{background:var(--accent-hover)}
-.btn-primary-sm:disabled{opacity:0.5;cursor:not-allowed}
-.btn-ghost-sm{padding:6px 14px;font-size:13px;color:var(--text-secondary);background:transparent;border:1px solid var(--border-color);border-radius:var(--radius-sm);cursor:pointer}
-.btn-ghost-sm:hover{border-color:var(--accent);color:var(--accent)}
-.btn-ghost-sm:disabled{opacity:0.5;cursor:not-allowed}
-.btn-sm{
-  padding:6px 12px;font-size:12px;
-  border:1px solid var(--border-color);background:var(--bg-secondary);color:var(--text-primary);
-  border-radius:var(--radius-sm);cursor:pointer;touch-action:manipulation;
-}
-.btn-sm:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
-.btn-sm:disabled{opacity:0.5;cursor:not-allowed}
-.btn-sm.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
-.btn-sm.primary:hover:not(:disabled){opacity:0.9;color:#fff}
+/* 按钮几何统一收归文件顶部「统一按钮体系」，此处不再重复定义（避免级联漂移导致同排按钮不等高） */
 
 /* ===== 动态文件面板（防遗忘摘要系统） ===== */
 .dm-panel{padding:12px 16px}
@@ -3819,9 +3845,11 @@ textarea.input.paper-textarea{
 }
 .chat-input:focus { outline: none; border-color: var(--accent); }
 .chat-send {
-  padding: 0 16px; border: none; border-radius: 8px;
-  background: var(--accent); color: white; font-size: 13px; font-weight: 500;
-  cursor: pointer; transition: opacity 0.15s;
+  min-height: 38px; padding: 0 16px; border: 1px solid transparent; border-radius: 8px;
+  background: var(--accent); color: white; font-size: 13px; font-weight: 500; line-height: 1;
+  cursor: pointer; transition: opacity 0.15s; box-sizing: border-box; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap;
+  align-self: stretch;
 }
 .chat-send:hover:not(:disabled) { opacity: 0.9; }
 .chat-send:disabled { opacity: 0.5; cursor: not-allowed; }

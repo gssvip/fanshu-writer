@@ -203,7 +203,7 @@ export function BibleEditPanel(props: {
           <p>暂无{tab.label}内容</p>
           <p className="text-muted">点击此处编辑，或使用上方按钮AI创作</p>
           <div className="bible-empty-actions">
-            <button className="btn-primary-sm" onClick={(e) => { e.stopPropagation(); onOpenAiCreate(tab.field); }} disabled={aiAssisting}>
+            <button className="btn-primary" onClick={(e) => { e.stopPropagation(); onOpenAiCreate(tab.field); }} disabled={aiAssisting}>
               {aiAssisting ? <><Icon name="hourglass" size={14} /> 生成中...</> : <><Icon name="sparkles" size={14} /> AI创作</>}
             </button>
             <button className="btn-ghost-sm" onClick={(e) => { e.stopPropagation(); onAnalyzeDimension(); }} disabled={dimAnalyzing || !hasChapters} title={hasChapters ? 'AI分析已有章节，自动识别' : '需要先创建章节才能AI识别'}>

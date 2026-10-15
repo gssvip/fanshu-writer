@@ -463,13 +463,13 @@ export default function MinePage() {
               >
                 <Icon name="user" size={14} /> {currentUser.username}
               </button>
-              <button className="btn-primary-sm" onClick={() => setActiveSection('account')} title="修改密码">
+              <button className="btn-primary" onClick={() => setActiveSection('account')} title="修改密码">
                 <Icon name="lock" size={14} /> 修改密码
               </button>
               <button className="btn-ghost-sm" onClick={handleLogout}>退出</button>
             </>
           ) : (
-            <button className="btn-primary-sm" onClick={() => requireAuth()}>登录 / 注册</button>
+            <button className="btn-primary" onClick={() => requireAuth()}>登录 / 注册</button>
           )}
         </div>
       </header>

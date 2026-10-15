@@ -1046,7 +1046,7 @@ ${existingVols || '（暂无）'}
           <p>暂无剧情信息</p>
           <p className="text-muted">点击「添加卷大纲」手动添加，或用AI识别自动提取</p>
           <div className="bible-empty-actions">
-            <button className="btn-primary-sm" onClick={addVolumeOutline}>＋ 添加卷大纲</button>
+            <button className="btn-primary" onClick={addVolumeOutline}>＋ 添加卷大纲</button>
             <button className="btn-ghost-sm" onClick={() => handleAnalyzeVolume('', '全部章节')} disabled={!hasChapters} title={hasChapters ? 'AI识别全部章节剧情' : '需要先创建章节才能AI识别'}>
               <Icon name="search" size={14} /> AI识别全部
             </button>

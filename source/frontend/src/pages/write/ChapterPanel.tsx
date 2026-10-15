@@ -907,8 +907,8 @@ export function ChapterPanel(props: {
     <div className="chapter-list-panel">
       <div className="chapter-list-header">
         <div className="chapter-header-row1">
-          <button className="btn-ghost-sm" onClick={() => onCreateVolume()} title="新建卷"><Icon name="folder" size={14} /> 新卷</button>
-          <button className="btn-ghost-sm" onClick={handleRebinVolumes} disabled={rebinning || !bookId || chapters.filter(c => !c.is_volume).length === 0} title="按50章/卷自动重新分卷（清空现有卷结构后重建）">
+          <button className="btn-sm" onClick={() => onCreateVolume()} title="新建卷"><Icon name="folder" size={14} /> 新卷</button>
+          <button className="btn-sm" onClick={handleRebinVolumes} disabled={rebinning || !bookId || chapters.filter(c => !c.is_volume).length === 0} title="按50章/卷自动重新分卷（清空现有卷结构后重建）">
             {rebinning ? <><Icon name="hourglass" size={13} /> 分卷中...</> : <><Icon name="refresh" size={13} /> 重新分卷</>}
           </button>
           <button className="btn-secondary-sm" onClick={() => importChaptersRef.current?.click()} disabled={importingChapters || !bookId} title="从 txt/md/docx/zip 文件追加章节，不影响已有章节">
