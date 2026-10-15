@@ -3991,7 +3991,7 @@ textarea.input.paper-textarea{
 
   /* 校审Tab：防遗忘/一致性检查按钮一排均匀分布 */
   .smart-review-actions { gap: 10px; }
-  .smart-review-actions .smart-action-btn { padding: 11px 18px; font-size: 14px; }
+  .smart-review-actions .smart-action-btn { padding: 9px 14px; font-size: 14px; }
 
   /* 校审范围：按卷 + 一致性章节 横向并排（两列等宽） */
   .smart-review-scope { flex-direction: row; gap: 10px; }
@@ -4018,7 +4018,7 @@ textarea.input.paper-textarea{
 /* Tab 工具区（维度按钮/章节选择/技能包） */
 .smart-toolbar {
   padding: 8px 10px; border-bottom: 1px solid var(--border-color);
-  background: var(--bg-tertiary); display: flex; flex-direction: column; gap: 8px;
+  background: var(--bg-tertiary); display: flex; flex-direction: column; gap: 6px;
   max-height: 40vh; overflow-y: auto;
 }
 
@@ -4211,9 +4211,9 @@ textarea.input.paper-textarea{
   display: flex; gap: 8px; flex-wrap: wrap;
 }
 .smart-action-btn {
-  flex: 1; min-width: 120px; padding: 10px 14px;
+  flex: 1; min-width: 120px; padding: 8px 12px;
   border: 1px solid var(--border-color); background: var(--bg-secondary);
-  border-radius: 8px; font-size: 13px; font-weight: 600;
+  border-radius: 8px; font-size: 13px; font-weight: 600; line-height: 1.3;
   color: var(--text-primary); cursor: pointer; transition: all 0.15s;
   touch-action: manipulation;
 }
@@ -4420,7 +4420,7 @@ textarea.input.paper-textarea{
 
 /* 智驾校审：事件日志 + 系统学习 同一行并排（桌面 + 手机端都并排），默认都收起只占一行高度 */
 .review-grid-row {
-  display: flex; flex-direction: row; gap: 6px; margin-top: 6px;
+  display: flex; flex-direction: row; gap: 6px; margin-top: 4px;
 }
 .review-grid-cell {
   flex: 1 1 0; min-width: 0; margin-top: 0;
@@ -4463,22 +4463,22 @@ textarea.input.paper-textarea{
 /* 头部更紧凑：少 padding / 小字号 → 真正一行高度；
    min-height 统一固定高度 → 无论内容差异（刷新按钮/徽章），两个按钮严格等高、文字上下位置一致 */
 .review-grid-cell .impact-preview-head {
-  padding: 5px 8px; font-size: 11.5px; gap: 4px;
-  min-height: 34px;
+  padding: 4px 8px; font-size: 11.5px; gap: 4px;
+  min-height: 28px;
 }
 .review-grid-cell .impact-preview-toggle { font-size: 10.5px; padding: 0 2px; }
 /* 手机端也强制同一行（不换行），继续压小 */
 @media (max-width: 768px) {
-  .review-grid-row { flex-wrap: nowrap; gap: 4px; margin-top: 4px; }
+  .review-grid-row { flex-wrap: nowrap; gap: 4px; margin-top: 2px; }
   .review-grid-cell { flex: 1 1 0; min-width: 0; }
   .review-grid-cell .impact-preview-head {
-    padding: 4px 6px; font-size: 11px;
+    padding: 3px 6px; font-size: 11px; min-height: 26px;
   }
   .review-grid-cell .impact-preview-body { padding: 0 6px 6px; gap: 6px; }
 }
 @media (max-width: 480px) {
   .review-grid-cell .impact-preview-head {
-    padding: 4px 5px; font-size: 10.5px;
+    padding: 3px 5px; font-size: 10.5px; min-height: 24px;
   }
   .review-grid-cell .impact-preview-toggle { font-size: 10px; }
 }
