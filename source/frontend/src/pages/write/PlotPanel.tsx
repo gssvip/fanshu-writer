@@ -107,7 +107,24 @@ export function PlotPanel(props: {
           if (Array.isArray((parsed as any)[k])) { parsed = (parsed as any)[k]; break; }
         }
       }
-      if (Array.isArray(parsed)) { setVolumes(parsed); return; }
+      if (Array.isArray(parsed)) {
+        // 类型归一化：timeline 来自 LLM/导入，卷名字段可能是数字、title 可能缺失，
+        // 这里统一收敛为 {volume: string, volume_index: number}，渲染层不再做防御。
+        const normalized = parsed
+          .filter((v: any) => v && typeof v === 'object')
+          .map((v: any) => {
+            const volName = (v.volume ?? v.title ?? v.volume_title ?? '');
+            const volNum = Number(v.volume_index ?? v.volumeIndex ?? NaN);
+            return {
+              ...v,
+              volume: String(volName || ''),
+              title: v.title === undefined || v.title === null ? String(volName || '') : String(v.title),
+              volume_index: Number.isFinite(volNum) && volNum > 0 ? volNum : undefined,
+            };
+          });
+        setVolumes(normalized);
+        return;
+      }
     } catch { /* not JSON */ }
     // 纯文本模式：作为整体大纲
     if (bible.timeline.trim()) {
@@ -246,7 +263,9 @@ export function PlotPanel(props: {
     if (!vol) return;
     const volId = vol.volume_id || '';
     const volName = vol.volume || '';
-    showConfirm(`确定删除「${volName || '该卷'}」的剧情？`, async () => {
+    const willDeleteChapter = !!(vol.volume_id && volumeChapters.find(c => c.id === vol.volume_id));
+    const extra = willDeleteChapter ? '\n\n注意：该卷的卷章（含卷标题）也会一并删除，此操作不可撤销。' : '\n\n该卷全部情节节点将被删除，此操作不可撤销。';
+    showConfirm(`确定删除「${volName || '该卷'}」的剧情？${extra}`, async () => {
       // 按 volume_id / volume 精确匹配删除，避免 displayVolumes 与 volumes 下标错位导致删错卷
       let newVols = volumes.filter((v: any) => {
         const vId = v.volume_id || '';
@@ -620,10 +639,13 @@ ${existingVols || '（暂无）'}
     const usedVolNames = new Set<string>();
     const usedVolNums = new Set<number>();
     // 卷号提取：第X卷 / 卷X / 第X部 等开头的数字
-    const extractVolNum = (s: string): number => {
-      if (!s) return 0;
+    const extractVolNum = (s: unknown): number => {
+      // LLM 产出的 timeline 不保证字段类型（可能给数字型 volume），统一归一化为字符串，
+      // 否则数字调 .match() 直接抛 TypeError 导致整个剧情面板白屏。
+      const text = s === null || s === undefined ? '' : String(s);
+      if (!text) return 0;
       const cn = '零一二三四五六七八九十';
-      const m = s.match(/第?\s*([零一二三四五六七八九十百\d]+)\s*[卷部篇]/);
+      const m = text.match(/第?\s*([零一二三四五六七八九十百\d]+)\s*[卷部篇]/);
       if (!m) return 0;
       const raw = m[1];
       if (/^\d+$/.test(raw)) return parseInt(raw, 10);
@@ -1065,7 +1087,7 @@ ${existingVols || '（暂无）'}
                     {analyzingVol === (vol.volume_id || vol.volume) ? <><Icon name="bot" size={13} /> 识别中...</> : <><Icon name="search" size={13} /> 识别</>}
                   </button>
                   <button className="btn-ghost-sm" onClick={() => startEditVol(vol.volume_id || vol.volume, vol)}><Icon name="edit" size={14} /> 编辑</button>
-                  <button className="btn-ghost-sm" onClick={() => deleteVolume(idx)} style={{color:'#e74c3c'}}><Icon name="trash" size={16} /></button>
+                  <button className="btn-ghost-sm" onClick={() => deleteVolume(idx)} style={{color:'#e74c3c'}} title="删除该卷剧情（含全部情节节点，不可恢复）" aria-label={`删除卷「${safeText(vol.volume) || `第${idx + 1}卷`}」剧情`}><Icon name="trash" size={16} /></button>
                 </div>
               </div>
               {!collapsedVols.has(idx) && (editingVol === (vol.volume_id || vol.volume) ? (

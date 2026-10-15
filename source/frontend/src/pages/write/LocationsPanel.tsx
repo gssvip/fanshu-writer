@@ -4,6 +4,8 @@ import { api } from '../../api';
 import type { BookBible, Chapter } from '../../types';
 import { collapseNewlines } from './write-shared';
 import Icon from '../../components/Icon';
+import { RelationGraph } from '../../components/RelationGraph';
+import type { GraphNode, GraphEdge } from '../../components/RelationGraph';
 
 /* ===== 地图/地点面板（按卷） ===== */
 export function LocationsPanel(props: {
@@ -78,6 +80,62 @@ export function LocationsPanel(props: {
       locCollapseInitRef.current = true;
       setCollapsedVols(new Set(displayVolumes.map((_, idx) => idx)));
     }
+  }, [displayVolumes]);
+
+  // 地图关系图：聚合各卷 AI 识别出的 区域(regions)/地点(locations)，
+  // 卷 → 区域（虚线归属）、区域 → 地点（包含）、卷 → 无区域归属的地点（虚线）。
+  const [mapGraphCollapsed, setMapGraphCollapsed] = useState(true);
+  const mapGraphData = useMemo(() => {
+    const nodes: GraphNode[] = [];
+    const edges: GraphEdge[] = [];
+    const nodeIds = new Set<string>();
+    const addNode = (id: string, label: string, tone: GraphNode['tone'], meta?: string) => {
+      if (!id || nodeIds.has(id)) return;
+      nodeIds.add(id);
+      nodes.push({ id, label, tone, meta });
+    };
+    const addEdge = (source: string, target: string, label?: string, dashed?: boolean) => {
+      if (!source || !target || source === target) return;
+      if (edges.some(e => e.source === source && e.target === target && e.label === label)) return;
+      edges.push({ source, target, label, dashed });
+    };
+    displayVolumes.forEach((vol, vi) => {
+      const d = vol.data || {};
+      const locs: any[] = Array.isArray(d.locations) ? d.locations : [];
+      const regs: any[] = Array.isArray(d.regions) ? d.regions : [];
+      if (!locs.length && !regs.length) return;
+      const volId = `vol:${vol.volume_id || vi}`;
+      const volName = vol.volume || `第${vi + 1}卷`;
+      addNode(volId, volName, 'protagonist', '卷');
+      const regionIds = new Set<string>();
+      regs.forEach((r: any) => {
+        const rname = String(r.name || '').trim();
+        if (!rname) return;
+        const rid = `reg:${rname}`;
+        regionIds.add(rid);
+        addNode(rid, rname, 'region', [r.scope, r.feature].filter(Boolean).join(' / '));
+        addEdge(volId, rid, '所辖区域', true);
+      });
+      locs.forEach((l: any) => {
+        const lname = String(l.name || '').trim();
+        if (!lname) return;
+        const lid = `loc:${lname}`;
+        addNode(lid, lname, 'location', [l.type, l.importance, l.description].filter(Boolean).join(' / '));
+        // 优先按显式 region/area 字段归属，其次按名称/描述中出现的区域名归属
+        let owner: string | undefined;
+        const explicit = String(l.region || l.area || '').trim();
+        if (explicit) owner = `reg:${explicit}`;
+        if (!owner || !nodeIds.has(owner)) {
+          owner = Array.from(regionIds).find(rid => {
+            const rn = rid.replace(/^reg:/, '');
+            return rn && (lname.includes(rn) || String(l.description || '').includes(rn));
+          });
+        }
+        if (owner) addEdge(owner, lid, l.type || '包含');
+        else addEdge(volId, lid, l.type || '出现于', true);
+      });
+    });
+    return { nodes, edges };
   }, [displayVolumes]);
 
   function toggleVol(idx: number) {
@@ -247,6 +305,24 @@ export function LocationsPanel(props: {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* 地图关系图（聚合各卷识别出的区域/地点） */}
+      {mapGraphData.nodes.length > 0 && (
+        <div className="plot-volume-list" style={{marginBottom:16}}>
+          <div className="plot-volume-card">
+            <div className="plot-volume-header" onClick={() => setMapGraphCollapsed(v => !v)} style={{cursor:'pointer'}}>
+              <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={mapGraphCollapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
+              <h4><Icon name="map" size={16} /> 地图关系图 <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:400}}>{mapGraphData.nodes.length}处 · {mapGraphData.edges.length}条归属</span></h4>
+            </div>
+            {!mapGraphCollapsed && (
+              <div className="plot-volume-body">
+                <RelationGraph nodes={mapGraphData.nodes} edges={mapGraphData.edges}
+                  emptyText="暂无地点识别数据，请先对分卷执行 AI 识别" />
+              </div>
+            )}
+          </div>
         </div>
       )}
 

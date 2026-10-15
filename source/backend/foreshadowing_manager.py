@@ -141,8 +141,12 @@ class ForeshadowingGraph:
             self.nodes[node_id].status = '已收'
             self.nodes[node_id].payoff_chapter = str(chapter_num)
 
-    def get_overdue_nodes(self, current_chapter: int, overdue_threshold: int = 10) -> List[ForeshadowingNode]:
-        """查询逾期未回收的伏笔（超过 target_chapter 仍未回收）"""
+    def get_overdue_nodes(self, current_chapter: int, overdue_threshold: int = 10) -> List[Dict[str, Any]]:
+        """查询逾期未回收的伏笔（超过 target_chapter 仍未回收）。
+
+        返回富化后的节点 dict 列表（含 overdue_gap/severity）。
+        注意：旧实现把 node_dict 算好却 append 了原 node，富化字段全部丢失，此处修正。
+        """
         overdue = []
         for node in self.nodes.values():
             if node.status in ('已收', '废弃'):
@@ -155,10 +159,75 @@ class ForeshadowingGraph:
                 node_dict = node.to_dict()
                 node_dict['overdue_gap'] = gap
                 node_dict['severity'] = 'critical' if (node.promoted and gap > overdue_threshold) else 'warning'
-                overdue.append(node)
-        # 按逾期章数降序
-        overdue.sort(key=lambda n: _parse_chapter_num(n.target_chapter) or 0)
+                overdue.append(node_dict)
+        # 逾期越久越靠前
+        overdue.sort(key=lambda d: d.get('overdue_gap', 0), reverse=True)
         return overdue
+
+    # 三级遗忘周期（与 DynamicMemory.foreshadowing_tracker 空模板 scan_rules 口径一致）：
+    # 20 章=短周期（待回收提醒），75 章=中周期（高危遗忘），150 章=长周期（核心悬念失控）
+    CYCLE_SHORT = 20
+    CYCLE_MID = 75
+    CYCLE_LONG = 150
+
+    def get_cycle_alerts(self, current_chapter: int,
+                         short: int = CYCLE_SHORT, mid: int = CYCLE_MID,
+                         long: int = CYCLE_LONG) -> List[Dict[str, Any]]:
+        """按 短/中/长 三级周期盘点未回收伏笔，返回预警列表（零 LLM 成本）。
+
+        - 有预期回收章且已超期：按超期 gap 定级；
+        - 无预期回收章：按埋设至今的 age 定级（防止"没写 target 就永不报警"）。
+        level：warning（待回收，>短周期）/ danger（高危遗忘，>中周期）/
+               critical（核心悬念，>长周期或主线核心伏笔进入 danger）。
+        """
+        alerts: List[Dict[str, Any]] = []
+        for node in self.nodes.values():
+            if node.status in ('已收', '废弃'):
+                continue
+            target = _parse_chapter_num(node.target_chapter) if node.target_chapter else None
+            created = _parse_chapter_num(node.created_at) if node.created_at else None
+            gap = (current_chapter - target) if (target and current_chapter - target > 0) else None
+            age = (current_chapter - created) if (created is not None and current_chapter - created > 0) else None
+
+            if gap is not None:
+                ref, basis = gap, 'overdue'
+            elif age is not None:
+                ref, basis = age, 'aging'
+            else:
+                continue
+            if ref <= short:
+                continue
+
+            if ref > long:
+                level, label = 'critical', '核心悬念长期未回收'
+            elif ref > mid:
+                level, label = 'danger', '高危遗忘'
+            elif node.core_hook and ref > short:
+                # 主线承重伏笔超短周期即升级一档
+                level, label = 'danger', '主线伏笔超期未回收'
+            else:
+                level, label = 'warning', '待回收伏笔超期'
+
+            alerts.append({
+                'id': node.id,
+                'content': node.content,
+                'layer': node.layer,
+                'weight': node.weight,
+                'core_hook': node.core_hook,
+                'status': node.status,
+                'created_at': node.created_at,
+                'target_chapter': node.target_chapter,
+                'gap': gap,
+                'age': age,
+                'basis': basis,
+                'level': level,
+                'label': label,
+            })
+        # critical → danger → warning；同级比权重/跨度
+        order = {'critical': 0, 'danger': 1, 'warning': 2}
+        alerts.sort(key=lambda a: (order.get(a['level'], 9), -a['weight'],
+                                   -(a['gap'] if a['gap'] is not None else a['age'] or 0)))
+        return alerts
 
     def to_dict(self) -> Dict:
         return {
@@ -348,13 +417,16 @@ def generate_status_report(graph: ForeshadowingGraph, current_chapter: int = 0) 
     resolved = [n for n in nodes if n.status == '已收']
     pending = [n for n in nodes if n.status in ('埋伏', '待收')]
     overdue = graph.get_overdue_nodes(current_chapter) if current_chapter else []
+    aging = graph.get_cycle_alerts(current_chapter) if current_chapter else []
 
     return {
         'total': total,
         'resolved_count': len(resolved),
         'pending_count': len(pending),
         'overdue_count': len(overdue),
-        'overdue': [n.to_dict() if isinstance(n, ForeshadowingNode) else n for n in overdue],
+        'aging_count': len(aging),
+        'overdue': overdue,
+        'aging': aging,
         'pending': [n.to_dict() for n in pending],
         'resolved': [n.to_dict() for n in resolved],
     }

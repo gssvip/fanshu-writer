@@ -5,9 +5,10 @@
 
 接入点：_action_chapter 正文写作时组装 ctx_blocks 后调用 rank_for_chapter。
 """
+import json
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
-import re
 
 
 # M3: 简单 ContextBus 查询封装（可被 _action_chapter 直接调用）

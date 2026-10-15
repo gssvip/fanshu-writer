@@ -1544,8 +1544,55 @@ def ai_import_recognize(book_id):
         'bible': bb.to_dict()
     })
 
+def _build_chapter_excerpt(content: str, limit: int = 200) -> str:
+    """从正文确定性地生成章节摘要（零 LLM 成本）。
+
+    用途：Chapter.summary 是轻量 RAG（_recall_related_chapters 按出场人物召回历史章）
+    与语义检索 provider 的输入，此前所有章节创建点都不写该列导致召回恒空。
+    规则：去掉首行标题/内部标签与空白 → 取前 limit 字 → 在窗口内最后一个句末标点处截断。
+    """
+    try:
+        text = (content or '').strip()
+        if not text:
+            return ''
+        # 去掉首行"第X章 标题"
+        first_nl = text.find('\n')
+        if first_nl > 0 and re.match(r'^\s*第[\d零一二三四五六七八九十百千]+章', text[:first_nl]):
+            text = text[first_nl + 1:].strip()
+        text = re.sub(r'【[^】]{1,30}】|<[^>]+>', '', text)
+        text = re.sub(r'\s+', '', text)
+        if len(text) <= limit:
+            return text
+        window = text[:limit]
+        cut = max(window.rfind('。'), window.rfind('！'), window.rfind('？'),
+                  window.rfind('…'), window.rfind('\u201d'))
+        return window[:cut + 1] if cut >= limit * 0.6 else window
+    except Exception:
+        return ''
+
+
+def _ensure_chapter_summary(chapter) -> bool:
+    """章节摘要兜底：缺摘要时用正文摘录回填并落库。返回是否做了写入。"""
+    try:
+        if not chapter or chapter.is_volume:
+            return False
+        cur = (getattr(chapter, 'summary', '') or '').strip()
+        if cur and len(cur) >= 10:
+            return False
+        excerpt = _build_chapter_excerpt(chapter.content or '')
+        if len(excerpt) < 10:
+            return False
+        chapter.summary = excerpt
+        db.session.commit()
+        return True
+    except Exception:
+        db.session.rollback()
+        return False
+
+
 def _after_chapter_persisted(book_id, chapter) -> Optional[Dict[str, Any]]:
     """【P1-2】章节创建/内容变更落库后统一钩子：
+       · 章节摘要回填（确定性摘录，供轻量 RAG/语义检索使用）
        · 事件抽取（关键章自动 LLM，普通章正则）
        · 伏笔 DAG 反查本章应埋/应收
        · 同步到实体注册表
@@ -1553,6 +1600,8 @@ def _after_chapter_persisted(book_id, chapter) -> Optional[Dict[str, Any]]:
     """
     if not chapter or chapter.is_volume or not (chapter.content or '').strip():
         return None
+    # 摘要列兜底：此前所有创建点均不写 summary，导致按出场人物召回历史章恒为空
+    _ensure_chapter_summary(chapter)
     bb = BookBible.query.filter_by(book_id=book_id).first()
     if not bb:
         return None
@@ -1925,28 +1974,44 @@ def ai_anti_forget_check(book_id):
     except Exception:
         pass
 
-    # 2. 伏笔 DAG 结构化状态（pending 节点 + 已回收节点）
+    # 2. 伏笔 DAG 结构化状态（pending 节点 + 已回收节点 + 20/75/150 周期预警）
+    fs_cycle_alerts = []
     try:
-        if bb.foreshadowing_graph and get_hooks_for_chapter:
+        if bb.foreshadowing_graph:
             graph = ForeshadowingGraph.from_dict(json.loads(bb.foreshadowing_graph))
+            # graph.nodes 是 Dict[str, ForeshadowingNode]，必须取 .values()
             pending_nodes = graph.get_pending_nodes()
-            resolved_nodes = [n for n in (graph.nodes or []) if getattr(n, 'status', '') in ('resolved', 'payoff', '已回收', '已揭示')]
+            resolved_nodes = [n for n in graph.nodes.values()
+                              if getattr(n, 'status', '') == '已收']
             fs_dag_lines = []
             if pending_nodes:
                 fs_dag_lines.append(f'待回收伏笔（{len(pending_nodes)}条）：')
                 for node in pending_nodes[:20]:
-                    desc = (node.content or node.title or '')[:80]
-                    planted = getattr(node, 'setup_chapter', '') or getattr(node, 'planted_chapter', '') or ''
-                    fs_dag_lines.append(f'  - [{node.id}] {desc}（埋设于第{planted}章）')
+                    # ForeshadowingNode 真实字段是 content/created_at/target_chapter，
+                    # 旧代码误用 node.title/setup_chapter（不存在）导致整块必崩被吞
+                    desc = (node.content or '')[:80]
+                    planted = node.created_at or '未知'
+                    target = node.target_chapter or '未定'
+                    fs_dag_lines.append(f'  - [{node.id}] {desc}（埋设于第{planted}章，计划第{target}章回收，{node.layer}权重{node.weight}）')
             if resolved_nodes:
                 fs_dag_lines.append(f'已回收伏笔（{len(resolved_nodes)}条，若正文再次当作未回收则属违规）：')
                 for node in resolved_nodes[:10]:
-                    desc = (node.content or node.title or '')[:60]
+                    desc = (node.content or '')[:60]
                     fs_dag_lines.append(f'  - [{node.id}] {desc}')
+            # 三级周期预警（20/75/150），作为确定性参照喂给 LLM 审查
+            fs_cycle_alerts = graph.get_cycle_alerts(ch_count) if ch_count else []
+            if fs_cycle_alerts:
+                fs_dag_lines.append(f'超期预警（按20/75/150章周期，{len(fs_cycle_alerts)}条，必须逐条核对）：')
+                for a in fs_cycle_alerts[:20]:
+                    ref = a['gap'] if a['gap'] is not None else a['age']
+                    basis = '超期' if a['basis'] == 'overdue' else '埋设至今'
+                    fs_dag_lines.append(
+                        f"  - [{a['level']}] [{a['id']}] {a['content'][:60]}"
+                        f"（{a['label']}，{basis}{ref}章，{a['layer']}）")
             if fs_dag_lines:
                 structured_ctx_parts.append('【伏笔DAG结构化状态】（权威伏笔状态，以此为准检查正文是否矛盾）\n' + '\n'.join(fs_dag_lines))
     except Exception:
-        pass
+        fs_cycle_alerts = []
 
     structured_ctx = '\n\n'.join(structured_ctx_parts)
 
@@ -2081,6 +2146,60 @@ def ai_anti_forget_check(book_id):
             report['violations'] = _violations
     except Exception:
         pass  # 规范化失败不阻断报告返回
+
+    # ===== 伏笔 20/75/150 周期预警确定性合并（不依赖 LLM 是否提及）=====
+    # LLM 审查可能漏报伏笔遗忘，且返回可能是 raw 文本；这里把 DAG 计算出的超期预警
+    # 强制并入报告：violations 供前端任务流逐条修正，pending_foreshadowing 供列表展示。
+    try:
+        if not isinstance(report, dict):
+            report = {'summary': str(content or '')[:500], 'raw': True}
+        if fs_cycle_alerts:
+            _lvl_map = {'critical': '严重', 'danger': '警告', 'warning': '提示'}
+            _urg_map = {'critical': '紧急', 'danger': '紧急', 'warning': '一般'}
+            vios = report.get('violations')
+            vios = vios if isinstance(vios, list) else []
+            existing_desc = {str(v.get('desc', ''))[:40] for v in vios if isinstance(v, dict)}
+            for a in fs_cycle_alerts:
+                ref = a['gap'] if a['gap'] is not None else a['age']
+                basis = '超过预期回收章' if a['basis'] == 'overdue' else '埋设后长期无回收计划'
+                desc = f"伏笔遗忘（{a['label']}）：{a['content'][:60]}（{basis}{ref}章）"
+                if desc[:40] in existing_desc:
+                    continue
+                vios.append({
+                    'type': '伏笔',
+                    'severity': _lvl_map.get(a['level'], '提示'),
+                    'location': f"第{ch_count}章·伏笔{a['id']}" if ch_count else f"伏笔{a['id']}",
+                    'desc': desc,
+                    'fix': f"尽快安排回收「{a['content'][:30]}」，或明确废弃并在正文交代",
+                    'foreshadow_id': a['id'],
+                    'alert_level': a['level'],
+                    'deterministic': True,
+                })
+                existing_desc.add(desc[:40])
+            report['violations'] = vios
+
+            pf = report.get('pending_foreshadowing')
+            pf = pf if isinstance(pf, list) else []
+            existing_pf = {str(x.get('content', ''))[:30] for x in pf if isinstance(x, dict)}
+            for a in fs_cycle_alerts:
+                if a['content'][:30] in existing_pf:
+                    continue
+                pf.append({
+                    'content': a['content'][:80],
+                    'buried_at': f"第{a['created_at'] or '?'}章",
+                    'urgency': _urg_map.get(a['level'], '一般'),
+                    'suggest_chapter': f"建议{ch_count + max(1, min(10, ref or 5))}章前回收" if ch_count else '',
+                    'alert_level': a['level'],
+                    'deterministic': True,
+                })
+            report['pending_foreshadowing'] = pf
+            report['foreshadowing_alerts'] = fs_cycle_alerts
+            report['foreshadowing_aging_counts'] = {
+                lv: sum(1 for a in fs_cycle_alerts if a['level'] == lv)
+                for lv in ('critical', 'danger', 'warning')
+            }
+    except Exception:
+        pass
 
     # 持久化到 DynamicMemory.health_dashboard（防遗忘仪表盘，保留原逻辑）
     if not dm:
@@ -4055,10 +4174,19 @@ def _recall_related_chapters(book_id, appearing_chars, current_chapter_num, max_
 
     recalled = []
     seen_chapters = set()
+    backfilled = 0
     for ch in candidates:
         summary = (getattr(ch, 'summary', '') or '').strip()
         if not summary or len(summary) < 10:
-            continue  # 无 summary 无法判断相关性
+            # 老数据惰性迁移：历史章节没有 summary（旧版本从不写入该列），
+            # 用确定性正文摘录回填，否则本召回对存量书恒返回空。
+            excerpt = _build_chapter_excerpt(ch.content or '')
+            if len(excerpt) < 10:
+                continue  # 无正文也无摘要，无法判断相关性
+            ch.summary = excerpt
+            db.session.add(ch)
+            backfilled += 1
+            summary = excerpt
         # 相关性判定：summary 含当前章出场角色名
         if any(name in summary for name in appearing_chars):
             if ch.order_index not in seen_chapters:
@@ -4070,6 +4198,11 @@ def _recall_related_chapters(book_id, appearing_chars, current_chapter_num, max_
                 })
             if len(recalled) >= max_chapters:
                 break
+    if backfilled:
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
     # 按章号升序排列（剧情时间顺序）
     recalled.sort(key=lambda x: x['chapter_num'])
     return recalled

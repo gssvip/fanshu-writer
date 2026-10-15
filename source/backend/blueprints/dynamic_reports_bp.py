@@ -25,6 +25,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
+import requests
 from flask import Blueprint, jsonify, request
 
 from auth_utils import login_required

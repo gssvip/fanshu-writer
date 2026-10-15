@@ -4,6 +4,8 @@ import { api } from '../../api';
 import type { BookBible, Chapter, SkillPack } from '../../types';
 import { SkillPackGroupedList, extractSkillPrompt } from './write-shared';
 import Icon from '../../components/Icon';
+import { RelationGraph, parseRelationLine } from '../../components/RelationGraph';
+import type { GraphNode, GraphEdge } from '../../components/RelationGraph';
 
 /* ===== 人物及关系面板 ===== */
 export interface CharacterData {
@@ -64,6 +66,58 @@ export function CharacterPanel(props: {
   const [relGraphCollapsed, setRelGraphCollapsed] = useState(true);
   const [relGraphEditing, setRelGraphEditing] = useState(false);
   const [relGraphValue, setRelGraphValue] = useState('');
+  const [relViewMode, setRelViewMode] = useState<'graph' | 'text'>('graph');
+
+  // 构建人物关系图：节点=角色档案（按 role 着色），
+  // 边=① relation_graph 文本里的"A → B：关系" ② 每个角色 relationships 文本中提到其他角色的片段
+  const relationGraphData = useMemo(() => {
+    const nodeMap = new Map<string, GraphNode>();
+    const edgeSet = new Set<string>();
+    const edges: GraphEdge[] = [];
+    const nameSet = new Set<string>();
+    const pushEdge = (source: string, target: string, label?: string) => {
+      if (!source || !target || source === target) return;
+      const key = `${source}›${target}›${label || ''}`;
+      if (edgeSet.has(key)) return;
+      edgeSet.add(key);
+      edges.push({ source, target, label: label || undefined });
+    };
+    for (const c of characters) {
+      const name = (c.name || '').trim();
+      if (!name) continue;
+      nameSet.add(name);
+      const roleStr = `${c.role || ''} ${c.identity || ''}`;
+      const tone = /主角|protagonist|女主|男主/.test(roleStr) ? 'protagonist'
+        : /反派|antagonist|对手|宿敌|boss/i.test(roleStr) ? 'antagonist' : 'default';
+      const meta = [c.identity, c.personality, c.background].filter(Boolean).slice(0, 2).join(' / ');
+      nodeMap.set(name, { id: name, label: name, tone, meta: meta.slice(0, 80) });
+
+      // relationships 自由文本：按分隔符切片，命中其他角色名即建边
+      const rel = (c.relationships || '').trim();
+      if (rel) {
+        for (const seg of rel.split(/[，,；;、\n]+/).map(x => x.trim()).filter(Boolean)) {
+          for (const other of characters.map(o => (o.name || '').trim()).filter(n => n && n !== name)) {
+            if (seg.includes(other)) {
+              const label = seg.replace(other, '').replace(/^[是为与和跟的：:\s]+|[的]$/g, '').trim() || seg;
+              pushEdge(name, other, label.slice(0, 12));
+              nameSet.add(other);
+              break;
+            }
+          }
+        }
+      }
+    }
+    // relation_graph 文本行
+    for (const line of (bible?.relation_graph || '').split(/\n+/)) {
+      const r = parseRelationLine(line);
+      if (!r) continue;
+      nameSet.add(r.source); nameSet.add(r.target);
+      if (!nodeMap.has(r.source)) nodeMap.set(r.source, { id: r.source, label: r.source, tone: 'default' });
+      if (!nodeMap.has(r.target)) nodeMap.set(r.target, { id: r.target, label: r.target, tone: 'default' });
+      pushEdge(r.source, r.target, r.label);
+    }
+    return { nodes: Array.from(nodeMap.values()), edges, nameCount: nameSet.size };
+  }, [characters, bible?.relation_graph]);
 
   function toggleChar(idx: number) {
     setCollapsedChars(prev => {
@@ -754,8 +808,14 @@ export function CharacterPanel(props: {
         <div className="plot-volume-card">
           <div className="plot-volume-header" onClick={() => setRelGraphCollapsed(v => !v)} style={{cursor:'pointer'}}>
             <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={relGraphCollapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
-            <h4><Icon name="link" size={16} /> 人物关系图谱</h4>
+            <h4><Icon name="link" size={16} /> 人物关系图谱 <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:400}}>{relationGraphData.nodes.length}人 · {relationGraphData.edges.length}条关系</span></h4>
             <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+              {!relGraphEditing && (
+                <div style={{display:'inline-flex',border:'1px solid var(--border)',borderRadius:6,overflow:'hidden',marginRight:6}}>
+                  <button onClick={() => setRelViewMode('graph')} style={{border:'none',padding:'3px 10px',fontSize:12,cursor:'pointer',background:relViewMode==='graph'?'var(--accent)':'transparent',color:relViewMode==='graph'?'#fff':'var(--text)'}}>关系图</button>
+                  <button onClick={() => setRelViewMode('text')} style={{border:'none',padding:'3px 10px',fontSize:12,cursor:'pointer',background:relViewMode==='text'?'var(--accent)':'transparent',color:relViewMode==='text'?'#fff':'var(--text)'}}>文本</button>
+                </div>
+              )}
               {relGraphEditing ? (
                 <>
                   <button className="btn-primary-sm" onClick={async () => {
@@ -766,7 +826,7 @@ export function CharacterPanel(props: {
                   <button className="btn-ghost-sm" onClick={() => { setRelGraphEditing(false); setRelGraphValue(bible?.relation_graph || ''); }}>取消</button>
                 </>
               ) : (
-                <button className="btn-ghost-sm" onClick={() => { setRelGraphEditing(true); setRelGraphValue(bible?.relation_graph || ''); }} title="编辑人物关系图谱"><Icon name="edit" size={14} /> 编辑</button>
+                <button className="btn-ghost-sm" onClick={() => { setRelGraphEditing(true); setRelViewMode('text'); setRelGraphValue(bible?.relation_graph || ''); }} title="编辑人物关系图谱（张三 → 李四：师徒）"><Icon name="edit" size={14} /> 编辑</button>
               )}
             </div>
           </div>
@@ -774,6 +834,13 @@ export function CharacterPanel(props: {
             <div className="plot-volume-body">
               {relGraphEditing ? (
                 <textarea className="input" value={relGraphValue} onChange={e => setRelGraphValue(e.target.value)} rows={10} style={{fontFamily:'monospace',fontSize:12}} placeholder="用文本描述人物关系图谱，例如：\n张三 → 李四：师徒\n张三 → 王五：宿敌\n李四 → 赵六：恋人" />
+              ) : relViewMode === 'graph' ? (
+                relationGraphData.nodes.length > 0 ? (
+                  <RelationGraph nodes={relationGraphData.nodes} edges={relationGraphData.edges}
+                    emptyText="暂无角色：请先在上方添加人物，或在文本视图用「张三 → 李四：师徒」格式录入关系" />
+                ) : (
+                  <div style={{fontSize:13,color:'var(--text-muted)',padding:'12px 4px'}}>暂无角色：请先在上方添加人物，或点「编辑」用「张三 → 李四：师徒」格式录入关系</div>
+                )
               ) : (
                 <div style={{fontSize:13,lineHeight:1.7,whiteSpace:'pre-wrap',color: bible?.relation_graph ? 'var(--text-primary)' : 'var(--text-muted)'}}>
                   {bible?.relation_graph || '暂无关系图谱，点击「编辑」手动输入或通过 AI 识别生成'}

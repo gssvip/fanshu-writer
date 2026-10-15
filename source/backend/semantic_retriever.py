@@ -196,7 +196,10 @@ class SemanticRetriever:
                 chapter_tf_list.append(tf)
                 self._chunks.append({
                     'chapter_idx': chapter_idx,
-                    'text': s[:200],  # 调试留痕，不参与向量
+                    # 必须存完整 chunk 文本：下方 TF-IDF 向量化阶段从该字段重新分词，
+                    # 若截断成前 200 字，2000 字块后 85% 内容永远进不了索引（免费模型/
+                    # 无 embedding key 走 TF-IDF 兜底时召回严重残缺）。
+                    'text': s,
                 })
                 for token in tf:
                     self._df[token] += 1
