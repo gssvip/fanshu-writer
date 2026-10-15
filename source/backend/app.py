@@ -848,7 +848,13 @@ def _do_fetch_models(base_url, api_key, model=None):
     )
     if resp.status_code != 200:
         return None, f'请求失败 (HTTP {resp.status_code})：{resp.text[:200]}', 400
-    result = resp.json()
+    # HTTP 200 但响应体非 JSON 时兜住（同 _do_test_connection），给出可读错误
+    try:
+        result = resp.json()
+    except ValueError:
+        ctype = (resp.headers.get('Content-Type') or '未知')[:80]
+        body = (resp.text or '(空响应体)').strip()[:200]
+        return None, f'拉取失败：接口返回了非 JSON 数据（HTTP {resp.status_code}，Content-Type: {ctype}）：{body}', 400
     # OpenRouter：专门只显示免费模型（pricing.prompt/completion 均为 0），收费模型一律隐藏
     is_openrouter = 'openrouter.ai' in (base or '').lower()
     is_opencode = 'opencode.ai' in (base or '').lower()
@@ -1017,7 +1023,15 @@ def _do_test_connection(base_url, api_key, model):
             'model': model,
             'usage': {}
         }, None, 200
-    result = resp.json()
+    # HTTP 200 但响应体非 JSON（空响应体 / HTML 拦截页 / 中转站异常响应）时，
+    # resp.json() 会抛 JSONDecodeError "Expecting value: line 1 column 1 (char 0)"，
+    # 这里兜住并给出可读错误（含 Content-Type 与响应体片段），方便定位 base_url 填错或中转站问题
+    try:
+        result = resp.json()
+    except ValueError:
+        ctype = (resp.headers.get('Content-Type') or '未知')[:80]
+        body = (resp.text or '(空响应体)').strip()[:200]
+        return None, f'连接失败：接口返回了非 JSON 数据（HTTP {resp.status_code}，Content-Type: {ctype}）：{body}', 400
     if 'choices' in result and len(result['choices']) > 0:
         reply = result['choices'][0]['message']['content']
         usage = result.get('usage', {})
