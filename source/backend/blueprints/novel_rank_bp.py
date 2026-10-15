@@ -22,6 +22,12 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request
 
+# 触发 LLM 的 rank 路由必须登录：/api/rank/ 在全局鉴权白名单内（榜单浏览是公共
+# 数据），白名单路径不会被全局守卫注入 request.current_user_id；若不单独加
+# login_required，get_llm_config() 会回落到共享/系统兜底 key（user_id IS NULL），
+# 表现为"别的功能用用户自己的模型正常，定位轻拆却 429 余额不足"。
+from auth_utils import login_required
+
 from blueprints.novel_rank_crawlers import (
     RANK_CATEGORIES,
     RANK_SITES,
@@ -794,6 +800,7 @@ def _core_rank_scan_for_concept(concept: str, platform: str = 'fanqie',
 
 
 @novel_rank_bp.route('/api/rank/scan-for-concept', methods=['POST'])
+@login_required
 def api_rank_scan_for_concept():
     """智驾入口：根据构想，匹配同题材新书榜 → 抓取 TopN → LLM 抽市场情报 → 返回 RankScanReport。
     Request JSON：
@@ -938,6 +945,7 @@ _POSITION_ANALYZE_SCHEMA_HINT = (
 
 
 @novel_rank_bp.route('/api/rank/position-analyze', methods=['POST'])
+@login_required
 def api_rank_position_analyze():
     """榜单元数据 → 定位轻拆（不依赖正文）。输入为榜单 NRItem + 当前赛道热词。"""
     payload = request.get_json(silent=True) or {}
