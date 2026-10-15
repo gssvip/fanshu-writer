@@ -4917,21 +4917,23 @@ textarea.input.paper-textarea{
   align-self: center;
 }
 
-/* ===== 榜单直拆操作行：四个控件一排等宽（定位轻拆 / 前N章 / 抓正文深拆 / 粘贴）===== */
+/* ===== 榜单直拆操作行 =====
+   桌面（≥768px）：单行 flex —— 轻拆｜前N章+深拆 靠左，贴文靠右
+   手机（<768px）：2×2 网格 —— 第一行 轻拆｜深拆（核心二选一），第二行 章节数｜贴文 */
 .nr-rank-actions {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 0 14px 12px;
   align-items: stretch;
 }
 .nr-rank-actions .nr-ra-btn,
 .nr-rank-actions .nr-ra-select {
-  margin: 0; /* 覆盖 .tool-panel .btn-primary 的 margin-top:10px，避免 grid 错位截短 */
-  width: 100%;
+  margin: 0; /* 覆盖 .tool-panel .btn-primary 的 margin-top:10px，避免 flex 错位截短 */
+  width: auto;
   min-width: 0;
   height: 34px;
-  padding: 0 8px;
+  padding: 0 16px;
   font-size: 12.5px;
   line-height: 1.2;
   display: inline-flex;
@@ -4941,21 +4943,43 @@ textarea.input.paper-textarea{
   white-space: nowrap;
   border-radius: 8px;
   box-sizing: border-box;
+  flex: 0 0 auto;
 }
 .nr-rank-actions .nr-ra-select {
   cursor: pointer;
+  flex-basis: 92px;
+  width: 92px;
+  padding: 0 6px;
 }
-/* 定位轻拆保留强调描边层级（尺寸仍与其余三个完全一致） */
-.nr-rank-actions .nr-ra-btn:first-child {
+/* 轻拆：描边强调，但视觉权重低于主按钮深拆 */
+.nr-rank-actions .nr-ra-light {
   border-color: var(--accent);
   color: var(--accent);
   font-weight: 700;
 }
-/* 非番茄平台：无章节下拉，中间禁用按钮占第 2-3 格（保持 4 列轨道，首尾按钮与番茄版同排对齐） */
+/* 贴文：桌面端推到行尾，与左侧拆解动作分组 */
+.nr-rank-actions .nr-ra-paste {
+  margin-left: auto;
+}
+/* 非番茄平台：禁用提示位于中间（贴文仍靠右） */
 .nr-rank-actions .nr-ra-wide {
-  grid-column: span 2;
+  flex: 0 1 auto;
   opacity: 0.6;
   cursor: not-allowed;
+}
+/* 未拆解前的选择引导行 */
+.nr-ra-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 0 14px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.nr-ra-hint svg {
+  flex-shrink: 0;
+  margin-top: 3px;
 }
 .tools-top-section .nr-collapsible-body {
   display: block;
@@ -4989,20 +5013,35 @@ textarea.input.paper-textarea{
     align-self: flex-start;
     margin-bottom: 4px;
   }
-  /* 榜单直拆四个操作：桌面一排 4 个，手机端改 2×2，避免文字挤压 */
-  .nr-rank-actions,
-  .nr-rank-actions.no-fetch {
-    grid-template-columns: repeat(2, 1fr);
+  /* 榜单直拆操作行：手机端 2×2 网格，触控高度加大到 38px */
+  .nr-rank-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     padding: 0 10px 10px;
   }
   .nr-rank-actions .nr-ra-btn,
   .nr-rank-actions .nr-ra-select {
-    height: 36px;
-    font-size: 12.5px;
+    width: 100%;
+    height: 38px;
+    font-size: 13px;
+    padding: 0 10px;
   }
-  /* 非番茄平台的禁用宽按钮：手机端独占整行（第二行） */
+  /* 番茄：第一行 轻拆｜深拆（用户二选一），第二行 章节数｜贴文 */
+  .nr-rank-actions .nr-ra-light  { grid-column: 1; grid-row: 1; }
+  .nr-rank-actions .nr-ra-deep   { grid-column: 2; grid-row: 1; }
+  .nr-rank-actions .nr-ra-select { grid-column: 1; grid-row: 2; flex: none; width: 100%; }
+  .nr-rank-actions .nr-ra-paste  { grid-column: 2; grid-row: 2; margin-left: 0; }
+  /* 非番茄：第一行 轻拆｜贴文，第二行禁用提示整行 */
+  .nr-rank-actions.no-fetch .nr-ra-light { grid-column: 1; grid-row: 1; }
+  .nr-rank-actions.no-fetch .nr-ra-paste { grid-column: 2; grid-row: 1; }
   .nr-rank-actions .nr-ra-wide {
-    grid-column: span 2;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex: none;
+    width: 100%;
+  }
+  .nr-ra-hint {
+    padding: 0 10px 10px;
   }
   .tools-page .page-header {
     padding-top: 12px;

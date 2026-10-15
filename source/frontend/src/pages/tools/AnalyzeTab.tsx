@@ -47,6 +47,7 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
   const [fetchedMeta, setFetchedMeta] = useState<{ chapters: number; total: number; decodeRate: number; locked?: boolean; lockedChapterNo?: number } | null>(null);
 
   // 切换到竞品模式更符合榜单对标场景：榜单书进入时默认竞品拆书
+  // 注意：进入时不再自动跑轻拆——等用户自己选择「轻拆」或「深拆」
   useEffect(() => {
     if (rankBook) {
       setAnalyzeMode('competitor');
@@ -58,8 +59,6 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
       setAnalyzeResult(null);
       setAnalyzeInput('');
       setUploadFilename('');
-      // 自动跑一次定位轻拆（零正文、秒出）；失败显示重试，不强弹
-      void handlePositionAnalyze(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rankBook?.bookId, rankBook?.platform]);
@@ -246,22 +245,25 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
                 style={{flexShrink:0,border:'none',background:'transparent',color:'var(--text-muted)',cursor:'pointer',padding:4,fontSize:16,lineHeight:1}}>×</button>
             </div>
 
-            {/* 四个动作一排等宽：定位轻拆 / 前N章 / 抓正文深拆 / 粘贴兜底（手机端自动 2×2） */}
-            <div className={`nr-rank-actions${rankBook.platform === 'fanqie' ? '' : ' no-fetch'}`}>
-              <button type="button" className="btn-secondary nr-ra-btn"
-                onClick={() => handlePositionAnalyze(false)} disabled={positionLoading}>
-                {positionLoading ? <><Icon name="hourglass" size={13} /> 定位分析中…</> : <><Icon name="target" size={13} /> 定位轻拆{positionResult ? '（重跑）' : ''}</>}
+            {/* 拆书动作：用户手动选择「轻拆」或「深拆」，贴文为已有正文的兜底入口
+                桌面：轻拆｜前N章+深拆 ........ 贴文（单行 flex）；手机：轻拆/深拆 二选一第一行 */}
+            <div className={`nr-rank-actions${rankBook.platform === 'fanqie' ? ' is-fanqie' : ' no-fetch'}`}>
+              <button type="button" className="btn-secondary nr-ra-btn nr-ra-light"
+                onClick={() => handlePositionAnalyze(false)} disabled={positionLoading || deepLoading}
+                title="仅凭榜单元数据快速定位：赛道、卖点、目标读者，无需正文">
+                {positionLoading ? <><Icon name="hourglass" size={13} /> 轻拆中…</> : <><Icon name="target" size={13} /> 轻拆{positionResult ? '（重跑）' : ''}</>}
               </button>
 
               {rankBook.platform === 'fanqie' ? (
                 <>
                   <select className="input nr-ra-select" value={chapterN} onChange={e => setChapterN(Number(e.target.value))}
-                    disabled={deepLoading} aria-label="抓取章节数">
+                    disabled={deepLoading || positionLoading} aria-label="抓取章节数" title="深拆自动抓取的正文章节数">
                     {[3, 10, 30].map(n => <option key={n} value={n}>前 {n} 章</option>)}
                   </select>
-                  <button type="button" className="btn-primary nr-ra-btn"
-                    onClick={handleDeepAnalyze} disabled={deepLoading}>
-                    {deepLoading ? <><Icon name="hourglass" size={13} /> 抓取分析中…</> : <><Icon name="download" size={13} /> 抓正文深拆</>}
+                  <button type="button" className="btn-primary nr-ra-btn nr-ra-deep"
+                    onClick={handleDeepAnalyze} disabled={deepLoading || positionLoading}
+                    title="自动抓取前 N 章正文，做完整深度拆解">
+                    {deepLoading ? <><Icon name="hourglass" size={13} /> 深拆中…</> : <><Icon name="download" size={13} /> 深拆</>}
                   </button>
                 </>
               ) : (
@@ -271,10 +273,19 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
                 </button>
               )}
 
-              <button type="button" className="btn-secondary nr-ra-btn" onClick={handlePasteFallback}>
-                <Icon name="edit" size={13} /> 我有正文，粘贴
+              <button type="button" className="btn-secondary nr-ra-btn nr-ra-paste" onClick={handlePasteFallback}
+                title="手上已有正文，粘贴到下方后开始分析">
+                <Icon name="edit" size={13} /> 贴文
               </button>
             </div>
+
+            {/* 未做任何拆解前的选择引导（开始轻拆/深拆/贴文后消失） */}
+            {!positionResult && !analyzeResult && !positionLoading && !deepLoading && !deepError && (
+              <div className="nr-ra-hint">
+                <Icon name="info" size={12} />
+                <span>请选择拆解方式：「轻拆」仅凭榜单数据秒出定位；「深拆」自动抓前 {chapterN} 章正文深度拆解；手上已有正文点「贴文」。</span>
+              </div>
+            )}
 
             {deepMsg && (
               <div style={{padding:'0 14px 10px',fontSize:12.5,color:'var(--accent)',display:'flex',alignItems:'center',gap:6}}>
@@ -299,10 +310,10 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
               </div>
             )}
 
-            {/* 定位轻拆结果 */}
+            {/* 轻拆结果 */}
             {positionLoading && !positionResult && (
               <div style={{padding:'4px 14px 14px',fontSize:13,color:'var(--text-muted)'}}>
-                <Icon name="hourglass" size={13} /> 正在基于榜单数据做定位分析…
+                <Icon name="hourglass" size={13} /> 正在基于榜单数据做轻拆定位分析…
               </div>
             )}
             {positionError && !positionResult && (
@@ -313,7 +324,7 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
             {positionResult && (
               <div style={{borderTop:'1px solid color-mix(in srgb, var(--accent) 22%, var(--border-color))',padding:'12px 14px'}}>
                 <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8,fontSize:13,fontWeight:800,color:'var(--accent)'}}>
-                  <Icon name="target" size={14} /> 定位轻拆（基于榜单数据，无需正文）
+                  <Icon name="target" size={14} /> 轻拆（基于榜单数据，无需正文）
                 </div>
                 {positionResult.genre_tags?.length ? (
                   <div className="analyze-tags" style={{marginBottom:8}}>
@@ -365,7 +376,7 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
           <span className="text-muted" style={{alignSelf:'center',fontSize:11}}>支持 txt/md/docx/zip</span>
         </div>
         <textarea ref={textareaRef} className="input" rows={8} value={analyzeInput} onChange={e => setAnalyzeInput(e.target.value)}
-          placeholder={rankBook ? '点击上方「抓正文深拆」自动填入，或点「我有正文，粘贴」后在此粘贴正文…' : '粘贴要分析的作品片段（建议2000字以上），或导入文件自动填充...'} />
+          placeholder={rankBook ? '点上方「深拆」自动抓正文填入，或点「贴文」后在此粘贴已有正文…' : '粘贴要分析的作品片段（建议2000字以上），或导入文件自动填充...'} />
         <div className="form-row">
           <button className="btn-primary" onClick={handleAnalyze} disabled={!analyzeInput.trim() || analyzeLoading}>
             {analyzeLoading ? '分析中...' : '开始分析'}
