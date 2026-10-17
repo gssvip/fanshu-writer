@@ -1568,7 +1568,7 @@ ${chapterEditContent}`;
           {books.map(b => (
             <div key={b.id} className="book-card" onClick={() => navigate(`/write?book=${b.id}`)}>
               <div className="book-card-cover">
-                {b.cover_path ? <img src={b.cover_path} alt="" /> : <div className="cover-placeholder"><Icon name="book" size={36} /></div>}
+                {b.cover_path ? <img src={b.cover_path} alt="" /> : <div className="cover-placeholder"><span className="cover-badge"><Icon name="book" size={18} /></span></div>}
               </div>
               <div className="book-card-info">
                 <h3>{b.title}</h3>

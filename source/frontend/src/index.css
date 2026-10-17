@@ -1406,9 +1406,24 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .write-page .book-grid{padding-left:16px;padding-right:16px}
 .book-card{background:var(--bg-secondary);border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--border-color);cursor:pointer;transition:all .15s}
 .book-card:active{transform:scale(0.98)}
-.book-card-cover{height:110px;background:var(--bg-tertiary);display:flex;align-items:center;justify-content:center}
+.book-card-cover{height:110px;background:var(--bg-tertiary);display:flex;align-items:center;justify-content:center;position:relative}
 .book-card-cover img{width:100%;height:100%;object-fit:cover}
 .cover-placeholder{font-size:40px;color:var(--text-muted);opacity:0.5}
+/* 作品封面占位：撑满卡片封面区并居中「迷你立体书封」徽标（不写 background，避免与各主题 .cover-placeholder 的 !important 背景冲突） */
+.book-card-cover .cover-placeholder{
+  width:100%;height:100%;opacity:1;font-size:0;
+  display:flex;align-items:center;justify-content:center;
+}
+/* 精致封面图标：迷你立体书封（书脊 + 斜向高光 + 居中书本线稿） */
+.cover-badge{
+  position:relative;width:44px;height:58px;border-radius:4px 9px 9px 4px;
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;background:var(--accent);overflow:hidden;
+  box-shadow:0 3px 8px rgba(0,0,0,.18),inset -1px 0 0 rgba(255,255,255,.22);
+}
+.cover-badge::before{content:'';position:absolute;left:0;top:0;bottom:0;width:7px;background:rgba(0,0,0,.16)}
+.cover-badge::after{content:'';position:absolute;left:-30%;top:-10%;width:70%;height:120%;background:linear-gradient(90deg,rgba(255,255,255,.26),rgba(255,255,255,0));transform:skewX(-18deg)}
+.cover-badge svg{position:relative;z-index:1;opacity:.95}
 .book-card-info{padding:12px}
 .book-card-info h3{font-size:14px;font-weight:600;margin-bottom:4px}
 .book-card-meta{font-size:11px;color:var(--text-muted);display:flex;gap:8px;margin-bottom:6px}
@@ -2541,7 +2556,7 @@ textarea.input.paper-textarea{
 @media (max-width: 767px) {
   .analyze-grid{grid-template-columns:1fr}
   .skill-grid{grid-template-columns:1fr}
-  .book-grid{grid-template-columns:repeat(2,1fr)}
+  .book-grid{grid-template-columns:repeat(3,1fr)}
   .review-score-header{flex-direction:column;text-align:center}
 }
 
@@ -2666,7 +2681,15 @@ textarea.input.paper-textarea{
   .mine-stats{gap:12px}
   .skill-apply-bar{position:sticky;bottom:0;backdrop-filter:blur(8px)}
   .page-header h1{font-size:17px}
-  .book-grid{gap:10px;padding:12px}
+  /* 每排三个作品：卡片整体收紧，封面/徽标/文字同步缩小。
+     统一加 .write-page 前缀提高优先级，避免被 [data-theme="dark"] .book-grid{gap:14px} 等主题规则覆盖。
+     左右内边距固定 16px，与上方"选择作品"标题栏严格平齐。 */
+  .write-page .book-grid{gap:8px;padding:10px 16px}
+  .write-page .book-card-cover{height:96px}
+  .write-page .cover-badge{width:38px;height:50px}
+  .write-page .book-card-info{padding:8px 9px}
+  .write-page .book-card-info h3{font-size:12.5px;line-height:1.28;margin-bottom:3px;word-break:break-word}
+  .write-page .book-card-meta{font-size:10px;gap:6px;margin-bottom:0}
 }
 
 /* 键盘弹出时编辑区底部留白跟随（JS 设 --kb-height） */
@@ -2685,6 +2708,16 @@ textarea.input.paper-textarea{
   .write-page:not(.chapter-mode) .write-content{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(var(--safe-bottom) + 12px)}
   /* 章节模式：预览可滚动，编辑器固定高度 */
   .write-page.chapter-mode .write-content{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  /* 选择作品视图：write-page 固定高度 + overflow:hidden 会把网格裁掉且无法滚动，
+     这里让作品网格吃满剩余高度并可纵向滚动。
+     必须 align-content:start + grid-auto-rows:max-content——grid 默认 align-content:stretch
+     会把 auto 行压缩/拉伸去填满容器高度，导致永不溢出（scrollHeight==clientHeight）、
+     无法滚动且卡片内容被裁切。 */
+  .write-page>.book-grid{
+    flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    align-content:start;grid-auto-rows:max-content;
+    padding-bottom:calc(var(--safe-bottom) + 16px);
+  }
 }
 
 /* 滚动惯性 */
