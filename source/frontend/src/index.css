@@ -1414,16 +1414,23 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
   width:100%;height:100%;opacity:1;font-size:0;
   display:flex;align-items:center;justify-content:center;
 }
-/* 精致封面图标：迷你立体书封（书脊 + 斜向高光 + 居中书本线稿） */
+/* 精致封面图标：浅色纸面迷你书封（书脊 + 斜向高光 + 居中书本线稿）
+   纸面用 accent 与卡片底色混合生成，保证纯白/宣纸/护眼绿/水墨各主题下都是浅色纸面。
+   ★ 不能用 background:var(--accent) 实心填充：light 主题 accent=近墨黑 #1e242b，会变成"一片黑" */
 .cover-badge{
   position:relative;width:44px;height:58px;border-radius:4px 9px 9px 4px;
   display:flex;align-items:center;justify-content:center;
-  color:#fff;background:var(--accent);overflow:hidden;
-  box-shadow:0 3px 8px rgba(0,0,0,.18),inset -1px 0 0 rgba(255,255,255,.22);
+  overflow:hidden;
+  color:var(--accent);
+  background:linear-gradient(150deg,
+    color-mix(in srgb, var(--accent) 18%, var(--bg-card, #ffffff)) 0%,
+    color-mix(in srgb, var(--accent)  6%, var(--bg-card, #ffffff)) 100%);
+  box-shadow:0 2px 6px color-mix(in srgb, var(--text-primary) 16%, transparent),
+             inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
 }
-.cover-badge::before{content:'';position:absolute;left:0;top:0;bottom:0;width:7px;background:rgba(0,0,0,.16)}
-.cover-badge::after{content:'';position:absolute;left:-30%;top:-10%;width:70%;height:120%;background:linear-gradient(90deg,rgba(255,255,255,.26),rgba(255,255,255,0));transform:skewX(-18deg)}
-.cover-badge svg{position:relative;z-index:1;opacity:.95}
+.cover-badge::before{content:'';position:absolute;left:0;top:0;bottom:0;width:6px;background:color-mix(in srgb, var(--accent) 32%, transparent)}
+.cover-badge::after{content:'';position:absolute;left:-30%;top:-10%;width:70%;height:120%;background:linear-gradient(90deg,rgba(255,255,255,.5),rgba(255,255,255,0));transform:skewX(-18deg)}
+.cover-badge svg{position:relative;z-index:1;opacity:.92}
 .book-card-info{padding:12px}
 .book-card-info h3{font-size:14px;font-weight:600;margin-bottom:4px}
 .book-card-meta{font-size:11px;color:var(--text-muted);display:flex;gap:8px;margin-bottom:6px}
