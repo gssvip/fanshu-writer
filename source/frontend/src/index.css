@@ -1405,7 +1405,7 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .write-page .book-select-header{margin-left:16px;margin-right:16px}
 .write-page .book-grid{padding-left:16px;padding-right:16px}
 /* 选择作品页：卡片即书封，9:16 竖版，下方信息区已并入封面 */
-.write-page .book-card{aspect-ratio:9/16}
+.write-page .book-card{aspect-ratio:2/3}
 .write-page .book-card-cover{height:100%}
 .write-page .book-card-info{display:none}
 .book-card{background:var(--bg-secondary);border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--border-color);cursor:pointer;transition:all .15s}
@@ -1413,13 +1413,12 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .book-card-cover{height:110px;background:var(--bg-tertiary);display:flex;align-items:center;justify-content:center;position:relative}
 .book-card-cover img{width:100%;height:100%;object-fit:cover}
 .cover-placeholder{font-size:40px;color:var(--text-muted);opacity:0.5}
-/* 纸质书封面：封面区即书封本体，左侧书脊 + 内描边 + 竖排书名居中
+/* 纸质书封面：封面区即书封本体，内描边 + 竖排书名居中
    不设 background，沿用各主题 .book-card-cover 的浅色纸面渐变，避免出现黑块 */
 .book-card-cover .cover-placeholder{
   width:100%;height:100%;opacity:1;
   display:flex;align-items:center;justify-content:center;
   position:relative;overflow:hidden;
-  border-left:5px solid color-mix(in srgb, var(--accent) 72%, black);
   box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent),
              inset 0 1px 8px rgba(255,255,255,.45),
              inset 0 -1px 4px color-mix(in srgb, var(--accent) 12%, transparent);
