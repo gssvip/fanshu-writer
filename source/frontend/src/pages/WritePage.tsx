@@ -1570,13 +1570,6 @@ ${chapterEditContent}`;
               <div className="book-card-cover">
                 {b.cover_path ? <img src={b.cover_path} alt="" /> : <div className="cover-placeholder"><span className="cover-title">{b.title}</span></div>}
               </div>
-              <div className="book-card-info">
-                <h3>{b.title}</h3>
-                <div className="book-card-meta">
-                  <span>{b.book_type === 'novel' ? '长篇' : b.book_type === 'script' ? '剧本' : '短篇'}</span>
-                  <span>{b.word_count}字</span>
-                </div>
-              </div>
             </div>
           ))}
           {books.length === 0 && (

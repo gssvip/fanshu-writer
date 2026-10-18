@@ -1404,6 +1404,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
    — 标题栏两侧留边与网格水平内边距取同一值（统一 16px，覆盖暗色 24px/大屏 20px 的差异，保证任何主题断点都不跑偏） */
 .write-page .book-select-header{margin-left:16px;margin-right:16px}
 .write-page .book-grid{padding-left:16px;padding-right:16px}
+/* 选择作品页：卡片即书封，9:16 竖版，下方信息区已并入封面 */
+.write-page .book-card{aspect-ratio:9/16}
+.write-page .book-card-cover{height:100%}
+.write-page .book-card-info{display:none}
 .book-card{background:var(--bg-secondary);border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--border-color);cursor:pointer;transition:all .15s}
 .book-card:active{transform:scale(0.98)}
 .book-card-cover{height:110px;background:var(--bg-tertiary);display:flex;align-items:center;justify-content:center;position:relative}
@@ -1420,16 +1424,19 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
              inset 0 1px 8px rgba(255,255,255,.45),
              inset 0 -1px 4px color-mix(in srgb, var(--accent) 12%, transparent);
 }
-/* 竖排书名（writing-mode vertical-rl，从右向左、从上到下，传统书封排版）*/
+/* 竖排书名（writing-mode vertical-rl，从右向左、从上到下，传统书封排版）
+   一列排不下时自动换到左侧第二列（max-width 限 2 列，超长截断）*/
 .cover-title{
+  position:relative;
   writing-mode:vertical-rl;
   -webkit-writing-mode:vertical-rl;
-  font-size:16px;font-weight:600;line-height:1.45;
+  font-size:16px;font-weight:600;line-height:1.5;
   color:color-mix(in srgb, var(--accent) 82%, black);
   letter-spacing:3px;
-  max-height:78%;
+  max-height:86%;
+  max-width:2.6em;
   overflow:hidden;
-  white-space:nowrap;
+  white-space:normal;
   font-family:var(--font-serif, 'Georgia','Noto Serif SC','STSong',serif);
   text-shadow:0 1px 0 rgba(255,255,255,.5);
 }
@@ -2700,11 +2707,7 @@ textarea.input.paper-textarea{
      统一加 .write-page 前缀提高优先级，避免被 [data-theme="dark"] .book-grid{gap:14px} 等主题规则覆盖。
      左右内边距固定 16px，与上方"选择作品"标题栏严格平齐。 */
   .write-page .book-grid{gap:8px;padding:10px 16px}
-  .write-page .book-card-cover{height:96px}
-  .write-page .cover-title{font-size:14px;letter-spacing:2px;max-height:82%}
-  .write-page .book-card-info{padding:8px 9px}
-  .write-page .book-card-info h3{font-size:12.5px;line-height:1.28;margin-bottom:3px;word-break:break-word}
-  .write-page .book-card-meta{font-size:10px;gap:6px;margin-bottom:0}
+  .write-page .cover-title{font-size:15px;letter-spacing:2px;max-height:86%;max-width:2.6em;white-space:normal;line-height:1.5}
 }
 
 /* 键盘弹出时编辑区底部留白跟随（JS 设 --kb-height） */
