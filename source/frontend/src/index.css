@@ -1409,28 +1409,36 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .book-card-cover{height:110px;background:var(--bg-tertiary);display:flex;align-items:center;justify-content:center;position:relative}
 .book-card-cover img{width:100%;height:100%;object-fit:cover}
 .cover-placeholder{font-size:40px;color:var(--text-muted);opacity:0.5}
-/* 作品封面占位：撑满卡片封面区并居中「迷你立体书封」徽标（不写 background，避免与各主题 .cover-placeholder 的 !important 背景冲突） */
+/* 纸质书封面：封面区即书封本体，左侧书脊 + 内描边 + 竖排书名居中
+   不设 background，沿用各主题 .book-card-cover 的浅色纸面渐变，避免出现黑块 */
 .book-card-cover .cover-placeholder{
-  width:100%;height:100%;opacity:1;font-size:0;
+  width:100%;height:100%;opacity:1;
   display:flex;align-items:center;justify-content:center;
+  position:relative;overflow:hidden;
+  border-left:5px solid color-mix(in srgb, var(--accent) 72%, black);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent),
+             inset 0 1px 8px rgba(255,255,255,.45),
+             inset 0 -1px 4px color-mix(in srgb, var(--accent) 12%, transparent);
 }
-/* 精致封面图标：浅色纸面迷你书封（书脊 + 斜向高光 + 居中书本线稿）
-   纸面用 accent 与卡片底色混合生成，保证纯白/宣纸/护眼绿/水墨各主题下都是浅色纸面。
-   ★ 不能用 background:var(--accent) 实心填充：light 主题 accent=近墨黑 #1e242b，会变成"一片黑" */
-.cover-badge{
-  position:relative;width:44px;height:58px;border-radius:4px 9px 9px 4px;
-  display:flex;align-items:center;justify-content:center;
+/* 竖排书名（writing-mode vertical-rl，从右向左、从上到下，传统书封排版）*/
+.cover-title{
+  writing-mode:vertical-rl;
+  -webkit-writing-mode:vertical-rl;
+  font-size:16px;font-weight:600;line-height:1.45;
+  color:color-mix(in srgb, var(--accent) 82%, black);
+  letter-spacing:3px;
+  max-height:78%;
   overflow:hidden;
-  color:var(--accent);
-  background:linear-gradient(150deg,
-    color-mix(in srgb, var(--accent) 18%, var(--bg-card, #ffffff)) 0%,
-    color-mix(in srgb, var(--accent)  6%, var(--bg-card, #ffffff)) 100%);
-  box-shadow:0 2px 6px color-mix(in srgb, var(--text-primary) 16%, transparent),
-             inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+  white-space:nowrap;
+  font-family:var(--font-serif, 'Georgia','Noto Serif SC','STSong',serif);
+  text-shadow:0 1px 0 rgba(255,255,255,.5);
 }
-.cover-badge::before{content:'';position:absolute;left:0;top:0;bottom:0;width:6px;background:color-mix(in srgb, var(--accent) 32%, transparent)}
-.cover-badge::after{content:'';position:absolute;left:-30%;top:-10%;width:70%;height:120%;background:linear-gradient(90deg,rgba(255,255,255,.5),rgba(255,255,255,0));transform:skewX(-18deg)}
-.cover-badge svg{position:relative;z-index:1;opacity:.92}
+/* 书脊装饰：书名左侧一条细金线，强化书封质感 */
+.cover-title::before{
+  content:'';
+  position:absolute;left:-10px;top:8%;bottom:8%;width:1px;
+  background:color-mix(in srgb, var(--accent) 40%, transparent);
+}
 .book-card-info{padding:12px}
 .book-card-info h3{font-size:14px;font-weight:600;margin-bottom:4px}
 .book-card-meta{font-size:11px;color:var(--text-muted);display:flex;gap:8px;margin-bottom:6px}
@@ -2693,7 +2701,7 @@ textarea.input.paper-textarea{
      左右内边距固定 16px，与上方"选择作品"标题栏严格平齐。 */
   .write-page .book-grid{gap:8px;padding:10px 16px}
   .write-page .book-card-cover{height:96px}
-  .write-page .cover-badge{width:38px;height:50px}
+  .write-page .cover-title{font-size:14px;letter-spacing:2px;max-height:82%}
   .write-page .book-card-info{padding:8px 9px}
   .write-page .book-card-info h3{font-size:12.5px;line-height:1.28;margin-bottom:3px;word-break:break-word}
   .write-page .book-card-meta{font-size:10px;gap:6px;margin-bottom:0}
