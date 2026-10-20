@@ -313,6 +313,22 @@ def _gate_until_boot():
         return None
     return _jsonify({'error': '服务预热中，请稍候', 'warming': True}), 503
 
+
+# 全局异常兜底：避免未捕获异常直接返回空白 HTML 500，便于线上定位（不暴露敏感堆栈全文）
+@app.errorhandler(Exception)
+def _global_exception_handler(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e  # 404/401/400 等 HTTP 异常走原生响应
+    import traceback
+    from flask import request as _req, jsonify as _jsonify
+    err = traceback.format_exc()
+    print(f'[500] {_req.method} {_req.path}: {type(e).__name__}: {e}', flush=True)
+    print(err, flush=True)
+    # 仅回传异常类型与末尾摘要，不回传完整堆栈（防信息泄露）
+    return _jsonify({'error': f'{type(e).__name__}: {str(e)[:200]}', 'path': _req.path}), 500
+
+
 EXPORTS_DIR = DATA_DIR / 'exports'
 EXPORTS_DIR.mkdir(exist_ok=True)
 COVERS_DIR = DATA_DIR / 'covers'
@@ -9178,6 +9194,12 @@ def init_db():
             row = None
         if row and row[0] == SCHEMA_SEED_VERSION:
             print(f'[INIT] ✅ schema/seed 版本一致（{SCHEMA_SEED_VERSION}），跳过迁移与种子同步', flush=True)
+            # 安全兜底：create_all 只创建缺失的表，绝不删除/修改已有表与数据，
+            # 防止"版本门禁命中但某表（如 auth_tokens）缺失"导致登录等接口 500。
+            try:
+                db.create_all()
+            except Exception as _e:
+                print(f'[INIT] ⚠️ create_all 兜底失败（不影响已有数据）：{_e}', flush=True)
             _print_db_diagnosis()
             return
         db.create_all()
