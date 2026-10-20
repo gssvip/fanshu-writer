@@ -178,6 +178,22 @@ if DATABASE_URL:
     # 兼容 Render/Heroku 的 postgres:// 前缀（SQLAlchemy 2.0+ 需要 postgresql://）
     if DATABASE_URL.startswith('postgres://'):
         DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    # Render 不支持 IPv6 出网，而 Neon 等托管 PG 的 DNS 有时返回 IPv6 地址，
+    # 导致 "Network is unreachable"。这里在启动时把主机名解析为 IPv4，通过
+    # hostaddr 传给 libpq，跳过 DNS 的 AAAA 解析。
+    _ipv4_host = None
+    try:
+        from sqlalchemy.engine import make_url
+        _u = make_url(DATABASE_URL)
+        if _u.host:
+            import socket as _sock
+            for _fam, _type, _proto, _canon, _sockaddr in _sock.getaddrinfo(_u.host, None, _sock.AF_INET, _sock.SOCK_STREAM):
+                _ipv4_host = _sockaddr[0]
+                break
+            if _ipv4_host:
+                print(f'[DB] IPv4 解析: {_u.host} -> {_ipv4_host}', flush=True)
+    except Exception as _dns_e:
+        print(f'[DB] ⚠️ 主机名 IPv4 解析失败，使用原始地址：{_dns_e}', flush=True)
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
     print(f'[DB] ✅ 使用 PostgreSQL 外部数据库（铁律：数据持久化，部署不丢失）', flush=True)
 else:
@@ -208,7 +224,7 @@ if DATABASE_URL:
     # psycopg2/psycopg3 专属 keepalives：防中间代理（Render/Cloudflare/PGBouncer）在大事务时静默断连
     # （tcp_user_timeout/keepalives* 均为 libpq 标准 conninfo 参数，两驱动通用）
     if 'psycopg2' in DATABASE_URL or 'psycopg://' in DATABASE_URL or DATABASE_URL.startswith(('postgresql://', 'postgres://')):
-        _engine_opts['connect_args'] = {
+        _ca = {
             'connect_timeout': 15,          # 建连超时 15s
             'keepalives': 1,                # 启用 TCP keepalive
             'keepalives_idle': 30,          # 空闲 30s 开始探测
@@ -216,6 +232,10 @@ if DATABASE_URL:
             'keepalives_count': 5,          # 5 次探测失败判死（总 80s）
             'tcp_user_timeout': 120000,     # 大包未 ACK 2 分钟判死（毫秒，Linux ≥ 2.6.37）
         }
+        if _ipv4_host:
+            # hostaddr 跳过 libpq 的 DNS 解析，直连 IPv4（规避 Render IPv6 不可达）
+            _ca['hostaddr'] = _ipv4_host
+        _engine_opts['connect_args'] = _ca
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = _engine_opts
 
 CORS(app, resources={r"/api/*": {"origins": "*"}})
