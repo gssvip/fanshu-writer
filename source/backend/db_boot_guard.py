@@ -15,7 +15,7 @@ OperationalError 进程退出 → Render 反复 "Deploy Error / Service Unavaila
 from __future__ import annotations
 
 
-def wait_for_db_ready(max_attempts: int = 5, base_delay: float = 2.0) -> None:
+def wait_for_db_ready(max_attempts: int = 6, base_delay: float = 2.0) -> None:
     """阻塞直到 db.session 能跑通 SELECT 1（连接确认可用）。
 
     仅在"连接建立失败"时重试；app_meta 表不存在等业务错误不会被本函数吞掉
