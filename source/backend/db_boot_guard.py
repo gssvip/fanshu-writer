@@ -44,9 +44,10 @@ def wait_for_db_ready(max_attempts: int = 6, base_delay: float = 2.0) -> None:
                       f'{type(e).__name__}），{delay:.0f}s 后重试（Neon 冷唤醒属正常现象）', flush=True)
                 _time.sleep(delay)
     print('=' * 70, flush=True)
-    print('[INIT][FATAL] PostgreSQL 始终连不上，进程退出（Render 会保留旧实例继续服务）', flush=True)
-    print(f'[INIT][FATAL] 最后错误：{type(last_err).__name__}: {last_err}', flush=True)
-    print('[INIT][FATAL] 排查：① Render Environment 里 DATABASE_URL 是否正确 ② Neon/PG', flush=True)
-    print('[INIT][FATAL]   免费版长期无流量会被暂停/回收，去控制台确认实例还在 ③ 网络白名单', flush=True)
+    print('[INIT][WARN] PostgreSQL 连接超时，继续启动（pool_pre_ping 将在查询时重连）', flush=True)
+    print(f'[INIT][WARN] 最后错误：{type(last_err).__name__}: {last_err}', flush=True)
+    print('[INIT][WARN] 若 Neon 免费版已暂停，首个业务请求会自动触发冷唤醒', flush=True)
     print('=' * 70, flush=True)
-    raise SystemExit('[INIT] PostgreSQL 不可达，拒绝启动（保护用户数据，详见上方日志）')
+    # 不再 SystemExit：让进程正常启动并监听端口，Render 不会判定服务挂掉；
+    # SQLAlchemy pool_pre_ping=True 会在每次查询前检测连接，DB 恢复后自动重连。
+    return

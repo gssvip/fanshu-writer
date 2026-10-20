@@ -12,7 +12,14 @@ from app import app, init_db, _set_boot_ready, _clear_boot_ready
 # 清掉可能残留的旧就绪标记，避免"上次部署已就绪"的假象让 worker 跳过预热门禁
 _clear_boot_ready()
 
-init_db()
+try:
+    init_db()
+except Exception as _e:
+    # DB 不可用（Neon 暂停/限流）时不让 gunicorn 启动失败：
+    # 进程继续监听端口，pool_pre_ping 在查询时自动重连，DB 恢复后业务自动正常。
+    import traceback
+    print(f'[INIT][WARN] init_db 跳过（DB 暂不可用）：{type(_e).__name__}: {_e}', flush=True)
+    print(traceback.format_exc(), flush=True)
 
 # 关键：gunicorn prefork 下，master 默认不执行 app.py 的 __main__ 后台预热线程，
 # 不写 .boot_ready 标记的话，fork 出来的 worker 内存 _BOOT_READY 恒 False 且磁盘
