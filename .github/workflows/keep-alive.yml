@@ -5,6 +5,12 @@ name: Keep-Alive
 # 唤醒（拉起容器 + init_db），期间前端报"无法连接到服务器，可能正在冷启动中"。
 # 本工作流每 10 分钟轻量探活一次 /api/health，保持实例常温，消除冷启动。
 # 免费额度 750 实例小时/月 > 全月 720 小时，常温运行不超额。
+#
+# 【配额铁律 2026-10-20】/api/health 已改为**不触碰数据库**（见 health_bp.py）：
+# 历史上该端点会执行 SELECT 1 唤醒 Neon，本保活每 10 分钟一次 → Neon 计算节点
+# 全年无休 ≈ 720 小时/月 > Neon 免费版计算配额 → 触发
+# "Your account or project has exceeded the quota" → Neon 拒绝全部连接、登录 500。
+# 因此本工作流只用于保持 Render 常温，严禁再请求 ?db=1（那会重新烧 Neon 配额）。
 # ============================================================================
 
 on:
@@ -19,6 +25,7 @@ jobs:
     steps:
       - name: GET /api/health
         run: |
+          # 注意：不带 ?db=1 —— 只探活进程，不唤醒 Neon（保护计算配额）
           code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 120 https://fanshu-writer-backend.onrender.com/api/health)
           echo "health endpoint status: $code"
           # 2xx 即成功；部署窗口内可能超时/502 属正常，等下一轮再探，不让工作流失败
