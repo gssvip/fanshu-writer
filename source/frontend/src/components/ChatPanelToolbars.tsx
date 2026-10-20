@@ -60,7 +60,7 @@ export function GeneralAssistantSelector({ roles, currentId, onSelect }: {
 }) {
   const [open, setOpen] = useState(false);
   const [cfgOpen, setCfgOpen] = useState(false);
-  const [draft, setDraft] = useState<{ tavily: string; exa: string; brave: string }>({ tavily: '', exa: '', brave: '' });
+  const [draft, setDraft] = useState<{ tavily: string; exa: string; brave: string; tencent_yuanbao: string }>({ tavily: '', exa: '', brave: '', tencent_yuanbao: '' });
   const [state, setState] = useState<{ keys: Record<string, string>; env: Record<string, boolean> } | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -79,9 +79,9 @@ export function GeneralAssistantSelector({ roles, currentId, onSelect }: {
   const saveCfg = async () => {
     setSaving(true);
     try {
-      const r = await api.saveSearchConfig({ tavily: draft.tavily.trim(), exa: draft.exa.trim(), brave: draft.brave.trim() });
+      const r = await api.saveSearchConfig({ tavily: draft.tavily.trim(), exa: draft.exa.trim(), brave: draft.brave.trim(), tencent_yuanbao: draft.tencent_yuanbao.trim() });
       setMsg(`✅ 已保存（${Object.entries(r.updated).filter(([, v]) => v).map(([k]) => k).join(' / ') || '已清空'}）`);
-      setDraft({ tavily: '', exa: '', brave: '' });
+      setDraft({ tavily: '', exa: '', brave: '', tencent_yuanbao: '' });
       loadCfg();
     } catch (e: any) {
       setMsg('❌ 保存失败：' + (e?.message || String(e)));
@@ -158,14 +158,14 @@ export function GeneralAssistantSelector({ roles, currentId, onSelect }: {
             ><Icon name="x" size={14} /></button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {(['tavily', 'exa', 'brave'] as const).map(k => (
+            {(['tencent_yuanbao', 'tavily', 'exa', 'brave'] as const).map(k => (
               <label key={k} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>{k === 'tavily' ? 'Tavily' : k === 'exa' ? 'Exa' : 'Brave Search'}
+                <span style={{ fontSize: 12, fontWeight: 600, color: '#555' }}>{k === 'tencent_yuanbao' ? '腾讯元宝搜索' : k === 'tavily' ? 'Tavily' : k === 'exa' ? 'Exa' : 'Brave Search'}
                   <span style={{ color: '#aaa', fontWeight: 400, marginLeft: 6 }}>{state?.keys[k] ? '（已保存）' : '（未配置）'}</span>
                 </span>
                 <input
                   type="password"
-                  placeholder="填写 API Key；留空则不修改"
+                  placeholder={k === 'tencent_yuanbao' ? '填写元宝搜索 API KEY（api.wsa.cloud.tencent.com）' : '填写 API Key；留空则不修改'}
                   value={draft[k]}
                   onChange={(e) => setDraft(d => ({ ...d, [k]: e.target.value }))}
                   style={{ fontSize: 12, padding: '7px 9px', border: '1px solid #d9d9e4', borderRadius: 8, outline: 'none' }}
@@ -181,7 +181,7 @@ export function GeneralAssistantSelector({ roles, currentId, onSelect }: {
               <span style={{ fontSize: 11, color: msg.startsWith('✅') ? '#288f2b' : msg.startsWith('❌') ? '#c32e2e' : '#888' }}>{msg}</span>
             </div>
             <div style={{ fontSize: 11, color: '#aaa', lineHeight: 1.6 }}>
-              不填也能联网（DuckDuckGo 兜底）；填 Tavily/Exa/Brave 任一生效，结果更稳更准。保存后立即生效。
+              不填也能联网（DuckDuckGo 兜底）；填腾讯元宝/Tavily/Exa/Brave 任一生效，结果更稳更准。保存后立即生效。
             </div>
           </div>
         </div>,

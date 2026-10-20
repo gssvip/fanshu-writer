@@ -62,7 +62,8 @@ def _sync_search_keys_from_preference():
         d = _json.loads(raw) if isinstance(raw, str) else {}
         if not isinstance(d, dict):
             return
-        for env_key, pref_key in (('TAVILY_API_KEY', 'tavily'), ('EXA_API_KEY', 'exa'), ('BRAVE_API_KEY', 'brave')):
+        for env_key, pref_key in (('TAVILY_API_KEY', 'tavily'), ('EXA_API_KEY', 'exa'),
+                                  ('BRAVE_API_KEY', 'brave'), ('TENCENTCLOUD_WSA_APIKEY', 'tencent_yuanbao')):
             if not os.environ.get(env_key):
                 v = str(d.get(pref_key) or '').strip()
                 if v:
@@ -83,11 +84,11 @@ def ai_search_config_get():
     except Exception:
         d = {}
     masked = {}
-    for k in ('tavily', 'exa', 'brave'):
+    for k in ('tavily', 'exa', 'brave', 'tencent_yuanbao'):
         v = str(d.get(k) or '').strip()
         masked[k] = '已配置' if v else ''
     env = {}
-    for k in ('TAVILY_API_KEY', 'EXA_API_KEY', 'BRAVE_API_KEY'):
+    for k in ('TAVILY_API_KEY', 'EXA_API_KEY', 'BRAVE_API_KEY', 'TENCENTCLOUD_WSA_APIKEY'):
         env[k] = bool(str(os.environ.get(k) or '').strip())
     return jsonify({'keys': masked, 'env': env})
 
@@ -105,7 +106,7 @@ def ai_search_config_put():
     except Exception:
         cur = {}
     changed = {}
-    for k in ('tavily', 'exa', 'brave'):
+    for k in ('tavily', 'exa', 'brave', 'tencent_yuanbao'):
         if k in body:
             v = str(body.get(k) or '').strip()
             cur[k] = v

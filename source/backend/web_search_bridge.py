@@ -2,7 +2,7 @@
 
 调度优先级（命中即止，不浪费 Key）：
 1) 模型原生联网：智谱 GLM / 一些中转支持原生 web_search 参数 → 直接把原生参数拼给 LLM chat（不消耗外部搜索 Key，效果最好）。
-2) 第三方搜索 API：按环境变量存在顺序挑 Tavily / Exa / Brave Search (官方 Data API) / 智谱搜索 / Perplexity。
+2) 第三方搜索 API：按环境变量存在顺序挑 腾讯元宝搜索(SearchPro) / Tavily / Exa / Brave Search (官方 Data API) / 智谱搜索 / Perplexity。
 3) 兜底：公开 HTML 搜索（DuckDuckGo HTML Lite）→ BeautifulSoup 解析 title/url/snippet。
 
 任何一层失败都不打断主聊天：静默 fallback 到下一层，全部失败就返回 { ok=False }，前端显示"未联网：使用本地知识"。
@@ -166,6 +166,53 @@ def _try_brave(query: str, num: int, timeout: float) -> Optional[SearchResult]:
         return _make_fallback('brave', str(e)[:300], int((time.time() - t0) * 1000))
 
 
+def _try_tencent_yuanbao(query: str, num: int, timeout: float) -> Optional[SearchResult]:
+    """腾讯云元宝搜索（SearchPro，API KEY 鉴权）。
+
+    文档：https://cloud.tencent.com/document/product/1806/130615
+    - POST https://api.wsa.cloud.tencent.com/SearchPro
+    - Authorization: Bearer <TENCENTCLOUD_WSA_APIKEY>
+    - Body: {"Query": "..."}
+    - 返回 Response.Pages 为 JSON 字符串数组，每条含 passage/title/url/site/date 等。
+    中文搜索质量高，适合国内用户的事实/时效性查询。
+    """
+    key = os.environ.get('TENCENTCLOUD_WSA_APIKEY') or ''
+    if not key:
+        return None
+    t0 = time.time()
+    try:
+        import requests
+        r = requests.post('https://api.wsa.cloud.tencent.com/SearchPro', timeout=timeout,
+                          headers={
+                              'Authorization': 'Bearer ' + key,
+                              'Content-Type': 'application/json; charset=utf-8',
+                          },
+                          json={'Query': query})
+        if r.status_code != 200:
+            return _make_fallback('tencent_yuanbao', f'HTTP {r.status_code}: {r.text[:200]}',
+                                  int((time.time() - t0) * 1000))
+        j = r.json() or {}
+        pages = ((j.get('Response') or {}).get('Pages') or [])
+        hits: List[SearchHit] = []
+        for raw in pages[:num]:
+            try:
+                pj = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except Exception:
+                continue
+            if not isinstance(pj, dict):
+                continue
+            title = str(pj.get('title') or '').strip()
+            url = str(pj.get('url') or '').strip()
+            snippet = str(pj.get('passage') or '').strip()
+            if not title and not snippet:
+                continue
+            hits.append(SearchHit(title=title or '(无标题)', url=url, snippet=snippet))
+        return SearchResult(ok=len(hits) > 0, engine='tencent_yuanbao', hits=hits,
+                            latency_ms=int((time.time() - t0) * 1000))
+    except Exception as e:
+        return _make_fallback('tencent_yuanbao', str(e)[:300], int((time.time() - t0) * 1000))
+
+
 def _try_duckduckgo_html(query: str, num: int, timeout: float) -> SearchResult:
     """兜底：DuckDuckGo HTML Lite（不要求 Key，中文支持一般但英文事实/时效性题够用）。"""
     t0 = time.time()
@@ -220,8 +267,9 @@ def run_web_search(query: str, *, num_results: int = 5, timeout_per_engine: floa
     if not (query or '').strip():
         return _make_fallback('noop', '空 query', 0)
     q = (query or '').strip()
-    # provider 顺序：Tavily（综合中文事实好）→ Exa（高语义）→ Brave（质量高）→ DuckDuckGo HTML 兜底
+    # provider 顺序：腾讯元宝搜索（中文质量高）→ Tavily → Exa → Brave → DuckDuckGo HTML 兜底
     providers = [
+        lambda: _try_tencent_yuanbao(q, num_results, timeout_per_engine),
         lambda: _try_tavily(q, num_results, timeout_per_engine),
         lambda: _try_exa(q, num_results, timeout_per_engine),
         lambda: _try_brave(q, num_results, timeout_per_engine),

@@ -1381,7 +1381,7 @@ export const api = {
   // ===== 联网搜索 Key 配置（Tavily/Exa/Brave 可选填；保存后立即生效） =====
   getSearchConfig: () =>
     request<{ keys: Record<string, string>; env: Record<string, boolean> }>('/ai/search-config', { method: 'GET' }),
-  saveSearchConfig: (keys: { tavily?: string; exa?: string; brave?: string }) =>
+  saveSearchConfig: (keys: { tavily?: string; exa?: string; brave?: string; tencent_yuanbao?: string }) =>
     request<{ ok: boolean; updated: Record<string, boolean> }>('/ai/search-config', {
       method: 'PUT', body: JSON.stringify(keys),
     }),
