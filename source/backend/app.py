@@ -218,8 +218,9 @@ if DATABASE_URL:
     _engine_opts = {
         'pool_pre_ping': True,
         'pool_recycle': 900,  # 15 分钟回收，小于 Neon/Render 空闲超时
-        'pool_size': 5,
-        'max_overflow': 5,
+        # 免费层配额紧张：池尽量小，避免占用过多连接/额度（Neon 超额会拒绝连接）
+        'pool_size': 2,
+        'max_overflow': 2,
     }
     # psycopg2/psycopg3 专属 keepalives：防中间代理（Render/Cloudflare/PGBouncer）在大事务时静默断连
     # （tcp_user_timeout/keepalives* 均为 libpq 标准 conninfo 参数，两驱动通用）
