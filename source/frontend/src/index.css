@@ -1460,10 +1460,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 
 /* 手机端顶部：左 wangbiao logo + 右文字（仅移动端显示） */
 .home-topbar-mobile{display:flex;align-items:center;justify-content:center;gap:20px;padding:12px 16px 6px;margin:0 0 4px}
-.home-topbar-text{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-width:0}
+.home-topbar-text{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-width:0;flex-shrink:0}
 .home-topbar-title{font-size:29px;font-weight:700;color:#4a7a5a;letter-spacing:8.55px;line-height:1.2;text-align:right;white-space:nowrap}
 /* 副标题与主标题上下齐边：justify 把行内词间距撑满容器宽（容器宽=主标题宽），两行左右边缘齐平 */
-.home-topbar-sub{font-size:17px;color:#7a9a8a;letter-spacing:0.5px;line-height:1.2;white-space:nowrap;text-align:justify;text-align-last:justify}
+.home-topbar-sub{font-size:16px;color:#7a9a8a;letter-spacing:0.5px;line-height:1.2;white-space:nowrap;text-align:justify;text-align-last:justify}
 /* · 缩小到 0.9 倍：两端对齐由 justify 撑开空格补偿，边缘仍与主标题齐平 */
 .home-topbar-sub-dot{font-size:0.9em}
 .home-topbar-logo{flex:0 0 auto;display:flex;align-items:center}
