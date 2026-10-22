@@ -3764,9 +3764,10 @@ textarea.input.paper-textarea{
 }
 .chat-quick-prompt:hover { border-color: var(--accent); color: var(--accent); }
 
-.chat-msg { display: flex; gap: 8px; max-width: 92%; }
+.chat-msg { display: flex; gap: 8px; max-width: 96%; }
 .chat-msg-user { align-self: flex-end; flex-direction: row-reverse; }
-.chat-msg-ai { align-self: flex-start; }
+.chat-msg-ai { align-self: flex-start; width: 100%; max-width: 100%; }
+.chat-msg-ai .chat-msg-body { flex: 1; min-width: 0; }
 .chat-msg-avatar {
   width: 28px; height: 28px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
