@@ -1464,6 +1464,8 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .home-topbar-title{font-size:29px;font-weight:700;color:#4a7a5a;letter-spacing:8.55px;line-height:1.2;text-align:right;white-space:nowrap}
 /* 副标题与主标题上下齐边：justify 把行内词间距撑满容器宽（容器宽=主标题宽），两行左右边缘齐平 */
 .home-topbar-sub{font-size:17px;color:#7a9a8a;letter-spacing:0.5px;line-height:1.2;white-space:nowrap;text-align:justify;text-align-last:justify}
+/* · 缩小到 0.9 倍：两端对齐由 justify 撑开空格补偿，边缘仍与主标题齐平 */
+.home-topbar-sub-dot{font-size:0.9em}
 .home-topbar-logo{flex:0 0 auto;display:flex;align-items:center}
 .home-topbar-logo img{width:auto;height:77px;max-width:144px;object-fit:contain}
 

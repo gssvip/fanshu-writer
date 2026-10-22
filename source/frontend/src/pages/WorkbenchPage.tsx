@@ -350,7 +350,7 @@ export default function WorkbenchPage() {
         </picture>
         <div className="home-topbar-text">
           <span className="home-topbar-title">蚂　蚁　写　作</span>
-          <span className="home-topbar-sub">mayi.chat · 专业Ai小说创作平台</span>
+          <span className="home-topbar-sub">mayi.chat <span className="home-topbar-sub-dot">·</span> 专业Ai小说创作平台</span>
         </div>
       </div>
 
