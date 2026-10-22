@@ -3138,8 +3138,8 @@ textarea.input.paper-textarea{
   flex-direction:column;
   align-items:stretch;
   justify-content:center;
-  padding:10px 28px!important;
-  min-height:110px!important;
+  padding:5px 28px!important;
+  min-height:100px!important;
   font-size:18px!important;
   font-weight:700!important;
   border-radius:16px!important;
