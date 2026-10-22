@@ -3138,8 +3138,8 @@ textarea.input.paper-textarea{
   flex-direction:column;
   align-items:stretch;
   justify-content:center;
-  padding:18px 28px!important;
-  min-height:126px!important;
+  padding:10px 28px!important;
+  min-height:110px!important;
   font-size:18px!important;
   font-weight:700!important;
   border-radius:16px!important;
@@ -3161,7 +3161,7 @@ textarea.input.paper-textarea{
 /* 手机端隐藏副标题 */
 .concept-ai-create-cta .cta-sub-text{display:none}
 @media (min-width:768px){
-  .concept-ai-create-cta{padding:24px 40px!important;min-height:140px!important;font-size:20px!important;color:#000!important}
+  .concept-ai-create-cta{padding:14px 40px!important;min-height:118px!important;font-size:20px!important;color:#000!important}
   .concept-ai-create-cta .cta-main-row{
     justify-content:center;
     gap:48px;
