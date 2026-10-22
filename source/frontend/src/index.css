@@ -3137,12 +3137,14 @@ textarea.input.paper-textarea{
   display:flex;
   flex-direction:column;
   align-items:stretch;
-  padding:6px 28px!important;
+  justify-content:center;
+  padding:18px 28px!important;
   font-size:18px!important;
   font-weight:700!important;
   border-radius:16px!important;
   box-shadow:0 6px 20px rgba(91,163,168,0.35)!important;
   transition:transform .15s ease,box-shadow .15s ease!important;
+  flex-shrink:0!important;
 }
 .concept-ai-create-cta:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 8px 26px rgba(91,163,168,0.45)!important}
 .concept-ai-create-cta:active:not(:disabled){transform:translateY(0)}
@@ -3158,7 +3160,7 @@ textarea.input.paper-textarea{
 /* 手机端隐藏副标题 */
 .concept-ai-create-cta .cta-sub-text{display:none}
 @media (min-width:768px){
-  .concept-ai-create-cta{padding:9px 36px!important;font-size:20px!important;color:#000!important}
+  .concept-ai-create-cta{padding:24px 40px!important;font-size:20px!important;color:#000!important}
   .concept-ai-create-cta .cta-main-row{
     justify-content:center;
     gap:48px;
