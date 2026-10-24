@@ -1,0 +1,13 @@
+{
+  "buildCommand": "echo 'no build needed for validation'",
+  "outputDirectory": ".",
+  "rewrites": [
+    { "source": "/*", "destination": "/index.html" }
+  ],
+  "cloudFunctions": {
+    "python": {
+      "maxDuration": 120
+    },
+    "regions": ["ap-hongkong"]
+  }
+}

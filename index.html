@@ -1,111 +1,113 @@
-<!doctype html>
-<html lang="zh-CN" translate="no">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="./wangbiao.png" />
-    <link rel="apple-touch-icon" href="./wangbiao.png" />
-    <link rel="manifest" href="./manifest.json" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
-    <meta name="description" content="蚂蚁写作 - AI原生的中文网文创作工作台，移动端沉浸写作" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="蚂蚁写作" />
-    
-    <meta name="google" content="notranslate" />
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EdgeOne 最小验证版</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 20px; }
+  .card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin: 12px 0; }
+  button { padding: 8px 16px; font-size: 14px; cursor: pointer; border-radius: 6px; border: 1px solid #ccc; background: #f5f5f5; }
+  button:active { background: #e0e0e0; }
+  pre { background: #f5f5f5; padding: 12px; border-radius: 6px; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; font-size: 13px; }
+  .stream-output { font-size: 18px; min-height: 40px; color: #333; }
+  .label { font-size: 12px; color: #888; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+  <h1>EdgeOne Cloud Functions 最小验证版</h1>
 
-    <title>蚂蚁写作</title>
-    
-    <script src="./config.js"></script>
-    <script>
-      // ===========================================================
-      //  🔥 FOUC 防闪：React 挂载**之前**就写好 <html data-theme>
-      //  默认 = light（米黄羊皮纸 #f4e9d0 与用户截图一致）
-      //  这是防止"打开白/蓝一秒后才变黄"的唯一关键代码
-      // ===========================================================
-      (function () {
-        try {
-          var legacyKey = function (k) { return 'mayi-writing:' + k; };
-          var t = localStorage.getItem('app-theme') || localStorage.getItem(legacyKey('theme'));
-          if (t === 'sepia') t = 'green';
-          // 恢复原默认 dark：用户指令"只做浅色主题其他不动"，不改其他用户的默认主题
-          if (!t) t = 'dark';
-          document.documentElement.setAttribute('data-theme', t);
-        } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'dark');
-        }
-      })();
+  <div class="card">
+    <div class="label">1. 健康检查（验证 Flask 能否启动）</div>
+    <button onclick="testHealth()">测试 /api/health</button>
+    <pre id="health-output">点击按钮测试</pre>
+  </div>
 
-      // 强制注销所有已注册的 Service Worker（避免缓存冲突）
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function (registrations) {
-          for (var i = 0; i < registrations.length; i++) registrations[i].unregister();
-        });
-      }
+  <div class="card">
+    <div class="label">2. SSE 流式测试（验证流式响应是否支持）</div>
+    <button onclick="testStream()">测试 /api/test-stream</button>
+    <div class="stream-output" id="stream-output"></div>
+    <pre id="stream-raw" style="font-size:11px;color:#888;"></pre>
+  </div>
 
-      // 动态预连接：从当前 API Base 解析 origin，不再把后端域名写死在模板里
-      (function () {
-        try {
-          var saved = localStorage.getItem('app-api-base-url');
-          var envBase = (window.__APP_ENV__ && window.__APP_ENV__.VITE_API_URL) || '';
-          var base = (saved && saved.trim()) || envBase || '';
-          var origin = '';
-          if (base) {
-            try { origin = new URL(base, window.location.href).origin; } catch (e) {}
-          }
-          if (!origin) origin = window.location.origin;
-          if (origin && origin !== window.location.origin) {
-            var l1 = document.createElement('link'); l1.rel = 'preconnect'; l1.href = origin; l1.crossOrigin = 'anonymous';
-            var l2 = document.createElement('link'); l2.rel = 'dns-prefetch'; l2.href = origin;
-            document.head.appendChild(l1); document.head.appendChild(l2);
-          }
-        } catch (e) {}
-      })();
+  <div class="card">
+    <div class="label">3. 长耗时测试（验证 maxDuration 是否够用）</div>
+    <button onclick="testSlow(30)">sleep 30s</button>
+    <button onclick="testSlow(60)">sleep 60s</button>
+    <pre id="slow-output">点击按钮测试</pre>
+  </div>
 
-      // 版本自检 + 自动刷新（绕缓存）
-      (function () {
-        var KEY = 'app-version';
-        function safeGetKey() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
-        function safeSetKey(v) { try { localStorage.setItem(KEY, v); } catch (e) {} }
-        function withCacheBust(url) {
-          return url.replace(/([?&])_v=[^&]*(&|$)/, '$1').replace(/\?$/, '') + (url.indexOf('?') >= 0 ? '&' : '?') + '_v=' + Date.now();
-        }
-        function reloadTo(v) {
-          safeSetKey(v);
-          var next = withCacheBust(location.href.split('#')[0]);
-          if (location.href !== next) location.replace(next); else location.reload(true);
-        }
-        var inFlight = false;
-        function check() {
-          if (inFlight) return;
-          inFlight = true;
-          fetch('./version.json?_t=' + Date.now(), { cache: 'no-store' })
-            .then(function (r) { return r.ok ? r.json() : null; })
-            .then(function (data) {
-              if (!data || !data.v) { inFlight = false; return; }
-              var saved = safeGetKey();
-              if (!saved) {
-                var has = /[?&]_v=/.test(location.search || '');
-                safeSetKey(data.v);
-                if (!has) reloadTo(data.v); else inFlight = false;
-              } else if (saved !== data.v) {
-                reloadTo(data.v);
-              } else {
-                inFlight = false;
-              }
-            })
-            .catch(function () { inFlight = false; });
-        }
-        check();
-        setInterval(check, 60000);
-      })();
-    </script>
-    <script type="module" crossorigin src="./assets/index-V6a7ILtj.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/Bb2p6SWh.css">
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
+  <div class="card">
+    <div class="label">4. 文件系统写入测试（验证 /tmp 可写，boot gate 需要）</div>
+    <button onclick="testFs()">测试 /api/test-fs</button>
+    <pre id="fs-output">点击按钮测试</pre>
+  </div>
+
+<script>
+async function testHealth() {
+  const out = document.getElementById('health-output');
+  out.textContent = '请求中...';
+  try {
+    const r = await fetch('/api/health');
+    const data = await r.json();
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    out.textContent = '错误: ' + e.message;
+  }
+}
+
+function testStream() {
+  const out = document.getElementById('stream-output');
+  const raw = document.getElementById('stream-raw');
+  out.textContent = '';
+  raw.textContent = '连接中...';
+
+  const es = new EventSource('/api/test-stream');
+  es.onmessage = (e) => {
+    raw.textContent = '收到: ' + e.data;
+    if (e.data === '[DONE]') {
+      raw.textContent = '✅ 流式完成';
+      es.close();
+      return;
+    }
+    try {
+      const obj = JSON.parse(e.data);
+      out.textContent += obj.char;
+    } catch {}
+  };
+  es.onerror = (e) => {
+    raw.textContent = '❌ SSE 错误: 连接被关闭（可能不支持流式）';
+    es.close();
+  };
+}
+
+async function testSlow(seconds) {
+  const out = document.getElementById('slow-output');
+  out.textContent = `sleep ${seconds}s 中...（如果超时说明 maxDuration 不够）`;
+  const start = Date.now();
+  try {
+    const r = await fetch(`/api/test-slow?seconds=${seconds}`);
+    const data = await r.json();
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    out.textContent = `✅ 成功！耗时 ${elapsed}s\n` + JSON.stringify(data, null, 2);
+  } catch (e) {
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    out.textContent = `❌ 失败（${elapsed}s）: ` + e.message + '\n可能是 maxDuration 超时或网络断开';
+  }
+}
+
+async function testFs() {
+  const out = document.getElementById('fs-output');
+  out.textContent = '请求中...';
+  try {
+    const r = await fetch('/api/test-fs');
+    const data = await r.json();
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    out.textContent = '错误: ' + e.message;
+  }
+}
+</script>
+</body>
 </html>
