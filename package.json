@@ -1,0 +1,6 @@
+{
+  "name": "edgeone-validation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "EdgeOne Cloud Functions 最小验证版"
+}

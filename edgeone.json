@@ -1,5 +1,6 @@
 {
-  "buildCommand": "echo 'no build needed for validation'",
+  "installCommand": "echo skip",
+  "buildCommand": "echo skip",
   "outputDirectory": ".",
   "rewrites": [
     { "source": "/*", "destination": "/index.html" }
