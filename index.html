@@ -26,7 +26,8 @@
 
   <div class="card">
     <div class="label">2. SSE 流式测试（验证流式响应是否支持）</div>
-    <button onclick="testStream()">测试 /api/test-stream</button>
+    <button onclick="testStream()">EventSource 测试</button>
+    <button onclick="testStreamFetch()" style="margin-left:8px">fetch 流式测试</button>
     <div class="stream-output" id="stream-output"></div>
     <pre id="stream-raw" style="font-size:11px;color:#888;"></pre>
   </div>
@@ -80,6 +81,36 @@ function testStream() {
     raw.textContent = '❌ SSE 错误: 连接被关闭（可能不支持流式）';
     es.close();
   };
+}
+
+async function testStreamFetch() {
+  const out = document.getElementById('stream-output');
+  const raw = document.getElementById('stream-raw');
+  out.textContent = '';
+  raw.textContent = 'fetch 连接中...';
+  let firstChunkAt = null;
+  try {
+    const r = await fetch('/api/test-stream');
+    raw.textContent = '响应头: ' + r.headers.get('content-type');
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let chunkCount = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunkCount++;
+      if (!firstChunkAt) firstChunkAt = Date.now();
+      const text = decoder.decode(value, { stream: true });
+      raw.textContent = `✅ 流式可用！已收到 ${chunkCount} 个数据块`;
+      // 提取文字
+      const matches = text.match(/"char":"([^"]+)"/g);
+      if (matches) matches.forEach(m => out.textContent += m.slice(8, -1));
+    }
+    const elapsed = firstChunkAt ? ((Date.now() - firstChunkAt) / 1000).toFixed(1) : '?';
+    raw.textContent = `✅ fetch 流式完成，共 ${chunkCount} 块，耗时约 ${elapsed}s`;
+  } catch (e) {
+    raw.textContent = '❌ fetch 错误: ' + e.message;
+  }
 }
 
 async function testSlow(seconds) {
