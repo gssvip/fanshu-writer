@@ -1,0 +1,57 @@
+name: Neon → 生产库 数据合并（11月1日定时）
+
+on:
+  # 11月1日 UTC 00:30 = 北京时间 08:30（Neon 月度额度已重置）
+  schedule:
+    - cron: '30 0 1 11 *'
+  # 允许手动触发（预演或重跑）
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: '是否真正写入（true=执行合并，false=仅 dry-run 预演）'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    env:
+      NEON_URL: ${{ secrets.NEON_DATABASE_URL }}
+      PROD_URL: ${{ secrets.PROD_DATABASE_URL }}
+    steps:
+      - name: 检查 Secrets 是否已配置
+        run: |
+          if [ -z "$NEON_URL" ]; then echo "❌ 缺少 Secret: NEON_DATABASE_URL"; exit 1; fi
+          if [ -z "$PROD_URL" ]; then echo "❌ 缺少 Secret: PROD_DATABASE_URL"; exit 1; fi
+          echo "✅ Secrets 已配置"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: pip install sqlalchemy==2.0.36 psycopg2-binary==2.9.12
+
+      - name: 从 Neon 导出全量数据
+        run: python source/scripts/db_export.py --url "$NEON_URL" --out neon_export.json.gz
+
+      - name: Dry-run 预演（输出合并计划，不写库）
+        run: python source/scripts/db_merge_import.py --src neon_export.json.gz --dst "$PROD_URL"
+        id: dryrun
+
+      - name: 正式合并写入
+        if: ${{ github.event_name == 'schedule' || github.event.inputs.apply == 'true' }}
+        run: python source/scripts/db_merge_import.py --src neon_export.json.gz --dst "$PROD_URL" --apply
+
+      - name: 上传导出文件作为备份
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-export-$(date +%Y%m%d)
+          path: neon_export.json.gz
+          retention-days: 90
