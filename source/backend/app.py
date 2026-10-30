@@ -226,7 +226,7 @@ if DATABASE_URL:
     # （tcp_user_timeout/keepalives* 均为 libpq 标准 conninfo 参数，两驱动通用）
     if 'psycopg2' in DATABASE_URL or 'psycopg://' in DATABASE_URL or DATABASE_URL.startswith(('postgresql://', 'postgres://')):
         _ca = {
-            'connect_timeout': 15,          # 建连超时 15s
+            'connect_timeout': 30,          # 建连超时 30s（Neon 免费版休眠唤醒需 15-30s）
             'keepalives': 1,                # 启用 TCP keepalive
             'keepalives_idle': 30,          # 空闲 30s 开始探测
             'keepalives_interval': 10,      # 每 10s 一个探测包
