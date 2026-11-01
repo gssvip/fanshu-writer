@@ -459,38 +459,42 @@ export function ForeshadowingPanel(props: {
         <>
           {/* ===== 防遗忘检查（原全局伏笔档案位置）===== */}
       <div className="bible-edit-section" style={{marginTop:16}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-          <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <h4 style={{margin:0}}><Icon name="shield" size={16} /> 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}{(() => { const c = afReports.filter((r: any) => r.status === 'pending' || (!r.status && r.fix_draft?.length > 0)).length; return c > 0 ? <span style={{fontSize:11,background:'#ff4757',color:'#fff',borderRadius:10,padding:'2px 8px',marginLeft:6}}>待审阅 {c}</span> : null; })()}</h4>
-            <button
-              className="btn-primary-sm"
-              onClick={openAfVolPicker}
-              disabled={afChecking}
-              style={{fontSize:14,padding:'4px 14px'}}
-            >
-              {afChecking ? <><Icon name="hourglass" size={14} /> 检查中...</> : <><Icon name="shield" size={14} /> 开始检查</>}
-            </button>
+        {/* 标题行 */}
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+          <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+            <h4 style={{margin:0}}><Icon name="shield" size={16} /> 防遗忘检查{afReports.length > 0 && <span className="text-muted" style={{fontSize:12,fontWeight:400}}>（{afReports.length}）</span>}</h4>
+            {(() => { const c = afReports.filter((r: any) => r.status === 'pending' || (!r.status && r.fix_draft?.length > 0)).length; return c > 0 ? <span style={{fontSize:11,background:'#ff4757',color:'#fff',borderRadius:10,padding:'2px 8px'}}>待审阅 {c}</span> : null; })()}
           </div>
-          <span className="text-muted" style={{fontSize:12,cursor:'pointer'}} onClick={() => setAfSectionOpen(v => !v)}>{afSectionOpen ? <><Icon name="chevron-down" size={11} /> 收起</> : <><Icon name="chevron-right" size={11} /> 展开</>}</span>
+          <button
+            className="btn-primary-sm"
+            onClick={openAfVolPicker}
+            disabled={afChecking}
+            style={{fontSize:13,padding:'4px 12px',flexShrink:0}}
+          >
+            {afChecking ? <><Icon name="hourglass" size={14} /> 检查中</> : <><Icon name="shield" size={14} /> 开始检查</>}
+          </button>
         </div>
 
         {afSectionOpen && (
           <>
-            {/* 检查资料范围选择（动态文件 / 仅维度）*/}
-            <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:8}}>
-              <span style={{fontSize:13,color:'var(--text-muted)'}}>检查资料：</span>
-              <button
-                onClick={() => setAfScope('reports')}
-                disabled={afChecking}
-                title="检查所有动态报告"
-                style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='reports'?'var(--accent)':'var(--border)'}`,background:afScope==='reports'?'var(--accent-light)':'transparent',color:afScope==='reports'?'var(--accent)':'var(--text)',fontWeight:afScope==='reports'?600:400}}
-              ><Icon name="file-text" size={14} /> 动态文件</button>
-              <button
-                onClick={() => setAfScope('dimensions')}
-                disabled={afChecking}
-                title="查阅除构思、章节外所有维度"
-                style={{padding:'4px 12px',fontSize:13,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='dimensions'?'var(--accent)':'var(--border)'}`,background:afScope==='dimensions'?'var(--accent-light)':'transparent',color:afScope==='dimensions'?'var(--accent)':'var(--text)',fontWeight:afScope==='dimensions'?600:400}}
-              ><Icon name="ruler" size={14} /> 仅维度</button>
+            {/* 检查资料范围选择 */}
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+              <span style={{fontSize:12,color:'var(--text-muted)',flexShrink:0}}>检查资料</span>
+              <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                <button
+                  onClick={() => setAfScope('reports')}
+                  disabled={afChecking}
+                  title="检查所有动态报告"
+                  style={{padding:'3px 10px',fontSize:12,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='reports'?'var(--accent)':'var(--border)'}`,background:afScope==='reports'?'var(--accent-light)':'transparent',color:afScope==='reports'?'var(--accent)':'var(--text)',fontWeight:afScope==='reports'?600:400}}
+                ><Icon name="file-text" size={13} /> 动态文件</button>
+                <button
+                  onClick={() => setAfScope('dimensions')}
+                  disabled={afChecking}
+                  title="查阅除构思、章节外所有维度"
+                  style={{padding:'3px 10px',fontSize:12,borderRadius:6,cursor:'pointer',border:`1px solid ${afScope==='dimensions'?'var(--accent)':'var(--border)'}`,background:afScope==='dimensions'?'var(--accent-light)':'transparent',color:afScope==='dimensions'?'var(--accent)':'var(--text)',fontWeight:afScope==='dimensions'?600:400}}
+                ><Icon name="ruler" size={13} /> 仅维度</button>
+              </div>
+              <span style={{marginLeft:'auto',fontSize:12,cursor:'pointer',color:'var(--text-muted)',flexShrink:0}} onClick={() => setAfSectionOpen(v => !v)}>{afSectionOpen ? <><Icon name="chevron-up" size={11} /> 收起</> : <><Icon name="chevron-down" size={11} /> 展开</>}</span>
             </div>
 
             {/* 自动检查草稿提示 */}
@@ -516,57 +520,68 @@ export function ForeshadowingPanel(props: {
                   const scopeLabel = r.source_label || (r.volume_ids && r.volume_ids.length ? `指定${r.volume_ids.length}卷` : '全部章节');
                   return (
                     <div key={r.id} className="plot-volume-card">
-                      <div className="plot-volume-header" style={{cursor:'pointer'}} onClick={() => !isEditing && !isRenaming && toggleAfReport(r.id)}>
-                        <span className="map-toggle" style={{marginRight:6,display:'inline-flex'}}><Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
-                        {isRenaming ? (
-                          <input
-                            type="text"
-                            className="input"
-                            value={afRenameValue}
-                            onChange={e => setAfRenameValue(e.target.value)}
-                            onClick={e => e.stopPropagation()}
-                            onKeyDown={e => { if (e.key === 'Enter') saveAfRename(r); if (e.key === 'Escape') setAfRenamingId(null); }}
-                            style={{flex:1,fontSize:13,padding:'2px 6px'}}
-                            autoFocus
-                          />
-                        ) : (
-                          <h4 style={{margin:0}}>{r.title || `检查${String(r.seq || 0).padStart(2,'0')}`}</h4>
-                        )}
-                        {typeof score === 'number' && !isRenaming && (
-                          <span style={{fontSize:12,fontWeight:600,color: score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--accent)' : 'var(--danger)'}}>健康度 {score}</span>
-                        )}
-                        {!isRenaming && !isEditing && <span className="text-muted" style={{fontSize:11}}>{scopeLabel}{r.ch_count ? ` · ${r.ch_count}章` : ''}</span>}
-                        {!isRenaming && !isEditing && r.status === 'pending' && <span style={{fontSize:11,background:'#ff4757',color:'#fff',borderRadius:10,padding:'1px 6px'}}>待审阅</span>}
-                        {!isRenaming && !isEditing && r.status === 'reviewed' && <span style={{fontSize:11,background:'#74b9ff',color:'#fff',borderRadius:10,padding:'1px 6px'}}>已审阅</span>}
-                        {!isRenaming && !isEditing && r.status === 'applied' && <span style={{fontSize:11,background:'#55efc4',color:'#006266',borderRadius:10,padding:'1px 6px'}}>已应用</span>}
-                        {!isRenaming && !isEditing && r.status === 'ignored' && <span style={{fontSize:11,background:'#b2bec3',color:'#fff',borderRadius:10,padding:'1px 6px'}}>已忽略</span>}
-                        <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+                      <div className="plot-volume-header" style={{cursor:'pointer',flexWrap:'wrap',rowGap:6}} onClick={() => !isEditing && !isRenaming && toggleAfReport(r.id)}>
+                        {/* 第一行：标题 + 状态 + 健康度 */}
+                        <div style={{display:'flex',alignItems:'center',gap:6,flex:'1 1 auto',minWidth:0}}>
+                          <span className="map-toggle" style={{display:'inline-flex',flexShrink:0}}><Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={12} /></span>
                           {isRenaming ? (
-                            <>
-                              <button className="btn-primary-sm" onClick={() => saveAfRename(r)}><Icon name="save" size={14} /></button>
-                              <button className="btn-ghost-sm" onClick={() => setAfRenamingId(null)}><Icon name="x" size={14} /></button>
-                            </>
-                          ) : isEditing ? (
-                            <>
-                              <button className="btn-primary-sm" onClick={() => saveAfEdit(r)}><Icon name="save" size={14} /> 保存</button>
-                              <button className="btn-ghost-sm" onClick={() => { setAfEditingId(null); setAfEditValue(''); }}>取消</button>
-                            </>
+                            <input
+                              type="text"
+                              className="input"
+                              value={afRenameValue}
+                              onChange={e => setAfRenameValue(e.target.value)}
+                              onClick={e => e.stopPropagation()}
+                              onKeyDown={e => { if (e.key === 'Enter') saveAfRename(r); if (e.key === 'Escape') setAfRenamingId(null); }}
+                              style={{flex:1,fontSize:13,padding:'2px 6px'}}
+                              autoFocus
+                            />
                           ) : (
-                            <>
-                              <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? <><Icon name="inbox" size={14} /> 拉取</> : <><Icon name="folder-open" size={14} /> 折叠</>}</button>
-                              <button className="btn-primary-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'setting' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·设定，协同修正设定维度">
-                                <Icon name="wrench" size={14} /> AI修正
-                              </button>
-                              <button className="btn-ghost-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'chapter' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·正文，协同修正违规章节"><Icon name="edit" size={14} /> 修正正文</button>
-                              {r.status === 'pending' && (
-                                <button className="btn-ghost-sm" onClick={() => ignoreFixDraft(r.id)} title="忽略此报告的修正草稿"><Icon name="ban" size={14} /> 忽略</button>
-                              )}
-                              <button className="btn-ghost-sm" onClick={() => startAfEdit(r)} title="编辑报告内容"><Icon name="edit" size={14} /></button>
-                              <button className="btn-ghost-sm" onClick={() => startAfRename(r)} title="重命名"><Icon name="tag" size={14} /></button>
-                              <button className="btn-ghost-sm" onClick={() => deleteAfReport(r)} style={{color:'#e74c3c'}} title="删除"><Icon name="trash" size={16} /></button>
-                            </>
+                            <h4 style={{margin:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.title || `检查${String(r.seq || 0).padStart(2,'0')}`}</h4>
+                          )}
+                          {!isRenaming && !isEditing && r.status === 'pending' && <span style={{fontSize:10,background:'#ff4757',color:'#fff',borderRadius:8,padding:'1px 6px',flexShrink:0}}>待审阅</span>}
+                          {!isRenaming && !isEditing && r.status === 'reviewed' && <span style={{fontSize:10,background:'#74b9ff',color:'#fff',borderRadius:8,padding:'1px 6px',flexShrink:0}}>已审阅</span>}
+                          {!isRenaming && !isEditing && r.status === 'applied' && <span style={{fontSize:10,background:'#55efc4',color:'#006266',borderRadius:8,padding:'1px 6px',flexShrink:0}}>已应用</span>}
+                          {!isRenaming && !isEditing && r.status === 'ignored' && <span style={{fontSize:10,background:'#b2bec3',color:'#fff',borderRadius:8,padding:'1px 6px',flexShrink:0}}>已忽略</span>}
+                          {typeof score === 'number' && !isRenaming && (
+                            <span style={{fontSize:11,fontWeight:600,color: score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--accent)' : 'var(--danger)',marginLeft:'auto',flexShrink:0}}>健康度 {score}</span>
                           )}
                         </div>
+                        {/* 第二行：检查范围（小字） */}
+                        {!isRenaming && !isEditing && (
+                          <div style={{width:'100%',fontSize:11,color:'var(--text-muted)',paddingLeft:18}}>{scopeLabel}{r.ch_count ? ` · ${r.ch_count}章` : ''}</div>
+                        )}
+                        {/* 第三行：操作按钮 */}
+                        {!isRenaming && !isEditing && (
+                          <div className="plot-volume-actions" style={{width:'100%',justifyContent:'flex-start',flexWrap:'wrap',gap:4,paddingLeft:18}} onClick={e => e.stopPropagation()}>
+                            <button className="btn-ghost-sm" onClick={() => toggleAfReport(r.id)} title={collapsed ? '展开' : '折叠'}>{collapsed ? <><Icon name="inbox" size={13} /> 拉取</> : <><Icon name="folder-open" size={13} /> 折叠</>}</button>
+                            <button className="btn-primary-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'setting' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·设定，协同修正设定维度">
+                              <Icon name="wrench" size={13} /> AI修正
+                            </button>
+                            <button className="btn-ghost-sm" onClick={() => { setFixVolPicker({ reportId: r.id, mode: 'chapter' }); setFixSelectedVolId(''); }} title="跳转 AI智驾·正文，协同修正违规章节"><Icon name="edit" size={13} /> 修正正文</button>
+                            {r.status === 'pending' && (
+                              <button className="btn-ghost-sm" onClick={() => ignoreFixDraft(r.id)} title="忽略此报告的修正草稿"><Icon name="ban" size={13} /> 忽略</button>
+                            )}
+                            <button className="btn-ghost-sm" onClick={() => startAfEdit(r)} title="编辑报告内容"><Icon name="edit" size={13} /></button>
+                            <button className="btn-ghost-sm" onClick={() => startAfRename(r)} title="重命名"><Icon name="tag" size={13} /></button>
+                            <button className="btn-ghost-sm" onClick={() => deleteAfReport(r)} style={{color:'#e74c3c'}} title="删除"><Icon name="trash" size={14} /></button>
+                          </div>
+                        )}
+                        {/* 重命名/编辑模式的操作按钮 */}
+                        {(isRenaming || isEditing) && (
+                          <div className="plot-volume-actions" onClick={e => e.stopPropagation()}>
+                            {isRenaming ? (
+                              <>
+                                <button className="btn-primary-sm" onClick={() => saveAfRename(r)}><Icon name="save" size={14} /></button>
+                                <button className="btn-ghost-sm" onClick={() => setAfRenamingId(null)}><Icon name="x" size={14} /></button>
+                              </>
+                            ) : (
+                              <>
+                                <button className="btn-primary-sm" onClick={() => saveAfEdit(r)}><Icon name="save" size={14} /> 保存</button>
+                                <button className="btn-ghost-sm" onClick={() => { setAfEditingId(null); setAfEditValue(''); }}>取消</button>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                       {!collapsed && (
                         <div className="plot-volume-body">
