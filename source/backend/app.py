@@ -217,24 +217,25 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 if DATABASE_URL:
     _engine_opts = {
         'pool_pre_ping': True,
-        'pool_recycle': 900,  # 15 分钟回收，小于 Neon/Render 空闲超时
-        # 免费层配额紧张：池尽量小，避免占用过多连接/额度（Neon 超额会拒绝连接）
-        'pool_size': 2,
-        'max_overflow': 2,
+        'pool_recycle': 900,  # 15 分钟回收
+        # 连接池调大，避免并发请求时排队超时
+        'pool_size': 5,
+        'max_overflow': 10,
     }
     # psycopg2/psycopg3 专属 keepalives：防中间代理（Render/Cloudflare/PGBouncer）在大事务时静默断连
     # （tcp_user_timeout/keepalives* 均为 libpq 标准 conninfo 参数，两驱动通用）
     if 'psycopg2' in DATABASE_URL or 'psycopg://' in DATABASE_URL or DATABASE_URL.startswith(('postgresql://', 'postgres://')):
         _ca = {
-            'connect_timeout': 30,          # 建连超时 30s（Neon 免费版休眠唤醒需 15-30s）
+            'connect_timeout': 30,          # 建连超时 30s
             'keepalives': 1,                # 启用 TCP keepalive
             'keepalives_idle': 30,          # 空闲 30s 开始探测
             'keepalives_interval': 10,      # 每 10s 一个探测包
             'keepalives_count': 5,          # 5 次探测失败判死（总 80s）
             'tcp_user_timeout': 120000,     # 大包未 ACK 2 分钟判死（毫秒，Linux ≥ 2.6.37）
         }
-        if _ipv4_host:
-            # hostaddr 跳过 libpq 的 DNS 解析，直连 IPv4（规避 Render IPv6 不可达）
+        # 仅 Neon 需要 hostaddr 直连 IPv4（规避 Render IPv6 不可达）；
+        # Aiven/其他托管 PG 依赖域名路由（SNI/SSL），直连 IP 会超时，必须走 DNS。
+        if _ipv4_host and 'neon.tech' in DATABASE_URL:
             _ca['hostaddr'] = _ipv4_host
         _engine_opts['connect_args'] = _ca
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = _engine_opts
