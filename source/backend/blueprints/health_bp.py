@@ -34,8 +34,11 @@ def health_check():
     if request.args.get('db') == '1':
         try:
             from app import db
-            db.session.execute(db.text('SELECT 1'))
-            db.session.rollback()
+            from sqlalchemy import text
+            # engine.connect() 上下文管理器：SELECT 1 结束后连接立即归还连接池
+            # （Aiven 免费版仅 20 连接上限，严禁长占用）
+            with db.engine.connect() as conn:
+                conn.execute(text('SELECT 1'))
             db_status = 'ok'
         except Exception:
             db_status = 'down'

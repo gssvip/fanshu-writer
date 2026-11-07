@@ -3,14 +3,14 @@ name: Keep-Alive
 # ============================================================================
 # 保活策略（2026-11-08 更新：数据库已迁 Aiven）
 #
-# 1. Render 免费版 Web Service 15 分钟无流量自动休眠。本工作流 60 分钟一次，
-#    两次探活之间 Render 会休眠（用户首次访问需冷启动 ~50s，可接受）。
+# 1. Render 免费版 Web Service 15 分钟无流量自动休眠 → 每 5 分钟探活一次保持常温。
 # 2. Aiven 免费版 PostgreSQL 无持续活动会自动关机（Powered off，域名停止解析，
 #    部署连库报 "failed to resolve host"）。Aiven 检测的是数据库活动而非网站流量，
 #    因此探活改为 /api/health?db=1，每次真实执行 SELECT 1 保持数据库活动。
-#    Aiven 免费版无计算配额限制（20 连接上限，查询用完即释放），可放心保活。
+#    查库后连接立即归还连接池（health_bp 用 engine.connect() 上下文管理器），
+#    Aiven 免费版 20 连接上限不会被占用。Aiven 无计算配额限制，可放心保活。
 #    旧铁律"严禁 ?db=1"仅针对 Neon 计算配额，已不适用。
-#    频率 60 分钟一次（2026-11-08 用户要求）；若 Aiven 仍自动关机再加密频率。
+#    频率 5 分钟一次（2026-11-08 用户要求：保 Render 常温 + 保 Aiven 活动）。
 # 3. 兜底：若数据库仍被关机（db != ok），尝试通过 Aiven API 自动开机。
 #    需在仓库 Secrets 配置 AVN_API_TOKEN（Aiven 控制台 → Profile → Authentication
 #    tokens 生成，权限含 services:write）；可选 AVN_PROJECT（默认 fanshu）、
@@ -19,7 +19,7 @@ name: Keep-Alive
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
