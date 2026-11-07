@@ -184,20 +184,38 @@ def register():
 def login():
     from app import db, User, AuthToken
     from auth_utils import generate_token, hash_token
+    import time as _time
     data = request.json
     username = (data.get('username', '')).strip()
     password = (data.get('password', '')).strip()
-    # 支持用户名或邮箱登录：先按邮箱查，查不到再按用户名查
-    user = User.query.filter_by(email=username).first()
-    if not user:
-        user = User.query.filter_by(username=username).first()
-    if not user or not check_password_hash(user.password_hash, password):
-        return jsonify({'error': '用户名或密码错误'}), 401
-    token = generate_token()
-    expires = datetime.now(timezone.utc) + timedelta(days=30)
-    db.session.add(AuthToken(user_id=user.id, token=hash_token(token), expires_at=expires))
-    db.session.commit()
-    return jsonify({'user': user.to_dict(), 'token': token})
+    # 数据库冷启动重试：Neon/Aiven 休眠后首次连接可能超时，重试 1 次
+    def _try_login():
+        user = User.query.filter_by(email=username).first()
+        if not user:
+            user = User.query.filter_by(username=username).first()
+        if not user or not check_password_hash(user.password_hash, password):
+            return jsonify({'error': '用户名或密码错误'}), 401
+        token = generate_token()
+        expires = datetime.now(timezone.utc) + timedelta(days=30)
+        db.session.add(AuthToken(user_id=user.id, token=hash_token(token), expires_at=expires))
+        db.session.commit()
+        return jsonify({'user': user.to_dict(), 'token': token})
+    try:
+        return _try_login()
+    except Exception as e:
+        err_name = type(e).__name__
+        # 连接超时/断开 → 回滚会话并重试一次（给数据库唤醒时间）
+        if 'OperationalError' in err_name or 'ConnectionTimeout' in str(e) or 'connection' in str(e).lower():
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            _time.sleep(2)
+            try:
+                return _try_login()
+            except Exception as e2:
+                return jsonify({'error': f'数据库连接超时，请重试（{type(e2).__name__}）'}), 503
+        return jsonify({'error': f'登录失败：{str(e)[:120]}'}), 500
 
 
 @auth_bp.route('/api/auth/me', methods=['GET'])
