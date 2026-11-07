@@ -27,7 +27,8 @@ def health_check():
     Neon 拒绝全部连接，登录等接口 500。
 
     现改为：默认只做进程级探活（供 Render 判断端口/服务存活），**不再唤醒数据库**；
-    需要穿透 DB 时可显式加 ?db=1（人工排障用，不要放进定时保活）。
+    需要穿透 DB 时可显式加 ?db=1。2026-11-08 起数据库迁至 Aiven（无计算配额限制），
+    keep-alive 定时保活恢复使用 ?db=1 以保持 Aiven 活动、防止其自动关机。
     """
     db_status = 'skipped'
     if request.args.get('db') == '1':
