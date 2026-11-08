@@ -347,6 +347,16 @@ def _global_exception_handler(e):
     err = traceback.format_exc()
     print(f'[500] {_req.method} {_req.path}: {type(e).__name__}: {e}', flush=True)
     print(err, flush=True)
+    # DB 连接类异常（Aiven 关机/网络中断）→ 后台自动开机 + 友好 503
+    # （按类名匹配同时覆盖 sqlalchemy/psycopg 两层包装，避免在此新增 import）
+    if type(e).__name__ in ('OperationalError', 'InterfaceError'):
+        try:
+            from db_autostart import maybe_power_on_async
+            maybe_power_on_async()
+        except Exception:
+            pass
+        return _jsonify({'error': '数据库连接中断，系统正在自动恢复，请 1~2 分钟后重试',
+                         'recovering': True}), 503
     # 仅回传异常类型与末尾摘要，不回传完整堆栈（防信息泄露）
     return _jsonify({'error': f'{type(e).__name__}: {str(e)[:200]}', 'path': _req.path}), 500
 

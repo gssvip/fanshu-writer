@@ -42,4 +42,10 @@ def health_check():
             db_status = 'ok'
         except Exception:
             db_status = 'down'
+            # Aiven 自动关机兜底：后台请求开机（db_autostart，冷却 5 分钟）
+            try:
+                from db_autostart import maybe_power_on_async
+                maybe_power_on_async()
+            except Exception:
+                pass
     return jsonify({'status': 'ok', 'db': db_status, 'time': datetime.now().isoformat()}), 200

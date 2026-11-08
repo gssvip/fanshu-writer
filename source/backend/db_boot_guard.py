@@ -34,6 +34,13 @@ def wait_for_db_ready(max_attempts: int = 6, base_delay: float = 2.0) -> None:
             return
         except Exception as e:
             last_err = e
+            # Aiven 自动关机兜底：连不上就后台请求开机，与退避重试并行
+            # （db_autostart 内部冷却 5 分钟，重复失败不会重复发请求）
+            try:
+                from db_autostart import maybe_power_on_async
+                maybe_power_on_async()
+            except Exception:
+                pass
             try:
                 db.session.rollback()
             except Exception:
