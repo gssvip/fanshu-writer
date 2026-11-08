@@ -366,6 +366,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
     if (!rawText || !rawText.trim()) return null;
     const trimmed = rawText.trim();
     let data: any = null;
+    let bodyText = '';  // front-matter 之后的正文 / 纯文本兜底的正文，用于工作流步骤识别
 
     // ① md代码块先扫
     const yamlBlockMatch = trimmed.match(/```(?:yaml|yml)\s*\r?\n([\s\S]*?)\r?\n?```/i);
@@ -385,6 +386,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
       if (fmMatch) {
         const header = fmMatch[1];
         const body = fmMatch[2] || '';
+        if (body.trim()) bodyText = body.trim();
         const normalized = header
           // 兼容：key：value (中文全角冒号/两边空格) 统一为 key: value
           .replace(/^([^\s：:][^：:\n]*?)[ \t]*[：:][ \t]*/gm, (_, k) => `${k}: `);
@@ -418,6 +420,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
     if (!data || typeof data !== 'object') {
       const body = (data && typeof data === 'string') ? data : rawText;
       if (!body || !String(body).trim()) return null;
+      bodyText = String(body).trim();
       const firstLine = String(body).split(/\r?\n/).map(l => l.trim()).find(l => l.length) || '我的技能';
       const cleanName = firstLine.replace(/^[#\s\-*>`"']+|[#\s\-*>`"']+$/g, '').slice(0, 40) || '自定义技能包';
       const plainDesc = String(body).trim().replace(/\s+/g, ' ').slice(0, 160);
@@ -441,14 +444,36 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
     if (data.genre_target !== undefined && data.genre_target !== null) {
       data.genre_target = normalizeGenreKey(data.genre_target);
     }
-    // 规范化：如果只有纯prompts没有workflow，就不强制创建workflow（空数组也可）
-    if (!Array.isArray(data.workflow)) data.workflow = [];
+    // 规范化：prompts 兜底
     if (!data.prompts || typeof data.prompts !== 'object') {
       // 如果用户给的是string文本但走到这里，兜底塞进 prompts.default
       const fallback = typeof data.content === 'string' ? data.content
         : typeof data.prompt === 'string' ? data.prompt
         : typeof data.body === 'string' ? data.body : '';
       data.prompts = { default: fallback || String(rawText).trim().slice(0, 4000) };
+    }
+
+    // ===== 工作流自动识别（导入文件 / 新建粘贴 两条路径共用）=====
+    // ① 先规范化 workflow 本身：字符串步骤、别名字段（title/description/prompt）、内联提示词自动落到 prompts
+    data.workflow = normalizeWorkflowSteps(data.workflow, data.prompts);
+    // ② workflow 为空 → 从正文里提取步骤（"## 工作流"小节、"### 1. 步骤名"标题、"1. 步骤名"/"步骤1：xxx"编号列表）
+    if (!data.workflow.length && bodyText) {
+      const extracted = extractWorkflowFromText(bodyText);
+      if (extracted && extracted.workflow.length) {
+        data.workflow = extracted.workflow;
+        data.prompts = { ...extracted.prompts, ...data.prompts };
+        // 正文已拆成步骤提示词时，去掉与整段正文重复的兜底提示词，避免重复
+        for (const k of Object.keys(data.prompts)) {
+          if ((data.prompts[k] || '').trim() === bodyText) delete data.prompts[k];
+        }
+      }
+    }
+    // ③ 仍无 workflow 但 prompts 有多个键 → 按键名生成步骤（prompt_key 与键名一一对应）
+    if (!data.workflow.length) {
+      const stepKeys = Object.keys(data.prompts).filter(k => !['default', 'master_default', 'style_default', 'review_default'].includes(k));
+      if (stepKeys.length >= 2) {
+        data.workflow = stepKeys.map((k, i) => ({ step: i + 1, name: k, desc: '', prompt_key: k }));
+      }
     }
     return data;
   }
@@ -461,6 +486,121 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
     if (reviewHits >= styleHits && reviewHits >= 2) return 'review';
     if (styleHits >= 2) return 'style';
     return 'master';
+  }
+
+  /**
+   * 工作流步骤自动识别：从 skill.md / 纯文本正文里提取工作流步骤，支持三种常见写法——
+   *   ① 标题式：### 1. 设定构建 / ## 步骤一：设定构建
+   *   ② 编号列表：1. 设定构建：搭建世界观  /  2）大纲生成
+   *   ③ "步骤N"式：步骤1：设定构建
+   * 每个步骤正文自动落到 prompts[prompt_key]（可用 "prompt_key：xxx" / "提示词键名：xxx" 显式指定键名，
+   * 缺省为 step_N），并把 name/desc/prompt_key 填进工作流对应位置。
+   */
+  function extractWorkflowFromText(text: string): { workflow: WorkflowStep[]; prompts: Record<string, string> } | null {
+    if (!text || !text.trim()) return null;
+    const lines = String(text).split(/\r?\n/);
+    // 步骤起点行：可选 markdown 标题/列表符号 + 可选"步骤/第N步"前缀 + 序号 + 分隔符 + 名称
+    const stepLineRe = /^(?:#{1,6}\s*)?(?:[-*+]\s+|\s{0,3})(?:\*\*)?(?:步骤\s*|第\s*)?([0-9]{1,2}|[一二三四五六七八九十]{1,3})\s*(?:步)?[.、)）:：]\s*(?:\*\*)?\s*(.+?)(?:\*\*)?\s*$/;
+    const headingRe = /^#{1,6}\s+\S/;
+    const keyRe = /(?:prompt_key|prompt\s*key|提示词键名|提示词键)\s*[：:]\s*([A-Za-z0-9_\-]+)/i;
+    const descRe = /(?:^|\s)(?:desc|description|说明|简介)\s*[：:]\s*(.+)$/i;
+    const promptLabelRe = /^(?:\*\*)?\s*(?:提示词|prompt)(?:模板|模板内容|内容)?\s*[：:]?\s*(?:\*\*)?\s*$/i;
+
+    interface Seg { name: string; desc: string; body: string[]; explicit: boolean }
+    const segs: Seg[] = [];
+    let cur: Seg | null = null;
+    for (const rawLine of lines) {
+      const m = rawLine.match(stepLineRe);
+      if (m && m[2]) {
+        let name = m[2].trim();
+        let desc = '';
+        const nm = name.match(/^([^：:]+)[：:]\s*(.+)$/);
+        if (nm) { name = nm[1].trim(); desc = nm[2].trim(); }
+        name = name.replace(/\*+/g, '').trim();
+        // 明确的步骤标记（markdown标题 / "步骤N" / "第N步"）→ 单步也可识别
+        const explicit = /^\s*#/.test(rawLine) || /步骤|第\s*[0-9一二三四五六七八九十]+\s*步|step/i.test(rawLine);
+        cur = { name, desc, body: [], explicit };
+        segs.push(cur);
+        continue;
+      }
+      // 其他标题（非步骤）→ 截断当前步骤正文，防止把下一节内容吞进提示词
+      if (headingRe.test(rawLine)) {
+        if (cur) cur = null;
+        continue;
+      }
+      if (cur && !promptLabelRe.test(rawLine)) cur.body.push(rawLine);
+    }
+
+    const valid = segs.filter(s => s.name);
+    if (!valid.length) return null;
+    // 普通编号列表至少 2 步才算工作流（避免把提示词里的"1. 2."清单误判）；带明确步骤标记的 1 步也认
+    if (valid.length < 2 && !valid.some(s => s.explicit)) return null;
+
+    const workflow: WorkflowStep[] = [];
+    const prompts: Record<string, string> = {};
+    valid.forEach((seg, i) => {
+      let promptKey = '';
+      let desc = seg.desc;
+      const contentLines: string[] = [];
+      for (const l of seg.body) {
+        const km = l.match(keyRe);
+        if (km && !promptKey) { promptKey = km[1].trim(); continue; }
+        const dm = !desc ? l.match(descRe) : null;
+        if (dm) { desc = dm[1].trim(); continue; }
+        contentLines.push(l);
+      }
+      const content = contentLines.join('\n').trim();
+      if (!promptKey && content) promptKey = `step_${i + 1}`;
+      if (content && promptKey) prompts[promptKey] = content;
+      workflow.push({ step: i + 1, name: seg.name, desc, prompt_key: promptKey });
+    });
+    return { workflow, prompts };
+  }
+
+  /**
+   * 规范化导入/粘贴得到的 workflow：兼容字符串步骤和别名字段（title/description/prompt/key），
+   * 步骤里内联的提示词正文自动落到 prompts[prompt_key]，与工作流"对应位置"关联。
+   */
+  function normalizeWorkflowSteps(raw: any, prompts: Record<string, string>): WorkflowStep[] {
+    if (!Array.isArray(raw)) return [];
+    const out: WorkflowStep[] = [];
+    for (const item of raw) {
+      if (item == null) continue;
+      let name = '', desc = '', promptKey = '', inline = '';
+      let temp: number | undefined;
+      if (typeof item === 'string') {
+        // "名称 | 说明 | prompt_key" 或 "1. 名称：说明"
+        const parts = item.split('|').map(s => s.trim());
+        name = (parts[0] || '')
+          .replace(/^(?:步骤\s*|第\s*)?[0-9一二三四五六七八九十]{1,3}\s*(?:步)?[.、)）:：]?\s*/, '')
+          .replace(/\*+/g, '').trim();
+        const nm = name.match(/^([^：:]+)[：:]\s*(.+)$/);
+        if (nm) { name = nm[1].trim(); desc = nm[2].trim(); }
+        if (parts[1]) desc = parts[1];
+        promptKey = parts[2] || '';
+      } else if (typeof item === 'object') {
+        name = String(item.name ?? item.title ?? item.step_name ?? item.label ?? '').replace(/\*+/g, '').trim();
+        desc = String(item.desc ?? item.description ?? item.summary ?? '').trim();
+        const pk = item.prompt_key ?? item.promptKey ?? item.prompt_id ?? item.key;
+        if (typeof pk === 'string' && pk.trim()) promptKey = pk.trim();
+        const rawPrompt = item.prompt_text ?? item.content ?? item.prompt ?? item.body ?? item.template;
+        if (typeof rawPrompt === 'string' && rawPrompt.trim()) {
+          // prompt 字段短横线命名 → 当键名；否则当内联提示词正文
+          if (!promptKey && /^[A-Za-z0-9_\-]{1,40}$/.test(rawPrompt.trim())) {
+            promptKey = rawPrompt.trim();
+          } else {
+            inline = rawPrompt.trim();
+          }
+        }
+        const t = Number(item.temperature ?? item.temp);
+        if (Number.isFinite(t) && t >= 0 && t <= 2) temp = t;
+      }
+      if (!name && !promptKey && !inline) continue;
+      if (!promptKey && inline) promptKey = `step_${out.length + 1}`;
+      if (inline && promptKey && !prompts[promptKey]) prompts[promptKey] = inline;
+      out.push({ step: out.length + 1, name, desc, prompt_key: promptKey, ...(temp !== undefined ? { temperature: temp } : {}) });
+    }
+    return out;
   }
 
   /** 创建/编辑表单里：把用户粘贴的文本识别成字段（保留用户已手动填好的name/category/description不覆盖） */
@@ -632,7 +772,8 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
               <input className="input" value={skillEditor.name} onChange={e => setSkillEditor(prev => ({ ...prev, name: e.target.value }))} placeholder="如：悬疑推理创作流" />
             </div>
 
-            <div className="form-row">
+            {/* 题材/类型同一排平齐、两列等宽（移动端也保持一行） */}
+            <div className="form-row skill-meta-row">
               <div className="form-field">
                 <label>题材</label>
                 <select className="input" value={skillEditor.genre} onChange={e => setSkillEditor(prev => ({ ...prev, genre: e.target.value }))}>
@@ -643,25 +784,6 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
                   ))}
                 </select>
               </div>
-              {/* 文风类：额外显示「适用题材 (genre_target)」下拉，和创建小说表单题材条目完全对齐 */}
-              {skillEditor.category === 'style' && (
-                <div className="form-field">
-                  <label>文风适用题材（正文阶段按题材优先匹配）</label>
-                  <select className="input"
-                    value={skillEditor.genre_target || ''}
-                    onChange={e => setSkillEditor(prev => ({ ...prev, genre_target: e.target.value }))}>
-                    <option value="">不指定（任意题材生效）</option>
-                    {GENRE_GROUPS.map(g => (
-                      <optgroup key={g.label} label={g.label}>
-                        {g.keys.map(k => <option key={k} value={k}>{GENRES[k] || k}</option>)}
-                      </optgroup>
-                    ))}
-                  </select>
-                  <p className="text-muted" style={{fontSize:11, marginTop:4}}>
-                    如果指定题材，仅当当前创作小说的题材与该值一致时才会在正文阶段注入，避免文风跨题材污染。
-                  </p>
-                </div>
-              )}
               <div className="form-field">
                 <label>类型</label>
                 <select className="input" value={skillEditor.book_type} onChange={e => setSkillEditor(prev => ({ ...prev, book_type: e.target.value }))}>
@@ -670,6 +792,25 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
                 </select>
               </div>
             </div>
+            {/* 文风类：额外显示「适用题材 (genre_target)」下拉，和创建小说表单题材条目完全对齐 */}
+            {skillEditor.category === 'style' && (
+              <div className="form-field">
+                <label>文风适用题材（正文阶段按题材优先匹配）</label>
+                <select className="input"
+                  value={skillEditor.genre_target || ''}
+                  onChange={e => setSkillEditor(prev => ({ ...prev, genre_target: e.target.value }))}>
+                  <option value="">不指定（任意题材生效）</option>
+                  {GENRE_GROUPS.map(g => (
+                    <optgroup key={g.label} label={g.label}>
+                      {g.keys.map(k => <option key={k} value={k}>{GENRES[k] || k}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+                <p className="text-muted" style={{fontSize:11, marginTop:4}}>
+                  如果指定题材，仅当当前创作小说的题材与该值一致时才会在正文阶段注入，避免文风跨题材污染。
+                </p>
+              </div>
+            )}
 
             {/* 【三类无污染】技能包分类选择：决定该包在哪个创作阶段注入 */}
             <div className="form-field">
@@ -722,7 +863,7 @@ category：master
                 }}
               />
               <p className="text-muted" style={{fontSize:11, marginTop:4}}>
-                小技巧：格式越规范识别越准。普通纯文本也会自动转为默认提示词，分类按关键词自动猜测。
+                小技巧：格式越规范识别越准。带编号/"步骤N"/小节标题的正文会自动识别成工作流步骤并对应到提示词键，普通纯文本自动转为默认提示词，分类按关键词自动猜测。
               </p>
             </div>
 

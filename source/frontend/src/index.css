@@ -1327,6 +1327,10 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .form-row>*{margin-top:0}
 /* 高特异性覆盖 .tool-panel .btn-primary{margin-top:10px}，保证排内按钮垂直居中 */
 .tool-panel .form-row .btn-primary,.form-row .btn-primary.btn-primary{margin-top:0}
+/* 新建技能：题材/类型同一排平齐、两列等宽（用 grid，移动端 media query 的 flex-direction:column 不生效，保持一行） */
+.skill-meta-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}
+.skill-meta-row>.form-field{margin:10px 0;min-width:0}
+.skill-meta-row>.form-field .input{width:100%;box-sizing:border-box}
 .modal-actions{align-items:center}
 .confirm-actions{align-items:center}
 .form-field{margin:10px 0}
@@ -1826,7 +1830,7 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .skill-editor-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-color)}
 .skill-editor-header h3{font-size:16px}
 .emoji-picker{display:flex;flex-wrap:wrap;gap:6px}
-.emoji-chip{width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:20px;border:2px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-tertiary);cursor:pointer;transition:all .15s}
+.emoji-chip{width:36px;height:36px;flex:0 0 36px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-size:20px;border:2px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-tertiary);cursor:pointer;transition:all .15s}
 .emoji-chip.active{border-color:var(--accent);background:var(--accent-light)}
 .workflow-editor-step{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap}
 .workflow-editor-step .input{flex:1;min-width:100px}
