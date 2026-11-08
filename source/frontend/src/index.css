@@ -1829,12 +1829,28 @@ input[type="checkbox"]:disabled{opacity:0.5;cursor:not-allowed}
 .sync-mode-desc{font-size:12px;color:var(--text-muted);line-height:1.5}
 .skill-editor-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border-color)}
 .skill-editor-header h3{font-size:16px}
-.emoji-picker{display:flex;flex-wrap:wrap;gap:6px}
-.emoji-chip{width:36px;height:36px;flex:0 0 36px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-size:20px;border:2px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-tertiary);cursor:pointer;transition:all .15s}
+/* 图标选择：桌面端 12 个一排；手机端 6 个×两排（见下方 media query） */
+.emoji-picker{display:grid;grid-template-columns:repeat(12,36px);gap:6px;justify-content:space-between}
+.emoji-chip{width:36px;height:36px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-size:20px;border:2px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-tertiary);cursor:pointer;transition:all .15s}
 .emoji-chip.active{border-color:var(--accent);background:var(--accent-light)}
-.workflow-editor-step{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap}
-.workflow-editor-step .input{flex:1;min-width:100px}
-.workflow-editor-step .input:last-of-type{flex:2}
+/* 工作流步骤行：桌面端一排放齐，手机端按"名称+删除 / 说明 / 键名+温度"整齐分行 */
+.workflow-editor-step{display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap;padding:8px;background:var(--bg-tertiary);border-radius:var(--radius-sm)}
+.workflow-editor-step .input{min-width:0}
+.workflow-editor-step .wf-name{flex:1 1 110px}
+.workflow-editor-step .wf-desc{flex:1.5 1 150px}
+.workflow-editor-step .wf-key{flex:1 1 90px}
+.workflow-editor-step .wf-temp{display:flex;align-items:center;gap:4px;font-size:12px;flex:0 0 auto}
+.workflow-editor-step .wf-temp input{width:56px;padding:4px 6px}
+.workflow-editor-step .wf-remove{flex:0 0 auto;margin-left:auto}
+@media (max-width: 767px){
+  .emoji-picker{grid-template-columns:repeat(6,36px)}
+  .workflow-editor-step .workflow-step-num{order:0}
+  .workflow-editor-step .wf-name{order:1;flex:1 1 calc(100% - 88px)}
+  .workflow-editor-step .wf-remove{order:2}
+  .workflow-editor-step .wf-desc{order:3;flex:1 1 100%}
+  .workflow-editor-step .wf-key{order:4;flex:1 1 55%}
+  .workflow-editor-step .wf-temp{order:5;flex:1 1 38%;justify-content:flex-end}
+}
 .prompt-editor-item{margin-bottom:10px;padding:10px;background:var(--bg-tertiary);border-radius:var(--radius-sm)}
 .prompt-editor-header{display:flex;gap:6px;margin-bottom:6px}
 .prompt-key-input{flex:0 0 160px !important}

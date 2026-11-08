@@ -20,11 +20,10 @@ interface SkillEditorState {
   genre_target?: string;  // 文风类专属题材标签
 }
 
-// 技能包图标选择：使用 IconName 语义名称
+// 技能包图标选择：使用 IconName 语义名称（12个：桌面端一排、手机端两排各6个）
 const ICON_CHOICES: string[] = [
   'package', 'edit-pencil', 'target', 'rocket', 'lightbulb', 'crystal',
   'sword', 'castle', 'heart', 'search', 'bar-chart', 'drama',
-  'book', 'palette', 'zap',
 ];
 
 // 旧 emoji → 新 IconName 映射（向后兼容已有数据）
@@ -806,9 +805,6 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
                     </optgroup>
                   ))}
                 </select>
-                <p className="text-muted" style={{fontSize:11, marginTop:4}}>
-                  如果指定题材，仅当当前创作小说的题材与该值一致时才会在正文阶段注入，避免文风跨题材污染。
-                </p>
               </div>
             )}
 
@@ -820,11 +816,6 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
                 <option value="style">文风类（正文生成阶段注入，按题材锚定文风）</option>
                 <option value="review">审查类（去AI味/一致性检查阶段注入）</option>
               </select>
-              <p className="text-muted" style={{fontSize:11, marginTop:4}}>
-                {skillEditor.category === 'master' && '构思类：在大纲/规划/设定/总创作时注入，提供创作方法论'}
-                {skillEditor.category === 'style' && '文风类：仅在正文生成时注入，锚定特定题材的句式/节奏/用词风格'}
-                {skillEditor.category === 'review' && '审查类：在去AI味/一致性检查时注入，规范审校规则'}
-              </p>
             </div>
 
             <div className="form-field">
@@ -834,7 +825,7 @@ export default function SkillsTab({ selectedBookId }: { selectedBookId: string }
 
             {/* 【用户诉求-易用性】直接粘贴任意文本 / skill.md / JSON/YAML，自动识别成技能包 */}
             <div className="form-field">
-              <label style={{display:'inline-flex',alignItems:'center',gap:4}}><Icon name="lightbulb" size={14} /> 粘贴提示词或 skill.md 自动生成 <span className="text-muted" style={{fontSize:11}}>（支持 front-matter / JSON / YAML / 普通纯文本，不会覆盖已填好的名称/分类）</span></label>
+              <label style={{display:'inline-flex',alignItems:'center',gap:4}}><Icon name="lightbulb" size={14} /> 粘贴提示词或 skill.md 自动识别</label>
               <textarea
                 className="input"
                 rows={5}
@@ -862,29 +853,25 @@ category：master
                   }
                 }}
               />
-              <p className="text-muted" style={{fontSize:11, marginTop:4}}>
-                小技巧：格式越规范识别越准。带编号/"步骤N"/小节标题的正文会自动识别成工作流步骤并对应到提示词键，普通纯文本自动转为默认提示词，分类按关键词自动猜测。
-              </p>
             </div>
 
             <div className="form-field">
-                <label>创作工作流步骤（场景级：每步可独立设置温度）</label>
-                <p className="text-muted" style={{fontSize:11}}>每个步骤对应创作中的一个环节，prompt_key 与下方提示词的键名对应。temperature 为该场景调用AI时的采样温度（0~2，缺省跟随全局配置）。</p>
+                <label>创作工作流步骤</label>
                 {skillEditor.workflow.map((step, idx) => (
-                  <div key={idx} className="workflow-editor-step" style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                  <div key={idx} className="workflow-editor-step">
                     <span className="workflow-step-num">{idx + 1}</span>
-                    <input className="input" style={{flex:'1 1 120px'}} value={step.name} onChange={e => updateWorkflowStep(idx, 'name', e.target.value)} placeholder="步骤名称（如：设定构建）" />
-                    <input className="input" style={{flex:'1 1 160px'}} value={step.desc} onChange={e => updateWorkflowStep(idx, 'desc', e.target.value)} placeholder="步骤说明" />
-                    <input className="input" style={{flex:'1 1 100px'}} value={step.prompt_key} onChange={e => updateWorkflowStep(idx, 'prompt_key', e.target.value)} placeholder="prompt键名" />
-                    <label style={{display:'flex',alignItems:'center',gap:4,fontSize:12,minWidth:110}}>
+                    <input className="input wf-name" value={step.name} onChange={e => updateWorkflowStep(idx, 'name', e.target.value)} placeholder="步骤名称（如：设定构建）" />
+                    <input className="input wf-desc" value={step.desc} onChange={e => updateWorkflowStep(idx, 'desc', e.target.value)} placeholder="步骤说明" />
+                    <input className="input wf-key" value={step.prompt_key} onChange={e => updateWorkflowStep(idx, 'prompt_key', e.target.value)} placeholder="prompt键名" />
+                    <label className="wf-temp" title="该步骤采样温度（0~2，缺省跟随全局配置）">
                       <Icon name="thermometer" size={14} /> 温度
                       <input type="number" min={0} max={2} step={0.1}
-                        className="input" style={{width:52,padding:'4px 6px'}}
+                        className="input"
                         value={step.temperature ?? ''}
                         onChange={e => updateWorkflowTemp(idx, parseFloat(e.target.value))}
                         placeholder="默认" />
                     </label>
-                    <button className="btn-icon" onClick={() => removeWorkflowStep(idx)}><Icon name="x" size={16} /></button>
+                    <button className="btn-icon wf-remove" onClick={() => removeWorkflowStep(idx)}><Icon name="x" size={16} /></button>
                   </div>
                 ))}
                 <button className="btn-secondary" onClick={addWorkflowStep}>+ 添加步骤</button>
@@ -892,7 +879,6 @@ category：master
 
             <div className="form-field">
               <label>提示词模板</label>
-              <p className="text-muted" style={{fontSize:11}}>键名对应工作流步骤的 prompt_key，值是发给AI的提示词模板</p>
               {Object.entries(skillEditor.prompts).map(([key, val]) => (
                 <div key={key} className="prompt-editor-item">
                   <div className="prompt-editor-header">
