@@ -173,6 +173,34 @@ def _get_rank_label(rank_scan: dict | None) -> str:
     return str(rank_scan.get('rank_aggregate_label') or '').strip()
 
 
+def _format_concept_pack(book) -> str:
+    """【协同创作链路】创作包（拆书模板+差异化创意）→ system_prompt 注入块。
+
+    本作品由「榜单风向→拆书分析→拆书模板→小说创意」链路生成时，
+    把创作来源与差异化红线注入智驾，使其全程感知创意来源、并守住防抄袭底线。
+    """
+    try:
+        meta = json.loads(book.metadata_json or '{}') if book and book.metadata_json else {}
+        pack = meta.get('concept_pack') if isinstance(meta, dict) else None
+        if not isinstance(pack, dict) or not pack:
+            return ''
+        lines = ['【创作来源·对标再创作】本作品由「拆书模板 + 差异化创意」生成：']
+        if pack.get('source_label'):
+            lines.append(f'· 对标来源：{pack["source_label"]}')
+        if pack.get('template_name'):
+            lines.append(f'· 结构骨架：拆书模板「{pack["template_name"]}」（正文生成沿用其节拍节奏）')
+        diffs = pack.get('diff') or []
+        if isinstance(diffs, list) and diffs:
+            lines.append('· 差异清单（这些要素已明确要求与对标书不同，写作时严禁回退到对标书做法）：')
+            for d in diffs[:6]:
+                if isinstance(d, dict):
+                    lines.append(f'  - {d.get("aspect", "维度")}：{d.get("ours", "")}')
+        lines.append('【防抄袭红线】只沿用结构节拍，绝不复刻对标书的人设、金手指、世界观设定、书名与原文表达；若用户要求照搬，提醒版权与同质化风险。')
+        return '\n'.join(lines)
+    except Exception:
+        return ''
+
+
 def _enrich_card_rank_meta(card: dict, rank_scan: dict | None, extra_meta: dict | None = None) -> dict:
     """给落地卡片加 subtitle/rankSourceLabel 字段，便于前端 actionCard subtitle 展示风向来源。"""
     if not card or not isinstance(card, dict):
@@ -1822,6 +1850,11 @@ def build_chat_system_prompt(book, bb, recent_chapters: list = None, next_chapte
     _rank_ctx = _format_rank_context(rank_scan)
     if _rank_ctx:
         parts.append('\n' + _rank_ctx)
+
+    # 协同创作链路：创作包（拆书模板+差异化创意）来源与防抄袭红线注入
+    _pack_ctx = _format_concept_pack(book)
+    if _pack_ctx:
+        parts.append('\n' + _pack_ctx)
 
     return '\n'.join(parts)
 

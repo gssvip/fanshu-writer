@@ -219,6 +219,8 @@ class Template(db.Model):
     structure_json = db.Column(db.Text, default='[]')
     prompts_json = db.Column(db.Text, default='{}')
     is_builtin = db.Column(db.Boolean, default=False)
+    # 来源溯源（JSON）：拆书生成的模板记录 {type:'teardown', analysis_id, book_title, source_label}
+    source_json = db.Column(db.Text, default='{}')
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
     def to_dict(self):
@@ -228,7 +230,71 @@ class Template(db.Model):
             'structure': json.loads(self.structure_json or '[]'),
             'prompts': json.loads(self.prompts_json or '{}'),
             'is_builtin': self.is_builtin,
+            'source': json.loads(self.source_json or '{}'),
             'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+class BookAnalysis(db.Model):
+    """拆书档案：拆书分析结果落库（资料库·拆书档案分区）。
+
+    拆书链路的资产沉淀层：分析结果不再"看完即丢"，可反复查看、生成拆书模板、
+    作为差异化再创作的对标依据。
+    """
+    __tablename__ = 'book_analyses'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), default='', index=True)
+    title = db.Column(db.String(200), default='')          # 对标书名 / 分析标题
+    source_label = db.Column(db.String(300), default='')   # 来源标签（如 "🍅番茄新书榜·男频都市"）
+    platform = db.Column(db.String(50), default='')        # 榜单平台 code（无则空）
+    mode = db.Column(db.String(20), default='competitor')  # competitor / deep / position
+    result_json = db.Column(db.Text, default='{}')         # 完整拆书 JSON（schema v2）
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self, include_result=False):
+        d = {
+            'id': self.id, 'title': self.title, 'source_label': self.source_label,
+            'platform': self.platform, 'mode': self.mode,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+        if include_result:
+            d['result'] = json.loads(self.result_json or '{}')
+        else:
+            # 列表态只带摘要字段，避免大 JSON 拖慢资料库列表
+            r = json.loads(self.result_json or '{}')
+            d['summary'] = {
+                'logline': r.get('logline', ''),
+                'genre_tags': r.get('genre_tags', []),
+                'positioning': r.get('positioning', ''),
+            }
+        return d
+
+class IdeaCard(db.Model):
+    """创意卡 / 创作包：基于拆书模板的差异化再创作产出（资料库·创意工坊）。
+
+    idea_json：创意内容（故事核/卖点/人物/开篇钩子等）
+    diff_json：差异清单（防抄袭自检，与对标书逐项对比的差异点）
+    book_id：「送去智驾」后关联的新作品，形成 榜单→拆书→模板→创意→成书 溯源链。
+    """
+    __tablename__ = 'idea_cards'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), default='', index=True)
+    title = db.Column(db.String(200), default='')          # 创意名
+    idea_json = db.Column(db.Text, default='{}')           # 创意内容
+    diff_json = db.Column(db.Text, default='[]')           # 差异清单（防抄袭自检）
+    template_id = db.Column(db.String(36), default='')     # 来源拆书模板
+    analysis_id = db.Column(db.String(36), default='')     # 来源拆书档案（可空）
+    source_label = db.Column(db.String(300), default='')   # 来源标签（对标书/榜单）
+    book_id = db.Column(db.String(36), default='')         # 送去智驾后关联的作品
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'title': self.title,
+            'idea': json.loads(self.idea_json or '{}'),
+            'diff': json.loads(self.diff_json or '[]'),
+            'template_id': self.template_id, 'analysis_id': self.analysis_id,
+            'source_label': self.source_label, 'book_id': self.book_id,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
 class AISession(db.Model):

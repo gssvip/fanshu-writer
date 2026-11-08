@@ -256,6 +256,7 @@ try:
     from blueprints.ai_continue_bp import ai_continue_bp; app.register_blueprint(ai_continue_bp)  # 正文滚动创作域（续写/定点修订/批写/SSE，拆自 app.py）
     from blueprints.ai_analyze_bp import ai_analyze_bp; app.register_blueprint(ai_analyze_bp)  # AI 分析域（9+2 个 ai-analyze 路由，拆自 app.py）
     from blueprints.novel_rank_bp import novel_rank_bp; app.register_blueprint(novel_rank_bp)
+    from blueprints.library_bp import library_bp; app.register_blueprint(library_bp)  # 资料库域（拆书档案/拆书模板/创意工坊/创作包，协同创作链路）
     from node_design_bp import node_design_bp; app.register_blueprint(node_design_bp)
 except ImportError:
     pass
@@ -374,6 +375,7 @@ from models import (
     Book, Chapter, ChapterVersion, Character, Outline, DailyStats, Template,
     AISession, AIConfig, AIUsageLog, AppPreference, StageContent, BookBible,
     SkillPack, DynamicMemory, DynamicReport, PromptTemplate, AppMeta,
+    BookAnalysis, IdeaCard,
 )
 
 # ==== 鉴权工具（拆至 auth_utils.py：app.py 58 处路由 + 各蓝图共用，单向导入无循环）====
@@ -9204,7 +9206,7 @@ def ai_usage_stats():
 
 # 【冷启动提速·2026-08-20】schema+seed 版本号：改动数据库结构（新表/新列/迁移）
 # 或种子数据（SEED_SKILL_PACKS / 内置模板）时必须递增此版本，老库才会重新走全量初始化。
-SCHEMA_SEED_VERSION = '2026-09-20.1'  # 多用户信息隔离：ai_config / ai_sessions 新增 user_id 列
+SCHEMA_SEED_VERSION = '2026-11-08.1'  # 资料库协同创作：templates 新增 source_json 列 + book_analyses / idea_cards 新表
 
 
 def init_db():
@@ -9306,6 +9308,7 @@ def init_db():
         # Migration: 总卷数 + 风格流派（Book 与 BookBible 双写）
         _add_column('books', 'total_volumes INTEGER DEFAULT 10')
         _add_column('books', "novel_styles TEXT DEFAULT '[]'")
+        _add_column('templates', "source_json TEXT DEFAULT '{}'")
         _add_column('book_bible', 'total_volumes INTEGER DEFAULT 10')
         _add_column('book_bible', "novel_styles TEXT DEFAULT '[]'")
         # Migration P1-5: 章节审计-修订闭环快照（修复保存章节 500 错误：老库缺此列）

@@ -4,19 +4,75 @@ import type { Book } from '../types';
 import Icon from '../components/Icon';
 import { useIsMobile } from '../hooks/useMobileUI';
 import { GENRES, GENRE_GROUPS, normalizeGenreKey } from '../constants';
-import ReviewTab from './tools/ReviewTab';
+import LibraryTab from './tools/LibraryTab';
 import SkillsTab from './tools/SkillsTab';
 import AnalyzeTab from './tools/AnalyzeTab';
 import RankingsTab, { type RankContext, type RankAnalyzeTarget } from './tools/RankingsTab';
 
-type ToolTab = 'review' | 'skills' | 'analyze' | 'rankings';
+type ToolTab = 'library' | 'skills' | 'analyze' | 'rankings';
 
+// 资料库 = 协同创作链路（榜单风向→拆书分析→拆书模板→小说创意→智驾生成）的资产沉淀层
 const TOOL_TABS: { key: ToolTab; label: string; icon: string; desc: string }[] = [
-  { key: 'review', label: 'AI 责编', icon: 'search', desc: 'AI平台视角审稿打分' },
+  { key: 'library', label: '资料库', icon: 'book', desc: '拆书模板·档案·创意工坊' },
   { key: 'skills', label: '技能包', icon: 'package', desc: '15+题材工作流套件' },
   { key: 'analyze', label: '拆书分析', icon: 'bar-chart', desc: '导入文件分析提炼方法论' },
   { key: 'rankings', label: '榜单风向', icon: 'trending-up', desc: '各平台排行榜趋势洞察' },
 ];
+
+// ---- 协同创作链路进度条：榜单风向→拆书分析→拆书模板→小说创意→智驾生成 ----
+function PipelineBar({ activeTab, onJumpTab }: { activeTab: ToolTab; onJumpTab: (tab: ToolTab) => void }) {
+  const [flags, setFlags] = useState({ analyses: 0, templates: 0, ideas: 0, driven: 0 });
+
+  useEffect(() => {
+    Promise.all([api.listBookAnalyses(), api.listTemplates(), api.listIdeaCards()])
+      .then(([a, t, i]) => setFlags({
+        analyses: a.length,
+        templates: t.filter((x: any) => !x.is_builtin).length,
+        ideas: i.length,
+        driven: i.filter((x: any) => x.book_id).length,
+      }))
+      .catch(() => {});
+  }, []);
+
+  const steps: { key: string; label: string; tab: ToolTab | 'write'; done: boolean }[] = [
+    { key: 'rankings', label: '榜单风向', tab: 'rankings', done: true },
+    { key: 'analyze', label: '拆书分析', tab: 'analyze', done: flags.analyses > 0 },
+    { key: 'template', label: '拆书模板', tab: 'library', done: flags.templates > 0 },
+    { key: 'idea', label: '小说创意', tab: 'library', done: flags.ideas > 0 },
+    { key: 'drive', label: '智驾生成', tab: 'write', done: flags.driven > 0 },
+  ];
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+      padding: '8px 12px', borderRadius: 10, marginBottom: 12, fontSize: 12,
+      border: '1px solid var(--border, rgba(120,120,130,0.2))',
+      background: 'var(--bg-secondary, rgba(128,128,140,0.05))',
+    }}>
+      <span style={{ color: 'var(--text-secondary, #888)', marginRight: 2 }}>创作链路</span>
+      {steps.map((s, idx) => {
+        const active = s.tab === activeTab;
+        return (
+          <span key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              onClick={() => (s.tab === 'write' ? (window.location.hash = '#/write') : onJumpTab(s.tab as ToolTab))}
+              style={{
+                border: 'none', background: active ? 'var(--accent, #4c6ef5)' : 'transparent',
+                color: active ? '#fff' : 'inherit', cursor: 'pointer',
+                padding: '3px 10px', borderRadius: 999, fontSize: 12,
+                fontWeight: active ? 600 : 400,
+              }}
+              title={s.done ? '已完成' : '待完成'}
+            >
+              {s.done ? '✓ ' : ''}{s.label}
+            </button>
+            {idx < steps.length - 1 && <span style={{ color: 'var(--text-secondary, #888)' }}>›</span>}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 /** 榜单分类名（如「东方仙侠」「都市高武」「宫斗宅斗」）→ 作品题材 key 的子串匹配兜底 */
 const CATEGORY_KEYWORDS: [string, string][] = [
@@ -51,7 +107,7 @@ function guessGenreFromCategory(categoryName?: string, subName?: string): string
 const NEW_BOOK_VALUE = '__new__';
 
 export default function ToolsPage() {
-  const [activeTab, setActiveTab] = useState<ToolTab>('review');
+  const [activeTab, setActiveTab] = useState<ToolTab>('library');
   const [books, setBooks] = useState<Book[]>([]);
   const [selectedBookId, setSelectedBookId] = useState('');
   // #3 移动端自动折叠：工具箱 + 选择作品 在 activeTab=rankings 时收起
@@ -185,7 +241,9 @@ export default function ToolsPage() {
         </div>
       </section>
 
-      {activeTab === 'review' && <ReviewTab selectedBookId={selectedBookId} />}
+      <PipelineBar activeTab={activeTab} onJumpTab={setActiveTab} />
+
+      {activeTab === 'library' && <LibraryTab />}
       {activeTab === 'skills' && <SkillsTab selectedBookId={selectedBookId} />}
       {activeTab === 'analyze' && (
         <AnalyzeTab

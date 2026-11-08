@@ -35,6 +35,9 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
   const [syncBookId, setSyncBookId] = useState('');
   const [syncMode, setSyncMode] = useState('imitate');
   const [syncing, setSyncing] = useState(false);
+  // 资料库（协同创作链路）：拆书结果落库 + 一键生成拆书模板
+  const [savedAnalysisId, setSavedAnalysisId] = useState<string | null>(null);
+  const [libBusy, setLibBusy] = useState('');
 
   // ===== 榜单书直拆（无需导入）=====
   const [positionResult, setPositionResult] = useState<RankPositionAnalysis | null>(null);
@@ -168,6 +171,7 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
     if (!ok) return;
     setAnalyzeLoading(true);
     setAnalyzeResult(null);
+    setSavedAnalysisId(null);
     try {
       const r = await api.analyzeBook(text, mode === 'competitor' ? 'competitor' : undefined);
       setAnalyzeResult(r);
@@ -198,6 +202,63 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
       alert('同步失败：' + (e.message || '请检查AI配置'));
     }
     setSyncing(false);
+  }
+
+  // ---- 资料库：拆书结果落库（拆书档案），供「生成拆书模板」「创意工坊」复用 ----
+  function buildSourceLabel(): string {
+    if (rankBook) {
+      const cat = [rankBook.categoryName, rankBook.categorySubName].filter(Boolean).join('/');
+      return `${rankBook.platformName || '榜单'}${cat ? '·' + cat : ''}`;
+    }
+    return uploadFilename ? `导入:${uploadFilename}` : '';
+  }
+
+  async function ensureSavedAnalysis(): Promise<string | null> {
+    if (savedAnalysisId) return savedAnalysisId;
+    const ok = await requireAuth();
+    if (!ok) return null;
+    const defaultTitle = rankBook?.bookTitle
+      ? `《${rankBook.bookTitle}》拆书`
+      : (uploadFilename ? uploadFilename.replace(/\.[^.]+$/, '') : '拆书档案');
+    const title = prompt('拆书档案名称：', defaultTitle);
+    if (title === null) return null;
+    setLibBusy('save');
+    try {
+      const row = await api.saveBookAnalysis({
+        title: title.trim() || defaultTitle,
+        source_label: buildSourceLabel(),
+        platform: rankBook?.platform || '',
+        mode: analyzeMode === 'competitor' ? 'competitor' : 'deep',
+        result: analyzeResult,
+      });
+      setSavedAnalysisId(row.id);
+      return row.id;
+    } catch (e: any) {
+      alert('存入资料库失败: ' + e.message);
+      return null;
+    } finally {
+      setLibBusy('');
+    }
+  }
+
+  async function handleSaveToLibrary() {
+    const id = await ensureSavedAnalysis();
+    if (id) alert('已存入资料库·拆书档案。可在工具页「资料库」查看，并一键生成拆书模板。');
+  }
+
+  async function handleGenTemplate() {
+    const id = await ensureSavedAnalysis();
+    if (!id) return;
+    const name = prompt('拆书模板名称：', `${rankBook?.bookTitle || '拆书'}·拆书模板`);
+    if (name === null) return;
+    setLibBusy('tpl');
+    try {
+      const t = await api.analysisToTemplate(id, name.trim() || undefined);
+      alert(`已生成拆书模板：${t.name}\n可在「资料库·拆书模板」查看，或在新建作品时选用。`);
+    } catch (e: any) {
+      alert('生成模板失败: ' + e.message);
+    }
+    setLibBusy('');
   }
 
   return (
@@ -384,6 +445,18 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
           {analyzeResult && (
             <>
               <button className="btn-secondary" onClick={handleExportAnalysis}><Icon name="inbox" size={14} /> 导出结果</button>
+              {!savedAnalysisId ? (
+                <button className="btn-secondary" disabled={libBusy === 'save'} onClick={handleSaveToLibrary}>
+                  <Icon name="book" size={14} /> {libBusy === 'save' ? '存入中…' : '存入资料库'}
+                </button>
+              ) : (
+                <button className="btn-secondary" disabled style={{opacity:.7}}>
+                  <Icon name="check-circle" size={14} /> 已存入资料库
+                </button>
+              )}
+              <button className="btn-secondary" disabled={!!libBusy} onClick={handleGenTemplate}>
+                <Icon name="clipboard" size={14} /> {libBusy === 'tpl' ? '生成中…' : '生成拆书模板'}
+              </button>
               <button className="btn-secondary" onClick={() => { setSyncBookId(prev => prev || selectedBookId || ''); setShowSyncModal(true); }} style={{borderColor:'var(--accent)',color:'var(--accent)'}}>
                 <Icon name="clipboard" size={14} /> 同步到作品
               </button>

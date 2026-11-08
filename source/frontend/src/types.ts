@@ -44,6 +44,7 @@ export interface Template {
   structure: TemplateChapter[];
   prompts: Record<string, string>;
   is_builtin: boolean; created_at: string;
+  source?: Record<string, any>;  // 来源溯源：拆书生成的模板 {type:'teardown', analysis_id, book_title, source_label}
 }
 
 export interface TemplateChapter {
@@ -477,6 +478,42 @@ export interface BrainstormResult {
     locations: BrainstormSuggestion[];
     foreshadowing: BrainstormSuggestion[];
   };
+}
+
+// ==== 资料库（协同创作链路：拆书档案 / 拆书模板 / 创意工坊）====
+export interface BookAnalysis {
+  id: string; title: string; source_label: string; platform: string;
+  mode: string; created_at: string;
+  summary?: { logline: string; genre_tags: string[]; positioning: string };
+  result?: Record<string, any>;
+}
+
+export interface IdeaDiffItem {
+  aspect: string; benchmark: string; ours: string; passed?: boolean;
+}
+
+export interface IdeaContent {
+  logline?: string;
+  selling_points?: string[];
+  worldview?: string;
+  conflict?: string;
+  characters?: Array<{ name: string; role: string; desc: string }>;
+  opening_hook?: string;
+  outline_sketch?: string;
+}
+
+export interface IdeaCard {
+  id: string; title: string;
+  idea: IdeaContent;
+  diff: IdeaDiffItem[];
+  template_id: string; analysis_id: string;
+  source_label: string; book_id: string;
+  created_at: string;
+}
+
+export interface IdeaGenerateResult {
+  title: string; idea: IdeaContent; diff: IdeaDiffItem[];
+  plagiarism_risk: string; risk_note: string; source_label: string;
 }
 
 export interface DynamicReport {

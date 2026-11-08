@@ -1,4 +1,4 @@
-import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, AppliedPatchItem, ImpactPreview, AIUsageLogItem, AIUsageStats, RankingData, NRPlatform, NRFilters, NRListResult } from './types';
+import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, AppliedPatchItem, ImpactPreview, AIUsageLogItem, AIUsageStats, RankingData, NRPlatform, NRFilters, NRListResult, BookAnalysis, IdeaCard, IdeaGenerateResult } from './types';
 
 // 后端 API 地址解析优先级：
 // 1. localStorage 用户手动覆盖地址
@@ -234,6 +234,23 @@ export const api = {
   // Templates
   listTemplates: () => request<Template[]>('/templates'),
   createTemplate: (data: Partial<Template>) => request<Template>('/templates', { method: 'POST', body: JSON.stringify(data) }),
+
+  // ==== 资料库（协同创作链路：拆书档案 / 拆书模板 / 创意工坊 / 创作包）====
+  listBookAnalyses: () => request<BookAnalysis[]>('/library/analyses'),
+  saveBookAnalysis: (data: { title: string; source_label?: string; platform?: string; mode?: string; result: any }) =>
+    request<BookAnalysis>('/library/analyses', { method: 'POST', body: JSON.stringify(data) }),
+  getBookAnalysis: (id: string) => request<BookAnalysis>(`/library/analyses/${id}`),
+  deleteBookAnalysis: (id: string) => request<{ ok: boolean }>(`/library/analyses/${id}`, { method: 'DELETE' }),
+  analysisToTemplate: (id: string, name?: string) =>
+    request<Template>(`/library/analyses/${id}/to-template`, { method: 'POST', body: JSON.stringify({ name }) }),
+  listIdeaCards: () => request<IdeaCard[]>('/library/ideas'),
+  generateIdea: (data: { template_id: string; analysis_id?: string; brief?: string }) =>
+    request<IdeaGenerateResult>('/library/ideas/generate', { method: 'POST', body: JSON.stringify(data) }, undefined, 180000),
+  saveIdeaCard: (data: { title: string; idea: any; diff?: any[]; template_id?: string; analysis_id?: string; source_label?: string }) =>
+    request<IdeaCard>('/library/ideas', { method: 'POST', body: JSON.stringify(data) }),
+  deleteIdeaCard: (id: string) => request<{ ok: boolean }>(`/library/ideas/${id}`, { method: 'DELETE' }),
+  createBookFromIdea: (id: string) =>
+    request<{ book_id: string; book: Book }>(`/library/ideas/${id}/create-book`, { method: 'POST' }),
 
   // AI
   getAIConfig: () => request<AIConfig>('/ai/config'),
