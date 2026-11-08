@@ -281,9 +281,12 @@ export default function WritePage() {
   }, [bible]);
 
   // 从首页 AI总创作 入口跳转过来时，URL 带 ai=global，现统一打开 AI 智驾
+  // 资料库「加载」跳转时带 session=<id>，直达对应智驾会话
   useEffect(() => {
     if (bookId && searchParams.get('ai') === 'global') {
-      openNewAiCreate();
+      const sid = searchParams.get('session');
+      if (sid) openChatPanel(bookId, sid);
+      else openNewAiCreate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId]);

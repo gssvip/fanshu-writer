@@ -1,4 +1,4 @@
-import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, AppliedPatchItem, ImpactPreview, AIUsageLogItem, AIUsageStats, RankingData, NRPlatform, NRFilters, NRListResult, BookAnalysis, IdeaCard, IdeaGenerateResult } from './types';
+import type { Book, Chapter, Character, Outline, Template, AIConfig, AIConfigList, AISession, AIMessage, ActionCard, ProgressMap, StatsData, StageItem, PromptT, BookBible, SkillPack, ReviewResult, AnalysisResult, BrainstormResult, DynamicReport, OptimizationReport, AppliedPatchItem, ImpactPreview, AIUsageLogItem, AIUsageStats, RankingData, NRPlatform, NRFilters, NRListResult, BookAnalysis, IdeaCard, IdeaGenerateResult, LibraryNote } from './types';
 
 // 后端 API 地址解析优先级：
 // 1. localStorage 用户手动覆盖地址
@@ -248,9 +248,23 @@ export const api = {
     request<IdeaGenerateResult>('/library/ideas/generate', { method: 'POST', body: JSON.stringify(data) }, undefined, 180000),
   saveIdeaCard: (data: { title: string; idea: any; diff?: any[]; template_id?: string; analysis_id?: string; source_label?: string }) =>
     request<IdeaCard>('/library/ideas', { method: 'POST', body: JSON.stringify(data) }),
+  updateIdeaCard: (id: string, data: { title?: string; idea?: any }) =>
+    request<IdeaCard>(`/library/ideas/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteIdeaCard: (id: string) => request<{ ok: boolean }>(`/library/ideas/${id}`, { method: 'DELETE' }),
   createBookFromIdea: (id: string) =>
     request<{ book_id: string; book: Book }>(`/library/ideas/${id}/create-book`, { method: 'POST' }),
+  updateBookAnalysis: (id: string, data: { title?: string; source_label?: string; content?: string }) =>
+    request<BookAnalysis>(`/library/analyses/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  updateTemplate: (id: string, data: Partial<Template>) =>
+    request<Template>(`/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  listNotes: () => request<LibraryNote[]>('/library/notes'),
+  createNote: (data: { title: string; content: string }) =>
+    request<LibraryNote>('/library/notes', { method: 'POST', body: JSON.stringify(data) }),
+  updateNote: (id: string, data: { title?: string; content?: string }) =>
+    request<LibraryNote>(`/library/notes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteNote: (id: string) => request<{ ok: boolean }>(`/library/notes/${id}`, { method: 'DELETE' }),
+  loadToChat: (data: { book_id: string; title: string; content: string }) =>
+    request<{ session_id: string }>('/library/load-to-chat', { method: 'POST', body: JSON.stringify(data) }),
 
   // AI
   getAIConfig: () => request<AIConfig>('/ai/config'),

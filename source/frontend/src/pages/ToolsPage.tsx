@@ -243,7 +243,7 @@ export default function ToolsPage() {
 
       <PipelineBar activeTab={activeTab} onJumpTab={setActiveTab} />
 
-      {activeTab === 'library' && <LibraryTab />}
+      {activeTab === 'library' && <LibraryTab selectedBookId={selectedBookId} />}
       {activeTab === 'skills' && <SkillsTab selectedBookId={selectedBookId} />}
       {activeTab === 'analyze' && (
         <AnalyzeTab

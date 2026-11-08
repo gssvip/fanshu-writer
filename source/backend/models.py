@@ -750,3 +750,22 @@ class AppMeta(db.Model):
     __tablename__ = 'app_meta'
     key = db.Column(db.String(100), primary_key=True)
     value = db.Column(db.Text)
+
+
+class LibraryNote(db.Model):
+    """素材笔记（资料库·素材笔记分区）：随手笔记/资料卡/金句/人物原型。"""
+    __tablename__ = 'library_notes'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), index=True, default='')
+    title = db.Column(db.String(200), default='')
+    content = db.Column(db.Text, default='')
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self):
+        return {
+            'id': self.id, 'user_id': self.user_id,
+            'title': self.title, 'content': self.content,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }

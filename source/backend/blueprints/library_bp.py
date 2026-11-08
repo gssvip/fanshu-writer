@@ -414,3 +414,155 @@ def create_book_from_idea(idea_id):
     row.book_id = book.id
     db.session.commit()
     return jsonify({'book_id': book.id, 'book': book.to_dict()}), 201
+
+
+# ---------------------------------------------------------------------------
+# 编辑（拆书档案 / 创意卡）
+# ---------------------------------------------------------------------------
+
+@library_bp.route('/api/library/analyses/<analysis_id>', methods=['PUT'])
+@login_required
+def update_analysis(analysis_id):
+    from app import db, BookAnalysis
+    row = BookAnalysis.query.filter_by(id=analysis_id, user_id=request.current_user_id).first()
+    if not row:
+        return jsonify({'error': 'Not found'}), 404
+    data = request.json or {}
+    if 'title' in data:
+        row.title = (data.get('title') or '').strip()[:200]
+    if 'source_label' in data:
+        row.source_label = (data.get('source_label') or '').strip()[:300]
+    if 'content' in data:
+        try:
+            result = json.loads(row.result_json or '{}')
+        except Exception:
+            result = {}
+        result['raw'] = data.get('content') or ''
+        row.result_json = json.dumps(result, ensure_ascii=False)
+        row.summary_json = json.dumps(_summary_from_result(result), ensure_ascii=False)
+    db.session.commit()
+    return jsonify(row.to_dict())
+
+
+@library_bp.route('/api/library/ideas/<idea_id>', methods=['PUT'])
+@login_required
+def update_idea(idea_id):
+    from app import db, IdeaCard
+    row = IdeaCard.query.filter_by(id=idea_id, user_id=request.current_user_id).first()
+    if not row:
+        return jsonify({'error': 'Not found'}), 404
+    data = request.json or {}
+    if 'title' in data:
+        row.title = (data.get('title') or '').strip()[:200]
+    if isinstance(data.get('idea'), dict):
+        try:
+            idea = json.loads(row.idea_json or '{}')
+        except Exception:
+            idea = {}
+        idea.update(data['idea'])
+        row.idea_json = json.dumps(idea, ensure_ascii=False)
+    db.session.commit()
+    return jsonify(row.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# 素材笔记（library_notes）
+# ---------------------------------------------------------------------------
+
+@library_bp.route('/api/library/notes', methods=['GET'])
+@login_required
+def list_notes():
+    from app import LibraryNote
+    rows = LibraryNote.query.filter_by(user_id=request.current_user_id) \
+        .order_by(LibraryNote.updated_at.desc()).all()
+    return jsonify([r.to_dict() for r in rows])
+
+
+@library_bp.route('/api/library/notes', methods=['POST'])
+@login_required
+def create_note():
+    from app import db, LibraryNote
+    data = request.json or {}
+    row = LibraryNote(
+        user_id=request.current_user_id,
+        title=(data.get('title') or '').strip()[:200],
+        content=data.get('content') or '',
+    )
+    db.session.add(row)
+    db.session.commit()
+    return jsonify(row.to_dict()), 201
+
+
+@library_bp.route('/api/library/notes/<note_id>', methods=['PUT'])
+@login_required
+def update_note(note_id):
+    from app import db, LibraryNote
+    row = LibraryNote.query.filter_by(id=note_id, user_id=request.current_user_id).first()
+    if not row:
+        return jsonify({'error': 'Not found'}), 404
+    data = request.json or {}
+    if 'title' in data:
+        row.title = (data.get('title') or '').strip()[:200]
+    if 'content' in data:
+        row.content = data.get('content') or ''
+    db.session.commit()
+    return jsonify(row.to_dict())
+
+
+@library_bp.route('/api/library/notes/<note_id>', methods=['DELETE'])
+@login_required
+def delete_note(note_id):
+    from app import db, LibraryNote
+    row = LibraryNote.query.filter_by(id=note_id, user_id=request.current_user_id).first()
+    if not row:
+        return jsonify({'error': 'Not found'}), 404
+    db.session.delete(row)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# 加载到智驾：把资料库条目作为一条消息追加进所选作品的智驾会话
+# ---------------------------------------------------------------------------
+
+@library_bp.route('/api/library/load-to-chat', methods=['POST'])
+@login_required
+def load_to_chat():
+    from datetime import datetime, timezone
+
+    from auth_utils import get_owned_book
+    from app import db, AISession
+    from session_persist import _archive_replace_all
+
+    data = request.json or {}
+    book_id = (data.get('book_id') or '').strip()
+    content = (data.get('content') or '').strip()
+    title = (data.get('title') or '').strip()
+    if not book_id or not content:
+        return jsonify({'error': '缺少 book_id 或内容'}), 400
+    if get_owned_book(book_id) is None:
+        return jsonify({'error': 'Book not found'}), 404
+
+    # 优先续用该作品最近的智驾会话（smart_setting），否则 general，再没有就新建
+    session = (AISession.query.filter_by(book_id=book_id, scope='smart_setting')
+               .order_by(AISession.updated_at.desc()).first()
+               or AISession.query.filter_by(book_id=book_id, scope='general')
+               .order_by(AISession.updated_at.desc()).first())
+    if not session:
+        session = AISession(book_id=book_id, scope='smart_setting',
+                            user_id=request.current_user_id, title=title[:30] or '智驾')
+        db.session.add(session)
+        db.session.flush()
+
+    try:
+        msgs = json.loads(session.messages_json or '[]')
+        if not isinstance(msgs, list):
+            msgs = []
+    except Exception:
+        msgs = []
+    msgs.append({'role': 'user', 'content': content})
+    _archive_replace_all(session.id, msgs)
+    session.messages_json = json.dumps(msgs, ensure_ascii=False)
+    session.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+    return jsonify({'session_id': session.id})

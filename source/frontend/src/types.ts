@@ -516,6 +516,12 @@ export interface IdeaGenerateResult {
   plagiarism_risk: string; risk_note: string; source_label: string;
 }
 
+// 资料库·素材笔记
+export interface LibraryNote {
+  id: string; title: string; content: string;
+  created_at: string; updated_at: string;
+}
+
 export interface DynamicReport {
   id: string;
   book_id: string;

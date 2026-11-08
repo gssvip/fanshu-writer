@@ -823,6 +823,29 @@ def create_template():
     db.session.commit()
     return jsonify(template.to_dict()), 201
 
+@app.route('/api/templates/<template_id>', methods=['PUT'])
+def update_template(template_id):
+    template = Template.query.get(template_id)
+    if not template:
+        return jsonify({'error': 'Template not found'}), 404
+    if template.is_builtin:
+        return jsonify({'error': '内置模板不可编辑'}), 403
+    data = request.json or {}
+    if 'name' in data:
+        template.name = (data.get('name') or '').strip()[:200] or template.name
+    if 'description' in data:
+        template.description = data.get('description') or ''
+    if 'genre' in data:
+        template.genre = data.get('genre') or 'other'
+    if 'book_type' in data:
+        template.book_type = data.get('book_type') or 'novel'
+    if 'structure' in data and isinstance(data.get('structure'), list):
+        template.structure_json = json.dumps(data['structure'], ensure_ascii=False)
+    if 'prompts' in data and isinstance(data.get('prompts'), dict):
+        template.prompts_json = json.dumps(data['prompts'], ensure_ascii=False)
+    db.session.commit()
+    return jsonify(template.to_dict())
+
 # ==== AI API ====
 # 注：/api/ai/config GET/PUT 已迁移至 blueprints/ai_config_bp.py（多配置支持）
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { AuthContext } from '../../App';
-import type { BookAnalysis, IdeaCard, IdeaGenerateResult, Template } from '../../types';
+import type { BookAnalysis, IdeaCard, IdeaGenerateResult, LibraryNote, Template } from '../../types';
 import Icon from '../../components/Icon';
 
 // 资料库：协同创作链路（榜单风向→拆书分析→拆书模板→小说创意→智驾生成）的资产沉淀层。
@@ -31,8 +31,18 @@ const fieldStyle: React.CSSProperties = {
   width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, boxSizing: 'border-box',
   border: '1px solid var(--border, rgba(120,120,130,0.3))', background: 'transparent', color: 'inherit',
 };
+const modalMaskStyle: React.CSSProperties = {
+  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000,
+  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+};
+const modalStyle: React.CSSProperties = {
+  background: 'var(--bg-primary, #fff)', borderRadius: 12, padding: 18,
+  width: 'min(520px, 100%)', maxHeight: '85vh', overflowY: 'auto', boxSizing: 'border-box',
+};
 
-export default function LibraryTab() {
+type LibType = 'template' | 'analysis' | 'idea' | 'note';
+
+export default function LibraryTab({ selectedBookId }: { selectedBookId: string }) {
   const { requireAuth } = useContext(AuthContext);
   const navigate = useNavigate();
 
@@ -41,6 +51,15 @@ export default function LibraryTab() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [analyses, setAnalyses] = useState<BookAnalysis[]>([]);
   const [ideas, setIdeas] = useState<IdeaCard[]>([]);
+  const [notes, setNotes] = useState<LibraryNote[]>([]);
+
+  // 新建/编辑弹窗 + 条目选择器（编辑/加载多条时）
+  const [editor, setEditor] = useState<{
+    type: LibType; id: string | null;
+    title: string; desc: string; source: string; content: string; logline: string; selling: string;
+  } | null>(null);
+  const [editorSaving, setEditorSaving] = useState(false);
+  const [picker, setPicker] = useState<{ type: LibType; action: 'edit' | 'load' } | null>(null);
 
   // 创意工坊生成器
   const [genOpen, setGenOpen] = useState(false);
@@ -54,11 +73,12 @@ export default function LibraryTab() {
 
   function reload() {
     setLoading(true);
-    Promise.all([api.listTemplates(), api.listBookAnalyses(), api.listIdeaCards()])
-      .then(([t, a, i]) => {
+    Promise.all([api.listTemplates(), api.listBookAnalyses(), api.listIdeaCards(), api.listNotes()])
+      .then(([t, a, i, n]) => {
         setTemplates(t);
         setAnalyses(a);
         setIdeas(i);
+        setNotes(n);
         setError('');
       })
       .catch(e => setError(e.message || '加载失败'))
@@ -199,6 +219,161 @@ export default function LibraryTab() {
     }
   }
 
+  // ---- 分区通用：新建 / 编辑 / 加载 ----
+  function itemsOf(type: LibType): { id: string; label: string }[] {
+    if (type === 'template') return myTemplates.map(t => ({ id: t.id, label: t.name }));
+    if (type === 'analysis') return analyses.map(a => ({ id: a.id, label: a.title || '未命名档案' }));
+    if (type === 'idea') return ideas.map(c => ({ id: c.id, label: c.title }));
+    return notes.map(n => ({ id: n.id, label: n.title || '未命名笔记' }));
+  }
+
+  function analysisContent(a: BookAnalysis): string {
+    const r: any = a.result || {};
+    return r.raw || JSON.stringify(r, null, 2);
+  }
+
+  async function openEditor(type: LibType, id: string | null) {
+    let init = { title: '', desc: '', source: '', content: '', logline: '', selling: '' };
+    if (id && type === 'template') {
+      const t = templates.find(x => x.id === id)!;
+      init = { title: t.name, desc: t.description || '', content: (t.structure || []).map(s => s.title).join('\n'), source: '', logline: '', selling: '' };
+    } else if (id && type === 'analysis') {
+      const a = analyses.find(x => x.id === id)!;
+      let content = '';
+      try {
+        const full = await api.getBookAnalysis(id);
+        content = analysisContent(full);
+      } catch { content = ''; }
+      init = { title: a.title || '', source: a.source_label || '', content, desc: '', logline: '', selling: '' };
+    } else if (id && type === 'idea') {
+      const c = ideas.find(x => x.id === id)!;
+      init = { title: c.title, logline: c.idea.logline || '', selling: (c.idea.selling_points || []).join('，'), desc: '', source: c.source_label || '', content: '' };
+    } else if (id && type === 'note') {
+      const n = notes.find(x => x.id === id)!;
+      init = { title: n.title, content: n.content, desc: '', source: '', logline: '', selling: '' };
+    }
+    setEditor({ type, id, ...init });
+  }
+
+  function handleSectionAction(type: LibType, action: 'new' | 'edit' | 'load') {
+    if (action === 'new') {
+      if (type === 'idea') { setGenOpen(v => !v); setGenError(''); return; }
+      openEditor(type, null);
+      return;
+    }
+    const items = itemsOf(type);
+    if (items.length === 0) { alert(action === 'edit' ? '暂无可编辑条目' : '暂无可加载条目'); return; }
+    if (items.length === 1) {
+      if (action === 'edit') openEditor(type, items[0].id);
+      else handleLoad(type, items[0].id);
+    } else {
+      setPicker({ type, action });
+    }
+  }
+
+  async function handleSaveEditor() {
+    if (!editor) return;
+    if (!editor.title.trim()) { alert('请填写标题'); return; }
+    const ok = await requireAuth();
+    if (!ok) return;
+    setEditorSaving(true);
+    try {
+      if (editor.type === 'template') {
+        const structure = editor.content.split('\n').map(s => s.trim()).filter(Boolean)
+          .map((title, i) => ({ title, is_volume: false, parent_id: '', order_index: i }));
+        if (editor.id) {
+          await api.updateTemplate(editor.id, { name: editor.title.trim(), description: editor.desc, structure });
+        } else {
+          await api.createTemplate({ name: editor.title.trim(), description: editor.desc, genre: 'other', book_type: 'novel', structure });
+        }
+      } else if (editor.type === 'analysis') {
+        if (editor.id) {
+          await api.updateBookAnalysis(editor.id, { title: editor.title.trim(), source_label: editor.source, content: editor.content });
+        } else {
+          await api.saveBookAnalysis({ title: editor.title.trim(), source_label: editor.source, mode: 'manual', result: { raw: editor.content } });
+        }
+      } else if (editor.type === 'idea') {
+        if (editor.id) {
+          await api.updateIdeaCard(editor.id, {
+            title: editor.title.trim(),
+            idea: { logline: editor.logline, selling_points: editor.selling.split(/[，,、]/).map(s => s.trim()).filter(Boolean) },
+          });
+        }
+      } else {
+        if (editor.id) {
+          await api.updateNote(editor.id, { title: editor.title.trim(), content: editor.content });
+        } else {
+          await api.createNote({ title: editor.title.trim(), content: editor.content });
+        }
+      }
+      setEditor(null);
+      reload();
+    } catch (e: any) {
+      alert('保存失败: ' + e.message);
+    }
+    setEditorSaving(false);
+  }
+
+  // ---- 加载：把条目内容送进所选作品的智驾会话 ----
+  function loadContent(type: LibType, id: string, analysisResult?: any): { title: string; content: string } {
+    if (type === 'template') {
+      const t = templates.find(x => x.id === id)!;
+      const beats = (t.structure || []).map((s, i) => `${i + 1}. ${s.title}`).join('\n');
+      return {
+        title: t.name,
+        content: `【资料库·拆书模板】${t.name}\n${t.description ? t.description + '\n' : ''}节拍结构：\n${beats}`,
+      };
+    }
+    if (type === 'analysis') {
+      const a = analyses.find(x => x.id === id)!;
+      const r = analysisResult || a.result || {};
+      const body = r.raw || JSON.stringify(r, null, 2);
+      return {
+        title: a.title || '拆书档案',
+        content: `【资料库·拆书档案】${a.title || '未命名档案'}\n${a.source_label ? '来源：' + a.source_label + '\n' : ''}${body}`,
+      };
+    }
+    if (type === 'idea') {
+      const c = ideas.find(x => x.id === id)!;
+      return {
+        title: c.title,
+        content: `【资料库·创意卡】${c.title}\n${c.idea.logline || ''}\n卖点：${(c.idea.selling_points || []).join('、')}`,
+      };
+    }
+    const n = notes.find(x => x.id === id)!;
+    return { title: n.title, content: `【资料库·素材笔记】${n.title}\n${n.content}` };
+  }
+
+  async function handleLoad(type: LibType, id: string) {
+    if (!selectedBookId) { alert('请先在上方「选择作品」选择要加载到的作品'); return; }
+    const ok = await requireAuth();
+    if (!ok) return;
+    setBusyKey('load');
+    try {
+      let analysisResult: any;
+      if (type === 'analysis') {
+        const full = await api.getBookAnalysis(id);
+        analysisResult = full.result;
+      }
+      const { title, content } = loadContent(type, id, analysisResult);
+      const res = await api.loadToChat({ book_id: selectedBookId, title, content });
+      navigate(`/write?book=${selectedBookId}&ai=global&session=${res.session_id}`);
+    } catch (e: any) {
+      alert('加载失败: ' + e.message);
+      setBusyKey('');
+    }
+  }
+
+  function sectionButtons(type: LibType) {
+    return (
+      <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
+        <button style={{ ...btnPrimaryStyle, padding: '4px 12px', fontSize: 12 }} onClick={() => handleSectionAction(type, 'new')}>新建</button>
+        <button style={{ ...btnStyle, padding: '4px 12px', fontSize: 12 }} onClick={() => handleSectionAction(type, 'edit')}>编辑</button>
+        <button style={{ ...btnStyle, padding: '4px 12px', fontSize: 12 }} disabled={busyKey === 'load'} onClick={() => handleSectionAction(type, 'load')}>加载</button>
+      </div>
+    );
+  }
+
   function tplName(id: string): string {
     return templates.find(t => t.id === id)?.name || '自定义模板';
   }
@@ -230,6 +405,7 @@ export default function LibraryTab() {
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>拆书模板</strong>
           <span style={badgeMutedStyle}>{myTemplates.length} 个</span>
+          {sectionButtons('template')}
         </div>
         {myTemplates.map(t => {
           const srcLabel = templateSourceLabel(t);
@@ -261,6 +437,7 @@ export default function LibraryTab() {
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>拆书档案</strong>
           <span style={badgeMutedStyle}>{analyses.length} 份</span>
+          {sectionButtons('analysis')}
         </div>
         {analyses.map(a => (
           <div key={a.id} style={cardStyle}>
@@ -290,9 +467,7 @@ export default function LibraryTab() {
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>创意工坊</strong>
           <span style={badgeMutedStyle}>{ideas.length} 张</span>
-          <button style={{ ...btnPrimaryStyle, marginLeft: 'auto' }} onClick={() => { setGenOpen(v => !v); setGenError(''); }}>
-            {genOpen ? '收起' : '新建创意'}
-          </button>
+          {sectionButtons('idea')}
         </div>
 
         {genOpen && (
@@ -413,13 +588,124 @@ export default function LibraryTab() {
         ))}
       </section>
 
-      {/* ===== 素材笔记（规划中）===== */}
+      {/* ===== 素材笔记 ===== */}
       <section style={sectionStyle}>
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>素材笔记</strong>
-          <span style={badgeMutedStyle}>规划中</span>
+          <span style={badgeMutedStyle}>{notes.length} 条</span>
+          {sectionButtons('note')}
         </div>
+        {notes.map(n => (
+          <div key={n.id} style={cardStyle}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <strong style={{ fontSize: 14 }}>{n.title || '未命名笔记'}</strong>
+              <span style={badgeMutedStyle}>{(n.updated_at || '').slice(0, 10)}</span>
+            </div>
+            {n.content && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 10px', whiteSpace: 'pre-wrap' }}>
+                {n.content.length > 120 ? n.content.slice(0, 120) + '…' : n.content}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button style={btnStyle} onClick={async () => {
+                if (!confirm(`确定删除笔记「${n.title}」？`)) return;
+                try { await api.deleteNote(n.id); reload(); } catch (e: any) { alert('删除失败: ' + e.message); }
+              }}>删除</button>
+            </div>
+          </div>
+        ))}
       </section>
+
+      {/* ===== 条目选择器（编辑/加载多条时）===== */}
+      {picker && (
+        <div style={modalMaskStyle} onClick={() => setPicker(null)}>
+          <div style={modalStyle} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>
+              {picker.action === 'edit' ? '选择要编辑的条目' : '选择要加载的条目'}
+            </div>
+            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+              {itemsOf(picker.type).map(it => (
+                <button
+                  key={it.id}
+                  style={{ ...btnStyle, display: 'block', width: '100%', textAlign: 'left', marginBottom: 6 }}
+                  onClick={() => {
+                    const { type, action } = picker;
+                    setPicker(null);
+                    if (action === 'edit') openEditor(type, it.id);
+                    else handleLoad(type, it.id);
+                  }}
+                >
+                  {it.label}
+                </button>
+              ))}
+            </div>
+            <button style={{ ...btnStyle, marginTop: 8 }} onClick={() => setPicker(null)}>取消</button>
+          </div>
+        </div>
+      )}
+
+      {/* ===== 新建 / 编辑弹窗 ===== */}
+      {editor && (
+        <div style={modalMaskStyle} onClick={() => setEditor(null)}>
+          <div style={modalStyle} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>
+              {editor.id ? '编辑' : '新建'}{{ template: '拆书模板', analysis: '拆书档案', idea: '创意卡', note: '素材笔记' }[editor.type]}
+            </div>
+            <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+              标题
+              <input style={{ ...fieldStyle, marginTop: 4 }} value={editor.title} onChange={e => setEditor({ ...editor, title: e.target.value })} />
+            </label>
+            {editor.type === 'template' && (
+              <>
+                <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                  简介
+                  <input style={{ ...fieldStyle, marginTop: 4 }} value={editor.desc} onChange={e => setEditor({ ...editor, desc: e.target.value })} />
+                </label>
+                <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                  节拍结构（每行一个节拍）
+                  <textarea style={{ ...fieldStyle, marginTop: 4, minHeight: 140, resize: 'vertical' }} value={editor.content} onChange={e => setEditor({ ...editor, content: e.target.value })} />
+                </label>
+              </>
+            )}
+            {editor.type === 'analysis' && (
+              <>
+                <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                  来源标签
+                  <input style={{ ...fieldStyle, marginTop: 4 }} value={editor.source} onChange={e => setEditor({ ...editor, source: e.target.value })} />
+                </label>
+                <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                  拆书内容
+                  <textarea style={{ ...fieldStyle, marginTop: 4, minHeight: 160, resize: 'vertical' }} value={editor.content} onChange={e => setEditor({ ...editor, content: e.target.value })} />
+                </label>
+              </>
+            )}
+            {editor.type === 'idea' && (
+              <>
+                <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                  一句话简介
+                  <textarea style={{ ...fieldStyle, marginTop: 4, minHeight: 56, resize: 'vertical' }} value={editor.logline} onChange={e => setEditor({ ...editor, logline: e.target.value })} />
+                </label>
+                <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                  卖点（用顿号/逗号分隔）
+                  <input style={{ ...fieldStyle, marginTop: 4 }} value={editor.selling} onChange={e => setEditor({ ...editor, selling: e.target.value })} />
+                </label>
+              </>
+            )}
+            {editor.type === 'note' && (
+              <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                内容
+                <textarea style={{ ...fieldStyle, marginTop: 4, minHeight: 160, resize: 'vertical' }} value={editor.content} onChange={e => setEditor({ ...editor, content: e.target.value })} />
+              </label>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+              <button style={btnPrimaryStyle} disabled={editorSaving} onClick={handleSaveEditor}>
+                {editorSaving ? '保存中…' : '保存'}
+              </button>
+              <button style={btnStyle} onClick={() => setEditor(null)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
