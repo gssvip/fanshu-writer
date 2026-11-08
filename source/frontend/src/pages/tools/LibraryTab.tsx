@@ -216,14 +216,11 @@ export default function LibraryTab() {
   const genTpl = templates.find(t => t.id === genTemplateId);
 
   return (
-    <div>
+    <div className="tool-panel">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <h2 style={{ margin: 0, fontSize: 18, display: 'flex', alignItems: 'center', gap: 6 }}>
           <Icon name="book" size={18} /> 资料库
         </h2>
-        <span style={{ fontSize: 12, color: 'var(--text-secondary, #888)' }}>
-          协同创作的资产沉淀层：拆书模板 · 拆书档案 · 创意工坊
-        </span>
       </div>
       {error && <div className="error-msg" style={{ marginTop: 10 }}>{error}</div>}
       {loading && <div style={{ marginTop: 16, fontSize: 13, color: 'var(--text-secondary, #888)' }}>加载中…</div>}
@@ -233,15 +230,7 @@ export default function LibraryTab() {
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>拆书模板</strong>
           <span style={badgeMutedStyle}>{myTemplates.length} 个</span>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary, #888)' }}>拆书套路生成的结构骨架，带来源溯源</span>
         </div>
-        {myTemplates.length === 0 && !loading && (
-          <div style={cardStyle}>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary, #888)' }}>
-              暂无拆书模板。到「拆书分析」拆解一本对标书，一键生成结构骨架模板。
-            </div>
-          </div>
-        )}
         {myTemplates.map(t => {
           const srcLabel = templateSourceLabel(t);
           return (
@@ -272,15 +261,7 @@ export default function LibraryTab() {
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>拆书档案</strong>
           <span style={badgeMutedStyle}>{analyses.length} 份</span>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary, #888)' }}>对标书拆解报告，套路、节拍、爽点全留存</span>
         </div>
-        {analyses.length === 0 && !loading && (
-          <div style={cardStyle}>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary, #888)' }}>
-              暂无拆书档案。在「拆书分析」点击「存入资料库」即可归档。
-            </div>
-          </div>
-        )}
         {analyses.map(a => (
           <div key={a.id} style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -309,7 +290,6 @@ export default function LibraryTab() {
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>创意工坊</strong>
           <span style={badgeMutedStyle}>{ideas.length} 张</span>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary, #888)' }}>基于拆书模板的差异化创意，附防抄袭差异清单</span>
           <button style={{ ...btnPrimaryStyle, marginLeft: 'auto' }} onClick={() => { setGenOpen(v => !v); setGenError(''); }}>
             {genOpen ? '收起' : '新建创意'}
           </button>
@@ -438,11 +418,6 @@ export default function LibraryTab() {
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>素材笔记</strong>
           <span style={badgeMutedStyle}>规划中</span>
-        </div>
-        <div style={cardStyle}>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary, #888)' }}>
-            随手笔记、资料卡、金句、人物原型将在这里沉淀，敬请期待。
-          </div>
         </div>
       </section>
     </div>
