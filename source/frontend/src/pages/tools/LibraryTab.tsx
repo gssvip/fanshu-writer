@@ -16,7 +16,7 @@ const cardStyle: React.CSSProperties = {
 };
 const badgeStyle: React.CSSProperties = {
   fontSize: 11, padding: '2px 8px', borderRadius: 999,
-  background: 'rgba(76,110,245,0.12)', color: '#4c6ef5', whiteSpace: 'nowrap',
+  background: 'var(--accent-weak, rgba(76,110,245,0.12))', color: 'var(--accent, #4c6ef5)', whiteSpace: 'nowrap',
 };
 const badgeMutedStyle: React.CSSProperties = {
   fontSize: 11, padding: '2px 8px', borderRadius: 999,
@@ -26,7 +26,7 @@ const btnStyle: React.CSSProperties = {
   padding: '6px 14px', borderRadius: 8, border: '1px solid var(--border, rgba(120,120,130,0.3))',
   background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 13,
 };
-const btnPrimaryStyle: React.CSSProperties = { ...btnStyle, background: '#4c6ef5', borderColor: '#4c6ef5', color: '#fff' };
+const btnPrimaryStyle: React.CSSProperties = { ...btnStyle, background: 'var(--accent, #4c6ef5)', borderColor: 'var(--accent, #4c6ef5)', color: '#fff' };
 const iconBtnStyle: React.CSSProperties = {
   padding: '5px 8px', borderRadius: 8, border: '1px solid var(--border, rgba(120,120,130,0.3))',
   background: 'transparent', color: 'inherit', cursor: 'pointer',
@@ -42,7 +42,8 @@ const modalMaskStyle: React.CSSProperties = {
 };
 const modalStyle: React.CSSProperties = {
   background: 'var(--bg-primary, #fff)', borderRadius: 12, padding: 18,
-  width: 'min(520px, 100%)', maxHeight: '85vh', overflowY: 'auto', boxSizing: 'border-box',
+  width: '100%', maxWidth: 720, height: 'calc(100vh - 32px)', maxHeight: 'calc(100vh - 32px)',
+  overflowY: 'auto', boxSizing: 'border-box', margin: '0 auto',
 };
 
 type LibType = 'template' | 'analysis' | 'idea' | 'note';
@@ -51,7 +52,6 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
   const { requireAuth } = useContext(AuthContext);
   const navigate = useNavigate();
 
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [analyses, setAnalyses] = useState<BookAnalysis[]>([]);
@@ -84,7 +84,6 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
   const [busyKey, setBusyKey] = useState('');
 
   function reload() {
-    setLoading(true);
     Promise.all([api.listTemplates(), api.listBookAnalyses(), api.listIdeaCards(), api.listNotes()])
       .then(([t, a, i, n]) => {
         setTemplates(t);
@@ -93,8 +92,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
         setNotes(n);
         setError('');
       })
-      .catch(e => setError(e.message || '加载失败'))
-      .finally(() => setLoading(false));
+      .catch(e => setError(e.message || '加载失败'));
   }
 
   useEffect(() => { reload(); }, []);
@@ -391,7 +389,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
     return (
       <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
         <button
-          style={{ ...iconBtnStyle, background: '#4c6ef5', borderColor: '#4c6ef5', color: '#fff' }}
+          style={{ ...iconBtnStyle, background: 'var(--accent, #4c6ef5)', borderColor: 'var(--accent, #4c6ef5)', color: '#fff' }}
           title="新建"
           onClick={() => handleSectionAction(type, 'new')}
         >
@@ -435,7 +433,6 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
         </h2>
       </div>
       {error && <div className="error-msg" style={{ marginTop: 10 }}>{error}</div>}
-      {loading && <div style={{ marginTop: 16, fontSize: 13, color: 'var(--text-secondary, #888)' }}>加载中…</div>}
 
       {/* ===== 拆书模板 ===== */}
       <section style={sectionStyle}>
@@ -521,7 +518,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
         </div>
 
         {genOpen && (
-          <div style={{ ...cardStyle, borderColor: '#4c6ef5' }}>
+          <div style={{ ...cardStyle, borderColor: 'var(--accent, #4c6ef5)' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
               <label style={{ fontSize: 12 }}>
                 拆书模板（必选）<span style={{ color: '#e8463a' }}>*</span>
