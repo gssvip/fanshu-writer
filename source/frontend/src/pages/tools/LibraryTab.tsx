@@ -28,8 +28,8 @@ const btnStyle: React.CSSProperties = {
 };
 const btnPrimaryStyle: React.CSSProperties = { ...btnStyle, background: 'var(--accent, #4c6ef5)', borderColor: 'var(--accent, #4c6ef5)', color: '#fff' };
 const iconBtnStyle: React.CSSProperties = {
-  padding: '5px 8px', borderRadius: 8, border: '1px solid var(--border, rgba(120,120,130,0.3))',
-  background: 'transparent', color: 'inherit', cursor: 'pointer',
+  padding: '5px 9px', borderRadius: 999, border: 'none',
+  background: 'rgba(128,128,140,0.15)', color: 'inherit', cursor: 'pointer',
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
 };
 const fieldStyle: React.CSSProperties = {
@@ -389,7 +389,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
     return (
       <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
         <button
-          style={{ ...iconBtnStyle, background: 'var(--accent, #4c6ef5)', borderColor: 'var(--accent, #4c6ef5)', color: '#fff' }}
+          style={iconBtnStyle}
           title="新建"
           onClick={() => handleSectionAction(type, 'new')}
         >
@@ -518,7 +518,9 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
         </div>
 
         {genOpen && (
-          <div style={{ ...cardStyle, borderColor: 'var(--accent, #4c6ef5)' }}>
+          <div style={modalMaskStyle} onClick={() => setGenOpen(false)}>
+            <div style={modalStyle} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>生成小说创意（含差异清单）</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
               <label style={{ fontSize: 12 }}>
                 拆书模板（必选）<span style={{ color: '#e8463a' }}>*</span>
@@ -602,6 +604,10 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                 </div>
               </div>
             )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <button style={btnStyle} onClick={() => setGenOpen(false)}>关闭</button>
+            </div>
+            </div>
           </div>
         )}
 
