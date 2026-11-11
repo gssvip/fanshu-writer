@@ -520,6 +520,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
         {genOpen && (
           <div style={modalMaskStyle} onClick={() => setGenOpen(false)}>
             <div style={modalStyle} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>生成小说创意（含差异清单）</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
               <label style={{ fontSize: 12 }}>
@@ -537,25 +538,19 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                 </select>
               </label>
             </div>
-            <label style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+            <label style={{ fontSize: 12, display: 'flex', flexDirection: 'column', marginTop: 10, flex: genResult ? undefined : 1, minHeight: 120 }}>
               你的创作方向（可选）
               <textarea
-                style={{ ...fieldStyle, marginTop: 4, minHeight: 56, resize: 'vertical' }}
+                style={{ ...fieldStyle, marginTop: 4, flex: 1, resize: 'none' }}
                 placeholder="如：想写都市高武，主角是重生的退役兵王…"
                 value={genBrief}
                 onChange={e => setGenBrief(e.target.value)}
               />
             </label>
             {genError && <div className="error-msg" style={{ marginTop: 8 }}>{genError}</div>}
-            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-              <button style={btnPrimaryStyle} disabled={generating} onClick={handleGenerateIdea}>
-                {generating ? '生成中…（约1分钟）' : '生成创意（含差异清单）'}
-              </button>
-              {genTpl && <span style={{ ...badgeMutedStyle, alignSelf: 'center' }}>结构骨架来自「{genTpl.name}」</span>}
-            </div>
 
             {genResult && (
-              <div style={{ marginTop: 14, borderTop: '1px solid var(--border, rgba(120,120,130,0.2))', paddingTop: 12 }}>
+              <div style={{ marginTop: 14, borderTop: '1px solid var(--border, rgba(120,120,130,0.2))', paddingTop: 12, flex: 1, overflowY: 'auto', minHeight: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <strong style={{ fontSize: 15 }}>{genResult.title}</strong>
                   {ideaRiskBadge(genResult.plagiarism_risk)}
@@ -604,8 +599,13 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                 </div>
               </div>
             )}
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <div style={{ display: 'flex', gap: 8, marginTop: 'auto', paddingTop: 12, flexWrap: 'wrap' }}>
+              <button style={btnPrimaryStyle} disabled={generating} onClick={handleGenerateIdea}>
+                {generating ? '生成中…（约1分钟）' : '生成创意（含差异清单）'}
+              </button>
               <button style={btnStyle} onClick={() => setGenOpen(false)}>关闭</button>
+              {genTpl && <span style={{ ...badgeMutedStyle, alignSelf: 'center' }}>结构骨架来自「{genTpl.name}」</span>}
+            </div>
             </div>
             </div>
           </div>
@@ -711,6 +711,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
       {editor && (
         <div style={modalMaskStyle} onClick={() => setEditor(null)}>
           <div style={modalStyle} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>
               {editor.id ? '编辑' : '新建'}{{ template: '拆书模板', analysis: '拆书档案', idea: '创意卡', note: '素材笔记' }[editor.type]}
             </div>
@@ -724,9 +725,9 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                   简介
                   <input style={{ ...fieldStyle, marginTop: 4 }} value={editor.desc} onChange={e => setEditor({ ...editor, desc: e.target.value })} />
                 </label>
-                <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                <label style={{ fontSize: 12, display: 'flex', flexDirection: 'column', marginBottom: 8, flex: 1, minHeight: 160 }}>
                   节拍结构（每行一个节拍）
-                  <textarea style={{ ...fieldStyle, marginTop: 4, minHeight: 140, resize: 'vertical' }} value={editor.content} onChange={e => setEditor({ ...editor, content: e.target.value })} />
+                  <textarea style={{ ...fieldStyle, marginTop: 4, flex: 1, resize: 'none' }} value={editor.content} onChange={e => setEditor({ ...editor, content: e.target.value })} />
                 </label>
               </>
             )}
@@ -736,17 +737,17 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                   来源标签
                   <input style={{ ...fieldStyle, marginTop: 4 }} value={editor.source} onChange={e => setEditor({ ...editor, source: e.target.value })} />
                 </label>
-                <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                <label style={{ fontSize: 12, display: 'flex', flexDirection: 'column', marginBottom: 8, flex: 1, minHeight: 160 }}>
                   拆书内容
-                  <textarea style={{ ...fieldStyle, marginTop: 4, minHeight: 160, resize: 'vertical' }} value={editor.content} onChange={e => setEditor({ ...editor, content: e.target.value })} />
+                  <textarea style={{ ...fieldStyle, marginTop: 4, flex: 1, resize: 'none' }} value={editor.content} onChange={e => setEditor({ ...editor, content: e.target.value })} />
                 </label>
               </>
             )}
             {editor.type === 'idea' && (
               <>
-                <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                <label style={{ fontSize: 12, display: 'flex', flexDirection: 'column', marginBottom: 8, flex: 1, minHeight: 120 }}>
                   一句话简介
-                  <textarea style={{ ...fieldStyle, marginTop: 4, minHeight: 56, resize: 'vertical' }} value={editor.logline} onChange={e => setEditor({ ...editor, logline: e.target.value })} />
+                  <textarea style={{ ...fieldStyle, marginTop: 4, flex: 1, resize: 'none' }} value={editor.logline} onChange={e => setEditor({ ...editor, logline: e.target.value })} />
                 </label>
                 <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
                   卖点（用顿号/逗号分隔）
@@ -755,16 +756,17 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
               </>
             )}
             {editor.type === 'note' && (
-              <label style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+              <label style={{ fontSize: 12, display: 'flex', flexDirection: 'column', marginBottom: 8, flex: 1, minHeight: 160 }}>
                 内容
-                <textarea style={{ ...fieldStyle, marginTop: 4, minHeight: 160, resize: 'vertical' }} value={editor.content} onChange={e => setEditor({ ...editor, content: e.target.value })} />
+                <textarea style={{ ...fieldStyle, marginTop: 4, flex: 1, resize: 'none' }} value={editor.content} onChange={e => setEditor({ ...editor, content: e.target.value })} />
               </label>
             )}
-            <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+            <div style={{ display: 'flex', gap: 8, marginTop: 'auto', paddingTop: 10 }}>
               <button style={btnPrimaryStyle} disabled={editorSaving} onClick={handleSaveEditor}>
                 {editorSaving ? '保存中…' : '保存'}
               </button>
               <button style={btnStyle} onClick={() => setEditor(null)}>取消</button>
+            </div>
             </div>
           </div>
         </div>
