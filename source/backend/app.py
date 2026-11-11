@@ -375,7 +375,7 @@ from models import (
     Book, Chapter, ChapterVersion, Character, Outline, DailyStats, Template,
     AISession, AIConfig, AIUsageLog, AppPreference, StageContent, BookBible,
     SkillPack, DynamicMemory, DynamicReport, PromptTemplate, AppMeta,
-    BookAnalysis, IdeaCard,
+    BookAnalysis, IdeaCard, LibraryNote,
 )
 
 # ==== 鉴权工具（拆至 auth_utils.py：app.py 58 处路由 + 各蓝图共用，单向导入无循环）====
@@ -845,6 +845,17 @@ def update_template(template_id):
         template.prompts_json = json.dumps(data['prompts'], ensure_ascii=False)
     db.session.commit()
     return jsonify(template.to_dict())
+
+@app.route('/api/templates/<template_id>', methods=['DELETE'])
+def delete_template(template_id):
+    template = Template.query.get(template_id)
+    if not template:
+        return jsonify({'error': 'Template not found'}), 404
+    if template.is_builtin:
+        return jsonify({'error': '内置模板不可删除'}), 403
+    db.session.delete(template)
+    db.session.commit()
+    return jsonify({'ok': True})
 
 # ==== AI API ====
 # 注：/api/ai/config GET/PUT 已迁移至 blueprints/ai_config_bp.py（多配置支持）

@@ -257,6 +257,7 @@ export const api = {
     request<BookAnalysis>(`/library/analyses/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   updateTemplate: (id: string, data: Partial<Template>) =>
     request<Template>(`/templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTemplate: (id: string) => request<{ ok: boolean }>(`/templates/${id}`, { method: 'DELETE' }),
   listNotes: () => request<LibraryNote[]>('/library/notes'),
   createNote: (data: { title: string; content: string }) =>
     request<LibraryNote>('/library/notes', { method: 'POST', body: JSON.stringify(data) }),

@@ -27,6 +27,11 @@ const btnStyle: React.CSSProperties = {
   background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 13,
 };
 const btnPrimaryStyle: React.CSSProperties = { ...btnStyle, background: '#4c6ef5', borderColor: '#4c6ef5', color: '#fff' };
+const iconBtnStyle: React.CSSProperties = {
+  padding: '5px 8px', borderRadius: 8, border: '1px solid var(--border, rgba(120,120,130,0.3))',
+  background: 'transparent', color: 'inherit', cursor: 'pointer',
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+};
 const fieldStyle: React.CSSProperties = {
   width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, boxSizing: 'border-box',
   border: '1px solid var(--border, rgba(120,120,130,0.3))', background: 'transparent', color: 'inherit',
@@ -59,7 +64,14 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
     title: string; desc: string; source: string; content: string; logline: string; selling: string;
   } | null>(null);
   const [editorSaving, setEditorSaving] = useState(false);
-  const [picker, setPicker] = useState<{ type: LibType; action: 'edit' | 'load' } | null>(null);
+  const [picker, setPicker] = useState<{ type: LibType } | null>(null);
+  const [toast, setToast] = useState('');
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(''), 1800);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   // 创意工坊生成器
   const [genOpen, setGenOpen] = useState(false);
@@ -137,6 +149,18 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
     if (!confirm(`确定删除拆书档案「${a.title}」？`)) return;
     try {
       await api.deleteBookAnalysis(a.id);
+      reload();
+    } catch (e: any) {
+      alert('删除失败: ' + e.message);
+    }
+  }
+
+  async function handleDeleteTemplate(t: Template) {
+    const ok = await requireAuth();
+    if (!ok) return;
+    if (!confirm(`确定删除拆书模板「${t.name}」？`)) return;
+    try {
+      await api.deleteTemplate(t.id);
       reload();
     } catch (e: any) {
       alert('删除失败: ' + e.message);
@@ -255,20 +279,16 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
     setEditor({ type, id, ...init });
   }
 
-  function handleSectionAction(type: LibType, action: 'new' | 'edit' | 'load') {
+  function handleSectionAction(type: LibType, action: 'new' | 'load') {
     if (action === 'new') {
       if (type === 'idea') { setGenOpen(v => !v); setGenError(''); return; }
       openEditor(type, null);
       return;
     }
     const items = itemsOf(type);
-    if (items.length === 0) { alert(action === 'edit' ? '暂无可编辑条目' : '暂无可加载条目'); return; }
-    if (items.length === 1) {
-      if (action === 'edit') openEditor(type, items[0].id);
-      else handleLoad(type, items[0].id);
-    } else {
-      setPicker({ type, action });
-    }
+    if (items.length === 0) return;
+    if (items.length === 1) handleLoad(type, items[0].id);
+    else setPicker({ type });
   }
 
   async function handleSaveEditor() {
@@ -306,7 +326,9 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
           await api.createNote({ title: editor.title.trim(), content: editor.content });
         }
       }
+      const isNew = !editor.id;
       setEditor(null);
+      setToast(isNew ? '已创建' : '已保存');
       reload();
     } catch (e: any) {
       alert('保存失败: ' + e.message);
@@ -364,12 +386,27 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
     }
   }
 
-  function sectionButtons(type: LibType) {
+  function sectionActions(type: LibType) {
+    const hasItems = itemsOf(type).length > 0;
     return (
       <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-        <button style={{ ...btnPrimaryStyle, padding: '4px 12px', fontSize: 12 }} onClick={() => handleSectionAction(type, 'new')}>新建</button>
-        <button style={{ ...btnStyle, padding: '4px 12px', fontSize: 12 }} onClick={() => handleSectionAction(type, 'edit')}>编辑</button>
-        <button style={{ ...btnStyle, padding: '4px 12px', fontSize: 12 }} disabled={busyKey === 'load'} onClick={() => handleSectionAction(type, 'load')}>加载</button>
+        <button
+          style={{ ...iconBtnStyle, background: '#4c6ef5', borderColor: '#4c6ef5', color: '#fff' }}
+          title="新建"
+          onClick={() => handleSectionAction(type, 'new')}
+        >
+          <Icon name="plus" size={15} />
+        </button>
+        {hasItems && (
+          <button
+            style={iconBtnStyle}
+            title="加载到作品智驾"
+            disabled={busyKey === 'load'}
+            onClick={() => handleSectionAction(type, 'load')}
+          >
+            <Icon name="upload-cloud" size={15} />
+          </button>
+        )}
       </div>
     );
   }
@@ -405,21 +442,28 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>拆书模板</strong>
           <span style={badgeMutedStyle}>{myTemplates.length} 个</span>
-          {sectionButtons('template')}
+          {sectionActions('template')}
         </div>
         {myTemplates.map(t => {
           const srcLabel = templateSourceLabel(t);
           return (
-            <div key={t.id} style={cardStyle}>
+            <div key={t.id} style={cardStyle} title="双击编辑" onDoubleClick={() => openEditor('template', t.id)}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <strong style={{ fontSize: 14 }}>{t.name}</strong>
                 {srcLabel && <span style={badgeStyle}>{srcLabel}</span>}
                 <span style={badgeMutedStyle}>{(t.structure || []).length} 个节拍节点</span>
+                <button
+                  style={{ ...iconBtnStyle, marginLeft: 'auto', padding: '3px 6px' }}
+                  title="删除"
+                  onClick={e => { e.stopPropagation(); handleDeleteTemplate(t); }}
+                >
+                  <Icon name="trash" size={14} />
+                </button>
               </div>
               {t.description && (
                 <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 10px' }}>{t.description}</div>
               )}
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} onDoubleClick={e => e.stopPropagation()}>
                 <button style={btnPrimaryStyle} disabled={busyKey === t.id} onClick={() => createBookFromTemplate(t, true)}>
                   建书·进智驾
                 </button>
@@ -437,26 +481,32 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>拆书档案</strong>
           <span style={badgeMutedStyle}>{analyses.length} 份</span>
-          {sectionButtons('analysis')}
+          {sectionActions('analysis')}
         </div>
         {analyses.map(a => (
-          <div key={a.id} style={cardStyle}>
+          <div key={a.id} style={cardStyle} title="双击编辑" onDoubleClick={() => openEditor('analysis', a.id)}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <strong style={{ fontSize: 14 }}>{a.title || '未命名档案'}</strong>
               {a.source_label && <span style={badgeStyle}>{a.source_label}</span>}
               <span style={badgeMutedStyle}>{a.mode === 'competitor' ? '对标拆书' : a.mode === 'position' ? '轻拆定位' : '深拆'}</span>
               <span style={badgeMutedStyle}>{(a.created_at || '').slice(0, 10)}</span>
+              <button
+                style={{ ...iconBtnStyle, marginLeft: 'auto', padding: '3px 6px' }}
+                title="删除"
+                onClick={e => { e.stopPropagation(); handleDeleteAnalysis(a); }}
+              >
+                <Icon name="trash" size={14} />
+              </button>
             </div>
             {a.summary?.logline && (
               <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 10px' }}>
                 {a.summary.logline}
               </div>
             )}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} onDoubleClick={e => e.stopPropagation()}>
               <button style={btnPrimaryStyle} disabled={busyKey === a.id} onClick={() => handleAnalysisToTemplate(a)}>
                 生成拆书模板
               </button>
-              <button style={btnStyle} onClick={() => handleDeleteAnalysis(a)}>删除</button>
             </div>
           </div>
         ))}
@@ -467,7 +517,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>创意工坊</strong>
           <span style={badgeMutedStyle}>{ideas.length} 张</span>
-          {sectionButtons('idea')}
+          {sectionActions('idea')}
         </div>
 
         {genOpen && (
@@ -559,7 +609,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
         )}
 
         {ideas.map(card => (
-          <div key={card.id} style={cardStyle}>
+          <div key={card.id} style={cardStyle} title="双击编辑" onDoubleClick={() => openEditor('idea', card.id)}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <strong style={{ fontSize: 14 }}>{card.title}</strong>
               {card.source_label && <span style={badgeStyle}>{card.source_label}</span>}
@@ -568,11 +618,18 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
               {card.book_id
                 ? <span style={{ ...badgeStyle, background: 'rgba(46,184,92,0.14)', color: '#2eb85c' }}>已建书</span>
                 : <span style={badgeMutedStyle}>未建书</span>}
+              <button
+                style={{ ...iconBtnStyle, marginLeft: 'auto', padding: '3px 6px' }}
+                title="删除"
+                onClick={e => { e.stopPropagation(); handleDeleteIdea(card); }}
+              >
+                <Icon name="trash" size={14} />
+              </button>
             </div>
             {card.idea.logline && (
               <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 10px' }}>{card.idea.logline}</div>
             )}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} onDoubleClick={e => e.stopPropagation()}>
               {card.book_id ? (
                 <button style={btnPrimaryStyle} onClick={() => navigate(`/write?book=${card.book_id}&ai=global`)}>
                   进入作品·智驾
@@ -582,7 +639,6 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                   一键建书·送智驾
                 </button>
               )}
-              <button style={btnStyle} onClick={() => handleDeleteIdea(card)}>删除</button>
             </div>
           </div>
         ))}
@@ -593,35 +649,40 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
         <div style={sectionHeadStyle}>
           <strong style={{ fontSize: 15 }}>素材笔记</strong>
           <span style={badgeMutedStyle}>{notes.length} 条</span>
-          {sectionButtons('note')}
+          {sectionActions('note')}
         </div>
         {notes.map(n => (
-          <div key={n.id} style={cardStyle}>
+          <div key={n.id} style={cardStyle} title="双击编辑" onDoubleClick={() => openEditor('note', n.id)}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <strong style={{ fontSize: 14 }}>{n.title || '未命名笔记'}</strong>
               <span style={badgeMutedStyle}>{(n.updated_at || '').slice(0, 10)}</span>
+              <button
+                style={{ ...iconBtnStyle, marginLeft: 'auto', padding: '3px 6px' }}
+                title="删除"
+                onClick={e => {
+                  e.stopPropagation();
+                  if (!confirm(`确定删除笔记「${n.title}」？`)) return;
+                  api.deleteNote(n.id).then(reload).catch((e: any) => alert('删除失败: ' + e.message));
+                }}
+              >
+                <Icon name="trash" size={14} />
+              </button>
             </div>
             {n.content && (
-              <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 10px', whiteSpace: 'pre-wrap' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>
                 {n.content.length > 120 ? n.content.slice(0, 120) + '…' : n.content}
               </div>
             )}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button style={btnStyle} onClick={async () => {
-                if (!confirm(`确定删除笔记「${n.title}」？`)) return;
-                try { await api.deleteNote(n.id); reload(); } catch (e: any) { alert('删除失败: ' + e.message); }
-              }}>删除</button>
-            </div>
           </div>
         ))}
       </section>
 
-      {/* ===== 条目选择器（编辑/加载多条时）===== */}
+      {/* ===== 条目选择器（加载多条时）===== */}
       {picker && (
         <div style={modalMaskStyle} onClick={() => setPicker(null)}>
           <div style={modalStyle} onClick={e => e.stopPropagation()}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>
-              {picker.action === 'edit' ? '选择要编辑的条目' : '选择要加载的条目'}
+              选择要加载到作品智驾的条目
             </div>
             <div style={{ maxHeight: 320, overflowY: 'auto' }}>
               {itemsOf(picker.type).map(it => (
@@ -629,10 +690,9 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                   key={it.id}
                   style={{ ...btnStyle, display: 'block', width: '100%', textAlign: 'left', marginBottom: 6 }}
                   onClick={() => {
-                    const { type, action } = picker;
+                    const { type } = picker;
                     setPicker(null);
-                    if (action === 'edit') openEditor(type, it.id);
-                    else handleLoad(type, it.id);
+                    handleLoad(type, it.id);
                   }}
                 >
                   {it.label}
@@ -704,6 +764,17 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
               <button style={btnStyle} onClick={() => setEditor(null)}>取消</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ===== 轻提示（保存/创建成功）===== */}
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(0,0,0,0.78)', color: '#fff', padding: '8px 20px',
+          borderRadius: 8, fontSize: 13, zIndex: 2000, whiteSpace: 'nowrap',
+        }}>
+          {toast}
         </div>
       )}
     </div>
