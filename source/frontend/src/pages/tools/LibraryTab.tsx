@@ -459,13 +459,6 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                 <strong style={{ fontSize: 14 }}>{t.name}</strong>
                 {srcLabel && <span style={badgeStyle}>{srcLabel}</span>}
                 <span style={badgeMutedStyle}>{(t.structure || []).length} 个节拍节点</span>
-                <button
-                  style={{ ...iconBtnStyle, marginLeft: 'auto', padding: '3px 6px' }}
-                  title="删除"
-                  onClick={e => { e.stopPropagation(); handleDeleteTemplate(t); }}
-                >
-                  <Icon name="trash" size={14} />
-                </button>
               </div>
               {t.description && (
                 <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 10px' }}>{t.description}</div>
@@ -476,6 +469,13 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                 </button>
                 <button style={btnStyle} disabled={busyKey === t.id} onClick={() => createBookFromTemplate(t, false)}>
                   建书开写
+                </button>
+                <button
+                  style={{ ...iconBtnStyle, padding: '3px 6px' }}
+                  title="删除"
+                  onClick={e => { e.stopPropagation(); handleDeleteTemplate(t); }}
+                >
+                  <Icon name="trash" size={14} />
                 </button>
               </div>
             </div>
@@ -497,13 +497,6 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
               {a.source_label && <span style={badgeStyle}>{a.source_label}</span>}
               <span style={badgeMutedStyle}>{a.mode === 'competitor' ? '对标拆书' : a.mode === 'position' ? '轻拆定位' : '深拆'}</span>
               <span style={badgeMutedStyle}>{(a.created_at || '').slice(0, 10)}</span>
-              <button
-                style={{ ...iconBtnStyle, marginLeft: 'auto', padding: '3px 6px' }}
-                title="删除"
-                onClick={e => { e.stopPropagation(); handleDeleteAnalysis(a); }}
-              >
-                <Icon name="trash" size={14} />
-              </button>
             </div>
             {a.summary?.logline && (
               <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 10px' }}>
@@ -513,6 +506,13 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} onDoubleClick={e => e.stopPropagation()}>
               <button style={btnPrimaryStyle} disabled={busyKey === a.id} onClick={() => handleAnalysisToTemplate(a)}>
                 生成拆书模板
+              </button>
+              <button
+                style={{ ...iconBtnStyle, padding: '3px 6px' }}
+                title="删除"
+                onClick={e => { e.stopPropagation(); handleDeleteAnalysis(a); }}
+              >
+                <Icon name="trash" size={14} />
               </button>
             </div>
           </div>
@@ -631,13 +631,6 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
               {card.book_id
                 ? <span style={{ ...badgeStyle, background: 'rgba(46,184,92,0.14)', color: '#2eb85c' }}>已建书</span>
                 : <span style={badgeMutedStyle}>未建书</span>}
-              <button
-                style={{ ...iconBtnStyle, marginLeft: 'auto', padding: '3px 6px' }}
-                title="删除"
-                onClick={e => { e.stopPropagation(); handleDeleteIdea(card); }}
-              >
-                <Icon name="trash" size={14} />
-              </button>
             </div>
             {card.idea.logline && (
               <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 10px' }}>{card.idea.logline}</div>
@@ -652,6 +645,13 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                   一键建书·送智驾
                 </button>
               )}
+              <button
+                style={{ ...iconBtnStyle, padding: '3px 6px' }}
+                title="删除"
+                onClick={e => { e.stopPropagation(); handleDeleteIdea(card); }}
+              >
+                <Icon name="trash" size={14} />
+              </button>
             </div>
           </div>
         ))}
@@ -669,8 +669,18 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <strong style={{ fontSize: 14 }}>{n.title || '未命名笔记'}</strong>
               <span style={badgeMutedStyle}>{(n.updated_at || '').slice(0, 10)}</span>
+            </div>
+            {n.content && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>
+                {n.content.length > 120 ? n.content.slice(0, 120) + '…' : n.content}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }} onDoubleClick={e => e.stopPropagation()}>
+              <button style={btnStyle} onClick={() => handleLoad('note', n.id)}>
+                加载
+              </button>
               <button
-                style={{ ...iconBtnStyle, marginLeft: 'auto', padding: '3px 6px' }}
+                style={{ ...iconBtnStyle, padding: '3px 6px' }}
                 title="删除"
                 onClick={e => {
                   e.stopPropagation();
@@ -681,11 +691,6 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                 <Icon name="trash" size={14} />
               </button>
             </div>
-            {n.content && (
-              <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 0', whiteSpace: 'pre-wrap' }}>
-                {n.content.length > 120 ? n.content.slice(0, 120) + '…' : n.content}
-              </div>
-            )}
           </div>
         ))}
       </section>
