@@ -82,6 +82,8 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
   const [genError, setGenError] = useState('');
   const [genResult, setGenResult] = useState<IdeaGenerateResult | null>(null);
   const [busyKey, setBusyKey] = useState('');
+  // 分区折叠状态（条目多了可收起列表）
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   function reload() {
     Promise.all([api.listTemplates(), api.listBookAnalyses(), api.listIdeaCards(), api.listNotes()])
@@ -278,6 +280,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
   }
 
   function handleSectionAction(type: LibType, action: 'new' | 'load') {
+    setCollapsed(p => ({ ...p, [type]: false }));
     if (action === 'new') {
       if (type === 'idea') { setGenOpen(v => !v); setGenError(''); return; }
       openEditor(type, null);
@@ -390,6 +393,13 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
       <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
         <button
           style={iconBtnStyle}
+          title={collapsed[type] ? '展开列表' : '收起列表'}
+          onClick={() => setCollapsed(p => ({ ...p, [type]: !p[type] }))}
+        >
+          <Icon name={collapsed[type] ? 'chevron-down' : 'chevron-up'} size={15} />
+        </button>
+        <button
+          style={iconBtnStyle}
           title="新建"
           onClick={() => handleSectionAction(type, 'new')}
         >
@@ -441,7 +451,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
           <span style={badgeMutedStyle}>{myTemplates.length} 个</span>
           {sectionActions('template')}
         </div>
-        {myTemplates.map(t => {
+        {!collapsed.template && myTemplates.map(t => {
           const srcLabel = templateSourceLabel(t);
           return (
             <div key={t.id} style={cardStyle} title="双击编辑" onDoubleClick={() => openEditor('template', t.id)}>
@@ -480,7 +490,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
           <span style={badgeMutedStyle}>{analyses.length} 份</span>
           {sectionActions('analysis')}
         </div>
-        {analyses.map(a => (
+        {!collapsed.analysis && analyses.map(a => (
           <div key={a.id} style={cardStyle} title="双击编辑" onDoubleClick={() => openEditor('analysis', a.id)}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <strong style={{ fontSize: 14 }}>{a.title || '未命名档案'}</strong>
@@ -611,7 +621,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
           </div>
         )}
 
-        {ideas.map(card => (
+        {!collapsed.idea && ideas.map(card => (
           <div key={card.id} style={cardStyle} title="双击编辑" onDoubleClick={() => openEditor('idea', card.id)}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <strong style={{ fontSize: 14 }}>{card.title}</strong>
@@ -654,7 +664,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
           <span style={badgeMutedStyle}>{notes.length} 条</span>
           {sectionActions('note')}
         </div>
-        {notes.map(n => (
+        {!collapsed.note && notes.map(n => (
           <div key={n.id} style={cardStyle} title="双击编辑" onDoubleClick={() => openEditor('note', n.id)}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <strong style={{ fontSize: 14 }}>{n.title || '未命名笔记'}</strong>
