@@ -6816,3 +6816,10 @@ textarea.input.paper-textarea{
   .tab-item{ min-height:42px; padding:4px; }
 }
 
+/* 拆书结果操作按钮（导出/存库/生模/同步）：手机端每排2个共两排，电脑端一排4个 */
+.analyze-actions{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.analyze-actions .btn-secondary{ display:inline-flex; align-items:center; justify-content:center; width:100%; box-sizing:border-box; }
+@media (min-width: 768px) {
+  .analyze-actions{ grid-template-columns:repeat(4, 1fr); }
+}
+

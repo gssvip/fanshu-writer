@@ -182,16 +182,3 @@
     border-right-color: var(--border);
   }
 }
-
-/* 拆书结果操作按钮（导出/存库/生模/同步）：手机端每排2个，电脑端一排4个 */
-.analyze-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-@media (min-width: 1025px) {
-  .analyze-actions {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}

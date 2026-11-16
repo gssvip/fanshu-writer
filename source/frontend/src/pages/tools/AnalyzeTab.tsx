@@ -25,8 +25,8 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
   const [analyzeInput, setAnalyzeInput] = useState('');
   const [analyzeResult, setAnalyzeResult] = useState<AnalysisResult | null>(null);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
-  // 竞品拆书模式：normal=普通拆书 / competitor=竞品对标拆解
-  const [analyzeMode, setAnalyzeMode] = useState<'normal' | 'competitor'>('normal');
+  // 竞品拆书模式（仅保留竞品对标拆解）
+  const [analyzeMode] = useState<'normal' | 'competitor'>('competitor');
   const [uploadFilename, setUploadFilename] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -53,7 +53,6 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
   // 注意：进入时不再自动跑轻拆——等用户自己选择「轻拆」或「深拆」
   useEffect(() => {
     if (rankBook) {
-      setAnalyzeMode('competitor');
       setPositionResult(null);
       setPositionError('');
       setDeepError('');
@@ -417,24 +416,19 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
           </div>
         )}
 
-        <div className="form-row analyze-mode-row" style={{alignItems:'stretch',gap:8,marginBottom:10,flexDirection:'row',flexWrap:'nowrap'}}>
+        <div className="form-row" style={{alignItems:'stretch',gap:8,marginBottom:6,flexDirection:'row',flexWrap:'nowrap'}}>
           <button
-            className={analyzeMode === 'normal' ? 'btn-primary' : 'btn-secondary'}
-            onClick={() => setAnalyzeMode('normal')}
-          ><Icon name="book" size={15} /> 普通拆书</button>
-          <button
-            className={analyzeMode === 'competitor' ? 'btn-primary' : 'btn-secondary'}
-            onClick={() => setAnalyzeMode('competitor')}
+            className="btn-primary"
+            style={{flex:1}}
             title="站在竞品对标角度，输出市场定位、核心优势、差异弱点与可复刻方案"
           ><Icon name="sword" size={15} /> 竞品拆书</button>
-        </div>
-        <div className="form-row" style={{marginBottom:10}}>
           <input ref={fileInputRef} type="file" accept=".txt,.md,.docx,.zip,.json" onChange={handleUploadFile} style={{display:'none'}} id="analyze-file-input" />
-          <label htmlFor="analyze-file-input" className="btn-secondary" style={{cursor:'pointer',padding:'8px 16px',borderRadius:'var(--radius-sm)',display:'inline-block'}}>
+          <label htmlFor="analyze-file-input" className="btn-secondary" style={{cursor:'pointer',padding:'8px 16px',borderRadius:'var(--radius-sm)',display:'inline-flex',alignItems:'center',justifyContent:'center',flex:1,boxSizing:'border-box'}}>
             <Icon name="folder" size={14} /> 导入文件
           </label>
-          {uploadFilename && <span className="text-muted" style={{alignSelf:'center'}}>已导入: {uploadFilename}</span>}
-          <span className="text-muted" style={{alignSelf:'center',fontSize:11}}>支持 txt/md/docx/zip</span>
+        </div>
+        <div className="text-muted" style={{fontSize:11,marginBottom:8}}>
+          {uploadFilename ? `已导入: ${uploadFilename}　` : ''}支持 txt/md/docx/zip
         </div>
         <textarea ref={textareaRef} className="input" rows={8} value={analyzeInput} onChange={e => setAnalyzeInput(e.target.value)}
           placeholder={rankBook ? '点上方「深拆」自动抓正文填入，或点「贴文」后在此粘贴已有正文…' : '粘贴要分析的作品片段（建议2000字以上），或导入文件自动填充...'} />
