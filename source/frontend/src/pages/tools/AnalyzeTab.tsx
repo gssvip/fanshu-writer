@@ -442,27 +442,27 @@ export default function AnalyzeTab({ books, selectedBookId = '', rankBook = null
           <button className="btn-primary" onClick={handleAnalyze} disabled={!analyzeInput.trim() || analyzeLoading}>
             {analyzeLoading ? '分析中...' : '开始分析'}
           </button>
-          {analyzeResult && (
-            <>
-              <button className="btn-secondary" onClick={handleExportAnalysis}><Icon name="inbox" size={14} /> 导出结果</button>
-              {!savedAnalysisId ? (
-                <button className="btn-secondary" disabled={libBusy === 'save'} onClick={handleSaveToLibrary}>
-                  <Icon name="book" size={14} /> {libBusy === 'save' ? '存入中…' : '存入资料库'}
-                </button>
-              ) : (
-                <button className="btn-secondary" disabled style={{opacity:.7}}>
-                  <Icon name="check-circle" size={14} /> 已存入资料库
-                </button>
-              )}
-              <button className="btn-secondary" disabled={!!libBusy} onClick={handleGenTemplate}>
-                <Icon name="clipboard" size={14} /> {libBusy === 'tpl' ? '生成中…' : '生成拆书模板'}
-              </button>
-              <button className="btn-secondary" onClick={() => { setSyncBookId(prev => prev || selectedBookId || ''); setShowSyncModal(true); }} style={{borderColor:'var(--accent)',color:'var(--accent)'}}>
-                <Icon name="clipboard" size={14} /> 同步到作品
-              </button>
-            </>
-          )}
         </div>
+        {analyzeResult && (
+          <div className="analyze-actions">
+            <button className="btn-secondary" onClick={handleExportAnalysis}><Icon name="inbox" size={14} /> 导出</button>
+            {!savedAnalysisId ? (
+              <button className="btn-secondary" disabled={libBusy === 'save'} onClick={handleSaveToLibrary}>
+                <Icon name="book" size={14} /> {libBusy === 'save' ? '存入中…' : '存库'}
+              </button>
+            ) : (
+              <button className="btn-secondary" disabled style={{opacity:.7}}>
+                <Icon name="check-circle" size={14} /> 已存库
+              </button>
+            )}
+            <button className="btn-secondary" disabled={!!libBusy} onClick={handleGenTemplate}>
+              <Icon name="clipboard" size={14} /> {libBusy === 'tpl' ? '生成中…' : '生模'}
+            </button>
+            <button className="btn-secondary" onClick={() => { setSyncBookId(prev => prev || selectedBookId || ''); setShowSyncModal(true); }} style={{borderColor:'var(--accent)',color:'var(--accent)'}}>
+              <Icon name="clipboard" size={14} /> 同步
+            </button>
+          </div>
+        )}
         {analyzeResult && (
           <div className="analyze-result">
             {/* 一句话卖点 */}
