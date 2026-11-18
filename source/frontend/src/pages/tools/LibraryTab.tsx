@@ -111,7 +111,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
   }
 
   // ---- 拆书模板操作 ----
-  async function createBookFromTemplate(t: Template, withAI: boolean) {
+  async function createBookFromTemplate(t: Template) {
     const ok = await requireAuth();
     if (!ok) return;
     const title = prompt('给新书起个名字：', `${t.name.replace(/·?拆书模板$/, '')}·新作`);
@@ -119,7 +119,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
     setBusyKey(t.id);
     try {
       const book = await api.createBook({ title: title.trim(), genre: t.genre, book_type: t.book_type, template_id: t.id, synopsis: '' });
-      navigate(withAI ? `/write?book=${book.id}&ai=global` : `/write?book=${book.id}`);
+      navigate(`/write?book=${book.id}`);
     } catch (e: any) {
       alert('建书失败: ' + e.message);
       setBusyKey('');
@@ -521,18 +521,15 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
               {t.description && (
                 <div style={{ fontSize: 12, color: 'var(--text-secondary, #888)', margin: '6px 0 10px' }}>{t.description}</div>
               )}
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} onDoubleClick={e => e.stopPropagation()}>
-                <button style={btnPrimaryStyle} disabled={busyKey === t.id} onClick={() => createBookFromTemplate(t, true)}>
-                  建书·进智驾
-                </button>
-                <button style={btnStyle} disabled={busyKey === t.id} onClick={() => createBookFromTemplate(t, false)}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap' }} onDoubleClick={e => e.stopPropagation()}>
+                <button style={{ ...btnStyle, flex: 1, textAlign: 'center' }} disabled={busyKey === t.id} onClick={() => createBookFromTemplate(t)}>
                   建书开写
                 </button>
-                <button style={btnStyle} onClick={() => openGenerator({ templateId: t.id })}>
+                <button style={{ ...btnStyle, flex: 1, textAlign: 'center' }} onClick={() => openGenerator({ templateId: t.id })}>
                   换元创意
                 </button>
                 <button
-                  style={{ ...iconBtnStyle, padding: '3px 6px' }}
+                  style={{ ...iconBtnStyle, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   title="删除"
                   onClick={e => { e.stopPropagation(); handleDeleteTemplate(t); }}
                 >
