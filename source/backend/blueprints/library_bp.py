@@ -125,6 +125,41 @@ def delete_analysis(analysis_id):
 # 拆书档案 → 拆书模板（结构骨架落库，只留套路不留原文）
 # ---------------------------------------------------------------------------
 
+def _build_beat_titles(result: dict) -> list[str]:
+    """从拆书结果提炼节拍骨架标题（纯中文、只留套路不留原文表达）。"""
+    titles: list[str] = []
+
+    def _short(s, n=32):
+        return (s or '').strip().replace('\n', ' ')[:n]
+
+    # 优先：逐章详拆 → 每章一条「第N章：核心冲突」
+    for ch in (result.get('chapter_details') or []):
+        if not isinstance(ch, dict):
+            continue
+        label = _short(ch.get('chapter'), 12) or f'第{len(titles) + 1}章'
+        core = _short(ch.get('conflict')) or _short(ch.get('mission')) or _short(ch.get('payoff'))
+        titles.append(f'{label}：{core}' if core else label)
+    # 其次：剧情节拍 → 「第4-5章·冲突升级：关键事件」
+    if not titles:
+        for b in (result.get('plot_beats') or []):
+            if not isinstance(b, dict):
+                continue
+            head = _short(b.get('range'), 12) + ('·' + _short(b.get('function'), 10) if _short(b.get('function'), 10) else '')
+            ev = _short(b.get('event'), 24)
+            titles.append(f'{head}：{ev}' if ev else head)
+    # 兜底：黄金三章
+    if not titles:
+        for g in (result.get('golden_three') or []):
+            if not isinstance(g, dict):
+                continue
+            head = _short(g.get('chapter'), 12) + ('·' + _short(g.get('mission'), 10) if _short(g.get('mission'), 10) else '')
+            hook = _short(g.get('ending'), 20) or _short(g.get('opening'), 20)
+            titles.append(f'{head}：{hook}' if hook else head)
+    if not titles:
+        _collect_titles(result.get('opening_patterns'), titles)
+    return titles
+
+
 @library_bp.route('/api/library/analyses/<analysis_id>/to-template', methods=['POST'])
 @login_required
 def analysis_to_template(analysis_id):
@@ -136,12 +171,9 @@ def analysis_to_template(analysis_id):
     data = request.json or {}
     name = (data.get('name') or f'{row.title or "拆书"}·拆书模板').strip()[:200]
 
-    # 结构骨架：黄金三章 + 节拍表 → 章节节点（仅标题/功能，不含对标书原文）
-    titles: list[str] = []
-    for key in ('golden_three', 'plot_beats', 'opening_patterns'):
-        _collect_titles(result.get(key), titles)
+    # 结构骨架：章节详拆/节拍表/黄金三章 → 章节节点（仅中文套路标题，不含对标书原文）
     seen, structure = set(), []
-    for i, t in enumerate(titles):
+    for t in _build_beat_titles(result):
         t = t.strip()
         if not t or t in seen:
             continue
@@ -542,6 +574,12 @@ def load_to_chat():
         return jsonify({'error': '缺少 book_id 或内容'}), 400
     if get_owned_book(book_id) is None:
         return jsonify({'error': 'Book not found'}), 404
+
+    # 换元创作指引：资料仅作学习借鉴，智驾须用换元法在此基础上再创作（防抄袭）
+    content = content.rstrip() + (
+        '\n\n【换元创作指引】以上资料仅作学习借鉴，严禁抄袭原作。请用「换元法」在此基础上创作全新的内容：'
+        '保留可取的结构骨架与节奏套路，把人物、金手指、世界观、题材背景与关键情节全部替换成新的元素，'
+        '并说明与原作的差异点；任何原文表达都不得照搬。')
 
     # 优先续用该作品最近的智驾会话（smart_setting），否则 general，再没有就新建
     session = (AISession.query.filter_by(book_id=book_id, scope='smart_setting')

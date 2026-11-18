@@ -251,9 +251,55 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
     return notes.map(n => ({ id: n.id, label: n.title || '未命名笔记' }));
   }
 
+  // 拆书结果 → 纯中文可读文本（不出现 JSON 英文键、括号、引号等符号）
+  const ZH_KEYS: Record<string, string> = {
+    genre_tags: '题材标签', target_platform: '适配平台', logline: '一句话故事',
+    core_conflict: '主线核心矛盾', style_analysis: '文风', structure_analysis: '结构',
+    rhythm_analysis: '节奏', character_design_analysis: '人物塑造', golden_finger: '金手指',
+    golden_three: '黄金三章', plot_beats: '剧情节拍', characters: '人物表',
+    satisfaction_points: '爽点库', hook_techniques: '钩子技巧', hook_system: '钩子体系',
+    emotion_curve: '情绪曲线', pacing: '节奏评估', worldview: '世界观', golden_lines: '原文金句',
+    learnable_points: '可学方法论', replicable_template: '可复用套路', action_plan: '行动方案',
+    risks: '风险提示', market_position: '市场定位', strengths: '核心优势', weaknesses: '弱点缺口',
+    copy_plan: '复刻方案', chapter_details: '章节详拆',
+  };
+  const ZH_SUB: Record<string, string> = {
+    chapter: '章节', mission: '本章任务', opening: '开篇钩子', info: '关键信息', ending: '章尾钩子',
+    emotion: '读者情绪', range: '章节范围', function: '剧情功能', event: '关键事件', hook: '章尾钩子',
+    name: '名称', identity: '身份', desire: '核心欲望', trait: '性格', contrast: '反差记忆点',
+    type: '类型', rules: '规则与限制', upgrade: '升级路径', setup: '铺垫蓄力', payoff: '爽点兑现',
+    position: '出现位置', density: '爽点密度', tension: '张弛配比', issues: '节奏问题',
+    golden_finger: '金手指运作', conflict: '核心冲突', key_info: '关键信息',
+  };
+
+  function zhLine(v: any, indent = ''): string {
+    if (v == null) return '';
+    if (typeof v === 'string') return indent + v.trim();
+    if (typeof v === 'number' || typeof v === 'boolean') return indent + String(v);
+    if (Array.isArray(v)) return v.map(x => zhLine(x, indent + '· ')).filter(Boolean).join('\n');
+    return Object.entries(v).map(([k, val]) => {
+      const text = zhLine(val, '');
+      if (!text) return '';
+      const label = ZH_SUB[k] || ZH_KEYS[k];
+      return label ? `${indent}${label}：${text}` : indent + text;
+    }).filter(Boolean).join('\n');
+  }
+
+  function zhFormatResult(r: any): string {
+    const parts: string[] = [];
+    for (const [k, v] of Object.entries(r || {})) {
+      if (k === 'raw' || v == null) continue;
+      const body = zhLine(v, '');
+      if (!body) continue;
+      const label = ZH_KEYS[k];
+      parts.push(label ? `【${label}】\n${body}` : body);
+    }
+    return parts.join('\n\n') || '（暂无内容）';
+  }
+
   function analysisContent(a: BookAnalysis): string {
     const r: any = a.result || {};
-    return r.raw || JSON.stringify(r, null, 2);
+    return r.raw || zhFormatResult(r);
   }
 
   async function openEditor(type: LibType, id: string | null) {
@@ -277,6 +323,15 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
       init = { title: n.title, content: n.content, desc: '', source: '', logline: '', selling: '' };
     }
     setEditor({ type, id, ...init });
+  }
+
+  // 打开创意工坊生成器并预选模板/档案（换元法再创作入口）
+  function openGenerator(preset: { templateId?: string; analysisId?: string }) {
+    setGenTemplateId(preset.templateId || '');
+    setGenAnalysisId(preset.analysisId || '');
+    setGenOpen(true);
+    setGenError('');
+    setCollapsed(p => ({ ...p, idea: false }));
   }
 
   function handleSectionAction(type: LibType, action: 'new' | 'load') {
@@ -342,15 +397,18 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
     if (type === 'template') {
       const t = templates.find(x => x.id === id)!;
       const beats = (t.structure || []).map((s, i) => `${i + 1}. ${s.title}`).join('\n');
+      const promText = Object.entries(t.prompts || {})
+        .map(([k, v]) => `${ZH_KEYS[k] || k}：${zhLine(v, '')}`)
+        .filter(Boolean).join('\n');
       return {
         title: t.name,
-        content: `【资料库·拆书模板】${t.name}\n${t.description ? t.description + '\n' : ''}节拍结构：\n${beats}`,
+        content: `【资料库·拆书模板】${t.name}\n${t.description ? t.description + '\n' : ''}节拍结构：\n${beats}${promText ? '\n\n套路要点：\n' + promText : ''}`,
       };
     }
     if (type === 'analysis') {
       const a = analyses.find(x => x.id === id)!;
       const r = analysisResult || a.result || {};
-      const body = r.raw || JSON.stringify(r, null, 2);
+      const body = r.raw || zhFormatResult(r);
       return {
         title: a.title || '拆书档案',
         content: `【资料库·拆书档案】${a.title || '未命名档案'}\n${a.source_label ? '来源：' + a.source_label + '\n' : ''}${body}`,
@@ -470,6 +528,9 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                 <button style={btnStyle} disabled={busyKey === t.id} onClick={() => createBookFromTemplate(t, false)}>
                   建书开写
                 </button>
+                <button style={btnStyle} onClick={() => openGenerator({ templateId: t.id })}>
+                  换元创意
+                </button>
                 <button
                   style={{ ...iconBtnStyle, padding: '3px 6px' }}
                   title="删除"
@@ -506,6 +567,9 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }} onDoubleClick={e => e.stopPropagation()}>
               <button style={btnPrimaryStyle} disabled={busyKey === a.id} onClick={() => handleAnalysisToTemplate(a)}>
                 生成拆书模板
+              </button>
+              <button style={btnStyle} onClick={() => openGenerator({ analysisId: a.id })}>
+                换元创意
               </button>
               <button
                 style={{ ...iconBtnStyle, padding: '3px 6px' }}

@@ -3721,13 +3721,78 @@ def sync_skill_pack_from_github(pack_id):
         'synced_at': pack.github_synced_at.isoformat()
     })
 
+def _split_chapters(text: str):
+    """按「第N章/第N回」切分正文，返回 [(章节标题, 章节正文), ...]；识别不到 3 个以上章节时返回空列表。"""
+    pattern = re.compile(r'^[ \t]*(第[0-9零一二三四五六七八九十百千两]+[章回节卷][^\n]{0,30})$', re.M)
+    matches = list(pattern.finditer(text))
+    if len(matches) < 3:
+        return []
+    out = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[m.end():end].strip()
+        if body:
+            out.append((m.group(1).strip(), body))
+    return out
+
+
+_DETAIL_SCHEMA = """你是专业网文拆书师。请对给定的每一章都单独详细拆解，输出格式（严格 JSON，不要输出 JSON 以外的任何文字，不要用 ```json 包裹）：
+{"chapters":[{"chapter":"第N章","mission":"本章任务（一句话）","golden_finger":"金手指/核心设定在本章如何运作","conflict":"本章核心冲突与化解过程","payoff":"本章爽点如何蓄力与兑现","hook":"章尾钩子的具体写法","key_info":"本章释放的关键信息","emotion":"读者情绪与追读理由"}]}
+要求：
+1. 每一章必须单独一条、逐章详细拆解，禁止合并章节、禁止一笔带过、禁止只详细拆前面几章。
+2. 字段值全部用中文书写，禁止英文单词、字母缩写和多余符号。
+3. 每条要具体到情节与写法操作，禁止"节奏紧凑""人物丰满"这类空话。"""
+
+
+def _detail_one_batch(batch, gw):
+    """逐章详拆单批（3~5 章），返回 chapters 列表（失败返回空列表，不阻断整体拆书）。"""
+    body = '\n\n'.join(f'【{title}】\n{content}' for title, content in batch)
+    messages = [
+        {'role': 'system', 'content': _DETAIL_SCHEMA},
+        {'role': 'user', 'content': f'请逐章详细拆解以下 {len(batch)} 章正文：\n\n{body}'},
+    ]
+    out = gw.chat(messages, temperature=0.3, max_tokens=3000, response_format={'type': 'json_object'})
+    if not getattr(out, 'ok', False):
+        out = gw.chat(messages, temperature=0.3, max_tokens=3000)
+    if not getattr(out, 'ok', False):
+        return []
+    raw = (out.content or '').strip()
+    fence = re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', raw)
+    if fence:
+        raw = fence.group(1).strip()
+    s0, s1 = raw.find('{'), raw.rfind('}')
+    if s0 != -1 and s1 > s0:
+        raw = raw[s0:s1 + 1]
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    chs = data.get('chapters') if isinstance(data, dict) else None
+    return chs if isinstance(chs, list) else []
+
+
+def _detail_chapters(chapters, gw):
+    """逐章详拆全量章节：按 5 章一批并行拆解后按序合并，保证每章都有详细拆书。"""
+    batches = [chapters[i:i + 5] for i in range(0, len(chapters), 5)]
+    details: list = []
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(batches))) as pool:
+            for part in pool.map(lambda b: _detail_one_batch(b, gw), batches):
+                details.extend(part)
+    except Exception:
+        for b in batches:
+            details.extend(_detail_one_batch(b, gw))
+    return details
+
+
 @app.route('/api/analyze-book', methods=['POST'])
 def analyze_book():
     text = (request.json or {}).get('content', '')
     if not text.strip():
         return jsonify({'error': 'No content'}), 400
-    # 30 章深拆正文可达 6~9 万字：上限提升到 6 万字（黄金三章在开头，天然优先保留）
-    text = text[:60000]
+    # 30 章深拆正文可达 6~9 万字：上限放宽到 9 万字（逐章详拆会按章节分批处理）
+    text = text[:90000]
     # 竞品拆书模式：focus=competitor 时输出更偏"对标与复刻方案"的深度结论
     focus = request.json.get('focus', '')
 
@@ -3774,10 +3839,11 @@ def analyze_book():
 }
 要求：
 1. 所有结论必须基于给定正文，尽量引用原文词句或点名章节作为证据；正文没写的不要编造，证据不足的字段写"正文未体现"。
-2. golden_three 严格按前三章实际内容拆；plot_beats 按正文中出现的章节标题/顺序逐段归纳，覆盖你实际收到的全部章节（可多章合并一条，但不要遗漏阶段；没给到的章节不得编造）。
+2. golden_three 严格按前三章实际内容拆；plot_beats 逐章一条，覆盖你实际收到的全部章节，前后章节详细程度一致，不得合并、不得省略、不得越往后越简略；没给到的章节不得编造。
 3. satisfaction_points 至少 3 条；characters 至少覆盖主角和最重要的对手/配角。
 4. 每条要具体、可操作，禁止"节奏紧凑""人物丰满"这类空话。
-5. 字段较多，注意控制单条长度，确保输出的是一个完整、可解析的 JSON（不要被截断）。"""
+5. 字段较多，注意控制单条长度，确保输出的是一个完整、可解析的 JSON（不要被截断）。
+6. 所有字段值一律只用中文书写，禁止出现英文单词、字母缩写和多余符号（外文名词一律翻译成中文）。"""
 
     competitor_extra = """
 【竞品模式额外要求】除上述字段外，再输出以下 4 个字段（并入同一个 JSON 对象）：
@@ -3828,6 +3894,13 @@ def analyze_book():
         data = json.loads(raw)
         if not isinstance(data, dict):
             raise ValueError('模型返回不是 JSON 对象')
+        # ===== 逐章详细拆解（分批并行）：解决长文只详细拆前几章、后文被简化的问题 =====
+        try:
+            chapters = _split_chapters(text)
+            if len(chapters) >= 3:
+                data['chapter_details'] = _detail_chapters(chapters[:40], gw)
+        except Exception:
+            pass
         return jsonify(data)
     except Exception as e:
         return jsonify({'error': f'拆书分析失败：{str(e)[:200]}'}), 500
