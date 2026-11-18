@@ -297,6 +297,24 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
     return parts.join('\n\n') || '（暂无内容）';
   }
 
+  // 创意卡完整设定文本（金手指/剧情/章节设定，供加载进智驾）
+  function ideaFullText(idea: any): string {
+    const parts: string[] = [];
+    const gf = idea?.golden_finger;
+    if (gf && typeof gf === 'object') {
+      parts.push('【金手指设定】\n' + [
+        gf.name && `名称：${gf.name}`, gf.form && `表现形态：${gf.form}`, gf.rules && `运作规则：${gf.rules}`,
+        gf.limits && `代价与限制：${gf.limits}`, gf.upgrade && `升级路径：${gf.upgrade}`,
+      ].filter(Boolean).join('\n'));
+    }
+    if (idea?.plot_design) parts.push(`【剧情设定】${idea.plot_design}`);
+    const cd = (idea?.chapter_design || []).filter((c: any) => c && typeof c === 'object');
+    if (cd.length) {
+      parts.push('【章节设定】\n' + cd.map((c: any) => `- ${c.beat || ''}｜${c.function || ''}：${c.event || ''}（章尾钩子：${c.hook || ''}）`).join('\n'));
+    }
+    return parts.join('\n');
+  }
+
   function analysisContent(a: BookAnalysis): string {
     const r: any = a.result || {};
     return r.raw || zhFormatResult(r);
@@ -418,7 +436,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
       const c = ideas.find(x => x.id === id)!;
       return {
         title: c.title,
-        content: `【资料库·创意卡】${c.title}\n${c.idea.logline || ''}\n卖点：${(c.idea.selling_points || []).join('、')}`,
+        content: `【资料库·创意卡】${c.title}\n${c.idea.logline || ''}\n卖点：${(c.idea.selling_points || []).join('、')}\n${ideaFullText(c.idea)}`,
       };
     }
     const n = notes.find(x => x.id === id)!;
@@ -642,6 +660,39 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
                     </div>
                   ) : null
                 ))}
+
+                {/* 换元法三件套：金手指设定 / 剧情设定 / 章节设定 */}
+                {genResult.idea.golden_finger && (
+                  <div style={{ fontSize: 12, marginTop: 8 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>金手指设定</div>
+                    {([
+                      ['名称', genResult.idea.golden_finger.name], ['表现形态', genResult.idea.golden_finger.form],
+                      ['运作规则', genResult.idea.golden_finger.rules], ['代价与限制', genResult.idea.golden_finger.limits],
+                      ['升级路径', genResult.idea.golden_finger.upgrade], ['换元差异', genResult.idea.golden_finger.substitution],
+                    ] as const).map(([label, val]) => val ? (
+                      <div key={label} style={{ color: 'var(--text-secondary, #888)', marginBottom: 2 }}>
+                        <b style={{ color: 'inherit' }}>{label}：</b>{val}
+                      </div>
+                    ) : null)}
+                  </div>
+                )}
+                {genResult.idea.plot_design && (
+                  <div style={{ fontSize: 12, marginTop: 8 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>剧情设定</div>
+                    <div style={{ color: 'var(--text-secondary, #888)' }}>{genResult.idea.plot_design}</div>
+                  </div>
+                )}
+                {genResult.idea.chapter_design?.length ? (
+                  <div style={{ fontSize: 12, marginTop: 8 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>章节设定（{genResult.idea.chapter_design.length} 个节拍的换元事件）</div>
+                    {genResult.idea.chapter_design.map((c, i) => (
+                      <div key={i} style={{ color: 'var(--text-secondary, #888)', marginBottom: 3 }}>
+                        <b style={{ color: 'inherit' }}>{c.beat || `节拍${i + 1}`}</b>｜{c.function}：{c.event}
+                        {c.hook && <span>（钩子：{c.hook}）</span>}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
 
                 {/* 防抄袭自检：差异清单 */}
                 {genResult.diff.length > 0 && (

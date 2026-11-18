@@ -495,8 +495,11 @@ export interface IdeaDiffItem {
 export interface IdeaContent {
   logline?: string;
   selling_points?: string[];
+  golden_finger?: { name?: string; form?: string; rules?: string; limits?: string; upgrade?: string; substitution?: string };
   worldview?: string;
   conflict?: string;
+  plot_design?: string;
+  chapter_design?: Array<{ beat?: string; function?: string; event?: string; hook?: string }>;
   characters?: Array<{ name: string; role: string; desc: string }>;
   opening_hook?: string;
   outline_sketch?: string;

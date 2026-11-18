@@ -222,11 +222,20 @@ def analysis_to_template(analysis_id):
 _IDEA_SYSTEM_PROMPT = """你是资深网文创意策划师，服务于番茄小说/起点中文网。
 用户正在基于一份「拆书模板」（从对标书提炼的结构骨架）再创作一个全新的小说创意。
 
+【换元法原理（必须遵循）】
+换元 = 保留「套路骨架」，整体替换「表现元素」：
+1. 结构层保留：节拍顺序、节奏密度（黄金三章位置、爽点蓄力与兑现配比、章尾钩子位置）、每个节拍的剧情功能。
+2. 元素层换元（全部替换，逐项与对标书不同）：
+   - 金手指换元：换类型与形态（如系统换血脉/职业面板/模拟器）、换获取方式、换代价与限制、换升级路径；
+   - 人设换元：换身份、性格、核心欲望、人物关系网；
+   - 世界观换元：换时代、力量体系、社会规则；
+   - 剧情换元：每个节拍的「剧情功能」沿用模板，「具体事件」全部重新设计。
+3. 校验层：difference_check 逐项对标；任何一项退化为对标书做法，即调整创意直到形成差异。
+
 【防抄袭红线·最高优先级】
 1. 只允许沿用模板的节拍结构/节奏骨架，绝不允许复刻对标书的具体表达。
-2. 必须更换以下要素：金手指/能力体系、主角人设与人物关系、世界观具体设定、开篇钩子、核心事件设计。
-3. 对标书的书名、人名、专有名词、原文句子一律不得出现在你的输出中。
-4. 你必须在 difference_check 中逐项说明与对标书的差异；若某项无法形成差异，主动调整创意直到形成差异。
+2. 对标书的书名、人名、专有名词、原文句子一律不得出现在你的输出中。
+3. 你必须在 difference_check 中逐项说明与对标书的差异；若某项无法形成差异，主动调整创意直到形成差异。
 
 严格按 JSON 格式输出，不要任何其他文字：
 {
@@ -234,8 +243,20 @@ _IDEA_SYSTEM_PROMPT = """你是资深网文创意策划师，服务于番茄小�
   "idea": {
     "logline": "一句话故事核（50字内）",
     "selling_points": ["核心卖点1", "核心卖点2", "核心卖点3"],
-    "worldview": "世界观与金手指设定（100字内，必须与对标书不同）",
+    "golden_finger": {
+      "name": "金手指名称",
+      "form": "表现形态（必须与对标书金手指类型不同）",
+      "rules": "运作规则",
+      "limits": "代价与限制（必须有，不能无代价）",
+      "upgrade": "升级路径与解锁节点",
+      "substitution": "与对标金手指的换元差异一句话说明"
+    },
+    "worldview": "世界观设定（100字内，必须与对标书不同）",
     "conflict": "核心冲突与主线走向（100字内）",
+    "plot_design": "剧情设定：主线三幕走向+核心转折点，每段注明对应模板的哪个节拍功能（150字内）",
+    "chapter_design": [
+      {"beat": "对应模板节拍/章节范围", "function": "沿用的剧情功能", "event": "全新设计的具体事件（不写对标书事件）", "hook": "章尾钩子"}
+    ],
     "characters": [{"name": "主角名", "role": "身份", "desc": "人设（必须与对标书不同）"}],
     "opening_hook": "开篇钩子设计（80字内）",
     "outline_sketch": "前5章骨架走向（每章一行，只写事件功能不写细节）"
@@ -244,11 +265,14 @@ _IDEA_SYSTEM_PROMPT = """你是资深网文创意策划师，服务于番茄小�
     {"aspect": "金手指", "benchmark": "对标书常见做法", "ours": "我们的差异点", "passed": true},
     {"aspect": "人设", "benchmark": "...", "ours": "...", "passed": true},
     {"aspect": "世界观", "benchmark": "...", "ours": "...", "passed": true},
+    {"aspect": "剧情事件", "benchmark": "...", "ours": "...", "passed": true},
     {"aspect": "开篇钩子", "benchmark": "...", "ours": "...", "passed": true}
   ],
   "plagiarism_risk": "low",
   "risk_note": "风险说明（如有）"
-}"""
+}
+
+注意：chapter_design 必须为模板的每一个节拍节点各输出一项（不许合并、不许简化后几章），每项都要有全新事件设计。"""
 
 
 @library_bp.route('/api/library/ideas/generate', methods=['POST'])
@@ -306,7 +330,7 @@ def generate_idea():
         {'role': 'system', 'content': system_prompt.strip()},
         {'role': 'user', 'content': '请基于拆书模板的结构骨架，再创作一个通过防抄袭红线的全新小说创意。'},
     ]
-    content, error = _call_llm(messages, max_tokens=4000, temperature=0.9,
+    content, error = _call_llm(messages, max_tokens=7000, temperature=0.9,
                                task_type='creation', scene_label='library_idea_generate')
     if error or not content:
         return jsonify({'error': f'AI 生成失败：{error or "空响应"}'}), 500
@@ -397,20 +421,34 @@ def create_book_from_idea(idea_id):
 
     logline = (idea.get('logline') or row.title or '未命名创意')
     selling = idea.get('selling_points') or []
+    gf = idea.get('golden_finger') if isinstance(idea.get('golden_finger'), dict) else {}
+    gf_text = '／'.join(filter(None, [
+        gf.get('name'), gf.get('form'), f"规则：{gf['rules']}" if gf.get('rules') else '',
+        f"代价与限制：{gf['limits']}" if gf.get('limits') else '',
+        f"升级路径：{gf['upgrade']}" if gf.get('upgrade') else '',
+    ]))
+    chapter_design = [c for c in (idea.get('chapter_design') or []) if isinstance(c, dict)]
 
-    concept_text = '\n'.join([
+    concept_text = '\n'.join(filter(None, [
         f'【故事核】{logline}',
         f'【核心卖点】{"；".join(str(s) for s in selling) if selling else "（待补充）"}',
-        f'【世界观/金手指】{idea.get("worldview") or "（待补充）"}',
+        f'【金手指设定】{gf_text or idea.get("worldview") or "（待补充）"}',
+        f'【世界观】{idea.get("worldview") or "（待补充）"}',
         f'【核心冲突】{idea.get("conflict") or "（待补充）"}',
         f'【开篇钩子】{idea.get("opening_hook") or "（待补充）"}',
-    ])
+    ]))
     diff_text = '\n'.join(
         f'- {d.get("aspect", "维度")}：{d.get("ours", "")}（对标做法：{d.get("benchmark", "")}）'
         for d in diff if isinstance(d, dict)
     )
+    chapter_text = '\n'.join(
+        f'- {c.get("beat", "")}｜{c.get("function", "")}：{c.get("event", "")}（章尾钩子：{c.get("hook", "")}）'
+        for c in chapter_design
+    )
     plot_text = '\n'.join(filter(None, [
         f'【结构骨架】（来自拆书模板「{tpl_name}」，写作时沿用节拍节奏）：\n' + ' / '.join(structure_titles[:24]) if structure_titles else '',
+        f'【剧情设定】{idea.get("plot_design") or ""}',
+        f'【章节设定】（每个节拍的换元事件设计，正文按此展开）：\n{chapter_text}' if chapter_text else '',
         f'【前5章骨架】\n{idea.get("outline_sketch") or ""}',
         f'【差异化约束·防抄袭红线】以下要素已被明确要求与对标书不同，正文生成时严禁回退到对标书做法：\n{diff_text}' if diff_text else '',
     ]))
@@ -423,6 +461,8 @@ def create_book_from_idea(idea_id):
         'template_id': row.template_id,
         'template_name': tpl_name,
         'analysis_id': row.analysis_id,
+        'golden_finger': gf,
+        'chapter_design': chapter_design,
         'diff': diff,
         'created_from': 'idea_card',
     }

@@ -184,11 +184,22 @@ def _format_concept_pack(book) -> str:
         pack = meta.get('concept_pack') if isinstance(meta, dict) else None
         if not isinstance(pack, dict) or not pack:
             return ''
-        lines = ['【创作来源·对标再创作】本作品由「拆书模板 + 差异化创意」生成：']
+        lines = ['【创作来源·对标再创作】本作品由「拆书模板 + 差异化换元创意」生成：']
         if pack.get('source_label'):
             lines.append(f'· 对标来源：{pack["source_label"]}')
         if pack.get('template_name'):
             lines.append(f'· 结构骨架：拆书模板「{pack["template_name"]}」（正文生成沿用其节拍节奏）')
+        gf = pack.get('golden_finger') if isinstance(pack.get('golden_finger'), dict) else {}
+        if gf:
+            lines.append('· 金手指设定（正文严格按此运作，不得自行改动）：')
+            for k, label in (('name', '名称'), ('form', '形态'), ('rules', '规则'), ('limits', '代价与限制'), ('upgrade', '升级路径')):
+                if gf.get(k):
+                    lines.append(f'  - {label}：{gf[k]}')
+        chapters = [c for c in (pack.get('chapter_design') or []) if isinstance(c, dict)]
+        if chapters:
+            lines.append('· 章节设定（每个节拍的换元事件设计，正文按此展开）：')
+            for c in chapters[:30]:
+                lines.append(f'  - {c.get("beat", "")}｜{c.get("function", "")}：{c.get("event", "")}（章尾钩子：{c.get("hook", "")}）')
         diffs = pack.get('diff') or []
         if isinstance(diffs, list) and diffs:
             lines.append('· 差异清单（这些要素已明确要求与对标书不同，写作时严禁回退到对标书做法）：')
