@@ -727,7 +727,6 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
               </button>
               <button style={btnStyle} onClick={() => setGenOpen(false)}>关闭</button>
               {genTpl && <span style={{ ...badgeMutedStyle, alignSelf: 'center' }}>结构骨架来自「{genTpl.name}」</span>}
-              {!genTpl && genAnalysisId && <span style={{ ...badgeMutedStyle, alignSelf: 'center' }}>结构骨架从所选档案提炼</span>}
             </div>
             </div>
             </div>
