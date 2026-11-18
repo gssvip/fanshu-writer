@@ -286,12 +286,12 @@ def generate_idea():
     brief = (data.get('brief') or '').strip()
 
     template = Template.query.get(template_id) if template_id else None
-    if not template:
-        return jsonify({'error': '请先选择一个拆书模板'}), 400
-
     analysis = None
     if analysis_id:
         analysis = BookAnalysis.query.filter_by(id=analysis_id, user_id=request.current_user_id).first()
+    if not template and not analysis:
+        return jsonify({'error': '请至少选择一个拆书模板或拆书档案'}), 400
+
     source_label = ''
     analysis_ctx = ''
     if analysis:
@@ -309,8 +309,19 @@ def generate_idea():
             parts.append(f'对标人物（仅供避开）：{_text_from(chars)[:400]}')
         analysis_ctx = '\n'.join(parts)
 
-    structure_titles = [s.get('title', '') for s in (template.structure or []) if isinstance(s, dict)]
-    tpl_prompts = template.prompts or {}
+    if template:
+        structure_titles = [s.get('title', '') for s in (template.structure or []) if isinstance(s, dict)]
+        tpl_prompts = template.prompts or {}
+        skeleton_src = '拆书模板'
+    else:
+        # 未选模板时，直接从拆书档案提炼节拍骨架（档案自带剧情节拍）
+        a_result = json.loads(analysis.result_json or '{}')
+        structure_titles = _build_beat_titles(a_result)[:24]
+        tpl_prompts = {
+            'replicable_template': _text_from(a_result.get('replicable_template'))[:600],
+            'learnable_points': _text_from(a_result.get('learnable_points'))[:400],
+        }
+        skeleton_src = '拆书档案'
     template_ctx = '\n'.join([
         f'【结构骨架】（{len(structure_titles)} 个节拍节点）：' + ' / '.join(structure_titles[:24]),
         f'【可复制套路】{str(tpl_prompts.get("replicable_template", ""))[:600]}',
@@ -321,7 +332,7 @@ def generate_idea():
 
 {f'【对标书信息】（仅供差异化参照，禁止复刻）\n{analysis_ctx}' if analysis_ctx else '（未关联拆书档案，请在 difference_check 中以同题材常见套路为基准说明差异）'}
 
-【拆书模板（可沿用的结构骨架）】
+【结构骨架（可沿用的节拍套路，来源：{skeleton_src}）】
 {template_ctx}
 
 {f'【用户补充方向】{brief}' if brief else ''}"""

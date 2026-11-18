@@ -169,7 +169,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
 
   // ---- 创意工坊（P2：模板差异化再创作 + 防抄袭自检）----
   async function handleGenerateIdea() {
-    if (!genTemplateId) { setGenError('请先选择一个拆书模板'); return; }
+    if (!genTemplateId && !genAnalysisId) { setGenError('请至少选择一个拆书模板或拆书档案'); return; }
     const ok = await requireAuth();
     if (!ok) return;
     setGenerating(true);
@@ -613,7 +613,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>生成小说创意（含差异清单）</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
               <label style={{ fontSize: 12 }}>
-                拆书模板（必选）<span style={{ color: '#e8463a' }}>*</span>
+                拆书模板（与档案至少选一）
                 <select style={{ ...fieldStyle, marginTop: 4 }} value={genTemplateId} onChange={e => setGenTemplateId(e.target.value)}>
                   <option value="">选择模板…</option>
                   {myTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -727,6 +727,7 @@ export default function LibraryTab({ selectedBookId }: { selectedBookId: string 
               </button>
               <button style={btnStyle} onClick={() => setGenOpen(false)}>关闭</button>
               {genTpl && <span style={{ ...badgeMutedStyle, alignSelf: 'center' }}>结构骨架来自「{genTpl.name}」</span>}
+              {!genTpl && genAnalysisId && <span style={{ ...badgeMutedStyle, alignSelf: 'center' }}>结构骨架从所选档案提炼</span>}
             </div>
             </div>
             </div>
